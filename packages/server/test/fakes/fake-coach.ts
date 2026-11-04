@@ -9,8 +9,18 @@ export class FakeCoach implements CoachPort {
   readonly resolved: { requestId: string; allow: boolean }[] = [];
   knownRequests = new Set<string>();
   failSendWith: Error | undefined;
+  flushes = 0;
   private readonly eventListeners = new Set<(event: CoachEvent) => void>();
   private readonly permissionListeners = new Set<(request: PermissionRequest) => void>();
+
+  ensureSessionId(): number {
+    if (!this.sessionRow) throw new Error("the fake coach has no session row");
+    return this.sessionRow.id;
+  }
+
+  flushNotifications(): void {
+    this.flushes += 1;
+  }
 
   async send(text: string): Promise<void> {
     if (this.failSendWith) throw this.failSendWith;
