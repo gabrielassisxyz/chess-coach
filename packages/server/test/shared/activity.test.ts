@@ -123,6 +123,7 @@ describe("ActivityState schemas", () => {
       { type: "select_review_ply", game_id: 3, ply: 0 },
       { type: "leave_demo", activity_id: 2 },
       { type: "new_game", color: "black", elo: 1500 },
+      { type: "new_game", color: "black" },
       { type: "resign" },
       { type: "abort" },
       { type: "move", from: "a7", to: "a8", promotion: "q" },
@@ -135,6 +136,7 @@ describe("ActivityState schemas", () => {
       { type: "open_game", game_id: 0 },
       { type: "select_review_ply", game_id: 3, ply: -1 },
       { type: "new_game", color: "green", elo: 1500 },
+      { type: "new_game", color: "black", elo: 1500.5 },
       { type: "move", from: "a7", to: "a8", promotion: "k" },
     ];
     for (const command of bad) {

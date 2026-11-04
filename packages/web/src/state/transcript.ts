@@ -39,6 +39,7 @@ export interface ChatState {
   errorCount: number;
   localCount: number;
   activity: ActivityState | null;
+  currentElo?: number | null;
   // Cards made from each game since the page loaded, summed so a repeat click cannot show 0 over 3.
   cardsCreated: Record<number, number>;
 }
@@ -52,6 +53,7 @@ export const initialChatState: ChatState = {
   errorCount: 0,
   localCount: 0,
   activity: null,
+  currentElo: null,
   cardsCreated: {},
 };
 
@@ -180,7 +182,13 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "bootstrap": {
       const items: ChatItem[] = [];
       for (const entry of event.transcript) applyEntry(items, entry);
-      return { ...initialChatState, items, localCount: state.localCount, activity: event.activity };
+      return {
+        ...initialChatState,
+        items,
+        localCount: state.localCount,
+        activity: event.activity,
+        currentElo: event.current_elo ?? null,
+      };
     }
     case "chat":
       return applyChat(state, event);

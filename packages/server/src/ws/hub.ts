@@ -17,6 +17,7 @@ import type { CoachEvent } from "../coach/events.js";
 import type { PermissionRequest } from "../coach/session.js";
 import { type ChatMessage, listChatTail } from "../db/chat.js";
 import type { Database } from "../db/open.js";
+import { getCurrentElo } from "../db/settings.js";
 import { GameError } from "../game/errors.js";
 import { SrsError } from "../srs/errors.js";
 import { ChatEventNumbering } from "./chat-events.js";
@@ -160,6 +161,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
       type: "bootstrap",
       transcript: rows.map(toEntry),
       activity: activity.current(),
+      current_elo: getCurrentElo(db),
     });
   };
 
@@ -183,7 +185,10 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         await activity.leaveDemo(command.activity_id);
         return;
       case "new_game":
-        await activity.newGame({ color: command.color, elo: command.elo });
+        await activity.newGame({
+          color: command.color,
+          ...(command.elo === undefined ? {} : { elo: command.elo }),
+        });
         return;
       case "resign":
         await activity.resign(command.activity_id);

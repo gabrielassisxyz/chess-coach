@@ -15,7 +15,7 @@ export interface PlayProps {
 }
 
 export function Play({ server, createBoard, notice = null }: PlayProps) {
-  const { activity } = server;
+  const { activity, currentElo } = server;
   const moves = movesOf(activity);
 
   const move = (from: string, to: string, promotion?: PromotionPiece): void => {
@@ -37,7 +37,12 @@ export function Play({ server, createBoard, notice = null }: PlayProps) {
       ) : (
         <p className="screen__note">No game on the board. Start one with New game.</p>
       )}
-      <Controls activity={activity} send={server.send} newGameBlocked={notice !== null} />
+      <Controls
+        activity={activity}
+        send={server.send}
+        newGameBlocked={notice !== null}
+        currentElo={currentElo}
+      />
       <MoveList moves={moves} />
     </section>
   );

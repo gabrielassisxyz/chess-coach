@@ -155,7 +155,7 @@ export class ActivityService {
   }
 
   // The new game is entered only after it has settled, so no one sees its half-built first turn.
-  newGame(input: { color: PlayerColor; elo: number; fen?: string }): Promise<ActivityState> {
+  newGame(input: { color: PlayerColor; elo?: number; fen?: string }): Promise<ActivityState> {
     return this.enqueue("live_game", async () => {
       await this.game.newGame(input);
       return this.setLiveGame();
