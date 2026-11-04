@@ -1,5 +1,13 @@
 import { z } from "zod";
-import { ActivityStateSchema, PromotionSchema } from "./activity.js";
+import {
+  ActivityStateSchema,
+  ExpectedMoveSchema,
+  PromotionSchema,
+  TrainingItemSchema,
+  TrainingModeSchema,
+  TrainingStatusSchema,
+  TrainingSummarySchema,
+} from "./activity.js";
 
 // The wire contract between server and browser. Every frame is validated on arrival by the side
 // that receives it; a schema sits beside each type so the two cannot drift apart.
@@ -80,6 +88,17 @@ export const ErrorCodeSchema = z.enum([
   "nothing_to_undo",
   "invalid_elo",
   "invalid_position",
+  "not_in_training",
+  "empty_queue",
+  "item_unfinished",
+  "item_finished",
+  "card_not_found",
+  "exposure_unknown",
+  "exposure_used",
+  "exposure_stale",
+  "exposure_answered",
+  "exposure_unanswered",
+  "invalid_quality",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
@@ -98,12 +117,25 @@ export const ActivityEventSchema = z.object({
 });
 export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
 
+// Sent beside the activity event whenever the training item or its status changes.
+export const TrainingEventSchema = z.object({
+  type: z.literal("training"),
+  activity_id: z.number().int().positive(),
+  mode: TrainingModeSchema,
+  item: TrainingItemSchema,
+  status: TrainingStatusSchema,
+  expected: ExpectedMoveSchema.nullable(),
+  summary: TrainingSummarySchema.nullable(),
+});
+export type TrainingEvent = z.infer<typeof TrainingEventSchema>;
+
 export const ServerEventSchema = z.discriminatedUnion("type", [
   BootstrapEventSchema,
   ChatEventSchema,
   PermissionRequestEventSchema,
   ErrorEventSchema,
   ActivityEventSchema,
+  TrainingEventSchema,
 ]);
 export type ServerEvent = z.infer<typeof ServerEventSchema>;
 
@@ -181,6 +213,33 @@ export const UndoCommandSchema = z.object({
   activity_id: activityId,
 });
 
+export const StartTrainingCommandSchema = z.object({
+  type: z.literal("start_training"),
+  command_id: commandId,
+  mode: TrainingModeSchema,
+  motif: z.string().min(1).max(64).optional(),
+});
+
+export const RateCardCommandSchema = z.object({
+  type: z.literal("rate_card"),
+  command_id: commandId,
+  exposure_id: z.string().min(1).max(64),
+  quality: z.number().int().min(0).max(5),
+  activity_id: activityId,
+});
+
+export const NextTrainingItemCommandSchema = z.object({
+  type: z.literal("next_training_item"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
+export const EndTrainingCommandSchema = z.object({
+  type: z.literal("end_training"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   SayCommandSchema,
   ApproveToolCommandSchema,
@@ -192,6 +251,10 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   AbortCommandSchema,
   MoveCommandSchema,
   UndoCommandSchema,
+  StartTrainingCommandSchema,
+  RateCardCommandSchema,
+  NextTrainingItemCommandSchema,
+  EndTrainingCommandSchema,
 ]);
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
 

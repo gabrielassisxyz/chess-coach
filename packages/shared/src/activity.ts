@@ -74,17 +74,61 @@ export const ReviewActivitySchema = z.object({
   selected_ply: z.number().int().nonnegative(),
 });
 
-// A placeholder: the training work narrows `item` once cards and puzzles are served.
-export const TrainingItemSchema = z.object({
-  kind: z.enum(["card", "puzzle"]),
-  id: z.union([z.string(), z.number()]),
+const queuePosition = {
+  position_in_queue: z.number().int().positive(),
+  queue_length: z.number().int().positive(),
+};
+
+export const CardItemSchema = z.object({
+  kind: z.literal("card"),
+  card_id: z.number().int(),
+  exposure_id: z.string(),
+  prompt_fen: z.string(),
+  student_color: ColorSchema,
+  ...queuePosition,
 });
 
+// `reply_uci` is the opponent move the server just played after a right answer in a multi-move puzzle.
+export const PuzzleItemSchema = z.object({
+  kind: z.literal("puzzle"),
+  puzzle_id: z.string(),
+  motif: z.string(),
+  difficulty: z.string(),
+  fen: z.string(),
+  cursor: z.number().int().nonnegative(),
+  reply_uci: z.string().nullable(),
+  ...queuePosition,
+});
+
+export const TrainingItemSchema = z.discriminatedUnion("kind", [CardItemSchema, PuzzleItemSchema]);
+export type TrainingItem = z.infer<typeof TrainingItemSchema>;
+
+export const TrainingStatusSchema = z.enum(["prompt", "in_progress", "solved", "failed", "rated"]);
+export type TrainingStatus = z.infer<typeof TrainingStatusSchema>;
+
+export const TrainingModeSchema = z.enum(["srs", "puzzles"]);
+export type TrainingMode = z.infer<typeof TrainingModeSchema>;
+
+// The move the student should have played, shown once an item is answered wrong or finished.
+export const ExpectedMoveSchema = z.object({ uci: z.string(), san: z.string().nullable() });
+export type ExpectedMove = z.infer<typeof ExpectedMoveSchema>;
+
+export const TrainingSummarySchema = z.object({
+  solved: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+export type TrainingSummary = z.infer<typeof TrainingSummarySchema>;
+
+// `summary` is set once the queue has ended; the last item then stays on the board, locked.
 export const TrainingActivitySchema = z.object({
   kind: z.literal("training"),
   ...boardFields,
+  mode: TrainingModeSchema,
   item: TrainingItemSchema,
+  status: TrainingStatusSchema,
   exposure_id: z.string().optional(),
+  expected: ExpectedMoveSchema.nullable(),
+  summary: TrainingSummarySchema.nullable(),
 });
 
 export const DemoActivitySchema = z.object({
