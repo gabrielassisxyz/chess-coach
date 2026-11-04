@@ -172,6 +172,9 @@ describe("ply question", () => {
     const text = renderNotifications([turn(1), question]);
     expect(text).toContain("The latest move in full:");
     expect(text).toContain("asks about 6... Qxb7");
+  });
+});
+
 describe("renderSrsAnswer", () => {
   const base: SrsAnswerNotification = {
     type: "srs_answer",

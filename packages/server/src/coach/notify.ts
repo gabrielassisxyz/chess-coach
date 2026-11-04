@@ -106,6 +106,8 @@ export function renderPlyQuestion(question: PlyQuestionNotification): string {
     `Position before the move (FEN): ${question.fen_before}`,
     "Call show_position with that position, then explain what the move does and what the alternatives were.",
   ].join("\n");
+}
+
 export function renderSrsAnswer(answer: SrsAnswerNotification): string {
   const played = answer.answered_san ?? answer.answered_uci;
   const expected = answer.expected_san ?? answer.expected_uci;
