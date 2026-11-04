@@ -1,50 +1,80 @@
 /*
  * Design tokens. The only file in the web package allowed to hold a colour literal.
- * Derived from the owner's "Design taste" note; which rule each group follows:
+ * The values come from the design pass (Claude Design), read out of its running prototype.
  *
- * - Grounds: neutral charcoal #17171A on dark, soft off-white #FAF9F7 on light; never pure
- *   white or black, never cream. Both themes exist; this is a desktop app, so light is the
- *   default and dark follows prefers-color-scheme.
- * - Accent: exactly one hue (teal, 175) and the only chromatic colour besides the error
- *   tone. Saturation inside 30-45%, lightness 52-60% on dark and 42-50% on light.
- *   Labels on the accent use the charcoal ground, because off-white on a light-theme accent
- *   falls below readable contrast.
- * - Error: one muted warning hue, used only for something that failed (a turn, a refused
- *   command, an invalid field) and for a king in check. No severity ramp anywhere.
- * - Type: a grotesque sans for UI and titles (never serif, never Space Grotesk), a clean
- *   sans for running text near 65ch, mono only for tool input and output with tabular
- *   numerals. Titles are the largest step.
- * - Board: two cool-grey squares per theme; highlights are the accent at low alpha, so the
- *   board adds no second chromatic colour.
- * - Space and radii: a spacious 4px-based scale, small radii, hairline borders, no shadows.
+ * - Themes: light is the base set under :root, dark overrides it under
+ *   :root[data-theme="dark"]. state/theme.ts sets the attribute from the stored choice,
+ *   else from the system preference.
+ * - Neutrals: cool grey surfaces in three steps (app, panel, inset), one border, three text
+ *   levels.
+ * - Accent: one blue. --on-accent flips per theme because the light accent takes a light
+ *   label and the dark one a dark label. The light accent is one step darker than the
+ *   prototype's #2f6fdc, which measured 4.46:1 against the panel and missed 4.5:1.
+ * - Move quality: each of the six grades has a text colour and a badge background per theme,
+ *   and the word always stays as text beside the colour.
+ * - Status: ready, busy and error dots, the same in both themes.
+ * - Board: Lichess squares by default; [data-board] swaps in another square set.
+ * - Type: IBM Plex Sans for UI and body, IBM Plex Mono for moves, evaluations and the wordmark.
+ * - Space and radii: a 4-based scale up to 32, 4px controls, 8px panels, hairline borders, no shadows.
  * - Motion: under 300ms, ease-out only, transform and opacity only, no bounce; movement is
  *   dropped under prefers-reduced-motion.
  */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
-  --ground: #faf9f7;
-  --surface: #f2f1ee;
-  --hairline: #dcdad5;
-  --text: #17171a;
-  --text-muted: #5f5e5a;
-  --accent: hsl(175 45% 42%);
-  --accent-hover: hsl(175 45% 38%);
-  --on-accent: #17171a;
-  --error: hsl(8 45% 42%);
-  --board-light: #e9e8e4;
-  --board-dark: #b4bab7;
+  --surface-0: #eef0f3;
+  --surface-1: #f7f8fa;
+  --surface-2: #e4e7eb;
+  --border: #d3d8de;
+  --text-1: #1c2027;
+  --text-2: #5f6975;
+  --text-3: #8a94a0;
+  --accent: #2e6edb;
+  --accent-hover: color-mix(in srgb, var(--accent) 85%, var(--text-1));
+  --on-accent: #f7f8fa;
 
-  --font-ui: "Geist", "Hanken Grotesk", "Schibsted Grotesk", system-ui, sans-serif;
-  --font-body: system-ui, "Hanken Grotesk", sans-serif;
-  --font-mono: "Cascadia Code", "Iosevka", "Commit Mono", ui-monospace, monospace;
+  --quality-best: #177a55;
+  --quality-great: #3f7f23;
+  --quality-good: #5f6975;
+  --quality-inaccuracy: #8a6508;
+  --quality-mistake: #a8480f;
+  --quality-blunder: #b42323;
+  --quality-best-bg: #dcf2e8;
+  --quality-great-bg: #e3f0da;
+  --quality-good-bg: #e4e7eb;
+  --quality-inaccuracy-bg: #f7edd0;
+  --quality-mistake-bg: #fae5d6;
+  --quality-blunder-bg: #fadddd;
+
+  --status-ready: #35b283;
+  --status-busy: #d6a62a;
+  --status-error: #e05858;
+  --error-border: #e05858;
+  --error-text: var(--quality-blunder);
+
+  --board-light: #f0d9b5;
+  --board-dark: #b58863;
+  --board-last-move: rgba(155, 199, 0, 0.41);
+  --board-dest: rgba(0, 0, 0, 0.2);
+  --board-check: #d53a3a;
+  --overlay-arrow-1: #5ba69a;
+  --overlay-arrow-2: #8abc93;
+  --overlay-arrow-3: #a05ba6;
+  --overlay-premove: #4ba2e5;
+
+  --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
   --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-base: 0.9375rem;
+  --text-sm: 0.875rem;
+  --text-base: 0.875rem;
   --text-lg: 1.125rem;
   --text-title: 1.75rem;
-  --leading-body: 1.6;
+  --leading-title: 1.2;
+  --leading-heading: 1.3;
+  --leading-body: 1.5;
+  --leading-label: 1.4;
   --measure: 65ch;
 
   --space-1: 0.25rem;
@@ -53,28 +83,57 @@
   --space-4: 1rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
-  --space-12: 3rem;
 
-  --radius-sm: 2px;
-  --radius-md: 4px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
 
   --duration-fast: 120ms;
   --duration-base: 180ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ground: #17171a;
-    --surface: #202024;
-    --hairline: #34343a;
-    --text: #ecebe8;
-    --text-muted: #9b9a96;
-    --accent: hsl(175 38% 56%);
-    --accent-hover: hsl(175 38% 60%);
-    --on-accent: #17171a;
-    --error: hsl(8 38% 58%);
-    --board-light: #8e918f;
-    --board-dark: #5d6361;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface-0: #171a1f;
+  --surface-1: #1f2329;
+  --surface-2: #2a2f36;
+  --border: #353b44;
+  --text-1: #e8eaed;
+  --text-2: #9aa3ad;
+  --text-3: #6b7580;
+  --accent: #5b93ea;
+  --on-accent: #171a1f;
+
+  --quality-best: #4fcf9b;
+  --quality-great: #8fcd6c;
+  --quality-good: #b4bcc6;
+  --quality-inaccuracy: #e6bd4e;
+  --quality-mistake: #f09a63;
+  --quality-blunder: #f07c7c;
+  --quality-best-bg: #1b3a2e;
+  --quality-great-bg: #253a1f;
+  --quality-good-bg: #2a2f36;
+  --quality-inaccuracy-bg: #3c3420;
+  --quality-mistake-bg: #402a1d;
+  --quality-blunder-bg: #43252a;
+}
+
+:root[data-board="chesscom"] {
+  --board-light: #ebecd0;
+  --board-dark: #779556;
+  --board-last-move: rgba(255, 255, 51, 0.5);
+}
+
+:root[data-board="slate"] {
+  --board-light: #dee3e6;
+  --board-dark: #8ca2ad;
+  --board-last-move: rgba(242, 196, 70, 0.5);
+}
+
+:root[data-board="teal"] {
+  --board-light: #425a5a;
+  --board-dark: #35484b;
+  --board-last-move: #043f42;
+  --board-dest: #8ab3bc;
 }

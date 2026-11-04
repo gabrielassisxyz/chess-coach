@@ -1,7 +1,7 @@
 /*
- * The one board theme. chessground's base and piece-set CSS come from the package; this file
- * paints the squares and highlights from tokens, so the board follows light and dark with the
- * rest of the app instead of shipping a fixed brown.
+ * chessground's base and piece-set CSS come from the package; this file paints the squares and
+ * highlights from the --board-* tokens, so a [data-board] theme on <html> recolours the board
+ * without touching these rules.
  */
 .board {
   position: relative;
@@ -27,17 +27,11 @@ cg-board {
 }
 
 cg-board square.move-dest {
-  background: radial-gradient(
-    color-mix(in srgb, var(--accent) 70%, transparent) 22%,
-    transparent 24%
-  );
+  background: radial-gradient(var(--board-dest) 22%, transparent 24%);
 }
 
 cg-board square.oc.move-dest {
-  background: radial-gradient(
-    transparent 70%,
-    color-mix(in srgb, var(--accent) 70%, transparent) 72%
-  );
+  background: radial-gradient(transparent 70%, var(--board-dest) 72%);
 }
 
 cg-board square.move-dest:hover {
@@ -45,18 +39,15 @@ cg-board square.move-dest:hover {
 }
 
 cg-board square.last-move {
-  background-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background-color: var(--board-last-move);
 }
 
 cg-board square.selected {
-  background-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 75%, transparent);
 }
 
 cg-board square.check {
-  background: radial-gradient(
-    color-mix(in srgb, var(--error) 80%, transparent) 20%,
-    transparent 70%
-  );
+  background: radial-gradient(var(--board-check) 20%, transparent 70%);
 }
 
 .promotion {
@@ -69,7 +60,7 @@ cg-board square.check {
   position: absolute;
   inset: 0;
   border: 0;
-  background: color-mix(in srgb, var(--ground) 60%, transparent);
+  background: color-mix(in srgb, var(--surface-0) 60%, transparent);
   cursor: default;
 }
 
@@ -79,8 +70,8 @@ cg-board square.check {
   width: 12.5%;
   margin: 0;
   padding: 0;
-  background: var(--ground);
-  border: 1px solid var(--hairline);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 
@@ -88,7 +79,7 @@ cg-board square.check {
   aspect-ratio: 1;
   border: 0;
   background: transparent;
-  color: var(--text);
+  color: var(--text-1);
   font-size: clamp(1.5rem, 5vw, 2.75rem);
   line-height: 1;
   cursor: pointer;
@@ -96,7 +87,7 @@ cg-board square.check {
 
 .promotion__choice:hover,
 .promotion__choice:focus-visible {
-  background: var(--surface);
+  background: var(--surface-1);
 }
 
 .eval {
@@ -108,8 +99,8 @@ cg-board square.check {
 .eval__track {
   flex: 1;
   height: var(--space-2);
-  background: var(--surface);
-  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
 }

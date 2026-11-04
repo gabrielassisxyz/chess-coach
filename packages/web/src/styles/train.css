@@ -14,20 +14,20 @@
   align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
 }
 
 .train__failure {
   margin: 0;
-  color: var(--error);
+  color: var(--error-text);
   font-size: var(--text-sm);
 }
 
 .train__mode p {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 
 .train__field {
@@ -47,7 +47,7 @@
 }
 
 .train__expected {
-  color: var(--text);
+  color: var(--text-1);
   font-variant-numeric: tabular-nums;
 }
 
