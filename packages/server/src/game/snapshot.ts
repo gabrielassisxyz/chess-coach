@@ -46,7 +46,7 @@ export interface GameSnapshot {
 const PIECE_VALUE: Record<PieceSymbol, number> = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 const PROMOTION_ORDER: Promotion[] = ["q", "r", "b", "n"];
 
-function legalMoves(chess: Chess): LegalMove[] {
+export function legalMoves(chess: Chess): LegalMove[] {
   const byKey = new Map<string, LegalMove>();
   for (const move of chess.moves({ verbose: true })) {
     const key = `${move.from}${move.to}`;

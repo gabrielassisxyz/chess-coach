@@ -11,11 +11,10 @@ import {
   markDelivered,
 } from "../db/chat.js";
 import type { Database } from "../db/open.js";
-import type { NotificationContent } from "../game/notifications.js";
 import { assertSubscriptionAuth } from "./auth.js";
 import { type CoachEvent, mapSdkMessage, type SessionInit } from "./events.js";
 import type { CoachWorld } from "./game-tools.js";
-import { renderNotifications } from "./notify.js";
+import { type CoachNotification, renderNotifications } from "./notify.js";
 import { buildCoachPrompt, type CoachPrompt } from "./prompt.js";
 import { AsyncQueue } from "./queue.js";
 import { COACH_TOOL_NAMES, createCoachMcpServer, MCP_SERVER_NAME } from "./tools.js";
@@ -131,7 +130,7 @@ export class CoachSession {
     const pending = listUndeliveredNotifications(this.deps.db, row.id);
     if (pending.length === 0) return;
     const text = renderNotifications(
-      pending.map((message) => JSON.parse(message.contentJson) as NotificationContent),
+      pending.map((message) => JSON.parse(message.contentJson) as CoachNotification),
     );
     this.deps.db.transaction(() => {
       for (const message of pending) markDelivered(this.deps.db, message.id);

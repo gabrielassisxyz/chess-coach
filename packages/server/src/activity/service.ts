@@ -1,4 +1,9 @@
-import type { ActivityKind, ActivityState, PromotionPiece } from "@chess-coach/shared";
+import type {
+  ActivityKind,
+  ActivityState,
+  PromotionPiece,
+  TrainingMode,
+} from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import {
   type GameRecord,
@@ -13,6 +18,7 @@ import type { GameService, TurnReport } from "../game/service.js";
 import type { GameSnapshot } from "../game/snapshot.js";
 import { ActivityError } from "./errors.js";
 import { demoState, liveGameState, reviewState } from "./state.js";
+import { type TrainingDeps, TrainingRun } from "./training.js";
 
 export type LiveGamePort = Pick<
   GameService,
@@ -22,6 +28,8 @@ export type LiveGamePort = Pick<
 export interface ActivityServiceOptions {
   db: Database;
   game: LiveGamePort;
+  /** What a training queue needs besides the database; without it training is unavailable. */
+  training?: Omit<TrainingDeps, "db">;
 }
 
 type StateListener = (state: ActivityState | null) => void;
@@ -44,17 +52,20 @@ interface ReviewData {
 export class ActivityService {
   private readonly db: Database;
   private readonly game: LiveGamePort;
+  private readonly trainingDeps: Omit<TrainingDeps, "db"> | null;
   private state: ActivityState | null = null;
   private nextId = 1;
   private demo: DemoBoard | null = null;
   private underneath: Underneath | null = null;
   private review: ReviewData | null = null;
+  private run: TrainingRun | null = null;
   private readonly chains = new Map<ActivityKind, Promise<unknown>>();
   private readonly listeners = new Set<StateListener>();
 
   constructor(options: ActivityServiceOptions) {
     this.db = options.db;
     this.game = options.game;
+    this.trainingDeps = options.training ?? null;
     this.game.onSnapshot((snapshot) => this.followLiveGame(snapshot));
   }
 
@@ -148,6 +159,63 @@ export class ActivityService {
       await this.game.newGame(input);
       return this.setLiveGame();
     });
+  }
+
+  startTraining(input: { mode: TrainingMode; motif?: string }): Promise<ActivityState> {
+    return this.enqueue("training", async () => {
+      if (!this.trainingDeps) {
+        throw new ActivityError("not_in_training", "training is not available");
+      }
+      const run = TrainingRun.begin({ ...this.trainingDeps, db: this.db }, input);
+      this.leaveSideBoards();
+      this.run = run;
+      return this.publish(run.state(this.nextId++));
+    });
+  }
+
+  trainingMove(uci: string, expectedActivityId?: number): Promise<ActivityState> {
+    return this.stepTraining(expectedActivityId, (run) => run.answer(uci));
+  }
+
+  rateCard(
+    exposureId: string,
+    quality: number,
+    expectedActivityId?: number,
+  ): Promise<ActivityState> {
+    return this.stepTraining(expectedActivityId, (run) => run.rate(exposureId, quality));
+  }
+
+  nextTrainingItem(expectedActivityId?: number): Promise<ActivityState> {
+    return this.stepTraining(expectedActivityId, (run) => run.next());
+  }
+
+  // Back to what was under the queue: the live game if it is still unfinished, else an empty board.
+  endTraining(expectedActivityId?: number): Promise<ActivityState | null> {
+    return this.enqueue("training", async () => {
+      this.requireTraining(expectedActivityId);
+      this.run = null;
+      if (this.game.current()?.finishedAt === null) return this.setLiveGame();
+      return this.publish(null);
+    });
+  }
+
+  private stepTraining(
+    expectedActivityId: number | undefined,
+    step: (run: TrainingRun) => void,
+  ): Promise<ActivityState> {
+    return this.enqueue("training", async () => {
+      const run = this.requireTraining(expectedActivityId);
+      step(run);
+      return this.publish(run.state((this.state as ActivityState).activity_id));
+    });
+  }
+
+  private requireTraining(expected: number | undefined): TrainingRun {
+    this.checkFresh(expected);
+    if (this.state?.kind !== "training" || !this.run) {
+      throw new ActivityError("not_in_training", "no training is on the board");
+    }
+    return this.run;
   }
 
   // Live commands skip the activity chains on purpose: a turn can take seconds and a demo must
@@ -252,6 +320,7 @@ export class ActivityService {
   }
 
   private leaveSideBoards(): void {
+    this.run = null;
     this.demo = null;
     this.underneath = null;
   }

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Database } from "../db/open.js";
-import { listPuzzles } from "../db/puzzles.js";
+import { listMotifs, listPuzzles } from "../db/puzzles.js";
 
 const querySchema = z.object({
   motif: z.string().min(1).optional(),
@@ -10,6 +10,7 @@ const querySchema = z.object({
 });
 
 export function registerPuzzleRoutes(app: FastifyInstance, db: Database): void {
+  app.get("/api/puzzles/motifs", async () => ({ motifs: listMotifs(db) }));
   app.get("/api/puzzles", async (request, reply) => {
     const parsed = querySchema.safeParse(request.query);
     if (!parsed.success) {

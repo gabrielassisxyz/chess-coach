@@ -7,7 +7,11 @@ export type ActivityErrorCode =
   | "game_not_found"
   | "invalid_ply"
   | "illegal_move"
-  | "invalid_position";
+  | "invalid_position"
+  | "not_in_training"
+  | "empty_queue"
+  | "item_unfinished"
+  | "item_finished";
 
 export class ActivityError extends Error {
   constructor(
