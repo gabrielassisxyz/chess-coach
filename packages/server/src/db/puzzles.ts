@@ -73,6 +73,17 @@ export function getPuzzle(db: Database, id: string): StoredPuzzle | null {
   return { id: row.id, fen: row.fen, solution: JSON.parse(row.solution_uci) as string[] };
 }
 
+export interface PuzzleHeader {
+  motif: string;
+  difficulty: string;
+  explanation: string;
+}
+
+export function getPuzzleHeader(db: Database, id: string): PuzzleHeader | null {
+  const row = db.prepare("SELECT motif, difficulty, explanation FROM puzzles WHERE id = ?").get(id);
+  return (row as PuzzleHeader | undefined) ?? null;
+}
+
 export interface AttemptRecord {
   puzzleId: string;
   attemptedAt: string;

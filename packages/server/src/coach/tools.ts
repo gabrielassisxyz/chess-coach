@@ -9,6 +9,7 @@ import { buildGameTools, type CoachWorld } from "./game-tools.js";
 import { buildPuzzleTools } from "./puzzle-tools.js";
 import { buildRoutineTools } from "./routine-tools.js";
 import { buildSrsTools } from "./srs-tools.js";
+import { buildTrainingTools } from "./training-tools.js";
 
 export const MCP_SERVER_NAME = "chess";
 export const REFERENCE_NAMES = [
@@ -39,6 +40,8 @@ export const COACH_TOOL_BASE_NAMES = [
   "set_difficulty",
   "read_routine",
   "write_routine",
+  "serve_puzzle",
+  "serve_card",
 ] as const;
 export const COACH_TOOL_NAMES = COACH_TOOL_BASE_NAMES.map(
   (name) => `mcp__${MCP_SERVER_NAME}__${name}`,
@@ -86,6 +89,7 @@ export function buildCoachTools(deps: CoachToolDeps) {
     ...buildPuzzleTools(deps.db),
     ...buildDifficultyTools(deps.db, { now }),
     ...buildRoutineTools({ db: deps.db, now }),
+    ...buildTrainingTools(deps.world),
   ];
 }
 

@@ -19,7 +19,7 @@ import type { GameService, TurnReport } from "../game/service.js";
 import type { GameSnapshot } from "../game/snapshot.js";
 import { ActivityError } from "./errors.js";
 import { demoState, liveGameState, reviewState } from "./state.js";
-import { type TrainingDeps, TrainingRun } from "./training.js";
+import { type TrainingDeps, type TrainingItemRef, TrainingRun } from "./training.js";
 
 export type LiveGamePort = Pick<
   GameService,
@@ -172,6 +172,22 @@ export class ActivityService {
         throw new ActivityError("not_in_training", "training is not available");
       }
       const run = TrainingRun.begin({ ...this.trainingDeps, db: this.db }, input);
+      this.leaveSideBoards();
+      this.run = run;
+      return this.publish(run.state(this.nextId++));
+    });
+  }
+
+  // Stacks over a game, a review or a demo like startTraining; a second session never replaces an open one.
+  startTrainingItem(item: TrainingItemRef): Promise<ActivityState> {
+    return this.enqueue("training", async () => {
+      if (!this.trainingDeps) {
+        throw new ActivityError("not_in_training", "training is not available");
+      }
+      if (this.state?.kind === "training") {
+        throw new ActivityError("training_active", "a training session is already open");
+      }
+      const run = TrainingRun.beginWith({ ...this.trainingDeps, db: this.db }, item);
       this.leaveSideBoards();
       this.run = run;
       return this.publish(run.state(this.nextId++));

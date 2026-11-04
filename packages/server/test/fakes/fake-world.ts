@@ -1,4 +1,5 @@
 import { ActivityService } from "../../src/activity/service.js";
+import type { TrainingDeps } from "../../src/activity/training.js";
 import type { CoachWorld } from "../../src/coach/game-tools.js";
 import type { Database } from "../../src/db/open.js";
 import type { StudentColor } from "../../src/engine/evaluate.js";
@@ -20,10 +21,14 @@ export interface FakeWorld {
 
 // Real game and activity services over a real database, so error codes are the ones production
 // gives; only the engines are scripted.
-export function makeWorld(db: Database, replies: string[] = []): FakeWorld {
+export function makeWorld(
+  db: Database,
+  replies: string[] = [],
+  training?: Omit<TrainingDeps, "db">,
+): FakeWorld {
   const engine = new ScriptedEngine(replies);
   const game = new GameService({ db, engine });
-  const activity = new ActivityService({ db, game });
+  const activity = new ActivityService({ db, game, ...(training ? { training } : {}) });
   const analyzed: string[] = [];
   const evaluated: FakeWorld["evaluated"] = [];
   const answer = {
@@ -41,6 +46,7 @@ export function makeWorld(db: Database, replies: string[] = []): FakeWorld {
   const world: CoachWorld = {
     game,
     activity,
+    training: activity,
     analyze: (fen) => {
       analyzed.push(fen);
       return answer.next();
