@@ -19,6 +19,8 @@ export interface GraderOptions {
   db: Database;
   evaluate: EvaluateMove;
   log?: (message: string) => void;
+  /** Runs once after each game finishes grading; a failure is logged and never fails the game. */
+  onGraded?: () => Promise<unknown>;
 }
 
 /**
@@ -29,12 +31,14 @@ export class ImportGrader {
   private readonly db: Database;
   private readonly evaluate: EvaluateMove;
   private readonly log: (message: string) => void;
+  private readonly onGraded: (() => Promise<unknown>) | undefined;
   private working: Promise<void> | null = null;
 
   constructor(options: GraderOptions) {
     this.db = options.db;
     this.evaluate = options.evaluate;
     this.log = options.log ?? ((message) => console.error(message));
+    this.onGraded = options.onGraded;
   }
 
   /** Starts the worker when it is idle; calling it while it runs is harmless. */
@@ -73,6 +77,16 @@ export class ImportGrader {
     } catch (error) {
       setGrading(this.db, game.id, "failed");
       this.log(`grading game ${game.id} failed: ${error instanceof Error ? error.message : error}`);
+      return;
+    }
+    await this.afterGraded(game.id);
+  }
+
+  private async afterGraded(gameId: number): Promise<void> {
+    try {
+      await this.onGraded?.();
+    } catch (error) {
+      this.log(`after grading game ${gameId}: ${error instanceof Error ? error.message : error}`);
     }
   }
 }

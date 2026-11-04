@@ -70,6 +70,42 @@ describe("ImportGrader", () => {
     expect(getGame(db, id)?.grading).toBe("done");
   });
 
+  it("runs the after-grading hook once per graded game and never for a failed one", async () => {
+    importOne('[Result "0-1"]\n\n1. f3 e5 2. g4 Qh4# 0-1', "bad");
+    importOne(FIXTURE, "good");
+    const fake = new FakeEvaluator();
+    fake.failOn = "f2f3";
+    let hooks = 0;
+    const grader = new ImportGrader({
+      db,
+      evaluate: fake.evaluate,
+      log: () => {},
+      onGraded: async () => {
+        hooks += 1;
+      },
+    });
+    grader.kick();
+    await grader.idle();
+    expect(hooks).toBe(1);
+  });
+
+  it("logs a failing hook and still marks the game done", async () => {
+    const id = importOne();
+    const logs: string[] = [];
+    const grader = new ImportGrader({
+      db,
+      evaluate: new FakeEvaluator().evaluate,
+      log: (message) => logs.push(message),
+      onGraded: async () => {
+        throw new Error("engine gone");
+      },
+    });
+    grader.kick();
+    await grader.idle();
+    expect(getGame(db, id)?.grading).toBe("done");
+    expect(logs.join("\n")).toContain("engine gone");
+  });
+
   it("resumes a running game without searching graded plies again", async () => {
     const id = importOne();
     const first = new FakeEvaluator();

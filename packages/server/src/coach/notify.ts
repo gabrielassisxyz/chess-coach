@@ -194,7 +194,7 @@ export interface PuzzleResultNotification {
 /** Row content written once when a training queue ends. */
 export interface TrainingSummaryNotification {
   type: "training_summary";
-  mode: "srs" | "puzzles";
+  mode: "srs" | "puzzles" | "openings";
   solved: number;
   failed: number;
 }

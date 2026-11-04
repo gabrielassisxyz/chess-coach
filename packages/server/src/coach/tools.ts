@@ -7,6 +7,7 @@ import { getCurrentElo, lastDifficultyChange } from "../db/settings.js";
 import { buildDifficultyTools } from "./difficulty-tools.js";
 import { buildGameTools, type CoachWorld } from "./game-tools.js";
 import { buildPuzzleTools } from "./puzzle-tools.js";
+import { buildRoutineTools } from "./routine-tools.js";
 import { buildSrsTools } from "./srs-tools.js";
 
 export const MCP_SERVER_NAME = "chess";
@@ -36,6 +37,8 @@ export const COACH_TOOL_BASE_NAMES = [
   "get_puzzles",
   "get_due_cards",
   "set_difficulty",
+  "read_routine",
+  "write_routine",
 ] as const;
 export const COACH_TOOL_NAMES = COACH_TOOL_BASE_NAMES.map(
   (name) => `mcp__${MCP_SERVER_NAME}__${name}`,
@@ -114,6 +117,7 @@ export function buildCoachTools(deps: CoachToolDeps) {
     ...buildSrsTools({ db: deps.db, clock: { now }, evaluateMove: deps.world.evaluateMove }),
     ...buildPuzzleTools(deps.db),
     ...buildDifficultyTools(deps.db, { now }),
+    ...buildRoutineTools({ db: deps.db, now }),
   ];
 }
 

@@ -70,7 +70,12 @@ function useStartOutcome(server: ServerApi) {
 
   const begin = (mode: TrainingMode, motif: string): void => {
     setFailure(null);
-    const command = mode === "srs" ? { mode } : { mode, ...(motif === ANY_MOTIF ? {} : { motif }) };
+    const command =
+      mode === "srs"
+        ? { mode }
+        : mode === "openings"
+          ? { mode, color: motif as "white" | "black" }
+          : { mode, ...(motif === ANY_MOTIF ? {} : { motif }) };
     if (server.send({ type: "start_training", ...command })) {
       setStarting({ mode, motif, errorsBefore: server.errorCount });
     } else {
@@ -93,6 +98,7 @@ function motifNote(motifs: Motifs): string | null {
 function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: FetchMotifs }) {
   const motifs = useMotifs(fetchMotifs);
   const [motif, setMotif] = useState(ANY_MOTIF);
+  const [openingColor, setOpeningColor] = useState<"white" | "black">("white");
   const { starting, failure, begin } = useStartOutcome(server);
   const busy = starting !== null;
   const list = motifs.status === "ready" ? motifs.list : [];
@@ -139,6 +145,29 @@ function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: 
           onClick={() => begin("puzzles", motif)}
         >
           {label("puzzles", "Drill puzzles")}
+        </button>
+      </section>
+      <section className="train__mode" aria-label="Drill your openings">
+        <p>Find the best move in the early positions of your own games.</p>
+        <label className="train__field">
+          Colour
+          <select
+            className="input"
+            value={openingColor}
+            disabled={busy}
+            onChange={(event) => setOpeningColor(event.target.value as "white" | "black")}
+          >
+            <option value="white">White</option>
+            <option value="black">Black</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          className="button button--primary"
+          disabled={busy}
+          onClick={() => begin("openings", openingColor)}
+        >
+          {label("openings", "Drill openings")}
         </button>
       </section>
       {failure ? (

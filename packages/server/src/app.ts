@@ -5,7 +5,10 @@ import type { Database } from "./db/open.js";
 import { registerCardRoutes } from "./http/cards.js";
 import { registerGameRoutes } from "./http/games.js";
 import { type ImportRoutesOptions, registerImportRoutes } from "./http/import.js";
+import { registerOpeningRoutes } from "./http/openings.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
+import { registerRoutineRoutes } from "./http/routine.js";
+import type { GenerationResult } from "./openings/from-games.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
 
 export interface Readiness {
@@ -19,6 +22,8 @@ export interface AppOptions {
   db?: Database;
   /** Everything the import routes need besides the database; without it they are not mounted. */
   importer?: Omit<ImportRoutesOptions, "db">;
+  /** Builds the opening drills from graded games; without it the route is not mounted. */
+  generateOpenings?: () => Promise<GenerationResult>;
 }
 
 export function buildApp(options: AppOptions = {}): FastifyInstance {
@@ -35,7 +40,9 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     registerCardRoutes(app, options.db);
     registerGameRoutes(app, options.db);
     registerPuzzleRoutes(app, options.db);
+    registerRoutineRoutes(app, options.db);
     if (options.importer) registerImportRoutes(app, { db: options.db, ...options.importer });
+    if (options.generateOpenings) registerOpeningRoutes(app, options.generateOpenings);
   }
 
   if (options.hub) {

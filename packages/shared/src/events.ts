@@ -230,6 +230,7 @@ export const StartTrainingCommandSchema = z.object({
   command_id: commandId,
   mode: TrainingModeSchema,
   motif: z.string().min(1).max(64).optional(),
+  color: z.enum(["white", "black"]).optional(),
 });
 
 const uci = z.string().regex(/^[a-h][1-8][a-h][1-8][qrbn]?$/);

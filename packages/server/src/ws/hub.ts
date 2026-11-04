@@ -216,6 +216,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         await activity.startTraining({
           mode: command.mode,
           ...(command.motif === undefined ? {} : { motif: command.motif }),
+          ...(command.color === undefined ? {} : { color: command.color }),
         });
         return;
       case "explore":
