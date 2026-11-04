@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Database } from "../db/open.js";
 import { buildGameTools, type CoachWorld } from "./game-tools.js";
 import { buildPuzzleTools } from "./puzzle-tools.js";
+import { buildRoutineTools } from "./routine-tools.js";
 import { buildSrsTools } from "./srs-tools.js";
 
 export const MCP_SERVER_NAME = "chess";
@@ -33,6 +34,8 @@ export const COACH_TOOL_BASE_NAMES = [
   "explain_card",
   "get_puzzles",
   "get_due_cards",
+  "read_routine",
+  "write_routine",
 ] as const;
 export const COACH_TOOL_NAMES = COACH_TOOL_BASE_NAMES.map(
   (name) => `mcp__${MCP_SERVER_NAME}__${name}`,
@@ -115,6 +118,7 @@ export function buildCoachTools(deps: CoachToolDeps) {
     ...buildGameTools(deps.world),
     ...buildSrsTools({ db: deps.db, clock: { now }, evaluateMove: deps.world.evaluateMove }),
     ...buildPuzzleTools(deps.db),
+    ...buildRoutineTools({ db: deps.db, now }),
   ];
 }
 
