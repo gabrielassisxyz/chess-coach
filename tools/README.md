@@ -45,3 +45,16 @@ an unparseable move (each is reported with its upstream `id`). A card whose `pro
 | `id`, `motif`, `quality_history` | dropped |
 
 Moves are converted from SAN to UCI with chess.js on the card's own FEN.
+
+## Importing the earlier tutor's routine
+
+The same script has a second command that stores the earlier tutor's `routine.md` as the first
+weekly routine (`written_by = 'import'`, `week_start = 2026-10-27`):
+
+```
+pnpm import:routine <path-to-routine.md>
+```
+
+It prints `1 inserted, 0 skipped` the first time and `0 inserted, 1 skipped` after, because a body
+identical to an already imported one is not stored again. Em-dashes in the file are replaced with
+commas before storing.
