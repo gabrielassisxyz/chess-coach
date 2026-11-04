@@ -68,7 +68,6 @@ const app = buildApp({
   readiness: () => readiness,
   db,
   hub: { coach, activity, db, allowedOrigins: allowedOriginsFrom() },
-  db,
 });
 
 app.listen({ port, host: "127.0.0.1" }).then(async (address) => {
