@@ -45,9 +45,10 @@ describe("read_reference", () => {
 });
 
 describe("get_progress", () => {
-  it("is all zeros while the later tables do not exist", () => {
+  it("starts at the seeded level with nothing else", () => {
     expect(getProgress(freshDb())).toEqual({
-      current_elo: 0,
+      current_elo: 600,
+      last_difficulty_change: null,
       games_played: 0,
       cards_total: 0,
       cards_due: 0,
@@ -56,13 +57,19 @@ describe("get_progress", () => {
 
   it("reads what exists", () => {
     const db = freshDb();
-    db.exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT INTO settings VALUES ('current_elo', '950');
+    db.exec(`UPDATE settings SET value = '950' WHERE key = 'current_elo';
+      INSERT INTO difficulty_changes (changed_at, from_elo, to_elo, reason)
+      VALUES ('2026-05-01T00:00:00Z', 900, 950, 'streak_up');
       INSERT INTO srs_cards (source_kind, prompt_fen, student_color, expected_uci, created_at, next_review_at)
       VALUES ('teaching', 'f', 'white', 'd2d4', 't', '2026-01-01T00:00:00Z'),
              ('teaching', 'f', 'white', 'd2d4', 't', '2999-01-01T00:00:00Z');`);
     expect(getProgress(db, new Date("2026-06-01T00:00:00Z"))).toEqual({
       current_elo: 950,
+      last_difficulty_change: {
+        to_elo: 950,
+        reason: "streak_up",
+        changed_at: "2026-05-01T00:00:00Z",
+      },
       games_played: 0,
       cards_total: 2,
       cards_due: 1,

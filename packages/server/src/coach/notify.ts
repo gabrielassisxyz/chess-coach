@@ -1,5 +1,6 @@
 import type {
   CostlyMove,
+  DifficultyChangeNotification,
   GameEndNotification,
   NotificationContent,
   PlyQuestionNotification,
@@ -91,8 +92,20 @@ export function renderNotifications(items: CoachNotification[]): string {
   }
   for (const end of ends) parts.push(renderEnd(end));
   for (const item of items) if (isTrainingRow(item)) parts.push(renderOne(item));
+  for (const item of items) if (item.type === "difficulty_change") parts.push(renderOne(item));
   for (const question of questions) parts.push(renderPlyQuestion(question));
   return parts.join("\n\n");
+}
+
+const REASON_TEXT = {
+  streak_up: "the student won the last two games",
+  streak_down: "the student lost the last two games",
+  coach: "the coach changed it",
+  student: "the student asked for it",
+} as const;
+
+export function renderDifficultyChange(change: DifficultyChangeNotification): string {
+  return `The engine level moved from ${change.from_elo} to ${change.to_elo} because ${REASON_TEXT[change.reason]}. Tell the student in a sentence; the next game starts at ${change.to_elo}.`;
 }
 
 export function renderPlyQuestion(question: PlyQuestionNotification): string {
@@ -232,5 +245,7 @@ function renderOne(item: CoachNotification): string {
       return renderPuzzleResult(item);
     case "training_summary":
       return renderTrainingSummary(item);
+    case "difficulty_change":
+      return renderDifficultyChange(item);
   }
 }

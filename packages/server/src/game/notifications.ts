@@ -10,6 +10,7 @@ import {
   type Termination,
 } from "../db/games.js";
 import type { Database } from "../db/open.js";
+import type { DifficultyReason } from "../db/settings.js";
 import { findCardIdByMove } from "../db/srs.js";
 import type { Classification, PlayerMoveEvaluation } from "../engine/evaluate.js";
 import { type BatchResult, createCardsFromGame } from "../srs/cards.js";
@@ -64,7 +65,20 @@ export interface PlyQuestionNotification {
   best_san: string | null;
 }
 
-export type NotificationContent = TurnNotification | GameEndNotification | PlyQuestionNotification;
+/** The engine level moved after a game; the coach may mention it to the student. */
+export interface DifficultyChangeNotification {
+  type: "difficulty_change";
+  from_elo: number;
+  to_elo: number;
+  reason: DifficultyReason;
+  game_id: number | null;
+}
+
+export type NotificationContent =
+  | TurnNotification
+  | GameEndNotification
+  | PlyQuestionNotification
+  | DifficultyChangeNotification;
 
 /** Where the notification rows go: the coach session that will read them. */
 export interface NotificationSink {

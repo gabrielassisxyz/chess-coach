@@ -48,6 +48,7 @@ export const BootstrapEventSchema = z.object({
   type: z.literal("bootstrap"),
   transcript: z.array(TranscriptEntrySchema),
   activity: ActivityStateSchema.nullable(),
+  current_elo: z.number().int().optional(),
 });
 export type BootstrapEvent = z.infer<typeof BootstrapEventSchema>;
 
@@ -194,7 +195,7 @@ export const NewGameCommandSchema = z.object({
   type: z.literal("new_game"),
   command_id: commandId,
   color: z.enum(["white", "black"]),
-  elo: z.number().int(),
+  elo: z.number().int().optional(),
 });
 
 export const ResignCommandSchema = z.object({

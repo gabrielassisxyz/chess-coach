@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
+  DifficultyChangeNotification,
   GameEndNotification,
   NotificationContent,
   PlyQuestionNotification,
@@ -281,5 +282,27 @@ describe("the student's reasoning in a training result", () => {
     expect(text).toContain("- maybe the bishop instead");
     expect(text).toContain("+20s  undo");
     expect(text).toContain("Answer: g1f3 (wrong)");
+  });
+});
+
+describe("difficulty change", () => {
+  const change: DifficultyChangeNotification = {
+    type: "difficulty_change",
+    from_elo: 600,
+    to_elo: 650,
+    reason: "streak_up",
+    game_id: 4,
+  };
+
+  it("names the old level, the new one and the reason", () => {
+    const text = renderNotifications([change]);
+    expect(text).toContain("from 600 to 650");
+    expect(text).toContain("the student won the last two games");
+  });
+
+  it("states the lowering reason and survives being folded with a turn", () => {
+    const down = { ...change, from_elo: 650, to_elo: 600, reason: "streak_down" as const };
+    const text = renderNotifications([turn(1), down]);
+    expect(text).toContain("from 650 to 600 because the student lost the last two games");
   });
 });

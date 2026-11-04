@@ -19,6 +19,7 @@ const COACH_TOOL_ALLOWLIST = [
   "get_due_cards",
   "get_puzzles",
   "get_progress",
+  "set_difficulty",
   "read_reference",
 ];
 
@@ -78,7 +79,6 @@ describe("coach prompt", () => {
       "evaluate_move",
       "set_position",
       "get_board",
-      "set_difficulty",
       "save_session",
       "identify_opening",
       "routine.md",

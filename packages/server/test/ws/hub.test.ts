@@ -154,7 +154,12 @@ describe("hub", () => {
   it("bootstraps empty before a session exists", async () => {
     const { app } = await start();
     const { next } = await connect(app);
-    expect(await next()).toEqual({ type: "bootstrap", transcript: [], activity: null });
+    expect(await next()).toEqual({
+      type: "bootstrap",
+      transcript: [],
+      activity: null,
+      current_elo: 600,
+    });
   });
 
   it("answers a malformed frame with a typed error carrying the command_id", async () => {
