@@ -162,7 +162,11 @@ export class ActivityService {
     });
   }
 
-  startTraining(input: { mode: TrainingMode; motif?: string }): Promise<ActivityState> {
+  startTraining(input: {
+    mode: TrainingMode;
+    motif?: string;
+    color?: PlayerColor;
+  }): Promise<ActivityState> {
     return this.enqueue("training", async () => {
       if (!this.trainingDeps) {
         throw new ActivityError("not_in_training", "training is not available");

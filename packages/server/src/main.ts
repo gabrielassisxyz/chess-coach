@@ -12,6 +12,7 @@ import { poolGameEngine } from "./game/engine.js";
 import { GameService } from "./game/service.js";
 import { ChessComSource, httpFetcher } from "./import/chesscom.js";
 import { ImportGrader } from "./import/grader.js";
+import { generateOpeningPuzzles } from "./openings/from-games.js";
 import { contentDir, dataDir } from "./paths.js";
 import { seedPuzzles } from "./puzzles/seed.js";
 import { ReviewDesk } from "./srs/review.js";
@@ -41,8 +42,10 @@ const activity = new ActivityService({
   game,
   training: { desk, notifications, onNotification: () => coach.flushNotifications() },
 });
+const generateOpenings = () => generateOpeningPuzzles(db, pool.evaluation);
 const importGrader = new ImportGrader({
   db,
+  onGraded: generateOpenings,
   evaluate: (fen, moveUci, color) => evaluatePlayerMove(pool.evaluation, fen, moveUci, color),
 });
 const coach = new CoachSession({
@@ -83,6 +86,7 @@ if (engines.ok) {
 const app = buildApp({
   readiness: () => readiness,
   db,
+  generateOpenings,
   importer: {
     source: new ChessComSource(httpFetcher()),
     grader: importGrader,

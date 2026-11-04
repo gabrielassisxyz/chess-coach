@@ -106,7 +106,7 @@ export type TrainingItem = z.infer<typeof TrainingItemSchema>;
 export const TrainingStatusSchema = z.enum(["prompt", "in_progress", "solved", "failed", "rated"]);
 export type TrainingStatus = z.infer<typeof TrainingStatusSchema>;
 
-export const TrainingModeSchema = z.enum(["srs", "puzzles"]);
+export const TrainingModeSchema = z.enum(["srs", "puzzles", "openings"]);
 export type TrainingMode = z.infer<typeof TrainingModeSchema>;
 
 // The move the student should have played, shown once an item is answered wrong or finished.
