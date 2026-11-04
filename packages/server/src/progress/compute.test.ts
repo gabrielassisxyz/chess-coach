@@ -71,13 +71,17 @@ function insertAttempt(motif: string, puzzleId: string, solved: boolean, day: nu
   ).run(puzzleId, at(day), solved ? 1 : 0);
 }
 
-function insertCard(nextReviewAt: string): number {
+function insertCard(
+  nextReviewAt: string,
+  opts: { classification?: string; gameId?: number } = {},
+): number {
   const row = db
     .prepare(
-      `INSERT INTO srs_cards (source_kind, prompt_fen, student_color, expected_uci, created_at, next_review_at)
-       VALUES ('teaching', 'f', 'white', 'd2d4', 't', ?) RETURNING id`,
+      `INSERT INTO srs_cards (source_kind, source_game_id, classification, prompt_fen, student_color,
+         expected_uci, created_at, next_review_at)
+       VALUES ('teaching', ?, ?, 'f', 'white', 'd2d4', 't', ?) RETURNING id`,
     )
-    .get(nextReviewAt) as { id: number };
+    .get(opts.gameId ?? null, opts.classification ?? null, nextReviewAt) as { id: number };
   return row.id;
 }
 
@@ -140,14 +144,23 @@ function seedFixture(): void {
     insertAttempt("pin", `pin-${i}`, solved, i === 0 ? 8 : 4);
   });
 
-  const due1 = insertCard(at(9));
+  // A pin and a mate attempt 31 days before the clock: outside every 30-day figure.
+  insertAttempt("pin", "pin-old", true, -21);
+  insertAttempt("mate", "mate-old", true, -21);
+
+  const due1 = insertCard(at(9), { classification: "blunder", gameId: a });
   const due2 = insertCard(at(10));
+  insertCard(at(9, 6), { classification: "mistake", gameId: a });
+  insertCard(at(8), { classification: "blunder", gameId: b });
   insertCard(at(11));
+  insertCard(at(11, 13));
+  insertCard(at(11, 14));
   insertCard(at(20));
   insertCard(at(30));
   insertReview(due1, 9, true);
   insertReview(due2, 8, false);
   insertReview(due1, 1, true);
+  insertReview(due2, -21, false);
   insertUserMessage(10);
   db.exec("UPDATE settings SET value = '700' WHERE key = 'current_elo'");
   db.exec(`INSERT INTO difficulty_changes (changed_at, from_elo, to_elo, reason)
@@ -180,11 +193,49 @@ describe("computeProgress on a fixture database", () => {
     expect(byDay(1)).toMatchObject({ accuracy: 0.75, blunders: 0, mistakes: 0 });
 
     expect(progress.puzzles_by_motif).toEqual([
-      { motif: "fork", attempts: 5, solved: 3, success_rate: 0.6 },
-      { motif: "pin", attempts: 3, solved: 1, success_rate: 1 / 3 },
+      {
+        motif: "fork",
+        attempts: 5,
+        solved: 3,
+        success_rate: 0.6,
+        attempts_30d: 5,
+        solved_30d: 3,
+        success_rate_30d: 0.6,
+      },
+      {
+        motif: "mate",
+        attempts: 1,
+        solved: 1,
+        success_rate: 1,
+        attempts_30d: 0,
+        solved_30d: 0,
+        success_rate_30d: null,
+      },
+      {
+        motif: "pin",
+        attempts: 4,
+        solved: 2,
+        success_rate: 0.5,
+        attempts_30d: 3,
+        solved_30d: 1,
+        success_rate_30d: 1 / 3,
+      },
     ]);
 
-    expect(progress.cards).toEqual({ total: 5, due_now: 2, reviewed_7d: 2, correct_rate_7d: 0.5 });
+    // 9 cards; 4 due by day 10 noon: blunder x2 (games a, b), mistake x1 (game a), teaching x1.
+    // Next batch starts at(11); at(11, 13) is exactly an hour later, at(11, 14) is not.
+    // 30 days: three reviews in range (2 correct), the 31-day-old miss is out.
+    expect(progress.cards).toEqual({
+      total: 9,
+      due_now: 4,
+      reviewed_7d: 2,
+      correct_rate_7d: 0.5,
+      due_by_classification: { blunder: 2, mistake: 1, teaching: 1 },
+      due_from_games: 2,
+      next_due_at: at(11),
+      next_due_count: 2,
+      correct_rate_30d: 2 / 3,
+    });
     expect(progress.streak_days).toBe(3);
     expect(progress.difficulty).toEqual({
       current_elo: 700,
@@ -196,7 +247,17 @@ describe("computeProgress on a fixture database", () => {
     insertGame({ source: "coach", day: 9, finished: false });
     const progress = computeProgress(db, clockOn(10));
     expect(progress.games).toEqual([]);
-    expect(progress.cards).toEqual({ total: 0, due_now: 0, reviewed_7d: 0, correct_rate_7d: null });
+    expect(progress.cards).toEqual({
+      total: 0,
+      due_now: 0,
+      reviewed_7d: 0,
+      correct_rate_7d: null,
+      due_by_classification: {},
+      due_from_games: 0,
+      next_due_at: null,
+      next_due_count: 0,
+      correct_rate_30d: null,
+    });
     expect(progress.puzzles_by_motif).toEqual([]);
     expect(progress.difficulty).toEqual({ current_elo: 600, last_change: null });
   });
