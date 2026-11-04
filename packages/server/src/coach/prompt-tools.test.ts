@@ -9,7 +9,7 @@ import { buildCoachTools } from "./tools.js";
 
 // Tools the prompt describes before the bead that registers them has landed. Each bead that
 // registers one deletes its entry; the test below fails if an entry outlives its bead.
-const REGISTERED_BY_A_LATER_BEAD = ["get_due_cards", "get_puzzles"];
+const REGISTERED_BY_A_LATER_BEAD = ["get_due_cards"];
 
 const prompt = readFileSync(join(contentDir(), "prompts", "coach.md"), "utf8");
 
