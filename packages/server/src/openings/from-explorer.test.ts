@@ -23,23 +23,23 @@ const WHITE_THREE =
 const BLACK_ONE =
   '[Result "0-1"]\n\n1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 5. e3 O-O 6. Nf3 h6 7. Bh4 b6 0-1';
 
-function after(...sans: string[]): string {
+function fenAfter(...sans: string[]): string {
   const game = new Chess();
   for (const san of sans) game.move(san);
   return game.fen();
 }
 
-const START = after();
-const AFTER_E4_E5 = after("e4", "e5");
-const AFTER_E4_C5 = after("e4", "c5");
-const AFTER_D4_D5 = after("d4", "d5");
-const AFTER_E4_D5 = after("e4", "d5");
+const START = fenAfter();
+const AFTER_E4_E5 = fenAfter("e4", "e5");
+const AFTER_E4_C5 = fenAfter("e4", "c5");
+const AFTER_D4_D5 = fenAfter("d4", "d5");
+const AFTER_E4_D5 = fenAfter("e4", "d5");
 
 const BEST_BY_KEY: Record<string, string> = {
   [positionKey(AFTER_E4_E5)]: "g1f3",
   [positionKey(AFTER_E4_C5)]: "g1f3",
-  [positionKey(after("d4", "d5", "c4"))]: "e7e6",
-  [positionKey(after("e4", "d5", "exd5"))]: "d8d5",
+  [positionKey(fenAfter("d4", "d5", "c4"))]: "e7e6",
+  [positionKey(fenAfter("e4", "d5", "exd5"))]: "d8d5",
 };
 
 /** Plays the scripted best move where one is named, else the first legal move, a fixed gap ahead. */
@@ -253,7 +253,9 @@ describe("generateExplorerPuzzles", () => {
     // 1.e4 c5 2.Nf3 holds 120 games, so only the e5 branch goes on to ply 6.
     await run({ color: "white", maxPly: 6 });
     expect(explorer.calls).toHaveLength(4);
-    expect(explorer.calls.map((call) => call.key)).toContain(positionKey(after("e4", "c5", "Nf3")));
+    expect(explorer.calls.map((call) => call.key)).toContain(
+      positionKey(fenAfter("e4", "c5", "Nf3")),
+    );
   });
 
   it("shares the motif with own-games puzzles, so one opening drill serves both", async () => {
@@ -263,7 +265,7 @@ describe("generateExplorerPuzzles", () => {
       source: "own-games",
       motif: "opening-white",
       difficulty: "beginner",
-      fen: after("d4", "d5"),
+      fen: fenAfter("d4", "d5"),
       solutionUci: ["c2c4"],
       solutionSan: ["c4"],
       explanation: "From 1 of your games.",
