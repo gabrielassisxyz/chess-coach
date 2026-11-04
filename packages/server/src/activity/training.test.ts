@@ -224,6 +224,17 @@ describe("command routing and refusals", () => {
     expect(await code(activity.rateCard(exposure, 3))).toBe("exposure_used");
   });
 
+  it("refuses rating a card that is no longer on the board", async () => {
+    addCard();
+    addCard();
+    const { activity } = setup();
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    await activity.trainingMove("d2d4");
+    await activity.nextTrainingItem();
+    const earlier = (first.item as { exposure_id: string }).exposure_id;
+    expect(await code(activity.rateCard(earlier, 3))).toBe("exposure_unknown");
+  });
+
   it("refuses rating a card that was never answered", async () => {
     addCard();
     const { activity } = setup();

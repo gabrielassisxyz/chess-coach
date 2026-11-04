@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import type { ServerApi } from "../src/hooks/useServer.js";
 import { Train } from "../src/screens/Train.js";
+import { trainingView } from "../src/state/train.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
 
 afterEach(cleanup);
@@ -185,6 +186,12 @@ describe("a puzzle on the board", () => {
       expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
       unmount();
     }
+  });
+
+  it("is never rateable, even answered and carrying an exposure id", () => {
+    const answered = puzzle({ status: "solved", exposure_id: "ex-9" });
+    expect(trainingView(answered).canRate).toBe(false);
+    expect(trainingView(card({ status: "solved" })).canRate).toBe(true);
   });
 
   it("keeps next disabled until the puzzle is solved or failed", () => {
