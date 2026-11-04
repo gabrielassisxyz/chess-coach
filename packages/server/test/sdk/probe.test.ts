@@ -7,6 +7,7 @@ import { type CoachEvent, mapSdkMessage } from "../../src/coach/events.js";
 import { CoachSession, type QueryFn } from "../../src/coach/session.js";
 import { findLatestOpenSession } from "../../src/db/chat.js";
 import { openDatabase } from "../../src/db/open.js";
+import { makeWorld } from "../fakes/fake-world.js";
 
 // Opt-in: this spends a little of the owner's Claude Code subscription.
 const enabled = process.env.CHESS_COACH_SDK === "1";
@@ -62,11 +63,13 @@ function openHarness(root: string, contentDir: string): Harness {
   const dataDir = join(root, "data");
   const initTools: string[][] = [];
   const authSources: string[] = [];
+  const db = openDatabase(dataDir);
   const session = new CoachSession({
-    db: openDatabase(dataDir),
+    db,
     query: tappedQuery(initTools, authSources),
     contentDir,
     dataDir,
+    world: makeWorld(db).world,
   });
   const events: CoachEvent[] = [];
   session.onEvent((event) => events.push(event));

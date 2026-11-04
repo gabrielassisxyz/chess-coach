@@ -16,16 +16,30 @@ assertSubscriptionAuth();
 
 const port = Number(process.env.PORT ?? 3210);
 let readiness: Readiness = { ready: false, reason: "coach is starting" };
+// Once a turn has failed for good the server stays not-ready until a restart finishes it.
+let engineFault = false;
 const db = openDatabase(dataDir());
+const pool = new EnginePool(() => spawnStockfish());
+// The sink reads `coach` when a turn commits, long after the constant below is initialised.
+const game = new GameService({
+  db,
+  engine: poolGameEngine(pool),
+  notifications: { sessionId: () => coach.ensureSessionId() },
+});
+const activity = new ActivityService({ db, game });
 const coach = new CoachSession({
   db,
   query,
   contentDir: contentDir(),
   dataDir: dataDir(),
+  world: { game, activity, analyze: (fen) => pool.analyze(fen) },
 });
-const pool = new EnginePool(() => spawnStockfish());
-const game = new GameService({ db, engine: poolGameEngine(pool) });
-const activity = new ActivityService({ db, game });
+game.onNotification(() => coach.flushNotifications());
+game.onEngineFault((fault) => {
+  engineFault = true;
+  readiness = { ready: false, reason: "engine_fault" };
+  console.error(`engine fault during a turn (${fault.reason}): ${fault.message}`);
+});
 
 // The engines start before listening so a turn cut off by the last shutdown is finished before
 // any browser connects. A missing Stockfish does not stop the server: it reports why on /api/health.
@@ -49,7 +63,7 @@ app.listen({ port, host: "127.0.0.1" }).then(async (address) => {
   console.log(`chess-coach server listening on ${address}`);
   try {
     await coach.start();
-    if (engines.ok) readiness = { ready: true };
+    if (engines.ok && !engineFault) readiness = { ready: true };
   } catch (error) {
     readiness = { ready: false, reason: error instanceof Error ? error.message : String(error) };
     console.error(`coach failed to start: ${readiness.reason}`);

@@ -34,6 +34,8 @@ export function markIncompleteIfDangling(
 ): boolean {
   const newest = listChatTail(db, sessionId, 1)[0];
   if (newest?.role !== "user") return false;
+  // A notification nobody has delivered yet is waiting to be sent, not an answer that was lost.
+  if (newest.kind === "notification" && !newest.delivered) return false;
   appendChatMessage(
     db,
     sessionId,

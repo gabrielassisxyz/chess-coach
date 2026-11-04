@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { Database } from "../db/open.js";
+import { buildGameTools, type CoachWorld } from "./game-tools.js";
 
 export const MCP_SERVER_NAME = "chess";
 export const REFERENCE_NAMES = [
@@ -14,7 +15,19 @@ export const REFERENCE_NAMES = [
   "opening-guide",
   "tactical-patterns",
 ] as const;
-export const COACH_TOOL_NAMES = ["get_progress", "read_reference"].map(
+// Written out once so the allow-list handed to the SDK, the prompt check and the registry
+// below cannot drift: a test asserts this list equals what is actually registered.
+export const COACH_TOOL_BASE_NAMES = [
+  "get_progress",
+  "read_reference",
+  "get_game",
+  "show_position",
+  "make_move",
+  "analyze",
+  "new_game",
+  "resign_game",
+] as const;
+export const COACH_TOOL_NAMES = COACH_TOOL_BASE_NAMES.map(
   (name) => `mcp__${MCP_SERVER_NAME}__${name}`,
 );
 
@@ -72,26 +85,30 @@ function textResult(text: string): { content: { type: "text"; text: string }[] }
 export interface CoachToolDeps {
   db: Database;
   contentDir: string;
+  world: CoachWorld;
   now?: () => Date;
 }
 
-export function createCoachMcpServer(deps: CoachToolDeps) {
+// Tools of later beads are added here, next to the ones that exist.
+export function buildCoachTools(deps: CoachToolDeps) {
   const now = deps.now ?? (() => new Date());
-  return createSdkMcpServer({
-    name: MCP_SERVER_NAME,
-    tools: [
-      tool(
-        "get_progress",
-        "Current rating estimate, number of games played, and spaced-repetition card counts.",
-        {},
-        async () => textResult(JSON.stringify(getProgress(deps.db, now()))),
-      ),
-      tool(
-        "read_reference",
-        "Read one coaching reference document by name.",
-        referenceInput,
-        async ({ name }) => textResult(readReference(deps.contentDir, name)),
-      ),
-    ],
-  });
+  return [
+    tool(
+      "get_progress",
+      "Current rating estimate, number of games played, and spaced-repetition card counts.",
+      {},
+      async () => textResult(JSON.stringify(getProgress(deps.db, now()))),
+    ),
+    tool(
+      "read_reference",
+      "Read one coaching reference document by name.",
+      referenceInput,
+      async ({ name }) => textResult(readReference(deps.contentDir, name)),
+    ),
+    ...buildGameTools(deps.world),
+  ];
+}
+
+export function createCoachMcpServer(deps: CoachToolDeps) {
+  return createSdkMcpServer({ name: MCP_SERVER_NAME, tools: buildCoachTools(deps) });
 }
