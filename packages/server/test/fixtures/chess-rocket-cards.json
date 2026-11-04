@@ -1,0 +1,50 @@
+[
+  {
+    "id": "7f5b6d05-25fd-4184-84d0-022abc0cede6",
+    "fen": "r3kb1r/p5p1/1pp4p/4q3/Q3p3/2P5/PP3PPP/RN3RK1 w kq - 0 17",
+    "player_move": "Re1",
+    "best_move": "Qxc6+",
+    "cp_loss": 723,
+    "classification": "blunder",
+    "motif": null,
+    "explanation": "Qxc6+ forks the king on e8 and the rook on a8: the black queen left e6 on the previous move, so c6 lost its only defender. Before developing, check every check and capture, especially after the opponent moves a piece that was defending something.",
+    "created_at": "2026-10-28T22:34:39.787899+00:00",
+    "next_review": "2026-10-29T02:34:39.787899+00:00",
+    "interval_hours": 4,
+    "ease_factor": 2.5,
+    "repetitions": 0,
+    "quality_history": []
+  },
+  {
+    "id": "503afdc6-794c-45e5-870d-21a32dbf6109",
+    "fen": "r3kb1r/p5p1/2p4p/1p2q3/Q3p3/2P5/PP3PPP/RN2R1K1 w kq - 0 18",
+    "player_move": "Qd4",
+    "best_move": "Rxe4",
+    "cp_loss": 302,
+    "classification": "blunder",
+    "motif": "free capture",
+    "explanation": "The e4 pawn was attacked by Re1 one move earlier and is still free: Rxe4 wins it with tempo on the queen.",
+    "created_at": "2026-10-28T22:42:53.205539+00:00",
+    "next_review": "2026-10-29T02:42:53.205539+00:00",
+    "interval_hours": 4,
+    "ease_factor": 2.5,
+    "repetitions": 0,
+    "quality_history": []
+  },
+  {
+    "id": "promo-1",
+    "fen": "4k3/8/8/8/8/8/p7/4K3 b - - 0 1",
+    "player_move": "Kd7",
+    "best_move": "a1=N",
+    "cp_loss": 500,
+    "classification": "mistake",
+    "motif": null,
+    "explanation": "Promote the pawn.",
+    "created_at": "2026-10-28T22:42:53.253929+00:00",
+    "next_review": "2026-11-05T10:00:00+00:00",
+    "interval_hours": 24,
+    "ease_factor": 2.1,
+    "repetitions": 2,
+    "quality_history": []
+  }
+]
