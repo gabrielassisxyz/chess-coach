@@ -104,3 +104,47 @@ export function listMotifs(db: Database): MotifCount[] {
     .prepare("SELECT motif, COUNT(*) AS count FROM puzzles GROUP BY motif ORDER BY motif")
     .all() as MotifCount[];
 }
+
+export interface GeneratedPuzzle {
+  id: string;
+  source: string;
+  motif: string;
+  difficulty: string;
+  fen: string;
+  solutionUci: string[];
+  solutionSan: string[];
+  explanation: string;
+}
+
+export function getPuzzleExplanation(db: Database, id: string): string | null {
+  const row = db.prepare("SELECT explanation FROM puzzles WHERE id = ?").get(id) as
+    | { explanation: string }
+    | undefined;
+  return row?.explanation ?? null;
+}
+
+// False when the id already exists, so two overlapping generator runs cannot collide.
+export function insertGeneratedPuzzle(db: Database, puzzle: GeneratedPuzzle): boolean {
+  const info = db
+    .prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+    )
+    .run(
+      puzzle.id,
+      puzzle.source,
+      puzzle.motif,
+      puzzle.difficulty,
+      puzzle.fen,
+      JSON.stringify(puzzle.solutionUci),
+      JSON.stringify(puzzle.solutionSan),
+      puzzle.explanation,
+    );
+  return info.changes === 1;
+}
+
+// The row keeps its id, so the attempts that point at it survive a refresh.
+export function setPuzzleExplanation(db: Database, id: string, explanation: string): void {
+  db.prepare("UPDATE puzzles SET explanation = ? WHERE id = ?").run(explanation, id);
+}

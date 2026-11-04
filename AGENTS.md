@@ -49,6 +49,9 @@
 - **Import:** the Review screen imports Chess.com games by username and month range, or a pasted
   PGN, and grades them in the background. `CHESS_COACH_USERNAMES` (comma-separated) names the
   student's accounts so a pasted PGN finds its side; without it the form asks for the colour.
+- **Openings:** `POST /api/openings/generate` turns the first fifteen moves of every graded game into
+  "find the best move" puzzles (`own:` ids, source `own-games`, motifs `opening-white` and
+  `opening-black`); the import grader runs it after each game. Train's openings mode drills them.
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
 
