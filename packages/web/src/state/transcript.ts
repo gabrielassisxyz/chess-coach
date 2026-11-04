@@ -157,5 +157,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, activity: event.state };
     case "error":
       return withError(state, event.message);
+    // The activity event that precedes it already carries the same item and status.
+    case "training":
+      return state;
   }
 }

@@ -4,6 +4,7 @@ import { NoticeBanner } from "./components/NoticeBanner.js";
 import { type FetchHealth, useHealth } from "./hooks/useHealth.js";
 import { useServer } from "./hooks/useServer.js";
 import { Play } from "./screens/Play.js";
+import { Train } from "./screens/Train.js";
 import { serviceNotice } from "./state/health.js";
 
 const SCREENS = ["Play", "Review", "Train"] as const;
@@ -45,6 +46,8 @@ export function App({ fetchHealth }: AppProps = {}) {
       <main className="grid">
         {screen === "Play" ? (
           <Play server={server} notice={notice} />
+        ) : screen === "Train" ? (
+          <Train server={server} />
         ) : (
           <Placeholder name={screen} />
         )}

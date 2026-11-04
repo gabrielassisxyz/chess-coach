@@ -43,7 +43,7 @@ describe("App", () => {
     expect(screen.getByText("Review is not available yet.")).toBeTruthy();
     expect(screen.getByLabelText("Message to the coach")).toBeTruthy();
     fireEvent.click(tab("Train"));
-    expect(screen.getByText("Train is not available yet.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review due cards" })).toBeTruthy();
   });
 
   it("shows a server error as a dismissible notice and keeps the connection in the chat", () => {
