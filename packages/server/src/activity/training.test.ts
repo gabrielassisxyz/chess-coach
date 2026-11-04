@@ -535,3 +535,75 @@ describe("exploration", () => {
     expect(text).toContain("Answer: e4 (wrong)");
   });
 });
+
+describe("an item served by the coach", () => {
+  const cardCount = (): number =>
+    (db.prepare("SELECT COUNT(*) AS n FROM srs_cards").get() as { n: number }).n;
+
+  it("serves one card as item 1 of 1 in srs mode, due or not", async () => {
+    const id = addCard();
+    db.prepare("UPDATE srs_cards SET next_review_at = '2099-01-01T00:00:00.000Z'").run();
+    const { activity } = setup();
+    const state = training(await activity.startTrainingItem({ kind: "card", id }));
+    expect(state.mode).toBe("srs");
+    expect(state.item).toMatchObject({ kind: "card", card_id: id, position_in_queue: 1 });
+    expect(state.item).toMatchObject({ queue_length: 1 });
+    expect(state.input_enabled).toBe(true);
+  });
+
+  it("serves one puzzle as item 1 of 1 and refuses unknown ids by name", async () => {
+    addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
+    const { activity } = setup();
+    expect(await code(activity.startTrainingItem({ kind: "puzzle", id: "nope" }))).toBe(
+      "puzzle_not_found",
+    );
+    expect(await code(activity.startTrainingItem({ kind: "card", id: 999 }))).toBe(
+      "card_not_found",
+    );
+    const state = training(await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" }));
+    expect(state.item).toMatchObject({ kind: "puzzle", puzzle_id: "fk:0", queue_length: 1 });
+  });
+
+  it("refuses a second session while one is open and stacks over a live game", async () => {
+    addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
+    const { activity, game } = setup();
+    await game.newGame({ color: "white", elo: 1200 });
+    await activity.enterLiveGame();
+    await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" });
+    expect(await code(activity.startTrainingItem({ kind: "puzzle", id: "fk:0" }))).toBe(
+      "training_active",
+    );
+    const back = await activity.endTraining();
+    expect(back?.kind).toBe("live_game");
+  });
+
+  it("turns a failed puzzle into one teaching card, once", async () => {
+    addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
+    const { activity } = setup();
+    for (let round = 0; round < 2; round++) {
+      await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" });
+      await activity.trainingAnswer("h1g1");
+      await activity.endTraining();
+    }
+    expect(cardCount()).toBe(1);
+    expect(db.prepare("SELECT * FROM srs_cards").get()).toMatchObject({
+      source_kind: "teaching",
+      puzzle_id: "fk:0",
+      prompt_fen: FORK,
+      student_color: "white",
+      played_uci: "h1g1",
+      expected_uci: "f4e5",
+      cp_loss: null,
+      classification: null,
+      explanation: "why",
+    });
+  });
+
+  it("creates no card for a solved puzzle", async () => {
+    addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
+    const { activity } = setup();
+    await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" });
+    await activity.trainingAnswer("f4e5");
+    expect(cardCount()).toBe(0);
+  });
+});

@@ -14,7 +14,10 @@ export type ActivityErrorCode =
   | "item_finished"
   | "use_answer"
   | "not_exploring"
-  | "illegal_exploration";
+  | "illegal_exploration"
+  | "training_active"
+  | "puzzle_not_found"
+  | "card_not_found";
 
 export class ActivityError extends Error {
   constructor(

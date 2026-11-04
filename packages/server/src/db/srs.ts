@@ -32,6 +32,8 @@ export interface NewCard {
   classification: string | null;
   explanation: string | null;
   createdAt: string;
+  /** The puzzle a teaching card was born from; at most one card exists per puzzle. */
+  puzzleId?: string | null;
 }
 
 interface CardRow {
@@ -75,14 +77,14 @@ function toCard(row: CardRow): CardRecord {
 }
 
 // A new card is due the moment it is created, so it shows in the next training session.
-// Returns null when the move already has a card; a teaching card has no move and never conflicts.
+// Returns null when the move or the puzzle already has a card; any other teaching card never conflicts.
 export function insertCard(db: Database, card: NewCard): CardRecord | null {
   const row = db
     .prepare(
       `INSERT INTO srs_cards (source_kind, source_game_id, source_move_id, prompt_fen, student_color,
-         played_uci, expected_uci, cp_loss, classification, explanation, created_at, next_review_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (source_move_id) DO NOTHING RETURNING *`,
+         played_uci, expected_uci, cp_loss, classification, explanation, created_at, next_review_at, puzzle_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT DO NOTHING RETURNING *`,
     )
     .get(
       card.sourceKind,
@@ -97,6 +99,7 @@ export function insertCard(db: Database, card: NewCard): CardRecord | null {
       card.explanation,
       card.createdAt,
       card.createdAt,
+      card.puzzleId ?? null,
     );
   return row ? toCard(row as CardRow) : null;
 }
