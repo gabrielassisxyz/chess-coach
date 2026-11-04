@@ -1,0 +1,364 @@
+import { Chess } from "chess.js";
+import { type Clock, systemClock } from "../clock.js";
+import {
+  completeTurn,
+  createGame,
+  type Finish,
+  findLatestGame,
+  finishGame,
+  type GameRecord,
+  listMoves,
+  type MoveRecord,
+  type NewMove,
+  type PlayerColor,
+  recordPlayerMove,
+  removeLastPlies,
+} from "../db/games.js";
+import type { Database } from "../db/open.js";
+import type { PlayerMoveEvaluation } from "../engine/evaluate.js";
+import { applyUci } from "../engine/moves.js";
+import { MAX_ELO, MIN_ELO } from "../engine/play.js";
+import type { GameEngine } from "./engine.js";
+import { GameError } from "./errors.js";
+import { buildSnapshot, type GameSnapshot, type Promotion } from "./snapshot.js";
+
+export interface TurnReport {
+  playerMove: MoveRecord;
+  evaluation: PlayerMoveEvaluation;
+  engineReply: MoveRecord | null;
+}
+
+export interface GameServiceOptions {
+  db: Database;
+  engine: GameEngine;
+  clock?: Clock;
+}
+
+interface LiveState {
+  game: GameRecord;
+  moves: MoveRecord[];
+  chess: Chess;
+}
+
+const START_FEN = new Chess().fen();
+
+/** The moves rows are the truth; replaying them keeps repetition and fifty-move state, a bare FEN would not. */
+type ReplayedMove = Pick<MoveRecord, "ply" | "uci" | "fenBefore">;
+
+function replay(game: GameRecord, moves: ReplayedMove[]): Chess {
+  const chess = new Chess(game.initialFen);
+  for (const move of moves) {
+    if (chess.fen() !== move.fenBefore) {
+      throw new Error(`game ${game.id} ply ${move.ply} does not follow from the previous one`);
+    }
+    applyUci(chess, move.uci);
+  }
+  return chess;
+}
+
+function pgnOf(chess: Chess, result: string | null): string {
+  if (result) chess.setHeader("Result", result);
+  return chess.pgn();
+}
+
+function finishOf(chess: Chess, finishedAt: string): Finish | null {
+  if (!chess.isGameOver()) return null;
+  if (chess.isCheckmate()) {
+    return {
+      result: chess.turn() === "w" ? "0-1" : "1-0",
+      termination: "checkmate",
+      finishedAt,
+    };
+  }
+  return {
+    result: "1/2-1/2",
+    termination: chess.isStalemate() ? "stalemate" : "draw",
+    finishedAt,
+  };
+}
+
+export class GameService {
+  private readonly db: Database;
+  private readonly engine: GameEngine;
+  private readonly clock: Clock;
+  private state: LiveState | null = null;
+  private tail: Promise<unknown> = Promise.resolve();
+  private turnInFlight = false;
+  private readonly snapshotListeners = new Set<(snapshot: GameSnapshot) => void>();
+  private readonly turnListeners = new Set<(report: TurnReport) => void>();
+
+  constructor(options: GameServiceOptions) {
+    this.db = options.db;
+    this.engine = options.engine;
+    this.clock = options.clock ?? systemClock;
+    const latest = findLatestGame(this.db);
+    if (latest) this.state = this.load(latest);
+  }
+
+  current(): GameRecord | null {
+    return this.state?.game ?? null;
+  }
+
+  snapshot(): GameSnapshot | null {
+    return this.state ? buildSnapshot(this.state.game, this.state.moves, this.state.chess) : null;
+  }
+
+  onSnapshot(listener: (snapshot: GameSnapshot) => void): () => void {
+    this.snapshotListeners.add(listener);
+    return () => this.snapshotListeners.delete(listener);
+  }
+
+  onTurn(listener: (report: TurnReport) => void): () => void {
+    this.turnListeners.add(listener);
+    return () => this.turnListeners.delete(listener);
+  }
+
+  /** Called once at boot: finishes a turn that was cut off after the student's ply was saved. */
+  recover(): Promise<void> {
+    return this.enqueue(async () => {
+      const phase = this.state?.game.phase;
+      if (phase === "evaluating" || phase === "engine_turn") await this.finishTurn();
+    });
+  }
+
+  newGame(input: { color: PlayerColor; elo: number; fen?: string }): Promise<GameSnapshot> {
+    return this.enqueue(async () => {
+      if (this.state && this.state.game.finishedAt === null) {
+        throw new GameError("game_in_progress", "a game is already running");
+      }
+      if (!Number.isInteger(input.elo) || input.elo < MIN_ELO || input.elo > MAX_ELO) {
+        throw new GameError("invalid_elo", `elo must be an integer in ${MIN_ELO}..${MAX_ELO}`);
+      }
+      const initialFen = this.startFen(input.fen);
+      const game = createGame(this.db, {
+        playerColor: input.color,
+        targetElo: input.elo,
+        initialFen,
+        phase: input.color === "white" ? "player_turn" : "engine_turn",
+        startedAt: this.clock.now().toISOString(),
+      });
+      this.state = this.load(game);
+      if (game.phase === "engine_turn") await this.finishTurn();
+      else this.emitSnapshot();
+      return this.requireSnapshot();
+    });
+  }
+
+  playerMove(input: { from: string; to: string; promotion?: Promotion }): Promise<TurnReport> {
+    // Checked before queueing: a second move sent while the first is still being graded is out of turn.
+    if (this.turnInFlight) {
+      return Promise.reject(new GameError("not_player_turn", "the previous move is still in play"));
+    }
+    this.turnInFlight = true;
+    return this.enqueue(async () => {
+      try {
+        const live = this.requireUnfinished();
+        if (live.game.phase !== "player_turn") {
+          throw new GameError(
+            "not_player_turn",
+            `it is not the player's turn (${live.game.phase})`,
+          );
+        }
+        this.applyPlayerMove(live, input);
+        this.emitSnapshot();
+        const report = await this.finishTurn();
+        if (!report) throw new Error("turn finished without a report");
+        return report;
+      } finally {
+        this.turnInFlight = false;
+      }
+    });
+  }
+
+  undo(): Promise<GameSnapshot> {
+    if (this.turnInFlight) {
+      return Promise.reject(new GameError("not_player_turn", "a move is still being graded"));
+    }
+    return this.enqueue(async () => {
+      const live = this.requireUnfinished();
+      const [beforeEngine, engine] = live.moves.slice(-2);
+      if (
+        live.game.phase !== "player_turn" ||
+        !beforeEngine?.isPlayer ||
+        engine?.isPlayer !== false
+      ) {
+        throw new GameError("nothing_to_undo", "undo needs a player ply followed by an engine ply");
+      }
+      const kept = live.moves.slice(0, -2);
+      const pgn = pgnOf(replay(live.game, kept), null);
+      removeLastPlies(this.db, live.game.id, 2, pgn);
+      this.reload();
+      this.emitSnapshot();
+      return this.requireSnapshot();
+    });
+  }
+
+  resign(): Promise<GameSnapshot> {
+    return this.enqueue(async () => {
+      const { game } = this.requireUnfinished();
+      return this.end({
+        result: game.playerColor === "white" ? "0-1" : "1-0",
+        termination: "resign",
+        finishedAt: this.clock.now().toISOString(),
+      });
+    });
+  }
+
+  abort(): Promise<GameSnapshot> {
+    return this.enqueue(async () => {
+      this.requireUnfinished();
+      return this.end({
+        result: null,
+        termination: "abort",
+        finishedAt: this.clock.now().toISOString(),
+      });
+    });
+  }
+
+  // A rejected command must not stall the ones queued behind it.
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(task);
+    this.tail = run.catch(() => undefined);
+    return run;
+  }
+
+  private startFen(fen: string | undefined): string {
+    if (fen === undefined) return START_FEN;
+    try {
+      const chess = new Chess(fen);
+      if (chess.isGameOver()) throw new Error("the position is already over");
+      return chess.fen();
+    } catch (error) {
+      throw new GameError(
+        "invalid_position",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  private load(game: GameRecord): LiveState {
+    const moves = listMoves(this.db, game.id);
+    return { game, moves, chess: replay(game, moves) };
+  }
+
+  private reload(): LiveState {
+    const live = this.requireGame();
+    const game = findLatestGame(this.db);
+    if (!game || game.id !== live.game.id) throw new Error("the live game disappeared");
+    this.state = this.load(game);
+    return this.state;
+  }
+
+  private requireGame(): LiveState {
+    if (!this.state) throw new GameError("no_game", "there is no game");
+    return this.state;
+  }
+
+  private requireUnfinished(): LiveState {
+    const live = this.requireGame();
+    if (live.game.finishedAt !== null) throw new GameError("game_finished", "the game is over");
+    return live;
+  }
+
+  private requireSnapshot(): GameSnapshot {
+    const snapshot = this.snapshot();
+    if (!snapshot) throw new GameError("no_game", "there is no game");
+    return snapshot;
+  }
+
+  private applyPlayerMove(
+    live: LiveState,
+    input: { from: string; to: string; promotion?: Promotion },
+  ): void {
+    const next = replay(live.game, live.moves);
+    let move: ReturnType<Chess["move"]>;
+    try {
+      move = next.move(input.promotion ? input : { from: input.from, to: input.to });
+    } catch {
+      throw new GameError("illegal_move", `${input.from}${input.to} is not legal here`);
+    }
+    const ply = live.moves.length + 1;
+    const record: NewMove = {
+      ply,
+      san: move.san,
+      uci: move.lan,
+      fenBefore: move.before,
+      fenAfter: move.after,
+      isPlayer: true,
+    };
+    const pgn = pgnOf(replay(live.game, [...live.moves, record]), null);
+    recordPlayerMove(this.db, live.game.id, record, pgn);
+    this.reload();
+  }
+
+  /** Step 3 of the turn: grade the student's ply and choose the reply together, then commit both once. */
+  private async finishTurn(): Promise<TurnReport | null> {
+    const live = this.requireUnfinished();
+    const last = live.moves.at(-1);
+    const playerPly = last?.isPlayer ? last : undefined;
+    const needsReply = !live.chess.isGameOver() && (last === undefined || last.isPlayer);
+    const colorLetter = live.game.playerColor === "white" ? "w" : "b";
+    const [evaluation, choice] = await Promise.all([
+      playerPly
+        ? this.engine.evaluate(playerPly.fenBefore, playerPly.uci, colorLetter)
+        : Promise.resolve(null),
+      needsReply ? this.engine.play(live.chess.fen(), live.game.targetElo) : Promise.resolve(null),
+    ]);
+    // Cloning by FEN would drop the history that repetition and the fifty-move rule read.
+    const after = replay(live.game, live.moves);
+    let engineMove: NewMove | null = null;
+    if (choice) {
+      const played = applyUci(after, choice.moveUci);
+      engineMove = {
+        ply: live.moves.length + 1,
+        san: played.san,
+        uci: played.lan,
+        fenBefore: played.before,
+        fenAfter: played.after,
+        isPlayer: false,
+      };
+    }
+    const finish = finishOf(after, this.clock.now().toISOString());
+    const pgn = pgnOf(after, finish?.result ?? null);
+    completeTurn(this.db, {
+      gameId: live.game.id,
+      evaluation: playerPly && evaluation ? { ply: playerPly.ply, value: evaluation } : null,
+      engineMove,
+      pgn,
+      finish,
+    });
+    const settled = this.reload();
+    this.emitSnapshot();
+    if (!playerPly || !evaluation) return null;
+    const report: TurnReport = {
+      playerMove: settled.moves.find((move) => move.ply === playerPly.ply) as MoveRecord,
+      evaluation,
+      engineReply: engineMove ? (settled.moves.at(-1) ?? null) : null,
+    };
+    for (const listener of this.turnListeners) this.notify(() => listener(report));
+    return report;
+  }
+
+  private end(finish: Finish): GameSnapshot {
+    const live = this.requireUnfinished();
+    finishGame(this.db, live.game.id, finish, pgnOf(replay(live.game, live.moves), finish.result));
+    this.reload();
+    this.emitSnapshot();
+    return this.requireSnapshot();
+  }
+
+  private emitSnapshot(): void {
+    const snapshot = this.snapshot();
+    if (!snapshot) return;
+    for (const listener of this.snapshotListeners) this.notify(() => listener(snapshot));
+  }
+
+  // A listener that throws must not abort a turn whose rows are already committed.
+  private notify(call: () => void): void {
+    try {
+      call();
+    } catch {
+      // Intentionally dropped: the turn is already durable.
+    }
+  }
+}
