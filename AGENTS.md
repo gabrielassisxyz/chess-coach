@@ -33,7 +33,8 @@
   `bin/ci`: `CHESS_COACH_STOCKFISH=1` runs the real-engine grading suite
   (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
   Claude session probe (`test:sdk`, stdin closed); `CHESS_COACH_RECORD=<file>` records the SDK
-  stream to that file.
+  stream to that file. `CHESS_COACH_CHESSCOM=1` makes one real call to the public Chess.com API
+  (`chesscom.real.test.ts`, shape only).
 - **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
   proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
   Stockfish missing, engine fault, dropped socket, restart per game phase, undelivered
@@ -45,6 +46,9 @@
 - **Typecheck / lint:** `pnpm typecheck`, `pnpm lint` (Biome, lint and format in one)
 - **Gate:** `bin/ci`, the exact thing GitHub Actions runs. Green locally means green in CI.
 - **After clone:** `bin/install-hooks` once (gitleaks pre-commit, attribution commit-msg).
+- **Import:** the Review screen imports Chess.com games by username and month range, or a pasted
+  PGN, and grades them in the background. `CHESS_COACH_USERNAMES` (comma-separated) names the
+  student's accounts so a pasted PGN finds its side; without it the form asks for the colour.
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
 

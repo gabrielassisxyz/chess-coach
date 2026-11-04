@@ -7,7 +7,7 @@ import { useServer } from "../src/hooks/useServer.js";
 import { Review } from "../src/screens/Review.js";
 import type { GamesApi } from "../src/state/games-api.js";
 import { createFakeSocket, FakeSocket } from "./fake-socket.js";
-import { START_FEN } from "./fixtures.js";
+import { COACH_GAME_SOURCE, idleImportApi, START_FEN } from "./fixtures.js";
 
 const SANS = ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"];
 
@@ -30,6 +30,7 @@ function fixtureGame(): GameDetail {
     };
   });
   return {
+    ...COACH_GAME_SOURCE,
     id: 7,
     started_at: "2026-01-01T00:00:00.000Z",
     finished_at: "2026-01-01T01:00:00.000Z",
@@ -43,6 +44,7 @@ function fixtureGame(): GameDetail {
 }
 
 const summary: GameSummary = {
+  ...COACH_GAME_SOURCE,
   id: 7,
   started_at: "2026-01-01T00:00:00.000Z",
   finished_at: "2026-01-01T01:00:00.000Z",
@@ -73,7 +75,7 @@ const factory: BoardFactory = (_element, config) => {
 
 function Harness() {
   const server = useServer({ createSocket: createFakeSocket });
-  return <Review server={server} api={api} createBoard={factory} />;
+  return <Review server={server} api={api} importApi={idleImportApi} createBoard={factory} />;
 }
 
 const commands = (): { type: string; ply?: number }[] =>
@@ -250,7 +252,9 @@ describe("coach demo", () => {
 describe("failures", () => {
   it("says so when the list cannot be loaded", async () => {
     const broken: GamesApi = { ...api, listGames: async () => Promise.reject(new Error("down")) };
-    render(<Review server={{} as never} api={broken} createBoard={factory} />);
+    render(
+      <Review server={{} as never} api={broken} importApi={idleImportApi} createBoard={factory} />,
+    );
     await waitFor(() => expect(screen.getByText(/The games could not be loaded/)).toBeTruthy());
   });
 });

@@ -105,7 +105,7 @@ const INVENTORY: FailureCase[] = [
           "keeps a game waiting for the player's move exactly as it was",
           "finishes a turn cut off after the player's ply was saved, exactly once",
           "finishes a black game whose engine opening was never played",
-          "restores a finished game as finished after a restart",
+          "does not restore a finished game after a restart, so the board starts empty",
         ],
       },
     ],

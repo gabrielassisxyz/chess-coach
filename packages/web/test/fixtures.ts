@@ -1,5 +1,6 @@
 import type { ActivityMove, LegalMoveEntry, LiveGameActivity } from "@chess-coach/shared";
 import { Chess } from "chess.js";
+import type { ImportApi } from "../src/state/import-api.js";
 
 export const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -50,3 +51,23 @@ export function liveGame(overrides: Partial<LiveGameActivity> = {}): LiveGameAct
     ...overrides,
   };
 }
+
+/** The source fields every game the coach itself played carries. */
+export const COACH_GAME_SOURCE = {
+  source: "coach",
+  source_url: null,
+  opponent: null,
+  student_rating: null,
+  opponent_rating: null,
+  time_control: null,
+  played_at: null,
+  grading: "done",
+} as const;
+
+/** An import API with nothing queued, so a Review render never reaches for the network. */
+export const idleImportApi: ImportApi = {
+  listChessCom: async () => [],
+  importChessCom: async () => ({ imported: 0, skipped: 0 }),
+  importPgn: async () => ({ imported: 0, skipped: 0 }),
+  status: async () => ({ pending: 0, running: null, failed: 0 }),
+};

@@ -15,6 +15,15 @@ export const GameSummarySchema = z.object({
   move_count: z.number().int().nonnegative(),
   // Share of graded student moves with a cp loss of 30 or less; null when none was graded.
   accuracy: z.number().min(0).max(1).nullable(),
+  source: z.enum(["coach", "chesscom", "pgn"]),
+  source_url: z.string().nullable(),
+  opponent: z.string().nullable(),
+  student_rating: z.number().int().nullable(),
+  opponent_rating: z.number().int().nullable(),
+  time_control: z.string().nullable(),
+  played_at: z.string().nullable(),
+  // An imported game shows its moves without badges until the background grading is done.
+  grading: z.enum(["pending", "running", "done", "failed"]),
 });
 export type GameSummary = z.infer<typeof GameSummarySchema>;
 

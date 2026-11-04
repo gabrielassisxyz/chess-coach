@@ -10,6 +10,8 @@ import { EnginePool } from "./engine/pool.js";
 import { spawnStockfish } from "./engine/process.js";
 import { poolGameEngine } from "./game/engine.js";
 import { GameService } from "./game/service.js";
+import { ChessComSource, httpFetcher } from "./import/chesscom.js";
+import { ImportGrader } from "./import/grader.js";
 import { contentDir, dataDir } from "./paths.js";
 import { seedPuzzles } from "./puzzles/seed.js";
 import { ReviewDesk } from "./srs/review.js";
@@ -39,6 +41,10 @@ const activity = new ActivityService({
   game,
   training: { desk, notifications, onNotification: () => coach.flushNotifications() },
 });
+const importGrader = new ImportGrader({
+  db,
+  evaluate: (fen, moveUci, color) => evaluatePlayerMove(pool.evaluation, fen, moveUci, color),
+});
 const coach = new CoachSession({
   db,
   query,
@@ -67,6 +73,8 @@ if (engines.ok) {
     console.error(`game recovery failed: ${error instanceof Error ? error.message : error}`);
   });
   if (game.current()?.finishedAt === null) await activity.enterLiveGame();
+  // Games imported before the last shutdown resume grading where they stopped.
+  importGrader.kick();
 } else {
   readiness = { ready: false, reason: engines.reason };
   console.error(`engine failed to start (${engines.reason}): ${engines.detail}`);
@@ -75,6 +83,11 @@ if (engines.ok) {
 const app = buildApp({
   readiness: () => readiness,
   db,
+  importer: {
+    source: new ChessComSource(httpFetcher()),
+    grader: importGrader,
+    usernames: (process.env.CHESS_COACH_USERNAMES ?? "").split(",").filter(Boolean),
+  },
   hub: { coach, activity, db, allowedOrigins: allowedOriginsFrom() },
 });
 

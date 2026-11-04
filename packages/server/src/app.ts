@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { Database } from "./db/open.js";
 import { registerCardRoutes } from "./http/cards.js";
 import { registerGameRoutes } from "./http/games.js";
+import { type ImportRoutesOptions, registerImportRoutes } from "./http/import.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
 
@@ -16,6 +17,8 @@ export interface AppOptions {
   readiness?: () => Readiness;
   hub?: HubOptions;
   db?: Database;
+  /** Everything the import routes need besides the database; without it they are not mounted. */
+  importer?: Omit<ImportRoutesOptions, "db">;
 }
 
 export function buildApp(options: AppOptions = {}): FastifyInstance {
@@ -32,6 +35,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     registerCardRoutes(app, options.db);
     registerGameRoutes(app, options.db);
     registerPuzzleRoutes(app, options.db);
+    if (options.importer) registerImportRoutes(app, { db: options.db, ...options.importer });
   }
 
   if (options.hub) {
