@@ -32,6 +32,12 @@
   font-size: var(--text-sm);
 }
 
+.train__failure {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-sm);
+}
+
 .train__mode p {
   margin: 0;
   color: var(--text-muted);

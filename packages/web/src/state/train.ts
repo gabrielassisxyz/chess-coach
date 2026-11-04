@@ -1,4 +1,10 @@
-import type { ActivityState, TrainingActivity, TrainingStatus } from "@chess-coach/shared";
+import type {
+  ActivityState,
+  ErrorCode,
+  TrainingActivity,
+  TrainingMode,
+  TrainingStatus,
+} from "@chess-coach/shared";
 
 export interface MotifCount {
   motif: string;
@@ -58,3 +64,25 @@ export function trainingView(training: TrainingActivity): TrainingView {
     summary,
   };
 }
+
+// What to tell the student when a start was refused, ending on the thing they can do next.
+export function startFailureText(
+  mode: TrainingMode,
+  motif: string,
+  code: ErrorCode | null,
+  message: string | null,
+): string {
+  if (code === "empty_queue" && mode === "srs") {
+    return "Nothing is due right now. Cards come from the mistakes in a finished game: open one in Review and choose Create cards, or drill puzzles instead.";
+  }
+  if (code === "empty_queue") {
+    return motif === ""
+      ? "There are no puzzles to drill. Restart the server to load the puzzle library."
+      : `There are no ${motif} puzzles. Choose Any motif or another motif.`;
+  }
+  const reason = message ? `${message.replace(/\.$/, "")}. ` : "";
+  return `Training could not start. ${reason}Try again; if it keeps failing, restart the server.`;
+}
+
+export const OFFLINE_START_TEXT =
+  "The server is not connected. Wait until the chat header says connected, then try again.";

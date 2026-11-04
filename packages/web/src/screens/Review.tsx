@@ -26,8 +26,10 @@ type Listing =
   | { status: "failed" }
   | { status: "ready"; games: GameSummary[] };
 
-function useGameList(api: GamesApi): Listing {
+function useGameList(api: GamesApi): { listing: Listing; reload(): void } {
   const [listing, setListing] = useState<Listing>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the retry trigger
   useEffect(() => {
     let current = true;
     api.listGames().then(
@@ -37,17 +39,45 @@ function useGameList(api: GamesApi): Listing {
     return () => {
       current = false;
     };
-  }, [api]);
-  return listing;
+  }, [api, attempt]);
+  const reload = (): void => {
+    setListing({ status: "loading" });
+    setAttempt((count) => count + 1);
+  };
+  return { listing, reload };
 }
 
-function GameList({ listing, onOpen }: { listing: Listing; onOpen(id: number): void }) {
-  if (listing.status === "loading") return <p className="review__note">Loading games.</p>;
-  if (listing.status === "failed")
-    return <p className="review__note">The games could not be loaded.</p>;
+interface GameListProps {
+  listing: Listing;
+  onOpen(id: number): void;
+  onRetry(): void;
+}
+
+function GameList({ listing, onOpen, onRetry }: GameListProps) {
+  if (listing.status === "loading") {
+    return (
+      <p className="review__note" role="status">
+        Loading games.
+      </p>
+    );
+  }
+  if (listing.status === "failed") {
+    return (
+      <div className="review__empty" role="alert">
+        <p className="review__note">
+          The games could not be loaded. Check that the server is running, then try again.
+        </p>
+        <button type="button" className="button" onClick={onRetry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
   if (listing.games.length === 0) {
     return (
-      <p className="review__note">No finished games yet. Play one and it will show up here.</p>
+      <p className="review__note" role="status">
+        No finished games yet. Finish a game on the Play screen and it will show up here.
+      </p>
     );
   }
   return (
@@ -195,7 +225,7 @@ function OpenGame({ server, game, createBoard, onClose }: OpenGameProps) {
 }
 
 export function Review({ server, api = serverGamesApi, createBoard }: ReviewProps) {
-  const listing = useGameList(api);
+  const { listing, reload } = useGameList(api);
   const [game, setGame] = useState<GameDetail | null>(null);
   const [failed, setFailed] = useState(false);
   const { send } = server;
@@ -216,7 +246,11 @@ export function Review({ server, api = serverGamesApi, createBoard }: ReviewProp
 
   return (
     <section className="review" aria-label="Review">
-      {failed ? <p className="review__note">That game could not be loaded.</p> : null}
+      {failed ? (
+        <p className="review__note" role="alert">
+          That game could not be loaded. Try it again, or pick another game.
+        </p>
+      ) : null}
       {game ? (
         <OpenGame
           key={game.id}
@@ -226,7 +260,7 @@ export function Review({ server, api = serverGamesApi, createBoard }: ReviewProp
           onClose={() => setGame(null)}
         />
       ) : (
-        <GameList listing={listing} onOpen={open} />
+        <GameList listing={listing} onOpen={open} onRetry={reload} />
       )}
     </section>
   );
