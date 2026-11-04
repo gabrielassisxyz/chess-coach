@@ -1,6 +1,8 @@
 import type {
+  CostlyMove,
   GameEndNotification,
   NotificationContent,
+  PlyQuestionNotification,
   TurnNotification,
 } from "../game/notifications.js";
 
@@ -43,13 +45,17 @@ function renderEnd(end: GameEndNotification): string {
   ];
   if (end.costliest_moves.length > 0) {
     lines.push("The student's costliest moves, worst first:");
-    for (const move of end.costliest_moves) {
-      lines.push(
-        `- ${label(move.ply, move.san)} (${move.classification}, cp loss ${move.cp_loss}; ${bestText(move.best_san)})`,
-      );
-    }
+    for (const move of end.costliest_moves) lines.push(costlyLine(move));
+    lines.push(
+      `The spaced-repetition cards for this game were already created (${end.cards.created} new, ${end.cards.skipped} already existed), so do not call create_srs_cards. Walk through these moves one at a time: for each, call show_position with the position before the move, explain what went wrong and what the better move does, then call explain_card with that move's card id. A move with no card gets the walk-through only.`,
+    );
   }
   return lines.join("\n");
+}
+
+function costlyLine(move: CostlyMove): string {
+  const card = move.card_id === null ? "no card, the loss is too small" : `card id ${move.card_id}`;
+  return `- ${label(move.ply, move.san)} (${move.classification}, cp loss ${move.cp_loss}; ${bestText(move.best_san)}); position before (FEN): ${move.fen_before}; ${card}`;
 }
 
 function renderEarlier(turns: TurnNotification[]): string {
@@ -69,6 +75,9 @@ function renderEarlier(turns: TurnNotification[]): string {
 export function renderNotifications(items: CoachNotification[]): string {
   const turns = items.filter((item): item is TurnNotification => item.type === "turn");
   const ends = items.filter((item): item is GameEndNotification => item.type === "game_end");
+  const questions = items.filter(
+    (item): item is PlyQuestionNotification => item.type === "ply_question",
+  );
   const last = turns.at(-1);
   if (items.length === 1) {
     const only = items[0] as CoachNotification;
@@ -82,7 +91,21 @@ export function renderNotifications(items: CoachNotification[]): string {
   }
   for (const end of ends) parts.push(renderEnd(end));
   for (const item of items) if (isTrainingRow(item)) parts.push(renderOne(item));
+  for (const question of questions) parts.push(renderPlyQuestion(question));
   return parts.join("\n\n");
+}
+
+export function renderPlyQuestion(question: PlyQuestionNotification): string {
+  const who = question.is_player ? "the student" : "the engine";
+  const grade =
+    question.cp_loss === null || question.classification === null
+      ? "this move was not graded"
+      : `${question.classification}, cp loss ${question.cp_loss}; ${bestText(question.best_san)}`;
+  return [
+    `The student is reviewing game ${question.game_id} and asks about ${label(question.ply, question.san)}, played by ${who} (${grade}).`,
+    `Position before the move (FEN): ${question.fen_before}`,
+    "Call show_position with that position, then explain what the move does and what the alternatives were.",
+  ].join("\n");
 }
 
 export function renderSrsAnswer(answer: SrsAnswerNotification): string {
@@ -165,6 +188,8 @@ function renderOne(item: CoachNotification): string {
       return renderTurn(item);
     case "game_end":
       return renderEnd(item);
+    case "ply_question":
+      return renderPlyQuestion(item);
     case "srs_answer":
       return renderSrsAnswer(item);
     case "puzzle_result":

@@ -256,3 +256,35 @@ export function removeLastPlies(db: Database, gameId: number, count: number, pgn
     db.prepare("UPDATE games SET pgn = ? WHERE id = ?").run(pgn, gameId);
   })();
 }
+
+export interface GameSummaryRow {
+  game: GameRecord;
+  moveCount: number;
+  gradedStudentMoves: number;
+  accurateStudentMoves: number;
+}
+
+// A move counts as accurate at a cp loss of 30 or less; the counts stay raw so the caller owns the ratio.
+export const ACCURATE_CP_LOSS = 30;
+
+export function listFinishedGames(db: Database, limit: number): GameSummaryRow[] {
+  const rows = db
+    .prepare(
+      `SELECT g.*,
+         (SELECT COUNT(*) FROM moves m WHERE m.game_id = g.id) AS move_count,
+         (SELECT COUNT(*) FROM moves m
+           WHERE m.game_id = g.id AND m.is_player = 1 AND m.cp_loss IS NOT NULL) AS graded,
+         (SELECT COUNT(*) FROM moves m
+           WHERE m.game_id = g.id AND m.is_player = 1 AND m.cp_loss <= ?) AS accurate
+       FROM games g WHERE g.finished_at IS NOT NULL ORDER BY g.id DESC LIMIT ?`,
+    )
+    .all(ACCURATE_CP_LOSS, limit);
+  return (rows as (GameRow & { move_count: number; graded: number; accurate: number })[]).map(
+    (row) => ({
+      game: toGame(row),
+      moveCount: row.move_count,
+      gradedStudentMoves: row.graded,
+      accurateStudentMoves: row.accurate,
+    }),
+  );
+}

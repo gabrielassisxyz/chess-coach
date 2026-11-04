@@ -8,6 +8,7 @@ import "./styles/chat.css";
 import "./styles/board.css";
 import "./styles/layout.css";
 import "./styles/train.css";
+import "./styles/review.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root element in index.html");

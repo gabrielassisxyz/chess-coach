@@ -6,7 +6,9 @@ export type GameErrorCode =
   | "game_finished"
   | "nothing_to_undo"
   | "invalid_elo"
-  | "invalid_position";
+  | "invalid_position"
+  | "game_not_found"
+  | "invalid_ply";
 
 export class GameError extends Error {
   constructor(

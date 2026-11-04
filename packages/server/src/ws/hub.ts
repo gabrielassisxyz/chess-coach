@@ -12,6 +12,7 @@ import type { WebSocket } from "@fastify/websocket";
 import type { FastifyInstance } from "fastify";
 import { ActivityError } from "../activity/errors.js";
 import type { ActivityService } from "../activity/service.js";
+import type { Clock } from "../clock.js";
 import type { CoachEvent } from "../coach/events.js";
 import type { PermissionRequest } from "../coach/session.js";
 import { type ChatMessage, listChatTail } from "../db/chat.js";
@@ -20,6 +21,7 @@ import { GameError } from "../game/errors.js";
 import { SrsError } from "../srs/errors.js";
 import { ChatEventNumbering } from "./chat-events.js";
 import { isUpgradeAllowed } from "./origin.js";
+import { askCoachAboutPly, createCards } from "./review-commands.js";
 
 // The slice of CoachSession the hub drives, so tests can inject a named fake.
 export interface CoachPort {
@@ -28,6 +30,8 @@ export interface CoachPort {
   resolvePermission(requestId: string, allow: boolean): boolean;
   onEvent(listener: (event: CoachEvent) => void): () => void;
   onPermissionRequest(listener: (request: PermissionRequest) => void): () => void;
+  ensureSessionId(): number;
+  flushNotifications(): void;
 }
 
 // The slice of ActivityService the hub drives.
@@ -56,6 +60,7 @@ export interface HubOptions {
   db: Database;
   allowedOrigins: readonly string[];
   pingIntervalMs?: number;
+  clock?: Clock;
 }
 
 export const BOOTSTRAP_TAIL = 200;
@@ -122,6 +127,7 @@ function commandIdOf(raw: unknown): string | undefined {
 export async function registerHub(app: FastifyInstance, options: HubOptions): Promise<void> {
   const { coach, activity, db, allowedOrigins } = options;
   const numbering = new ChatEventNumbering();
+  const reviewDeps = { db, coach, ...(options.clock ? { clock: options.clock } : {}) };
 
   const broadcast = (payload: string): void => {
     for (const client of app.websocketServer.clients) {
@@ -218,6 +224,12 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         return;
       case "end_training":
         await activity.endTraining(command.activity_id);
+        return;
+      case "create_cards":
+        socket.send(frame(createCards(reviewDeps, command.game_id)));
+        return;
+      case "ask_coach_about_ply":
+        askCoachAboutPly(reviewDeps, command.game_id, command.ply);
         return;
     }
   };

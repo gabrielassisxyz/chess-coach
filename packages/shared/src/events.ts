@@ -99,6 +99,7 @@ export const ErrorCodeSchema = z.enum([
   "exposure_answered",
   "exposure_unanswered",
   "invalid_quality",
+  "game_not_finished",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
@@ -128,6 +129,12 @@ export const TrainingEventSchema = z.object({
   summary: TrainingSummarySchema.nullable(),
 });
 export type TrainingEvent = z.infer<typeof TrainingEventSchema>;
+export const CardsCreatedEventSchema = z.object({
+  type: z.literal("cards_created"),
+  game_id: z.number().int().positive(),
+  count: z.number().int().nonnegative(),
+});
+export type CardsCreatedEvent = z.infer<typeof CardsCreatedEventSchema>;
 
 export const ServerEventSchema = z.discriminatedUnion("type", [
   BootstrapEventSchema,
@@ -136,6 +143,7 @@ export const ServerEventSchema = z.discriminatedUnion("type", [
   ErrorEventSchema,
   ActivityEventSchema,
   TrainingEventSchema,
+  CardsCreatedEventSchema,
 ]);
 export type ServerEvent = z.infer<typeof ServerEventSchema>;
 
@@ -238,6 +246,17 @@ export const EndTrainingCommandSchema = z.object({
   type: z.literal("end_training"),
   command_id: commandId,
   activity_id: activityId,
+export const CreateCardsCommandSchema = z.object({
+  type: z.literal("create_cards"),
+  command_id: commandId,
+  game_id: z.number().int().positive(),
+});
+
+export const AskCoachAboutPlyCommandSchema = z.object({
+  type: z.literal("ask_coach_about_ply"),
+  command_id: commandId,
+  game_id: z.number().int().positive(),
+  ply: z.number().int().positive(),
 });
 
 export const ClientCommandSchema = z.discriminatedUnion("type", [
@@ -255,6 +274,8 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   RateCardCommandSchema,
   NextTrainingItemCommandSchema,
   EndTrainingCommandSchema,
+  CreateCardsCommandSchema,
+  AskCoachAboutPlyCommandSchema,
 ]);
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
 

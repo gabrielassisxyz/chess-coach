@@ -118,6 +118,11 @@ export function listCardsNewestFirst(db: Database, limit: number): CardRecord[] 
   return (rows as CardRow[]).map(toCard);
 }
 
+export function findCardIdByMove(db: Database, moveId: number): number | null {
+  const row = db.prepare("SELECT id FROM srs_cards WHERE source_move_id = ?").get(moveId);
+  return row ? (row as { id: number }).id : null;
+}
+
 export const DEFAULT_DUE_LIMIT = 20;
 export const MAX_DUE_LIMIT = 100;
 
