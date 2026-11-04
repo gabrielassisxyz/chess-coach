@@ -4,7 +4,7 @@ import type {
   NotificationContent,
   TurnNotification,
 } from "../game/notifications.js";
-import { renderNotifications } from "./notify.js";
+import { renderNotifications, renderSrsAnswer, type SrsAnswerNotification } from "./notify.js";
 
 const FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
 
@@ -102,5 +102,36 @@ describe("renderNotifications", () => {
     expect(text).toContain("The latest move in full:");
     expect(text.indexOf("The latest move")).toBeLessThan(text.indexOf("The game is over"));
     expect(text).not.toContain("No earlier move");
+  });
+});
+
+describe("renderSrsAnswer", () => {
+  const base: SrsAnswerNotification = {
+    type: "srs_answer",
+    card_id: 7,
+    prompt_fen: FEN,
+    answered_uci: "g1f3",
+    answered_san: "Nf3",
+    expected_uci: "d2d4",
+    expected_san: "d4",
+    correct: false,
+  };
+
+  it("tells the coach about a miss with both moves", () => {
+    expect(renderSrsAnswer(base)).toBe(
+      `The student missed review card 7: they played Nf3 and the expected move was d4.\nPosition (FEN): ${FEN}`,
+    );
+  });
+
+  it("reports a correct answer without naming an expected move", () => {
+    expect(renderSrsAnswer({ ...base, correct: true, answered_san: "d4" })).toBe(
+      `The student answered review card 7 correctly with d4.\nPosition (FEN): ${FEN}`,
+    );
+  });
+
+  it("falls back to UCI when a move has no SAN", () => {
+    expect(renderSrsAnswer({ ...base, answered_san: null, expected_san: null })).toContain(
+      "they played g1f3 and the expected move was d2d4",
+    );
   });
 });

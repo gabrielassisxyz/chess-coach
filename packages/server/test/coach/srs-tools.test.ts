@@ -138,3 +138,38 @@ describe("explain_card", () => {
     expect(accepts("explain_card", { card_id: 1, explanation: "" })).toBe(false);
   });
 });
+
+describe("get_due_cards", () => {
+  it("returns the coach's view of due cards, oldest first, and no exposure id", async () => {
+    const { db, call } = setup();
+    insertGradedGame(db);
+    await call("create_srs_cards", { game_id: 1 });
+    const out = await call("get_due_cards", { limit: 2 });
+    const cards = out.body as unknown as Record<string, unknown>[];
+    expect(cards).toHaveLength(2);
+    expect(Object.keys(cards[0] ?? {}).sort()).toEqual(
+      [
+        "classification",
+        "cp_loss",
+        "explanation",
+        "expected_san",
+        "id",
+        "next_review_at",
+        "played_san",
+        "prompt_fen",
+        "student_color",
+      ].sort(),
+    );
+    expect(cards.map((card) => card.id)).toEqual([1, 2]);
+    expect(JSON.stringify(out.body)).not.toMatch(/exposure/);
+  });
+
+  it("is capped at 20 and read-only", async () => {
+    const { db, accepts, call } = setup();
+    expect(accepts("get_due_cards", { limit: 21 })).toBe(false);
+    expect(accepts("get_due_cards", { limit: 0 })).toBe(false);
+    expect(accepts("get_due_cards", {})).toBe(true);
+    expect((await call("get_due_cards", {})).body).toEqual([]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM srs_reviews").get()).toEqual({ n: 0 });
+  });
+});

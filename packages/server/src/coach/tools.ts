@@ -32,6 +32,7 @@ export const COACH_TOOL_BASE_NAMES = [
   "add_srs_card",
   "explain_card",
   "get_puzzles",
+  "get_due_cards",
 ] as const;
 export const COACH_TOOL_NAMES = COACH_TOOL_BASE_NAMES.map(
   (name) => `mcp__${MCP_SERVER_NAME}__${name}`,
