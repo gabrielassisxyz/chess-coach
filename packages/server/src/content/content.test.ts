@@ -23,6 +23,8 @@ const COACH_TOOL_ALLOWLIST = [
   "get_progress",
   "set_difficulty",
   "read_reference",
+  "serve_puzzle",
+  "serve_card",
 ];
 
 const puzzlesDir = defaultPuzzlesDir();
