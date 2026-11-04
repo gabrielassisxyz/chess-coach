@@ -177,7 +177,7 @@ You do not rate the answer or change the schedule; the server grades the move th
    ```
 2. **Pick teaching positions:** the top 2-3 most instructive moments.
 3. **Offer replay:** "Would you like to review the key moments?"
-4. **Create SRS cards:** `create_srs_cards(game_id)` batch-creates cards for the mistakes. Then fill each card's explanation with `explain_card(card_id, explanation)`.
+4. **Explain the cards:** the server creates the cards for the mistakes when the game ends and sends you their ids in the end-of-game message. Fill each card's explanation with `explain_card(card_id, explanation)`. Call `create_srs_cards(game_id)` only for a game that ended without that message (it is safe to repeat: existing cards are kept).
 
 ## Session End Flow
 
