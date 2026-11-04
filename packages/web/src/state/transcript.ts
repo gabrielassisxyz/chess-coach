@@ -1,6 +1,7 @@
 import type {
   ActivityState,
   ChatEvent,
+  ErrorCode,
   PermissionRequestEvent,
   ServerEvent,
   TranscriptEntry,
@@ -25,10 +26,16 @@ export interface PendingPermission {
   input: unknown;
 }
 
+// What the coach is doing right now, derived from the chat events alone.
+export type CoachTurn = "idle" | "thinking" | "streaming";
+
 export interface ChatState {
   items: ChatItem[];
+  turn: CoachTurn;
   permissions: PendingPermission[];
   lastError: string | null;
+  // The server's code for lastError; null for a failure the page itself raised.
+  lastErrorCode: ErrorCode | null;
   errorCount: number;
   localCount: number;
   activity: ActivityState | null;
@@ -38,8 +45,10 @@ export interface ChatState {
 
 export const initialChatState: ChatState = {
   items: [],
+  turn: "idle",
   permissions: [],
   lastError: null,
+  lastErrorCode: null,
   errorCount: 0,
   localCount: 0,
   activity: null,
@@ -84,6 +93,7 @@ function applyChat(state: ChatState, event: ChatEvent): ChatState {
   const items = state.items.map((item) => ({ ...item }));
   const payload = event.event;
   const key = `live-${event.seq}`;
+  const turn = turnAfter(payload.kind);
   if (payload.kind === "text_delta") {
     const last = items.at(-1);
     if (last?.type === "text" && last.role === "assistant" && last.liveId === event.message_id) {
@@ -110,7 +120,22 @@ function applyChat(state: ChatState, event: ChatEvent): ChatState {
   } else if (payload.kind === "turn_error") {
     items.push({ type: "turn_error", key, message: payload.message });
   }
-  return { ...state, items };
+  return { ...state, items, turn };
+}
+
+// A tool call or its result means the coach is still working on the answer; only the end of
+// the turn, or its failure, hands control back, so a turn that dies cannot leave "thinking" on.
+function turnAfter(kind: ChatEvent["event"]["kind"]): CoachTurn {
+  switch (kind) {
+    case "text_delta":
+      return "streaming";
+    case "tool_use":
+    case "tool_result":
+      return "thinking";
+    case "turn_end":
+    case "turn_error":
+      return "idle";
+  }
 }
 
 function addPermission(state: ChatState, event: PermissionRequestEvent): ChatState {
@@ -119,8 +144,8 @@ function addPermission(state: ChatState, event: PermissionRequestEvent): ChatSta
 }
 
 // errorCount lets a view react to every refusal, including a repeat of the same message.
-function withError(state: ChatState, message: string): ChatState {
-  return { ...state, lastError: message, errorCount: state.errorCount + 1 };
+function withError(state: ChatState, message: string, code: ErrorCode | null): ChatState {
+  return { ...state, lastError: message, lastErrorCode: code, errorCount: state.errorCount + 1 };
 }
 
 export type ChatAction =
@@ -136,13 +161,18 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   if (action.type === "local_say") {
     const key = `local-${state.localCount}`;
     const item: ChatItem = { type: "text", key, role: "user", text: action.text };
-    return { ...state, items: [...state.items, item], localCount: state.localCount + 1 };
+    return {
+      ...state,
+      items: [...state.items, item],
+      turn: "thinking",
+      localCount: state.localCount + 1,
+    };
   }
   if (action.type === "permission_answered") {
     const permissions = state.permissions.filter((p) => p.requestId !== action.requestId);
     return { ...state, permissions };
   }
-  if (action.type === "protocol_error") return withError(state, action.message);
+  if (action.type === "protocol_error") return withError(state, action.message, null);
   if (action.type === "dismiss_error") return { ...state, lastError: null };
 
   const event = action.event;
@@ -159,7 +189,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "activity":
       return { ...state, activity: event.state };
     case "error":
-      return withError(state, event.message);
+      return withError(state, event.message, event.code);
     // The activity event that precedes it already carries the same item and status.
     case "training":
       return state;

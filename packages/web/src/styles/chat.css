@@ -36,7 +36,9 @@ body {
   letter-spacing: -0.02em;
 }
 
-.chat__status {
+.chat__state {
+  display: flex;
+  gap: var(--space-3);
   font-family: var(--font-ui);
   font-size: var(--text-sm);
   color: var(--text-muted);
@@ -75,6 +77,16 @@ body {
 
 .message--error {
   color: var(--error);
+}
+
+.message--error p,
+.message__hint {
+  margin: 0;
+}
+
+.message__hint {
+  margin-top: var(--space-1);
+  color: var(--text-muted);
 }
 
 .notice {

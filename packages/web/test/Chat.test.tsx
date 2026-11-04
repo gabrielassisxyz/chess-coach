@@ -11,6 +11,8 @@ function api(overrides: Partial<ServerApi> = {}): ServerApi {
     permissions: [],
     lastError: null,
     errorCount: 0,
+    lastErrorCode: null,
+    turn: "idle",
     localCount: 0,
     activity: null,
     cardsCreated: {},

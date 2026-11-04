@@ -17,6 +17,8 @@ function api(activity: ActivityState | null, overrides: Partial<ServerApi> = {})
     permissions: [],
     lastError: null,
     errorCount: 0,
+    lastErrorCode: null,
+    turn: "idle",
     localCount: 0,
     activity,
     cardsCreated: {},

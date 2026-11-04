@@ -1,6 +1,7 @@
 import { MAX_SAY_LENGTH } from "@chess-coach/shared";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import type { ServerApi } from "../hooks/useServer.js";
+import { coachErrorHint } from "../state/coach-hint.js";
 import type { ChatItem } from "../state/transcript.js";
 import { ApprovalCard } from "./ApprovalCard.js";
 import { ToolCard } from "./ToolCard.js";
@@ -11,12 +12,19 @@ function ItemView({ item }: { item: ChatItem }) {
       return <p className={`message message--${item.role}`}>{item.text}</p>;
     case "tool":
       return <ToolCard item={item} />;
-    case "turn_error":
+    case "turn_error": {
+      const hint = coachErrorHint(item.message);
       return (
-        <p className="message message--error" role="alert">
-          {item.message}
-        </p>
+        <div className="message message--error" role="alert">
+          <p>{item.message}</p>
+          {hint ? (
+            <p className="message__hint" data-testid="error-hint">
+              {hint}
+            </p>
+          ) : null}
+        </div>
       );
+    }
     case "notice":
       return <p className="notice">{item.text}</p>;
   }
@@ -47,9 +55,16 @@ export function Chat({ server }: { server: ServerApi }) {
     <div className="chat">
       <header className="chat__header">
         <h1 className="chat__title">chess-coach</h1>
-        <span className="chat__status" role="status">
-          {server.connection === "connected" ? "connected" : "reconnecting"}
-        </span>
+        <div className="chat__state">
+          <span className="chat__status" role="status">
+            {server.connection === "connected" ? "connected" : "reconnecting"}
+          </span>
+          {server.connection === "connected" ? (
+            <span className="chat__turn" data-turn={server.turn} aria-live="polite">
+              {server.turn}
+            </span>
+          ) : null}
+        </div>
       </header>
       <div className="chat__log">
         <div className="chat__column">
