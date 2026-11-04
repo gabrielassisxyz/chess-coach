@@ -1,0 +1,6 @@
+packages:
+  - packages/*
+# Dependencies whose install scripts may run. pnpm blocks every other package's scripts,
+# which is the right default; each entry here is a deliberate exception.
+allowBuilds:
+  esbuild: true

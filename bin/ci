@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# The exact checks CI runs, runnable locally, so "green locally" means "green in CI".
+# .github/workflows/ci.yml installs the toolchain and calls this script; it never
+# re-implements a check.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+fail=0
+
+# A tool this project cannot run without is a dependency, not a hurdle to document. A
+# missing one FAILS: a gate that skips itself when its binary is absent reports protection
+# it is not providing.
+require() {
+    command -v "$1" >/dev/null 2>&1 || { echo "missing: $1 (install: $2)" >&2; fail=1; }
+}
+require node     "mise install (see mise.toml)"
+require pnpm     "mise install (see mise.toml)"
+require gitleaks "https://github.com/gitleaks/gitleaks/releases"
+[ "$fail" -eq 0 ] || { echo "==> bin/ci FAILED (missing tools)"; exit 1; }
+
+# Node's V8 compile cache defaults to os.tmpdir(), a tmpfs on this desktop; the build disk
+# carries it where one exists. Unset on a CI runner is the correct default.
+build_root=/mnt/build
+[ -d "$build_root" ] && export NODE_COMPILE_CACHE="$build_root/node-compile-cache"
+
+echo "==> install";    pnpm install --frozen-lockfile
+echo "==> typecheck";  pnpm run typecheck
+echo "==> lint";       pnpm run lint
+echo "==> test";       pnpm run test
+echo "==> build";      pnpm run build
+echo "==> audit";      pnpm audit --audit-level=high
+echo "==> gitleaks";   gitleaks git --no-banner --redact .
+# Last on purpose: the other checks still run when this one trips.
+echo "==> slop-guard"; bin/slop-guard
+echo "CI green."
