@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ActivityStateSchema, PromotionSchema } from "./activity.js";
 
 // The wire contract between server and browser. Every frame is validated on arrival by the side
 // that receives it; a schema sits beside each type so the two cannot drift apart.
@@ -38,6 +39,7 @@ export type TranscriptEntry = z.infer<typeof TranscriptEntrySchema>;
 export const BootstrapEventSchema = z.object({
   type: z.literal("bootstrap"),
   transcript: z.array(TranscriptEntrySchema),
+  activity: ActivityStateSchema.nullable(),
 });
 export type BootstrapEvent = z.infer<typeof BootstrapEventSchema>;
 
@@ -63,6 +65,21 @@ export const ErrorCodeSchema = z.enum([
   "invalid_command",
   "unknown_request",
   "coach_error",
+  "stale_activity",
+  "not_in_demo",
+  "not_in_review",
+  "not_in_live_game",
+  "demo_active",
+  "game_not_found",
+  "invalid_ply",
+  "game_in_progress",
+  "no_game",
+  "not_player_turn",
+  "illegal_move",
+  "game_finished",
+  "nothing_to_undo",
+  "invalid_elo",
+  "invalid_position",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
@@ -74,11 +91,19 @@ export const ErrorEventSchema = z.object({
 });
 export type ErrorEvent = z.infer<typeof ErrorEventSchema>;
 
+// `state` is null when nothing is on the board.
+export const ActivityEventSchema = z.object({
+  type: z.literal("activity"),
+  state: ActivityStateSchema.nullable(),
+});
+export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
+
 export const ServerEventSchema = z.discriminatedUnion("type", [
   BootstrapEventSchema,
   ChatEventSchema,
   PermissionRequestEventSchema,
   ErrorEventSchema,
+  ActivityEventSchema,
 ]);
 export type ServerEvent = z.infer<typeof ServerEventSchema>;
 
@@ -97,8 +122,77 @@ export const ApproveToolCommandSchema = z.object({
 });
 export type ApproveToolCommand = z.infer<typeof ApproveToolCommandSchema>;
 
+// A command that acts on the board may name the activity it was issued against; the server
+// refuses it as stale when the board has since moved on, instead of applying it to the wrong one.
+const activityId = z.number().int().positive().optional();
+const square = z.string().regex(/^[a-h][1-8]$/);
+
+export const OpenGameCommandSchema = z.object({
+  type: z.literal("open_game"),
+  command_id: commandId,
+  game_id: z.number().int().positive(),
+});
+
+export const SelectReviewPlyCommandSchema = z.object({
+  type: z.literal("select_review_ply"),
+  command_id: commandId,
+  game_id: z.number().int().positive(),
+  ply: z.number().int().nonnegative(),
+  activity_id: activityId,
+});
+
+export const LeaveDemoCommandSchema = z.object({
+  type: z.literal("leave_demo"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
+export const NewGameCommandSchema = z.object({
+  type: z.literal("new_game"),
+  command_id: commandId,
+  color: z.enum(["white", "black"]),
+  elo: z.number().int(),
+});
+
+export const ResignCommandSchema = z.object({
+  type: z.literal("resign"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
+export const AbortCommandSchema = z.object({
+  type: z.literal("abort"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
+export const MoveCommandSchema = z.object({
+  type: z.literal("move"),
+  command_id: commandId,
+  from: square,
+  to: square,
+  promotion: PromotionSchema.optional(),
+  activity_id: activityId,
+});
+
+export const UndoCommandSchema = z.object({
+  type: z.literal("undo"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   SayCommandSchema,
   ApproveToolCommandSchema,
+  OpenGameCommandSchema,
+  SelectReviewPlyCommandSchema,
+  LeaveDemoCommandSchema,
+  NewGameCommandSchema,
+  ResignCommandSchema,
+  AbortCommandSchema,
+  MoveCommandSchema,
+  UndoCommandSchema,
 ]);
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
+
+export type ActivityCommand = Exclude<ClientCommand, SayCommand | ApproveToolCommand>;

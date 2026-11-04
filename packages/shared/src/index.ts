@@ -8,4 +8,5 @@ export interface HealthResponse {
   reason?: string;
 }
 
+export * from "./activity.js";
 export * from "./events.js";
