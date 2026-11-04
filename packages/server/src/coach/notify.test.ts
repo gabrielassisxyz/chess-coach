@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   GameEndNotification,
   NotificationContent,
+  PlyQuestionNotification,
   TurnNotification,
 } from "../game/notifications.js";
 import { renderNotifications, renderSrsAnswer, type SrsAnswerNotification } from "./notify.js";
@@ -33,9 +34,26 @@ const end: GameEndNotification = {
   player_color: "white",
   fen: FEN,
   costliest_moves: [
-    { ply: 3, san: "Nf3", cp_loss: 200, classification: "mistake", best_san: "d4" },
-    { ply: 5, san: "Bc4", cp_loss: 200, classification: "mistake", best_san: null },
+    {
+      ply: 3,
+      san: "Nf3",
+      cp_loss: 200,
+      classification: "mistake",
+      best_san: "d4",
+      fen_before: "fen-before-3",
+      card_id: 11,
+    },
+    {
+      ply: 5,
+      san: "Bc4",
+      cp_loss: 200,
+      classification: "mistake",
+      best_san: null,
+      fen_before: "fen-before-5",
+      card_id: null,
+    },
   ],
+  cards: { created: 1, skipped: 0 },
 };
 
 describe("renderNotifications", () => {
@@ -102,6 +120,58 @@ describe("renderNotifications", () => {
     expect(text).toContain("The latest move in full:");
     expect(text.indexOf("The latest move")).toBeLessThan(text.indexOf("The game is over"));
     expect(text).not.toContain("No earlier move");
+  });
+});
+
+describe("game end walk-through", () => {
+  it("names each move with its position before and its card id, and forbids a second batch", () => {
+    const text = renderNotifications([end]);
+    expect(text).toContain("position before (FEN): fen-before-3; card id 11");
+    expect(text).toContain("position before (FEN): fen-before-5; no card");
+    expect(text).toContain("(1 new, 0 already existed)");
+    expect(text).toContain("do not call create_srs_cards");
+    expect(text).toContain("show_position");
+    expect(text).toContain("explain_card");
+  });
+
+  it("gives no walk-through when no student move was graded", () => {
+    const text = renderNotifications([{ ...end, costliest_moves: [] }]);
+    expect(text).not.toContain("show_position");
+  });
+});
+
+describe("ply question", () => {
+  const question: PlyQuestionNotification = {
+    type: "ply_question",
+    game_id: 7,
+    ply: 12,
+    san: "Qxb7",
+    is_player: true,
+    fen_before: FEN,
+    cp_loss: 310,
+    classification: "blunder",
+    best_san: "Qd2",
+  };
+
+  it("renders the stored position, move and grade, and asks for the board", () => {
+    const text = renderNotifications([question]);
+    expect(text).toContain("game 7 and asks about 6... Qxb7, played by the student");
+    expect(text).toContain("blunder, cp loss 310; best was Qd2");
+    expect(text).toContain(`Position before the move (FEN): ${FEN}`);
+    expect(text).toContain("show_position");
+  });
+
+  it("says an engine move was not graded", () => {
+    const text = renderNotifications([
+      { ...question, is_player: false, cp_loss: null, classification: null, best_san: null },
+    ]);
+    expect(text).toContain("played by the engine (this move was not graded)");
+  });
+
+  it("is kept when it arrives together with a turn", () => {
+    const text = renderNotifications([turn(1), question]);
+    expect(text).toContain("The latest move in full:");
+    expect(text).toContain("asks about 6... Qxb7");
   });
 });
 

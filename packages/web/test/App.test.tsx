@@ -40,7 +40,7 @@ describe("App", () => {
     const tab = (name: string) => screen.getByRole("button", { name });
     expect(tab("Play").getAttribute("aria-current")).toBe("page");
     fireEvent.click(tab("Review"));
-    expect(screen.getByText("Review is not available yet.")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Review" })).toBeTruthy();
     expect(screen.getByLabelText("Message to the coach")).toBeTruthy();
     fireEvent.click(tab("Train"));
     expect(screen.getByText("Train is not available yet.")).toBeTruthy();

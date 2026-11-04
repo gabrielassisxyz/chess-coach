@@ -401,6 +401,7 @@ export class GameService {
                 finish,
                 playerColor: live.game.playerColor,
                 fen: live.chess.fen(),
+                clock: this.clock,
               }),
               this.clock,
             );
@@ -447,6 +448,7 @@ export class GameService {
           finish: input.finish,
           playerColor: input.playerColor,
           fen: input.fen,
+          clock: this.clock,
         });
         writeNotification(db, sessionId, content, this.clock);
       }

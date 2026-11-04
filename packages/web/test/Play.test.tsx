@@ -19,6 +19,7 @@ function api(activity: ActivityState | null, overrides: Partial<ServerApi> = {})
     errorCount: 0,
     localCount: 0,
     activity,
+    cardsCreated: {},
     connection: "connected",
     say: vi.fn(() => true),
     approve: vi.fn(),

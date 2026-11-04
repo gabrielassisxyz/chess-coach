@@ -3,6 +3,7 @@ import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Database } from "./db/open.js";
 import { registerCardRoutes } from "./http/cards.js";
+import { registerGameRoutes } from "./http/games.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
 
@@ -29,6 +30,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
 
   if (options.db) {
     registerCardRoutes(app, options.db);
+    registerGameRoutes(app, options.db);
     registerPuzzleRoutes(app, options.db);
   }
 
