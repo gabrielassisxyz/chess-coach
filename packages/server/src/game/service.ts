@@ -15,11 +15,18 @@ import {
   removeLastPlies,
 } from "../db/games.js";
 import type { Database } from "../db/open.js";
+import { EngineFault } from "../engine/errors.js";
 import type { PlayerMoveEvaluation } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
 import { MAX_ELO, MIN_ELO } from "../engine/play.js";
 import type { GameEngine } from "./engine.js";
 import { GameError } from "./errors.js";
+import {
+  gameEndContent,
+  type NotificationSink,
+  turnContent,
+  writeNotification,
+} from "./notifications.js";
 import { buildSnapshot, type GameSnapshot, type Promotion } from "./snapshot.js";
 
 export interface TurnReport {
@@ -32,6 +39,8 @@ export interface GameServiceOptions {
   db: Database;
   engine: GameEngine;
   clock?: Clock;
+  /** Absent in tests that do not involve a coach; turns then write no notification rows. */
+  notifications?: NotificationSink;
 }
 
 interface LiveState {
@@ -81,16 +90,20 @@ export class GameService {
   private readonly db: Database;
   private readonly engine: GameEngine;
   private readonly clock: Clock;
+  private readonly notifications: NotificationSink | undefined;
   private state: LiveState | null = null;
   private tail: Promise<unknown> = Promise.resolve();
   private turnInFlight = false;
   private readonly snapshotListeners = new Set<(snapshot: GameSnapshot) => void>();
   private readonly turnListeners = new Set<(report: TurnReport) => void>();
+  private readonly notificationListeners = new Set<() => void>();
+  private readonly faultListeners = new Set<(fault: EngineFault) => void>();
 
   constructor(options: GameServiceOptions) {
     this.db = options.db;
     this.engine = options.engine;
     this.clock = options.clock ?? systemClock;
+    this.notifications = options.notifications;
     const latest = findLatestGame(this.db);
     if (latest) this.state = this.load(latest);
   }
@@ -111,6 +124,18 @@ export class GameService {
   onTurn(listener: (report: TurnReport) => void): () => void {
     this.turnListeners.add(listener);
     return () => this.turnListeners.delete(listener);
+  }
+
+  /** Fires after a committed turn or resignation has left notification rows for the coach. */
+  onNotification(listener: () => void): () => void {
+    this.notificationListeners.add(listener);
+    return () => this.notificationListeners.delete(listener);
+  }
+
+  /** Fires when an engine fails a turn for good; the game stays in `evaluating` for the next boot. */
+  onEngineFault(listener: (fault: EngineFault) => void): () => void {
+    this.faultListeners.add(listener);
+    return () => this.faultListeners.delete(listener);
   }
 
   /** Called once at boot: finishes a turn that was cut off after the student's ply was saved. */
@@ -196,22 +221,24 @@ export class GameService {
   resign(): Promise<GameSnapshot> {
     return this.enqueue(async () => {
       const { game } = this.requireUnfinished();
-      return this.end({
-        result: game.playerColor === "white" ? "0-1" : "1-0",
-        termination: "resign",
-        finishedAt: this.clock.now().toISOString(),
-      });
+      return this.end(
+        {
+          result: game.playerColor === "white" ? "0-1" : "1-0",
+          termination: "resign",
+          finishedAt: this.clock.now().toISOString(),
+        },
+        true,
+      );
     });
   }
 
   abort(): Promise<GameSnapshot> {
     return this.enqueue(async () => {
       this.requireUnfinished();
-      return this.end({
-        result: null,
-        termination: "abort",
-        finishedAt: this.clock.now().toISOString(),
-      });
+      return this.end(
+        { result: null, termination: "abort", finishedAt: this.clock.now().toISOString() },
+        false,
+      );
     });
   }
 
@@ -298,12 +325,21 @@ export class GameService {
     const playerPly = last?.isPlayer ? last : undefined;
     const needsReply = !live.chess.isGameOver() && (last === undefined || last.isPlayer);
     const colorLetter = live.game.playerColor === "white" ? "w" : "b";
-    const [evaluation, choice] = await Promise.all([
-      playerPly
-        ? this.engine.evaluate(playerPly.fenBefore, playerPly.uci, colorLetter)
-        : Promise.resolve(null),
-      needsReply ? this.engine.play(live.chess.fen(), live.game.targetElo) : Promise.resolve(null),
-    ]);
+    let evaluation: PlayerMoveEvaluation | null;
+    let choice: Awaited<ReturnType<GameEngine["play"]>> | null;
+    try {
+      [evaluation, choice] = await Promise.all([
+        playerPly
+          ? this.engine.evaluate(playerPly.fenBefore, playerPly.uci, colorLetter)
+          : Promise.resolve(null),
+        needsReply
+          ? this.engine.play(live.chess.fen(), live.game.targetElo)
+          : Promise.resolve(null),
+      ]);
+    } catch (error) {
+      if (error instanceof EngineFault) this.emitFault(error);
+      throw error;
+    }
     // Cloning by FEN would drop the history that repetition and the fifty-move rule read.
     const after = replay(live.game, live.moves);
     let engineMove: NewMove | null = null;
@@ -320,15 +356,26 @@ export class GameService {
     }
     const finish = finishOf(after, this.clock.now().toISOString());
     const pgn = pgnOf(after, finish?.result ?? null);
+    const notify = this.turnNotifier({
+      gameId: live.game.id,
+      playerColor: live.game.playerColor,
+      player: playerPly,
+      evaluation,
+      engineMove,
+      finish,
+      fen: after.fen(),
+    });
     completeTurn(this.db, {
       gameId: live.game.id,
       evaluation: playerPly && evaluation ? { ply: playerPly.ply, value: evaluation } : null,
       engineMove,
       pgn,
       finish,
+      ...(notify ? { notify } : {}),
     });
     const settled = this.reload();
     this.emitSnapshot();
+    if (notify) this.emitNotification();
     if (!playerPly || !evaluation) return null;
     const report: TurnReport = {
       playerMove: settled.moves.find((move) => move.ply === playerPly.ply) as MoveRecord,
@@ -339,12 +386,79 @@ export class GameService {
     return report;
   }
 
-  private end(finish: Finish): GameSnapshot {
+  private end(finish: Finish, announce: boolean): GameSnapshot {
     const live = this.requireUnfinished();
-    finishGame(this.db, live.game.id, finish, pgnOf(replay(live.game, live.moves), finish.result));
+    const sessionId = announce ? this.notifications?.sessionId() : undefined;
+    const notify =
+      sessionId === undefined
+        ? undefined
+        : (db: Database): void =>
+            writeNotification(
+              db,
+              sessionId,
+              gameEndContent(db, {
+                gameId: live.game.id,
+                finish,
+                playerColor: live.game.playerColor,
+                fen: live.chess.fen(),
+              }),
+              this.clock,
+            );
+    finishGame(
+      this.db,
+      live.game.id,
+      finish,
+      pgnOf(replay(live.game, live.moves), finish.result),
+      notify,
+    );
     this.reload();
     this.emitSnapshot();
+    if (notify) this.emitNotification();
     return this.requireSnapshot();
+  }
+
+  // The rows are written by the turn's own transaction: a failed write must undo the turn, never leave it unannounced.
+  private turnNotifier(input: {
+    gameId: number;
+    playerColor: PlayerColor;
+    player: MoveRecord | undefined;
+    evaluation: PlayerMoveEvaluation | null;
+    engineMove: NewMove | null;
+    finish: Finish | null;
+    fen: string;
+  }): ((db: Database) => void) | undefined {
+    const graded = input.player?.isPlayer && input.evaluation ? input.player : undefined;
+    if (!this.notifications || !(graded || input.finish)) return undefined;
+    const sessionId = this.notifications.sessionId();
+    return (db) => {
+      if (graded && input.evaluation) {
+        const content = turnContent({
+          gameId: input.gameId,
+          player: graded,
+          evaluation: input.evaluation,
+          engineReply: input.engineMove,
+          fen: input.fen,
+        });
+        writeNotification(db, sessionId, content, this.clock);
+      }
+      if (input.finish) {
+        const content = gameEndContent(db, {
+          gameId: input.gameId,
+          finish: input.finish,
+          playerColor: input.playerColor,
+          fen: input.fen,
+        });
+        writeNotification(db, sessionId, content, this.clock);
+      }
+    };
+  }
+
+  private emitNotification(): void {
+    for (const listener of this.notificationListeners) this.notify(listener);
+  }
+
+  private emitFault(fault: EngineFault): void {
+    for (const listener of this.faultListeners) this.notify(() => listener(fault));
   }
 
   private emitSnapshot(): void {

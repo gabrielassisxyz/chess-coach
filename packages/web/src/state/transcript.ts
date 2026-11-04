@@ -66,7 +66,9 @@ function applyEntry(items: ChatItem[], entry: TranscriptEntry): void {
   } else if (entry.kind === "incomplete") {
     items.push({ type: "notice", key, text: "The previous answer was interrupted." });
   } else if (entry.kind === "notification") {
-    items.push({ type: "notice", key, text: textOf(content) });
+    // A game report is for the coach; it carries no text of its own to show the student.
+    const text = textOf(content);
+    if (text !== "") items.push({ type: "notice", key, text });
   }
 }
 

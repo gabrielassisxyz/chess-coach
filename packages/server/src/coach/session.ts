@@ -3,10 +3,19 @@ import { mkdirSync } from "node:fs";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { type Clock, systemClock } from "../clock.js";
 import type { CoachSession as CoachSessionRow } from "../db/chat.js";
-import { closeCoachSession, createCoachSession, findLatestOpenSession } from "../db/chat.js";
+import {
+  closeCoachSession,
+  createCoachSession,
+  findLatestOpenSession,
+  listUndeliveredNotifications,
+  markDelivered,
+} from "../db/chat.js";
 import type { Database } from "../db/open.js";
+import type { NotificationContent } from "../game/notifications.js";
 import { assertSubscriptionAuth } from "./auth.js";
 import { type CoachEvent, mapSdkMessage, type SessionInit } from "./events.js";
+import type { CoachWorld } from "./game-tools.js";
+import { renderNotifications } from "./notify.js";
 import { buildCoachPrompt, type CoachPrompt } from "./prompt.js";
 import { AsyncQueue } from "./queue.js";
 import { COACH_TOOL_NAMES, createCoachMcpServer, MCP_SERVER_NAME } from "./tools.js";
@@ -37,6 +46,7 @@ export interface CoachSessionDeps {
   query: QueryFn;
   contentDir: string;
   dataDir: string;
+  world: CoachWorld;
   clock?: Clock;
   env?: NodeJS.ProcessEnv;
   permissionTimeoutMs?: number;
@@ -63,6 +73,11 @@ export class CoachSession {
   private loop: Promise<void> = Promise.resolve();
   private usageLogged = false;
   private initLogged = false;
+  // True from handing the SDK a message until its turn ends: while it is set, notifications wait
+  // and are folded into one message instead of queueing behind the answer being written.
+  private busy = false;
+  // Rows written during boot recovery wait for start(); launching the SDK earlier would start it twice.
+  private started = false;
 
   constructor(private readonly deps: CoachSessionDeps) {
     this.clock = deps.clock ?? systemClock;
@@ -86,12 +101,45 @@ export class CoachSession {
   async start(): Promise<void> {
     assertSubscriptionAuth(this.deps.env ?? process.env);
     mkdirSync(this.deps.dataDir, { recursive: true });
-    this.prompt = buildCoachPrompt(this.deps.contentDir);
-    this.row = this.pickSessionRow(this.prompt.version);
+    this.ensureSessionId();
     this.launch();
+    this.started = true;
+    this.flushNotifications();
+  }
+
+  // The game service writes notification rows before the SDK is up (recovery runs at boot), so
+  // the session row has to exist without the query being started.
+  ensureSessionId(): number {
+    this.prompt ??= buildCoachPrompt(this.deps.contentDir);
+    this.row ??= this.pickSessionRow(this.prompt.version);
+    return this.row.id;
   }
 
   async send(text: string): Promise<void> {
+    const row = this.ensureStream();
+    recordUserText(this.deps.db, row.id, text, this.clock);
+    this.deliver(text);
+  }
+
+  /**
+   * Hands the SDK everything the game service left undelivered, as one message. Rows are marked
+   * delivered at the moment they are handed over, so a restart never sends a move twice.
+   */
+  flushNotifications(): void {
+    if (!this.started || this.busy) return;
+    const row = this.ensureStream();
+    const pending = listUndeliveredNotifications(this.deps.db, row.id);
+    if (pending.length === 0) return;
+    const text = renderNotifications(
+      pending.map((message) => JSON.parse(message.contentJson) as NotificationContent),
+    );
+    this.deps.db.transaction(() => {
+      for (const message of pending) markDelivered(this.deps.db, message.id);
+    })();
+    this.deliver(text);
+  }
+
+  private ensureStream(): CoachSessionRow {
     if (!this.prompt) throw new Error("coach session not started");
     if (!this.queue) {
       this.row =
@@ -99,8 +147,11 @@ export class CoachSession {
         createCoachSession(this.deps.db, { promptVersion: this.prompt.version }, this.clock);
       this.launch();
     }
-    const row = this.row as CoachSessionRow;
-    recordUserText(this.deps.db, row.id, text, this.clock);
+    return this.row as CoachSessionRow;
+  }
+
+  private deliver(text: string): void {
+    this.busy = true;
     this.queue?.push({
       type: "user",
       message: { role: "user", content: text },
@@ -137,6 +188,7 @@ export class CoachSession {
     const row = this.row as CoachSessionRow;
     const queue = new AsyncQueue<SDKUserMessage>();
     const resume = row.claudeSessionId ?? undefined;
+    this.busy = false;
     const stream = this.deps.query({ prompt: queue, options: this.buildOptions(resume) });
     this.queue = queue;
     this.active = stream;
@@ -152,7 +204,12 @@ export class CoachSession {
       settingSources: [],
       systemPrompt: { type: "preset", preset: "claude_code", append: this.prompt?.append ?? "" },
       mcpServers: {
-        [MCP_SERVER_NAME]: createCoachMcpServer({ db, contentDir, now: () => this.clock.now() }),
+        [MCP_SERVER_NAME]: createCoachMcpServer({
+          db,
+          contentDir,
+          world: this.deps.world,
+          now: () => this.clock.now(),
+        }),
       },
       // Without this the CLI also connects the owner's claude.ai connectors, whose tools would
       // then appear in the coach's tool list.
@@ -207,6 +264,10 @@ export class CoachSession {
         for (const item of mapped.finalized)
           recordFinalized(this.deps.db, row.id, item, this.clock);
         for (const event of mapped.events) this.emit(event);
+        if (mapped.events.some((event) => event.kind === "turn_end")) {
+          this.busy = false;
+          this.flushNotifications();
+        }
       }
     } catch (error) {
       // A stored session the CLI cannot find is closed so the next send starts a fresh one.
@@ -220,6 +281,7 @@ export class CoachSession {
       });
     } finally {
       if (this.active === stream) {
+        this.busy = false;
         this.queue?.close();
         this.queue = undefined;
         this.active = undefined;

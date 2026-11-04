@@ -7,11 +7,14 @@ import { NewGameForm } from "./NewGameForm.js";
 export interface ControlsProps {
   activity: ActivityState | null;
   send: ServerApi["send"];
+  // True while the engine is unavailable: a game could be opened but never played.
+  newGameBlocked?: boolean;
 }
 
-export function Controls({ activity, send }: ControlsProps) {
+export function Controls({ activity, send, newGameBlocked = false }: ControlsProps) {
   const [choosing, setChoosing] = useState(false);
   const enabled = controlState(activity);
+  const canStart = enabled.newGame && !newGameBlocked;
   const activityId = activity?.activity_id;
 
   const start = (color: "white" | "black", elo: number): void => {
@@ -24,7 +27,7 @@ export function Controls({ activity, send }: ControlsProps) {
         <button
           type="button"
           className="button"
-          disabled={!enabled.newGame}
+          disabled={!canStart}
           onClick={() => setChoosing(true)}
         >
           New game
@@ -63,7 +66,7 @@ export function Controls({ activity, send }: ControlsProps) {
           </button>
         ) : null}
       </div>
-      {choosing && enabled.newGame ? (
+      {choosing && canStart ? (
         <NewGameForm onStart={start} onCancel={() => setChoosing(false)} />
       ) : null}
     </div>

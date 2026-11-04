@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CoachEvent } from "../../src/coach/events.js";
 import { CoachSession, type CoachSessionDeps } from "../../src/coach/session.js";
+import { COACH_TOOL_NAMES } from "../../src/coach/tools.js";
 import {
   appendChatMessage,
   createCoachSession,
@@ -13,6 +14,7 @@ import {
 import { openDatabase } from "../../src/db/open.js";
 import { contentDir } from "../../src/paths.js";
 import { FakeSdk } from "../fakes/fake-sdk.js";
+import { makeWorld } from "../fakes/fake-world.js";
 
 const FIXTURE_SESSION_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -26,6 +28,7 @@ function setup(overrides: Partial<CoachSessionDeps> = {}) {
     query: sdk.query,
     contentDir: contentDir(),
     dataDir,
+    world: makeWorld(db).world,
     env: {},
     log: (line) => logs.push(line),
     ...overrides,
@@ -97,10 +100,8 @@ describe("CoachSession", () => {
     expect(options?.permissionMode).toBe("default");
     expect(options?.includePartialMessages).toBe(true);
     expect(options?.strictMcpConfig).toBe(true);
-    expect(options?.allowedTools).toEqual([
-      "mcp__chess__get_progress",
-      "mcp__chess__read_reference",
-    ]);
+    expect(options?.allowedTools).toEqual(COACH_TOOL_NAMES);
+    expect(options?.allowedTools).toHaveLength(8);
     expect(options?.resume).toBeUndefined();
     await session.stop();
   });
@@ -118,6 +119,7 @@ describe("CoachSession", () => {
       query: second.query,
       contentDir: contentDir(),
       dataDir: first.dataDir,
+      world: makeWorld(first.db).world,
       env: {},
       log: () => {},
     });
@@ -138,6 +140,7 @@ describe("CoachSession", () => {
       query: sdk.query,
       contentDir: contentDir(),
       dataDir,
+      world: makeWorld(db).world,
       env: {},
       log: () => {},
     });
@@ -160,6 +163,7 @@ describe("CoachSession", () => {
       query: sdk.query,
       contentDir: contentDir(),
       dataDir,
+      world: makeWorld(db).world,
       env: {},
       log: () => {},
     });
@@ -179,6 +183,7 @@ describe("CoachSession", () => {
       query: sdk.query,
       contentDir: contentDir(),
       dataDir,
+      world: makeWorld(db).world,
       env: {},
       log: () => {},
     });
@@ -198,6 +203,7 @@ describe("CoachSession", () => {
       query: broken.query,
       contentDir: contentDir(),
       dataDir,
+      world: makeWorld(db).world,
       env: {},
       log: () => {},
     });
