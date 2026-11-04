@@ -18,3 +18,30 @@ database, which were not carried over, so use `--pipeline stockfish` or `--pipel
 
 `validate_puzzles.py` reports `from-games.json` as short of puzzles while that file is empty;
 every other file validates.
+
+## Importing the earlier tutor's cards
+
+`import-chess-rocket-cards.ts` is a one-off TypeScript script, run from the repository root:
+
+```
+pnpm import:cards <path-to-srs_cards.json>
+```
+
+It writes into `data/chess-coach.db` (`CHESS_COACH_DATA_DIR` moves it) through the server's own
+`insertCard`, prints `N inserted, M skipped`, and exits non-zero when any card was skipped for
+an unparseable move (each is reported with its upstream `id`). A card whose `prompt_fen` and
+`expected_uci` already exist is skipped, so a second run inserts nothing.
+
+| upstream | `srs_cards` |
+|---|---|
+| (none) | `source_kind = 'teaching'`, no game or move |
+| `fen` | `prompt_fen` |
+| side to move in `fen` | `student_color` |
+| `player_move` (SAN) | `played_uci` |
+| `best_move` (SAN) | `expected_uci` |
+| `cp_loss`, `classification`, `explanation`, `created_at` | same columns |
+| `next_review` | `next_review_at` |
+| `interval_hours`, `ease_factor`, `repetitions` | same columns |
+| `id`, `motif`, `quality_history` | dropped |
+
+Moves are converted from SAN to UCI with chess.js on the card's own FEN.

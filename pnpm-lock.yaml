@@ -11,6 +11,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.6.4
         version: 2.6.4
+      chess.js:
+        specifier: ^1.4.0
+        version: 1.4.0
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

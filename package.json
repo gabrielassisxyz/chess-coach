@@ -12,10 +12,12 @@
     "typecheck": "pnpm -r run typecheck",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "pnpm -r run test"
+    "test": "pnpm -r run test",
+    "import:cards": "pnpm --filter @chess-coach/server exec tsx ../../tools/import-chess-rocket-cards.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.4",
+    "chess.js": "^1.4.0",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
   }
