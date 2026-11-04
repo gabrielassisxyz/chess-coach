@@ -29,3 +29,6 @@ dist
 # export. Nothing in it has a reader in the history. No trailing slash: a worktree
 # materializes this path as a symlink.
 /.beads
+
+# bv (beads viewer) local config and caches
+.bv/
