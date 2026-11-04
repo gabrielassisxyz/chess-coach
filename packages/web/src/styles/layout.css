@@ -107,10 +107,16 @@
   text-transform: capitalize;
 }
 
-.new-game__elo {
+.new-game__elo,
+.new-game__elo-field {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+}
+
+.new-game__error {
+  margin: 0;
+  color: var(--error);
 }
 
 .new-game__elo input {
