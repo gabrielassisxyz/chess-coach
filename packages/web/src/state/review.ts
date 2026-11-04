@@ -58,7 +58,17 @@ export function accuracyLabel(accuracy: number | null): string {
   return accuracy === null ? "not graded" : `${Math.round(accuracy * 100)}% accuracy`;
 }
 
+function importedLabel(game: GameSummary): string {
+  const result = game.result ?? "no result";
+  const ending = game.termination ?? "unfinished";
+  const where = game.source === "chesscom" ? "Chess.com" : "PGN";
+  const versus = game.opponent ? ` vs ${game.opponent}` : "";
+  const grade = game.grading === "done" ? accuracyLabel(game.accuracy) : `grading ${game.grading}`;
+  return `${(game.played_at ?? game.started_at).slice(0, 10)}, ${where}${versus}, ${game.player_color}, ${result} by ${ending}, ${game.move_count} moves, ${grade}`;
+}
+
 export function summaryLabel(game: GameSummary): string {
+  if (game.source !== "coach") return importedLabel(game);
   const result = game.result ?? "no result";
   const ending = game.termination ?? "unfinished";
   return `${game.started_at.slice(0, 10)}, ${game.player_color}, Elo ${game.target_elo}, ${result} by ${ending}, ${game.move_count} moves, ${accuracyLabel(game.accuracy)}`;

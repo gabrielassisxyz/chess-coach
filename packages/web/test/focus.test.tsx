@@ -9,7 +9,14 @@ import { Play } from "../src/screens/Play.js";
 import { Review } from "../src/screens/Review.js";
 import { Train } from "../src/screens/Train.js";
 import type { GamesApi } from "../src/state/games-api.js";
-import { legalMovesOf, liveGame, move, START_FEN } from "./fixtures.js";
+import {
+  COACH_GAME_SOURCE,
+  idleImportApi,
+  legalMovesOf,
+  liveGame,
+  move,
+  START_FEN,
+} from "./fixtures.js";
 import { serverApi } from "./server-api.js";
 
 afterEach(cleanup);
@@ -73,6 +80,7 @@ const inertBoard = () => ({ set: vi.fn(), destroy: vi.fn() }) as never;
 
 function reviewFixture(): GameDetail {
   return {
+    ...COACH_GAME_SOURCE,
     id: 7,
     started_at: "2026-01-01T00:00:00.000Z",
     finished_at: "2026-01-01T01:00:00.000Z",
@@ -94,6 +102,7 @@ function reviewFixture(): GameDetail {
 const gamesApi: GamesApi = {
   listGames: async () => [
     {
+      ...COACH_GAME_SOURCE,
       id: 7,
       started_at: "2026-01-01T00:00:00.000Z",
       finished_at: "2026-01-01T01:00:00.000Z",
@@ -151,7 +160,12 @@ describe("focus ring", () => {
 
   it("covers the Review list and an opened game with its controls", async () => {
     const { container } = render(
-      <Review server={serverApi()} api={gamesApi} createBoard={inertBoard} />,
+      <Review
+        server={serverApi()}
+        api={gamesApi}
+        importApi={idleImportApi}
+        createBoard={inertBoard}
+      />,
     );
     expect(
       expectFocusRing(container) + (await screen.findAllByRole("button")).length,

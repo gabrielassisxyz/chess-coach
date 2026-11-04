@@ -44,6 +44,14 @@ describe("GET /api/games", () => {
       termination: "resign",
       move_count: 12,
       accuracy: 1 / 6,
+      source: "coach",
+      source_url: null,
+      opponent: null,
+      student_rating: null,
+      opponent_rating: null,
+      time_control: null,
+      played_at: null,
+      grading: "done",
     });
   });
 

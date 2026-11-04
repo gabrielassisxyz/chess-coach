@@ -4,9 +4,10 @@ import {
   completeTurn,
   createGame,
   type Finish,
-  findLatestGame,
+  findUnfinishedGame,
   finishGame,
   type GameRecord,
+  getGame,
   listMoves,
   type MoveRecord,
   type NewMove,
@@ -104,8 +105,8 @@ export class GameService {
     this.engine = options.engine;
     this.clock = options.clock ?? systemClock;
     this.notifications = options.notifications;
-    const latest = findLatestGame(this.db);
-    if (latest) this.state = this.load(latest);
+    const unfinished = findUnfinishedGame(this.db);
+    if (unfinished) this.state = this.load(unfinished);
   }
 
   current(): GameRecord | null {
@@ -270,8 +271,8 @@ export class GameService {
 
   private reload(): LiveState {
     const live = this.requireGame();
-    const game = findLatestGame(this.db);
-    if (!game || game.id !== live.game.id) throw new Error("the live game disappeared");
+    const game = getGame(this.db, live.game.id);
+    if (!game) throw new Error("the live game disappeared");
     this.state = this.load(game);
     return this.state;
   }

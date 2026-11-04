@@ -1,9 +1,11 @@
 import type { GameDetail, GameSummary } from "@chess-coach/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
+import { ImportPanel } from "../components/ImportPanel.js";
 import { ReviewMoves } from "../components/ReviewMoves.js";
 import type { ServerApi } from "../hooks/useServer.js";
 import { type GamesApi, serverGamesApi } from "../state/games-api.js";
+import { type ImportApi, serverImportApi } from "../state/import-api.js";
 import { CLASSIFICATION_LABEL } from "../state/play.js";
 import {
   localReviewState,
@@ -18,6 +20,7 @@ import {
 export interface ReviewProps {
   server: ServerApi;
   api?: GamesApi;
+  importApi?: ImportApi;
   createBoard?: BoardFactory | undefined;
 }
 
@@ -224,7 +227,12 @@ function OpenGame({ server, game, createBoard, onClose }: OpenGameProps) {
   );
 }
 
-export function Review({ server, api = serverGamesApi, createBoard }: ReviewProps) {
+export function Review({
+  server,
+  api = serverGamesApi,
+  importApi = serverImportApi,
+  createBoard,
+}: ReviewProps) {
   const { listing, reload } = useGameList(api);
   const [game, setGame] = useState<GameDetail | null>(null);
   const [failed, setFailed] = useState(false);
@@ -261,7 +269,10 @@ export function Review({ server, api = serverGamesApi, createBoard }: ReviewProp
           onClose={() => setGame(null)}
         />
       ) : (
-        <GameList listing={listing} onOpen={open} onRetry={reload} />
+        <>
+          <ImportPanel api={importApi} onChanged={reload} />
+          <GameList listing={listing} onOpen={open} onRetry={reload} />
+        </>
       )}
     </section>
   );

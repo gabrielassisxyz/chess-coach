@@ -5,6 +5,8 @@ export type PlayerColor = "white" | "black";
 export type GamePhase = "player_turn" | "evaluating" | "engine_turn" | "finished";
 export type GameResult = "1-0" | "0-1" | "1/2-1/2";
 export type Termination = "checkmate" | "stalemate" | "draw" | "resign" | "abort";
+export type GameSource = "coach" | "chesscom" | "pgn";
+export type GradingState = "pending" | "running" | "done" | "failed";
 
 export interface GameRecord {
   id: number;
@@ -18,6 +20,15 @@ export interface GameRecord {
   result: GameResult | null;
   termination: Termination | null;
   pgn: string;
+  source: GameSource;
+  sourceId: string | null;
+  sourceUrl: string | null;
+  opponent: string | null;
+  studentRating: number | null;
+  opponentRating: number | null;
+  timeControl: string | null;
+  playedAt: string | null;
+  grading: GradingState;
 }
 
 export interface NewMove {
@@ -68,6 +79,15 @@ interface GameRow {
   result: GameResult | null;
   termination: Termination | null;
   pgn: string;
+  source: GameSource;
+  source_id: string | null;
+  source_url: string | null;
+  opponent: string | null;
+  student_rating: number | null;
+  opponent_rating: number | null;
+  time_control: string | null;
+  played_at: string | null;
+  grading: GradingState;
 }
 
 interface MoveRow {
@@ -100,6 +120,15 @@ function toGame(row: GameRow): GameRecord {
     result: row.result,
     termination: row.termination,
     pgn: row.pgn,
+    source: row.source,
+    sourceId: row.source_id,
+    sourceUrl: row.source_url,
+    opponent: row.opponent,
+    studentRating: row.student_rating,
+    opponentRating: row.opponent_rating,
+    timeControl: row.time_control,
+    playedAt: row.played_at,
+    grading: row.grading,
   };
 }
 
@@ -154,8 +183,11 @@ export function getGame(db: Database, id: number): GameRecord | undefined {
   return row ? toGame(row as GameRow) : undefined;
 }
 
-export function findLatestGame(db: Database): GameRecord | undefined {
-  const row = db.prepare("SELECT * FROM games ORDER BY id DESC LIMIT 1").get();
+// Imported games are born finished, so "the game in play" is the unfinished one and nothing else.
+export function findUnfinishedGame(db: Database): GameRecord | undefined {
+  const row = db
+    .prepare("SELECT * FROM games WHERE finished_at IS NULL ORDER BY id DESC LIMIT 1")
+    .get();
   return row ? toGame(row as GameRow) : undefined;
 }
 
@@ -287,4 +319,127 @@ export function listFinishedGames(db: Database, limit: number): GameSummaryRow[]
       accurateStudentMoves: row.accurate,
     }),
   );
+}
+
+export interface ImportedGame {
+  playerColor: PlayerColor;
+  targetElo: number;
+  initialFen: string;
+  startedAt: string;
+  finish: Finish;
+  pgn: string;
+  moves: NewMove[];
+  source: Exclude<GameSource, "coach">;
+  sourceId: string;
+  sourceUrl: string | null;
+  opponent: string | null;
+  studentRating: number | null;
+  opponentRating: number | null;
+  timeControl: string | null;
+  playedAt: string | null;
+}
+
+/** Stores a finished game and all its plies in one transaction; returns null when `sourceId` is known. */
+export function insertImportedGame(db: Database, game: ImportedGame): number | null {
+  return db.transaction((): number | null => {
+    const row = db
+      .prepare(
+        `INSERT INTO games (started_at, finished_at, player_color, target_elo, initial_fen, phase, result,
+           termination, pgn, source, source_id, source_url, opponent, student_rating, opponent_rating,
+           time_control, played_at, grading)
+         VALUES (?, ?, ?, ?, ?, 'finished', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+         ON CONFLICT DO NOTHING RETURNING id`,
+      )
+      .get(
+        game.startedAt,
+        game.finish.finishedAt,
+        game.playerColor,
+        game.targetElo,
+        game.initialFen,
+        game.finish.result,
+        game.finish.termination,
+        game.pgn,
+        game.source,
+        game.sourceId,
+        game.sourceUrl,
+        game.opponent,
+        game.studentRating,
+        game.opponentRating,
+        game.timeControl,
+        game.playedAt,
+      ) as { id: number } | undefined;
+    if (!row) return null;
+    for (const move of game.moves) insertMove(db, row.id, move);
+    return row.id;
+  })();
+}
+
+export function recordMoveEvaluation(
+  db: Database,
+  moveId: number,
+  value: PlayerMoveEvaluation,
+): void {
+  db.prepare(
+    `UPDATE moves SET eval_before_cp = ?, eval_after_cp = ?, cp_loss = ?, classification = ?,
+       best_move_uci = ?, best_move_san = ? WHERE id = ?`,
+  ).run(
+    value.evalBeforeCp,
+    value.evalAfterCp,
+    value.cpLoss,
+    value.classification,
+    value.bestMoveUci,
+    value.bestMoveSan,
+    moveId,
+  );
+}
+
+export function setGrading(db: Database, gameId: number, grading: GradingState): void {
+  db.prepare("UPDATE games SET grading = ? WHERE id = ?").run(grading, gameId);
+}
+
+/** The game the grader works on next: one interrupted mid-way first, then the oldest pending one. */
+export function findGameToGrade(db: Database): GameRecord | undefined {
+  const row = db
+    .prepare(
+      `SELECT * FROM games WHERE grading IN ('running', 'pending')
+       ORDER BY grading = 'running' DESC, id ASC LIMIT 1`,
+    )
+    .get();
+  return row ? toGame(row as GameRow) : undefined;
+}
+
+export interface GradingProgress {
+  pending: number;
+  failed: number;
+  running: { gameId: number; gradedPlies: number; totalPlies: number } | null;
+}
+
+export function gradingProgress(db: Database): GradingProgress {
+  const count = (state: GradingState): number =>
+    (db.prepare("SELECT COUNT(*) AS n FROM games WHERE grading = ?").get(state) as { n: number }).n;
+  const running = db.prepare("SELECT id FROM games WHERE grading = 'running' LIMIT 1").get() as
+    | { id: number }
+    | undefined;
+  const plies = (id: number) =>
+    db
+      .prepare(
+        `SELECT COUNT(*) AS total, COUNT(cp_loss) AS graded FROM moves
+         WHERE game_id = ? AND is_player = 1`,
+      )
+      .get(id) as { total: number; graded: number };
+  const detail = running ? plies(running.id) : null;
+  return {
+    pending: count("pending"),
+    failed: count("failed"),
+    running:
+      running && detail
+        ? { gameId: running.id, gradedPlies: detail.graded, totalPlies: detail.total }
+        : null,
+  };
+}
+
+/** Which of these source ids are already stored, so a listing can mark them. */
+export function getIdsBySource(db: Database, source: GameSource, ids: string[]): Set<string> {
+  const find = db.prepare("SELECT 1 FROM games WHERE source = ? AND source_id = ?");
+  return new Set(ids.filter((id) => find.get(source, id) !== undefined));
 }

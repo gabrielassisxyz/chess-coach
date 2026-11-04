@@ -7,6 +7,7 @@ import { listMoves } from "../db/games.js";
 import { type Database, openDatabase } from "../db/open.js";
 import type { PlayerMoveEvaluation } from "../engine/evaluate.js";
 import type { PlayChoice } from "../engine/play.js";
+import { importFinishedGame } from "../import/pgn.js";
 import type { GameEngine } from "./engine.js";
 import { GameError } from "./errors.js";
 import { GameService, type TurnReport } from "./service.js";
@@ -54,6 +55,7 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
+const IMPORTED_PGN = '[Result "0-1"]\n\n1. f3 e5 2. g4 Qh4# 0-1';
 const serviceWith = (engine: GameEngine) => new GameService({ db, engine });
 const move = (from: string, to: string) => ({ from, to });
 const plies = (gameId: number) => listMoves(db, gameId);
@@ -381,13 +383,33 @@ describe("a full game", () => {
     expect(service.snapshot()?.fen).toBe(finalFen);
   });
 
-  it("restores a finished game as finished after a restart", async () => {
+  it("does not restore a finished game after a restart, so the board starts empty", async () => {
     const service = serviceWith(new ScriptedEngine([]));
     await service.newGame({ color: "white", elo: 1200 });
     await service.resign();
     const restored = serviceWith(new ScriptedEngine([]));
-    expect(restored.snapshot()?.phase).toBe("finished");
+    expect(restored.current()).toBeNull();
+    expect(restored.snapshot()).toBeNull();
     await restored.recover();
-    expect(restored.current()?.termination).toBe("resign");
+    expect(restored.current()).toBeNull();
+  });
+
+  it("ignores an imported game at boot: nothing is current and recovery does nothing", async () => {
+    importFinishedGame(db, { pgn: IMPORTED_PGN, playerColor: "white", source: "pgn" });
+    const booted = serviceWith(new ScriptedEngine([]));
+    expect(booted.current()).toBeNull();
+    expect(booted.snapshot()).toBeNull();
+    await booted.recover();
+    expect(booted.current()).toBeNull();
+  });
+
+  it("keeps the unfinished game current when a newer imported game exists", async () => {
+    const service = serviceWith(new ScriptedEngine([]));
+    const live = await service.newGame({ color: "white", elo: 1200 });
+    importFinishedGame(db, { pgn: IMPORTED_PGN, playerColor: "white", source: "pgn" });
+    expect(serviceWith(new ScriptedEngine([])).current()?.id).toBe(service.current()?.id);
+    await service.resign();
+    expect(service.current()?.termination).toBe("resign");
+    expect(live.phase).toBe("player_turn");
   });
 });

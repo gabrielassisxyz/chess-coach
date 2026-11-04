@@ -4,11 +4,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Review } from "../src/screens/Review.js";
 import { Train } from "../src/screens/Train.js";
 import type { GamesApi } from "../src/state/games-api.js";
+import { COACH_GAME_SOURCE, idleImportApi } from "./fixtures.js";
 import { serverApi } from "./server-api.js";
 
 afterEach(cleanup);
 
 const summary: GameSummary = {
+  ...COACH_GAME_SOURCE,
   id: 7,
   started_at: "2026-01-01T00:00:00.000Z",
   finished_at: "2026-01-01T01:00:00.000Z",
@@ -29,12 +31,24 @@ const gamesApi = (overrides: Partial<GamesApi>): GamesApi => ({
 
 describe("Review states", () => {
   it("says what to do when there are no finished games", async () => {
-    render(<Review server={serverApi()} api={gamesApi({ listGames: async () => [] })} />);
+    render(
+      <Review
+        server={serverApi()}
+        api={gamesApi({ listGames: async () => [] })}
+        importApi={idleImportApi}
+      />,
+    );
     expect(await screen.findByText(/Finish a game on the Play screen/)).toBeTruthy();
   });
 
   it("shows a loading note while the list is on its way", () => {
-    render(<Review server={serverApi()} api={gamesApi({ listGames: never })} />);
+    render(
+      <Review
+        server={serverApi()}
+        api={gamesApi({ listGames: never })}
+        importApi={idleImportApi}
+      />,
+    );
     expect(screen.getByRole("status").textContent).toBe("Loading games.");
   });
 
@@ -43,7 +57,7 @@ describe("Review states", () => {
       .fn<GamesApi["listGames"]>()
       .mockRejectedValueOnce(new Error("down"))
       .mockResolvedValueOnce([summary]);
-    render(<Review server={serverApi()} api={gamesApi({ listGames })} />);
+    render(<Review server={serverApi()} api={gamesApi({ listGames })} importApi={idleImportApi} />);
     expect((await screen.findByRole("alert")).textContent).toContain("Check that the server");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(screen.getByRole("status").textContent).toBe("Loading games.");
@@ -53,7 +67,7 @@ describe("Review states", () => {
 
   it("says a game could not be opened and keeps the list to pick another", async () => {
     const getGame = vi.fn<GamesApi["getGame"]>().mockRejectedValue(new Error("gone"));
-    render(<Review server={serverApi()} api={gamesApi({ getGame })} />);
+    render(<Review server={serverApi()} api={gamesApi({ getGame })} importApi={idleImportApi} />);
     fireEvent.click(await screen.findByRole("button", { name: /1200/ }));
     expect((await screen.findByRole("alert")).textContent).toContain("pick another game");
     expect(screen.getByRole("list", { name: "Finished games" })).toBeTruthy();

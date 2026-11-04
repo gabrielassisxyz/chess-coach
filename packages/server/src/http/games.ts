@@ -1,7 +1,13 @@
 import type { GameDetailResponse, GameListResponse, GameMove } from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getGame, listFinishedGames, listMoves, type MoveRecord } from "../db/games.js";
+import {
+  type GameRecord,
+  getGame,
+  listFinishedGames,
+  listMoves,
+  type MoveRecord,
+} from "../db/games.js";
 import type { Database } from "../db/open.js";
 
 export const DEFAULT_GAME_LIMIT = 50;
@@ -26,6 +32,19 @@ function gameMove(move: MoveRecord): GameMove {
   };
 }
 
+function sourceFields(game: GameRecord) {
+  return {
+    source: game.source,
+    source_url: game.sourceUrl,
+    opponent: game.opponent,
+    student_rating: game.studentRating,
+    opponent_rating: game.opponentRating,
+    time_control: game.timeControl,
+    played_at: game.playedAt,
+    grading: game.grading,
+  };
+}
+
 export function registerGameRoutes(app: FastifyInstance, db: Database): void {
   app.get("/api/games", async (request, reply): Promise<GameListResponse | undefined> => {
     const parsed = listQuery.safeParse(request.query);
@@ -46,6 +65,7 @@ export function registerGameRoutes(app: FastifyInstance, db: Database): void {
         move_count: row.moveCount,
         accuracy:
           row.gradedStudentMoves === 0 ? null : row.accurateStudentMoves / row.gradedStudentMoves,
+        ...sourceFields(row.game),
       })),
     };
   });
@@ -67,6 +87,7 @@ export function registerGameRoutes(app: FastifyInstance, db: Database): void {
         result: game.result,
         termination: game.termination,
         initial_fen: game.initialFen,
+        ...sourceFields(game),
         moves: listMoves(db, game.id).map(gameMove),
       },
     };
