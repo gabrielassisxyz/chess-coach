@@ -1,16 +1,21 @@
 import {
+  type ActivityState,
   type ClientCommand,
   ClientCommandSchema,
   type ErrorCode,
+  ErrorCodeSchema,
   type ServerEvent,
   type TranscriptEntry,
 } from "@chess-coach/shared";
 import type { WebSocket } from "@fastify/websocket";
 import type { FastifyInstance } from "fastify";
+import { ActivityError } from "../activity/errors.js";
+import type { ActivityService } from "../activity/service.js";
 import type { CoachEvent } from "../coach/events.js";
 import type { PermissionRequest } from "../coach/session.js";
 import { type ChatMessage, listChatTail } from "../db/chat.js";
 import type { Database } from "../db/open.js";
+import { GameError } from "../game/errors.js";
 import { ChatEventNumbering } from "./chat-events.js";
 import { isUpgradeAllowed } from "./origin.js";
 
@@ -23,8 +28,24 @@ export interface CoachPort {
   onPermissionRequest(listener: (request: PermissionRequest) => void): () => void;
 }
 
+// The slice of ActivityService the hub drives.
+export type ActivityPort = Pick<
+  ActivityService,
+  | "current"
+  | "onState"
+  | "openGame"
+  | "selectReviewPly"
+  | "leaveDemo"
+  | "newGame"
+  | "resign"
+  | "abort"
+  | "playerMove"
+  | "undo"
+>;
+
 export interface HubOptions {
   coach: CoachPort;
+  activity: ActivityPort;
   db: Database;
   allowedOrigins: readonly string[];
   pingIntervalMs?: number;
@@ -59,6 +80,15 @@ function errorFrame(code: ErrorCode, message: string, commandId?: string): strin
   });
 }
 
+// Game and activity refusals carry a code the browser can switch on; anything else is a fault.
+function errorCodeOf(error: unknown): ErrorCode {
+  if (error instanceof GameError || error instanceof ActivityError) {
+    const code = ErrorCodeSchema.safeParse(error.code);
+    if (code.success) return code.data;
+  }
+  return "coach_error";
+}
+
 function commandIdOf(raw: unknown): string | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const id = (raw as { command_id?: unknown }).command_id;
@@ -68,7 +98,7 @@ function commandIdOf(raw: unknown): string | undefined {
 // The websocket plugin is registered by the caller on the root instance, so the server decorator
 // and injectWS stay visible outside this encapsulated context.
 export async function registerHub(app: FastifyInstance, options: HubOptions): Promise<void> {
-  const { coach, db, allowedOrigins } = options;
+  const { coach, activity, db, allowedOrigins } = options;
   const numbering = new ChatEventNumbering();
 
   const broadcast = (payload: string): void => {
@@ -87,7 +117,11 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
       }),
     ),
   );
+  const unsubscribeActivity = activity.onState((state: ActivityState | null) =>
+    broadcast(frame({ type: "activity", state })),
+  );
   app.addHook("onClose", async () => {
+    unsubscribeActivity();
     unsubscribeEvents();
     unsubscribePermissions();
   });
@@ -95,16 +129,54 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
   const bootstrap = (): string => {
     const row = coach.sessionRow;
     const rows = row ? listChatTail(db, row.id, BOOTSTRAP_TAIL) : [];
-    return frame({ type: "bootstrap", transcript: rows.map(toEntry) });
+    return frame({
+      type: "bootstrap",
+      transcript: rows.map(toEntry),
+      activity: activity.current(),
+    });
   };
 
   const run = async (command: ClientCommand, socket: WebSocket): Promise<void> => {
-    if (command.type === "say") {
-      await coach.send(command.text);
-      return;
-    }
-    if (!coach.resolvePermission(command.request_id, command.allow)) {
-      socket.send(errorFrame("unknown_request", "no such pending request", command.command_id));
+    switch (command.type) {
+      case "say":
+        await coach.send(command.text);
+        return;
+      case "approve_tool":
+        if (!coach.resolvePermission(command.request_id, command.allow)) {
+          socket.send(errorFrame("unknown_request", "no such pending request", command.command_id));
+        }
+        return;
+      case "open_game":
+        await activity.openGame(command.game_id);
+        return;
+      case "select_review_ply":
+        await activity.selectReviewPly(command.game_id, command.ply, command.activity_id);
+        return;
+      case "leave_demo":
+        await activity.leaveDemo(command.activity_id);
+        return;
+      case "new_game":
+        await activity.newGame({ color: command.color, elo: command.elo });
+        return;
+      case "resign":
+        await activity.resign(command.activity_id);
+        return;
+      case "abort":
+        await activity.abort(command.activity_id);
+        return;
+      case "move":
+        await activity.playerMove(
+          {
+            from: command.from,
+            to: command.to,
+            ...(command.promotion === undefined ? {} : { promotion: command.promotion }),
+          },
+          command.activity_id,
+        );
+        return;
+      case "undo":
+        await activity.undo(command.activity_id);
+        return;
     }
   };
 
@@ -123,7 +195,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
     }
     run(parsed.data, socket).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      socket.send(errorFrame("coach_error", message, parsed.data.command_id));
+      socket.send(errorFrame(errorCodeOf(error), message, parsed.data.command_id));
     });
   };
 

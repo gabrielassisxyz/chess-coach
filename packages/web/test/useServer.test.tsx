@@ -23,11 +23,60 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const demoState = (activityId: number, fen: string) => ({
+  kind: "demo",
+  activity_id: activityId,
+  orientation: "white",
+  fen,
+  turn: "black",
+  last_move: null,
+  legal_moves: [],
+  input_enabled: false,
+  pending: "none",
+  returns_to: null,
+  moves_played: [],
+});
+
 describe("useServer", () => {
+  it("keeps the latest activity from bootstrap and activity events", () => {
+    const { result } = mount();
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        transcript: [],
+        activity: demoState(1, "8/8/8/8/8/8/8/K6k w - - 0 1"),
+      }),
+    );
+    expect(result.current.activity).toMatchObject({ kind: "demo", activity_id: 1 });
+    act(() => FakeSocket.latest.receive({ type: "activity", state: demoState(2, "x") }));
+    expect(result.current.activity?.activity_id).toBe(2);
+    act(() => FakeSocket.latest.receive({ type: "activity", state: null }));
+    expect(result.current.activity).toBeNull();
+  });
+
+  it("sends a board command with a command_id and drops a malformed one", () => {
+    const { result } = mount();
+    act(() => FakeSocket.latest.open());
+    let sent = false;
+    act(() => {
+      sent = result.current.send({ type: "move", from: "e2", to: "e4", activity_id: 3 });
+    });
+    expect(sent).toBe(true);
+    expect(FakeSocket.latest.sent).toEqual([
+      { type: "move", command_id: "c1", from: "e2", to: "e4", activity_id: 3 },
+    ]);
+    act(() => {
+      sent = result.current.send({ type: "move", from: "z9", to: "e4" });
+    });
+    expect(sent).toBe(false);
+    expect(FakeSocket.latest.sent).toHaveLength(1);
+  });
+
   it("merges deltas of one message into a single assistant item", () => {
     const { result } = mount();
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [] }));
+    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
     act(() => FakeSocket.latest.receive(delta(1, 1, "Hel")));
     act(() => FakeSocket.latest.receive(delta(2, 1, "lo")));
     expect(result.current.items).toHaveLength(1);
@@ -61,6 +110,7 @@ describe("useServer", () => {
             created_at: "t",
           },
         ],
+        activity: null,
       }),
     );
     expect(result.current.items).toHaveLength(2);
@@ -70,7 +120,7 @@ describe("useServer", () => {
   it("resets transcript and approvals on reconnect and resends nothing", () => {
     const { result } = mount();
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [] }));
+    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
     act(() => FakeSocket.latest.receive(delta(1, 1, "partial")));
     act(() =>
       FakeSocket.latest.receive({
@@ -90,7 +140,7 @@ describe("useServer", () => {
     const second = FakeSocket.latest;
     expect(second).not.toBe(first);
     act(() => second.open());
-    act(() => second.receive({ type: "bootstrap", transcript: [] }));
+    act(() => second.receive({ type: "bootstrap", transcript: [], activity: null }));
 
     expect(result.current.connection).toBe("connected");
     expect(result.current.items).toEqual([]);
@@ -130,7 +180,7 @@ describe("useServer", () => {
   it("sends say with a command_id and shows the echo locally", () => {
     const { result } = mount();
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [] }));
+    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
     let sent = false;
     act(() => {
       sent = result.current.say("hello");

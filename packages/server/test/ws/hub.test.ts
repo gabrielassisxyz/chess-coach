@@ -7,11 +7,14 @@ import { join } from "node:path";
 import { ServerEventSchema } from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
+import { ActivityService } from "../../src/activity/service.js";
 import { buildApp } from "../../src/app.js";
 import { appendChatMessage, createCoachSession } from "../../src/db/chat.js";
 import { openDatabase } from "../../src/db/open.js";
+import { GameService } from "../../src/game/service.js";
 import { BOOTSTRAP_TAIL } from "../../src/ws/hub.js";
 import { FakeCoach } from "../fakes/fake-coach.js";
+import { ScriptedEngine } from "../fakes/scripted-engine.js";
 
 const VITE_ORIGIN = "http://localhost:5173";
 const VITE_HOST = "localhost:5173";
@@ -27,16 +30,19 @@ async function start(options: { pingIntervalMs?: number; origins?: string[] } = 
   const dataDir = mkdtempSync(join(tmpdir(), "hub-"));
   const db = openDatabase(dataDir);
   const coach = new FakeCoach();
+  const game = new GameService({ db, engine: new ScriptedEngine(["e7e5", "g8f6"]) });
+  const activity = new ActivityService({ db, game });
   app = buildApp({
     hub: {
       coach,
+      activity,
       db,
       allowedOrigins: options.origins ?? [VITE_ORIGIN, "http://127.0.0.1:5173"],
       ...(options.pingIntervalMs === undefined ? {} : { pingIntervalMs: options.pingIntervalMs }),
     },
   });
   await app.listen({ port: 0, host: "127.0.0.1" });
-  return { app, db, coach, port: (app.server.address() as AddressInfo).port };
+  return { app, db, coach, activity, port: (app.server.address() as AddressInfo).port };
 }
 
 // The reply to a raw upgrade request: the status line is all that matters for the Origin check.
@@ -148,7 +154,7 @@ describe("hub", () => {
   it("bootstraps empty before a session exists", async () => {
     const { app } = await start();
     const { next } = await connect(app);
-    expect(await next()).toEqual({ type: "bootstrap", transcript: [] });
+    expect(await next()).toEqual({ type: "bootstrap", transcript: [], activity: null });
   });
 
   it("answers a malformed frame with a typed error carrying the command_id", async () => {
@@ -251,5 +257,74 @@ describe("hub", () => {
     const { socket, next } = await connect(app);
     await next();
     await new Promise<void>((resolve) => socket.once("ping", () => resolve()));
+  });
+
+  it("includes the current activity in bootstrap", async () => {
+    const { app, activity } = await start();
+    await activity.startDemo("8/8/8/8/8/8/8/K6k w - - 0 1");
+    const { next } = await connect(app);
+    const event = ServerEventSchema.parse(await next());
+    if (event.type !== "bootstrap") throw new Error("expected bootstrap");
+    expect(event.activity).toMatchObject({ kind: "demo", activity_id: 1 });
+  });
+
+  it("drives a game from commands and broadcasts every activity change", async () => {
+    const { app } = await start();
+    const a = await connect(app);
+    const b = await connect(app);
+    await a.next();
+    await b.next();
+    a.socket.send(JSON.stringify({ type: "new_game", command_id: "n", color: "white", elo: 1200 }));
+    const opened = (await b.next()) as {
+      type: string;
+      state: { kind: string; activity_id: number };
+    };
+    expect(opened).toMatchObject({
+      type: "activity",
+      state: { kind: "live_game", activity_id: 1 },
+    });
+    a.socket.send(
+      JSON.stringify({ type: "move", command_id: "m", from: "e2", to: "e4", activity_id: 1 }),
+    );
+    const states: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const event = (await b.next()) as { state: { pending: string } };
+      states.push(event.state.pending);
+    }
+    expect(states).toEqual(["evaluating", "none"]);
+  });
+
+  it("answers a refused command with its typed code and command_id", async () => {
+    const { app, activity } = await start();
+    const { socket, next } = await connect(app);
+    await next();
+    socket.send(JSON.stringify({ type: "leave_demo", command_id: "l1" }));
+    expect(await next()).toMatchObject({ code: "not_in_demo", command_id: "l1" });
+    socket.send(JSON.stringify({ type: "new_game", command_id: "n", color: "white", elo: 1200 }));
+    await next();
+    await activity.startDemo("8/8/8/8/8/8/8/K6k w - - 0 1");
+    await next();
+    socket.send(JSON.stringify({ type: "move", command_id: "m1", from: "e2", to: "e4" }));
+    expect(await next()).toMatchObject({ code: "demo_active", command_id: "m1" });
+    socket.send(JSON.stringify({ type: "resign", command_id: "r1", activity_id: 1 }));
+    expect(await next()).toMatchObject({ code: "stale_activity", command_id: "r1" });
+    socket.send(JSON.stringify({ type: "open_game", command_id: "o1", game_id: 77 }));
+    expect(await next()).toMatchObject({ code: "game_not_found", command_id: "o1" });
+  });
+
+  it("passes the game's own error code through", async () => {
+    const { app } = await start();
+    const { socket, next } = await connect(app);
+    await next();
+    socket.send(JSON.stringify({ type: "new_game", command_id: "n", color: "white", elo: 50 }));
+    expect(await next()).toMatchObject({ code: "invalid_elo", command_id: "n" });
+  });
+
+  it("rejects a move with a malformed square before it reaches the game", async () => {
+    const { app } = await start();
+    const { socket, next } = await connect(app);
+    await next();
+    socket.send(JSON.stringify({ type: "move", command_id: "m", from: "z9", to: "e4" }));
+    expect(await next()).toMatchObject({ code: "invalid_command", command_id: "m" });
   });
 });

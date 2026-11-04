@@ -1,4 +1,4 @@
-import { ClientCommandSchema, ServerEventSchema } from "@chess-coach/shared";
+import { type ActivityCommand, ClientCommandSchema, ServerEventSchema } from "@chess-coach/shared";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { type ChatState, chatReducer, initialChatState } from "../state/transcript.js";
 
@@ -23,7 +23,10 @@ export interface ServerApi extends ChatState {
   connection: ConnectionState;
   say(text: string): boolean;
   approve(requestId: string, allow: boolean): void;
+  send(command: DistributiveOmit<ActivityCommand, "command_id">): boolean;
 }
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 const BACKOFF_START_MS = 500;
 const BACKOFF_MAX_MS = 10_000;
@@ -111,7 +114,13 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
     [sendCommand],
   );
 
-  return { ...state, connection, say, approve };
+  const send = useCallback(
+    (command: DistributiveOmit<ActivityCommand, "command_id">): boolean =>
+      sendCommand((command_id) => ({ ...command, command_id })),
+    [sendCommand],
+  );
+
+  return { ...state, connection, say, approve, send };
 }
 
 function parseJson(data: unknown): unknown {

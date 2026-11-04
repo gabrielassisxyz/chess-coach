@@ -1,4 +1,5 @@
 import type {
+  ActivityState,
   ChatEvent,
   PermissionRequestEvent,
   ServerEvent,
@@ -29,6 +30,7 @@ export interface ChatState {
   permissions: PendingPermission[];
   lastError: string | null;
   localCount: number;
+  activity: ActivityState | null;
 }
 
 export const initialChatState: ChatState = {
@@ -36,6 +38,7 @@ export const initialChatState: ChatState = {
   permissions: [],
   lastError: null,
   localCount: 0,
+  activity: null,
 };
 
 function textOf(content: unknown): string {
@@ -133,12 +136,14 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "bootstrap": {
       const items: ChatItem[] = [];
       for (const entry of event.transcript) applyEntry(items, entry);
-      return { ...initialChatState, items, localCount: state.localCount };
+      return { ...initialChatState, items, localCount: state.localCount, activity: event.activity };
     }
     case "chat":
       return applyChat(state, event);
     case "permission_request":
       return addPermission(state, event);
+    case "activity":
+      return { ...state, activity: event.state };
     case "error":
       return { ...state, lastError: event.message };
   }

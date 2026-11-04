@@ -11,9 +11,11 @@ function api(overrides: Partial<ServerApi> = {}): ServerApi {
     permissions: [],
     lastError: null,
     localCount: 0,
+    activity: null,
     connection: "connected",
     say: vi.fn(() => true),
     approve: vi.fn(),
+    send: vi.fn(() => true),
     ...overrides,
   };
 }
