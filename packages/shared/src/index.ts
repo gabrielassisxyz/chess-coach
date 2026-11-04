@@ -4,4 +4,6 @@
 export interface HealthResponse {
   status: "ok";
   version: string;
+  ready: boolean;
+  reason?: string;
 }
