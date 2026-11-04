@@ -119,7 +119,13 @@ export const TrainingSummarySchema = z.object({
 });
 export type TrainingSummary = z.infer<typeof TrainingSummarySchema>;
 
+// The student's scratch line on top of the served position. While the item is open, the board
+// fields of a training item (turn, last_move, legal_moves) describe this position.
+export const ExploringSchema = z.object({ fen: z.string(), line_san: z.array(z.string()) });
+export type Exploring = z.infer<typeof ExploringSchema>;
+
 // `summary` is set once the queue has ended; the last item then stays on the board, locked.
+// `fen` is the position the item was served in, the one an answer is graded against.
 export const TrainingActivitySchema = z.object({
   kind: z.literal("training"),
   ...boardFields,
@@ -128,6 +134,7 @@ export const TrainingActivitySchema = z.object({
   status: TrainingStatusSchema,
   exposure_id: z.string().optional(),
   expected: ExpectedMoveSchema.nullable(),
+  exploring: ExploringSchema,
   summary: TrainingSummarySchema.nullable(),
 });
 

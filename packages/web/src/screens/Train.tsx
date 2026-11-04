@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
 import type { ServerApi } from "../hooks/useServer.js";
 import {
+  answerUciOf,
+  boardOf,
   type FetchMotifs,
   fetchMotifsFromServer,
   type MotifCount,
@@ -161,8 +163,14 @@ export function Train({ server, createBoard, fetchMotifs = fetchMotifsFromServer
   const view = trainingView(training);
   const activityId = training.activity_id;
   const move = (from: string, to: string, promotion?: PromotionPiece): void => {
-    server.send({ type: "move", from, to, promotion, activity_id: activityId });
+    server.send({
+      type: "explore",
+      kind: "move",
+      uci: `${from}${to}${promotion ?? ""}`,
+      activity_id: activityId,
+    });
   };
+  const answerUci = answerUciOf(training);
   const exposureId = training.exposure_id;
 
   return (
@@ -177,7 +185,8 @@ export function Train({ server, createBoard, fetchMotifs = fetchMotifsFromServer
         </p>
       </header>
       <Board
-        activity={training}
+        activity={boardOf(training)}
+        bothSides
         onMove={move}
         syncToken={server.errorCount}
         createBoard={createBoard}
@@ -208,6 +217,36 @@ export function Train({ server, createBoard, fetchMotifs = fetchMotifsFromServer
             </button>
           ))}
         </fieldset>
+      ) : null}
+      {view.canExplore ? (
+        <div className="controls__row">
+          <button
+            type="button"
+            className="button button--primary"
+            disabled={!view.canAnswer || answerUci === null}
+            onClick={() =>
+              answerUci && server.send({ type: "answer", uci: answerUci, activity_id: activityId })
+            }
+          >
+            Answer
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={!view.canAnswer}
+            onClick={() => server.send({ type: "explore", kind: "undo", activity_id: activityId })}
+          >
+            Take back
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={!view.canAnswer}
+            onClick={() => server.send({ type: "explore", kind: "reset", activity_id: activityId })}
+          >
+            Reset
+          </button>
+        </div>
       ) : null}
       <div className="controls__row">
         {view.summary ? null : (

@@ -49,6 +49,8 @@ export interface CoachSessionDeps {
   clock?: Clock;
   env?: NodeJS.ProcessEnv;
   permissionTimeoutMs?: number;
+  /** Called with the id of each chat line the student sends, so it can be tied to an open item. */
+  onUserText?: (messageId: number) => void;
   log?: (line: string) => void;
 }
 
@@ -116,7 +118,8 @@ export class CoachSession {
 
   async send(text: string): Promise<void> {
     const row = this.ensureStream();
-    recordUserText(this.deps.db, row.id, text, this.clock);
+    const message = recordUserText(this.deps.db, row.id, text, this.clock);
+    this.deps.onUserText?.(message.id);
     this.deliver(text);
   }
 

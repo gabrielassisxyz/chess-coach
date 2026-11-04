@@ -86,6 +86,7 @@ describe("browser refresh", () => {
       status: "prompt",
       exposure_id: "ex-1",
       expected: null,
+      exploring: { fen: START_FEN, line_san: [] },
       summary: null,
     });
     expect(server.activity).toMatchObject({ kind: "training", exposure_id: "ex-1" });
@@ -109,6 +110,7 @@ describe("browser refresh", () => {
       },
       status: "in_progress",
       expected: null,
+      exploring: { fen: START_FEN, line_san: [] },
       summary: null,
     });
     expect(server.activity).toMatchObject({ kind: "training", item: { cursor: 2 } });

@@ -100,6 +100,9 @@ export const ErrorCodeSchema = z.enum([
   "exposure_unanswered",
   "invalid_quality",
   "game_not_finished",
+  "use_answer",
+  "not_exploring",
+  "illegal_exploration",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
@@ -228,6 +231,24 @@ export const StartTrainingCommandSchema = z.object({
   motif: z.string().min(1).max(64).optional(),
 });
 
+const uci = z.string().regex(/^[a-h][1-8][a-h][1-8][qrbn]?$/);
+
+// Exploration is recorded and never graded; `answer` is the only command that grades in training.
+export const ExploreCommandSchema = z.object({
+  type: z.literal("explore"),
+  command_id: commandId,
+  kind: z.enum(["move", "undo", "reset"]),
+  uci: uci.optional(),
+  activity_id: activityId,
+});
+
+export const AnswerCommandSchema = z.object({
+  type: z.literal("answer"),
+  command_id: commandId,
+  uci,
+  activity_id: activityId,
+});
+
 export const RateCardCommandSchema = z.object({
   type: z.literal("rate_card"),
   command_id: commandId,
@@ -273,6 +294,8 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   MoveCommandSchema,
   UndoCommandSchema,
   StartTrainingCommandSchema,
+  ExploreCommandSchema,
+  AnswerCommandSchema,
   RateCardCommandSchema,
   NextTrainingItemCommandSchema,
   EndTrainingCommandSchema,

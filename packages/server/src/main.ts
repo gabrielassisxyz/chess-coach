@@ -44,6 +44,7 @@ const coach = new CoachSession({
   query,
   contentDir: contentDir(),
   dataDir: dataDir(),
+  onUserText: (messageId) => activity.linkUserMessage(messageId),
   world: {
     game,
     activity,

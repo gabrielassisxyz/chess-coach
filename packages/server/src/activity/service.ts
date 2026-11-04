@@ -13,6 +13,7 @@ import {
   type PlayerColor,
 } from "../db/games.js";
 import type { Database } from "../db/open.js";
+import type { ExplorationKind } from "../db/training.js";
 import { GameError } from "../game/errors.js";
 import type { GameService, TurnReport } from "../game/service.js";
 import type { GameSnapshot } from "../game/snapshot.js";
@@ -173,8 +174,27 @@ export class ActivityService {
     });
   }
 
-  trainingMove(uci: string, expectedActivityId?: number): Promise<ActivityState> {
+  trainingAnswer(uci: string, expectedActivityId?: number): Promise<ActivityState> {
     return this.stepTraining(expectedActivityId, (run) => run.answer(uci));
+  }
+
+  trainingExplore(
+    input: { kind: ExplorationKind; uci?: string },
+    expectedActivityId?: number,
+  ): Promise<ActivityState> {
+    return this.enqueue("training", async () => {
+      this.checkFresh(expectedActivityId);
+      if (this.state?.kind !== "training" || !this.run) {
+        throw new ActivityError("not_exploring", "no training item is on the board");
+      }
+      this.run.explore(input.kind, input.uci);
+      return this.publish(this.run.state(this.state.activity_id));
+    });
+  }
+
+  // A chat line typed while an item is open belongs to it; the coach session reports each one here.
+  linkUserMessage(messageId: number): void {
+    this.run?.linkMessage(messageId);
   }
 
   rateCard(

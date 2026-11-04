@@ -24,6 +24,8 @@ export interface BoardProps {
   onMove(from: string, to: string, promotion?: PromotionPiece): void;
   // Bumped by the caller when the server refused something, so the board snaps back to the truth.
   syncToken?: number;
+  // Exploration plays both sides of a line, so the board may move the side to play, whoever it is.
+  bothSides?: boolean;
   createBoard?: BoardFactory | undefined;
 }
 
@@ -33,7 +35,7 @@ interface PendingPromotion {
   pieces: PromotionPiece[];
 }
 
-function toConfig(activity: ActivityState): Config {
+function toConfig(activity: ActivityState, bothSides: boolean): Config {
   const lastMove = activity.last_move ? [activity.last_move.from, activity.last_move.to] : [];
   return {
     fen: activity.fen,
@@ -45,27 +47,37 @@ function toConfig(activity: ActivityState): Config {
       free: false,
       // chessground's merge assigns undefined, which is how a disabled board drops the colour;
       // its typings do not admit it.
-      color: (activity.input_enabled ? activity.orientation : undefined) as Color,
+      color: (activity.input_enabled
+        ? bothSides
+          ? "both"
+          : activity.orientation
+        : undefined) as Color,
       dests: destsFrom(activity.legal_moves),
     },
   };
 }
 
-export function Board({ activity, onMove, syncToken = 0, createBoard = Chessground }: BoardProps) {
+export function Board({
+  activity,
+  onMove,
+  syncToken = 0,
+  bothSides = false,
+  createBoard = Chessground,
+}: BoardProps) {
   const elementRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<Api | null>(null);
   const [pending, setPending] = useState<PendingPromotion | null>(null);
   const [resync, setResync] = useState(0);
 
   // Chessground callbacks are registered once at creation, so they read the latest props here.
-  const latest = useRef({ activity, onMove });
-  latest.current = { activity, onMove };
+  const latest = useRef({ activity, onMove, bothSides });
+  latest.current = { activity, onMove, bothSides };
 
   useEffect(() => {
     const element = elementRef.current;
     if (!element) return;
     const api = createBoard(element, {
-      ...toConfig(latest.current.activity),
+      ...toConfig(latest.current.activity, latest.current.bothSides),
       draggable: { enabled: false },
       premovable: { enabled: false },
       selectable: { enabled: true },
@@ -90,8 +102,8 @@ export function Board({ activity, onMove, syncToken = 0, createBoard = Chessgrou
   // restores a piece the student moved that the server never accepted.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    apiRef.current?.set(toConfig(activity));
-  }, [activity, syncToken, resync]);
+    apiRef.current?.set(toConfig(activity, bothSides));
+  }, [activity, bothSides, syncToken, resync]);
 
   const choose = (piece: PromotionPiece): void => {
     if (!pending) return;
