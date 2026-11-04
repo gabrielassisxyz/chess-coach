@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Chess } from "chess.js";
 import { openDatabase } from "../packages/server/src/db/open.js";
 import type { Database } from "../packages/server/src/db/open.js";
+import { hasImportedBody, insertRoutine } from "../packages/server/src/db/routines.js";
 import { type NewCard, insertCard } from "../packages/server/src/db/srs.js";
 import { dataDir } from "../packages/server/src/paths.js";
 
@@ -100,7 +101,43 @@ export function importCards(db: Database, cards: UpstreamCard[]): ImportReport {
   return report;
 }
 
+export const IMPORTED_ROUTINE_WEEK_START = "2026-10-27";
+
+// The coach is told not to write em-dashes and the body is rendered, so the import matches.
+export function stripEmDashes(text: string): string {
+  return text.replace(/\s*\u2014\s*/g, ", ");
+}
+
+export interface RoutineReport {
+  inserted: boolean;
+}
+
+export function importRoutine(db: Database, markdown: string, now: Date = new Date()): RoutineReport {
+  const body = stripEmDashes(markdown).trim();
+  if (hasImportedBody(db, body)) return { inserted: false };
+  insertRoutine(db, {
+    weekStart: IMPORTED_ROUTINE_WEEK_START,
+    body,
+    writtenBy: "import",
+    createdAt: now.toISOString(),
+  });
+  return { inserted: true };
+}
+
+function mainRoutine(path: string | undefined): number {
+  if (!path) {
+    console.error("usage: import-chess-rocket-cards.ts routine <path-to-routine.md>");
+    return 2;
+  }
+  const db = openDatabase(dataDir());
+  const report = importRoutine(db, readFileSync(path, "utf8"));
+  db.close();
+  console.log(report.inserted ? "1 inserted, 0 skipped" : "0 inserted, 1 skipped");
+  return 0;
+}
+
 function main(): number {
+  if (process.argv[2] === "routine") return mainRoutine(process.argv[3]);
   const path = process.argv[2];
   if (!path) {
     console.error("usage: import-chess-rocket-cards.ts <path-to-srs_cards.json>");

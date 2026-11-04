@@ -18,6 +18,8 @@ const COACH_TOOL_ALLOWLIST = [
   "explain_card",
   "get_due_cards",
   "get_puzzles",
+  "read_routine",
+  "write_routine",
   "get_progress",
   "read_reference",
 ];

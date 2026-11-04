@@ -7,6 +7,7 @@ import { registerGameRoutes } from "./http/games.js";
 import { type ImportRoutesOptions, registerImportRoutes } from "./http/import.js";
 import { registerOpeningRoutes } from "./http/openings.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
+import { registerRoutineRoutes } from "./http/routine.js";
 import type { GenerationResult } from "./openings/from-games.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
 
@@ -39,6 +40,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     registerCardRoutes(app, options.db);
     registerGameRoutes(app, options.db);
     registerPuzzleRoutes(app, options.db);
+    registerRoutineRoutes(app, options.db);
     if (options.importer) registerImportRoutes(app, { db: options.db, ...options.importer });
     if (options.generateOpenings) registerOpeningRoutes(app, options.generateOpenings);
   }
