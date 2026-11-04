@@ -223,6 +223,34 @@ describe("CoachSession", () => {
     await session.stop();
   });
 
+  it("reports a login failure as a turn_error carrying the SDK's message", async () => {
+    const message = "Not logged in. Please run /login";
+    const { session, events } = setup({
+      query: new FakeSdk({ failBeforeInit: new Error(message) }).query,
+    });
+    await session.start();
+    await vi.waitFor(() => expect(events).toEqual([{ kind: "turn_error", message }]));
+    await session.stop();
+  });
+
+  it("recovers after the SDK process exits mid-turn and answers the next message", async () => {
+    const sdk = new FakeSdk({
+      failMidTurn: { messages: 5, error: new Error("Claude Code process exited with code 1") },
+    });
+    const { session, events } = setup({ query: sdk.query });
+    await session.start();
+    await session.send("hello");
+    await vi.waitFor(() => expect(events.at(-1)?.kind).toBe("turn_error"));
+    expect(events.some((e) => e.kind === "text_delta")).toBe(true);
+    expect(turnsEnded(events)).toBe(0);
+
+    await session.send("are you there");
+    await vi.waitFor(() => expect(sdk.calls).toHaveLength(2));
+    expect(sdk.calls[1]?.options.resume).toBe(FIXTURE_SESSION_ID);
+    await vi.waitFor(() => expect(turnsEnded(events)).toBe(1));
+    await session.stop();
+  });
+
   it("refuses to start with an API key in the environment", async () => {
     const { session } = setup({ env: { ANTHROPIC_API_KEY: "fake" } });
     await expect(session.start()).rejects.toThrow("ANTHROPIC_API_KEY");

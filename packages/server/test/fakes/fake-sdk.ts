@@ -27,6 +27,8 @@ export function loadRecordedTurns(): SDKMessage[][] {
 export interface FakeSdkOptions {
   turns?: SDKMessage[][];
   failBeforeInit?: Error;
+  // Ends the first turn with this error after `messages` messages, the way an exited CLI process does.
+  failMidTurn?: { messages: number; error: Error };
 }
 
 // Replays one recorded turn per user message it is fed, like the real streaming-input query.
@@ -35,10 +37,12 @@ export class FakeSdk {
   readonly userTexts: string[] = [];
   private readonly turns: SDKMessage[][];
   private readonly failBeforeInit: Error | undefined;
+  private midTurnFailure: FakeSdkOptions["failMidTurn"];
 
   constructor(options: FakeSdkOptions = {}) {
     this.turns = options.turns ?? loadRecordedTurns();
     this.failBeforeInit = options.failBeforeInit;
+    this.midTurnFailure = options.failMidTurn;
   }
 
   readonly query: QueryFn = ({ prompt, options }) => {
@@ -50,12 +54,19 @@ export class FakeSdk {
     const turns = this.turns;
     const userTexts = this.userTexts;
     const failure = this.failBeforeInit;
+    const midTurn = this.midTurnFailure;
+    this.midTurnFailure = undefined;
     async function* run(): AsyncGenerator<SDKMessage, void> {
       if (failure) throw failure;
       let index = 0;
       for await (const user of prompt) {
         userTexts.push(String(user.message.content));
-        for (const message of turns[index] ?? []) yield message;
+        const turn = turns[index] ?? [];
+        if (midTurn) {
+          yield* turn.slice(0, midTurn.messages);
+          throw midTurn.error;
+        }
+        for (const message of turn) yield message;
         index += 1;
       }
     }
