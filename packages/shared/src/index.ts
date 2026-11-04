@@ -7,3 +7,5 @@ export interface HealthResponse {
   ready: boolean;
   reason?: string;
 }
+
+export * from "./events.js";
