@@ -4,6 +4,7 @@ import { Chess } from "chess.js";
 import { z } from "zod";
 import { ActivityError } from "../activity/errors.js";
 import type { ActivityService } from "../activity/service.js";
+import type { PlayerMoveEvaluation, StudentColor } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
 import { MATE_SCORE_CP } from "../engine/parse.js";
 import { MAX_ELO, MIN_ELO } from "../engine/play.js";
@@ -12,12 +13,19 @@ import type { SearchResult } from "../engine/uci.js";
 import { GameError } from "../game/errors.js";
 import type { GameService } from "../game/service.js";
 
+export type SrsEvaluator = (
+  fen: string,
+  moveUci: string,
+  studentColor: StudentColor,
+) => Promise<PlayerMoveEvaluation>;
+
 // What the coach may touch of the running application. Each member is a slice of a real service
 // so a test can hand in a fake with only these methods.
 export interface CoachWorld {
   game: Pick<GameService, "snapshot" | "resign">;
   activity: Pick<ActivityService, "current" | "startDemo" | "demoMove" | "newGame">;
   analyze(fen: string): Promise<SearchResult>;
+  evaluateMove: SrsEvaluator;
 }
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: true };

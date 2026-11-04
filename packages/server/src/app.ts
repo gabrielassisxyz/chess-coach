@@ -2,6 +2,7 @@ import type { HealthResponse } from "@chess-coach/shared";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Database } from "./db/open.js";
+import { registerCardRoutes } from "./http/cards.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
 
@@ -26,7 +27,10 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     return state.ready || state.reason === undefined ? base : { ...base, reason: state.reason };
   });
 
-  if (options.db) registerPuzzleRoutes(app, options.db);
+  if (options.db) {
+    registerCardRoutes(app, options.db);
+    registerPuzzleRoutes(app, options.db);
+  }
 
   if (options.hub) {
     void app.register(websocket, { options: { maxPayload: MAX_FRAME_BYTES } });

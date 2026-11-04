@@ -58,8 +58,9 @@ describe("get_progress", () => {
     const db = freshDb();
     db.exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       INSERT INTO settings VALUES ('current_elo', '950');
-      CREATE TABLE srs_cards (id INTEGER PRIMARY KEY, next_review_at TEXT NOT NULL);
-      INSERT INTO srs_cards (next_review_at) VALUES ('2026-01-01T00:00:00Z'), ('2999-01-01T00:00:00Z');`);
+      INSERT INTO srs_cards (source_kind, prompt_fen, student_color, expected_uci, created_at, next_review_at)
+      VALUES ('teaching', 'f', 'white', 'd2d4', 't', '2026-01-01T00:00:00Z'),
+             ('teaching', 'f', 'white', 'd2d4', 't', '2999-01-01T00:00:00Z');`);
     expect(getProgress(db, new Date("2026-06-01T00:00:00Z"))).toEqual({
       current_elo: 950,
       games_played: 0,

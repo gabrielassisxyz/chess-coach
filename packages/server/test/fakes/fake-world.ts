@@ -1,6 +1,7 @@
 import { ActivityService } from "../../src/activity/service.js";
 import type { CoachWorld } from "../../src/coach/game-tools.js";
 import type { Database } from "../../src/db/open.js";
+import type { StudentColor } from "../../src/engine/evaluate.js";
 import type { SearchResult } from "../../src/engine/uci.js";
 import { GameService } from "../../src/game/service.js";
 import { ScriptedEngine } from "./scripted-engine.js";
@@ -11,6 +12,8 @@ export interface FakeWorld {
   activity: ActivityService;
   engine: ScriptedEngine;
   analyzed: string[];
+  /** Every move the SRS tools asked to be graded, in order. */
+  evaluated: { fen: string; uci: string; color: StudentColor }[];
   /** Replace to script what the next `analyze` call resolves or rejects with. */
   answer: { next: () => Promise<SearchResult> };
 }
@@ -22,6 +25,7 @@ export function makeWorld(db: Database, replies: string[] = []): FakeWorld {
   const game = new GameService({ db, engine });
   const activity = new ActivityService({ db, game });
   const analyzed: string[] = [];
+  const evaluated: FakeWorld["evaluated"] = [];
   const answer = {
     next: (): Promise<SearchResult> =>
       Promise.resolve({
@@ -41,6 +45,17 @@ export function makeWorld(db: Database, replies: string[] = []): FakeWorld {
       analyzed.push(fen);
       return answer.next();
     },
+    evaluateMove: async (fen, uci, color) => {
+      evaluated.push({ fen, uci, color });
+      return {
+        evalBeforeCp: 100,
+        evalAfterCp: -120,
+        cpLoss: 220,
+        classification: "mistake",
+        bestMoveUci: "d2d4",
+        bestMoveSan: "d4",
+      };
+    },
   };
-  return { world, game, activity, engine, analyzed, answer };
+  return { world, game, activity, engine, analyzed, evaluated, answer };
 }

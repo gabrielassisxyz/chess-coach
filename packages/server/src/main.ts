@@ -5,6 +5,7 @@ import { assertSubscriptionAuth } from "./coach/auth.js";
 import { CoachSession } from "./coach/session.js";
 import { openDatabase } from "./db/open.js";
 import { bootEngines } from "./engine/boot.js";
+import { evaluatePlayerMove } from "./engine/evaluate.js";
 import { EnginePool } from "./engine/pool.js";
 import { spawnStockfish } from "./engine/process.js";
 import { poolGameEngine } from "./game/engine.js";
@@ -36,7 +37,12 @@ const coach = new CoachSession({
   query,
   contentDir: contentDir(),
   dataDir: dataDir(),
-  world: { game, activity, analyze: (fen) => pool.analyze(fen) },
+  world: {
+    game,
+    activity,
+    analyze: (fen) => pool.analyze(fen),
+    evaluateMove: (fen, moveUci, color) => evaluatePlayerMove(pool.evaluation, fen, moveUci, color),
+  },
 });
 game.onNotification(() => coach.flushNotifications());
 game.onEngineFault((fault) => {
