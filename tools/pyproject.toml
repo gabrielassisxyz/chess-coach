@@ -1,0 +1,9 @@
+[project]
+name = "chess-coach-tools"
+version = "0.0.0"
+description = "Offline scripts that produce and validate the puzzle JSON under content/puzzles"
+requires-python = ">=3.10"
+dependencies = [
+    "python-chess",
+    "zstandard",
+]
