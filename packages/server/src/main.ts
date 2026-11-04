@@ -10,6 +10,7 @@ import { spawnStockfish } from "./engine/process.js";
 import { poolGameEngine } from "./game/engine.js";
 import { GameService } from "./game/service.js";
 import { contentDir, dataDir } from "./paths.js";
+import { seedPuzzles } from "./puzzles/seed.js";
 import { allowedOriginsFrom } from "./ws/origin.js";
 
 assertSubscriptionAuth();
@@ -19,6 +20,9 @@ let readiness: Readiness = { ready: false, reason: "coach is starting" };
 // Once a turn has failed for good the server stays not-ready until a restart finishes it.
 let engineFault = false;
 const db = openDatabase(dataDir());
+// A bad puzzle entry throws here, naming <file>:<index>, before anything else starts.
+const seeded = seedPuzzles(db, contentDir());
+console.log(`puzzles seeded: ${seeded.inserted} new, ${seeded.updated} updated`);
 const pool = new EnginePool(() => spawnStockfish());
 // The sink reads `coach` when a turn commits, long after the constant below is initialised.
 const game = new GameService({
@@ -56,6 +60,7 @@ if (engines.ok) {
 
 const app = buildApp({
   readiness: () => readiness,
+  db,
   hub: { coach, activity, db, allowedOrigins: allowedOriginsFrom() },
 });
 
