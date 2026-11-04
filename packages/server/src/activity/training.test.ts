@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
 import { START_FEN } from "../../test/fixture-game.js";
 import type { Clock } from "../clock.js";
-import { createCoachSession, listChatTail } from "../db/chat.js";
+import { type CoachNotification, renderNotifications } from "../coach/notify.js";
+import { appendChatMessage, createCoachSession, listChatTail } from "../db/chat.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { getCard, insertCard } from "../db/srs.js";
 import { GameService } from "../game/service.js";
@@ -19,7 +20,7 @@ const FORK = "r2qk2r/pQp1ppbp/6p1/1N3P2/2p2B2/8/PPn2P1P/R4K1R w kq - 2 14";
 
 let tmp: string;
 let db: Database;
-const clock: Clock = { now: () => T0 };
+const fixedClock: Clock = { now: () => T0 };
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "cc-training-"));
@@ -54,7 +55,7 @@ function addCard(expectedUci = "d2d4"): number {
   return (card as { id: number }).id;
 }
 
-function setup() {
+function setup(clock: Clock = fixedClock) {
   const game = new GameService({ db, engine: new ScriptedEngine(["e7e5"]) });
   const session = createCoachSession(db, { promptVersion: "v" });
   const notifications = { sessionId: () => session.id };
@@ -67,7 +68,21 @@ function setup() {
   });
   const rows = () =>
     listChatTail(db, session.id, 100).map((row) => JSON.parse(row.contentJson) as { type: string });
-  return { activity, game, flushed, rows };
+  const say = (text: string): number => {
+    const row = appendChatMessage(
+      db,
+      session.id,
+      { role: "user", kind: "text", contentJson: JSON.stringify({ text }) },
+      clock,
+    );
+    activity.linkUserMessage(row.id);
+    return row.id;
+  };
+  const notes = () =>
+    listChatTail(db, session.id, 100)
+      .filter((row) => row.kind === "notification")
+      .map((row) => JSON.parse(row.contentJson) as CoachNotification);
+  return { activity, game, flushed, rows, say, notes };
 }
 
 const training = (state: ActivityState | null): TrainingActivity => {
@@ -133,7 +148,7 @@ describe("a card item", () => {
     addCard("d2d4");
     const { activity, flushed, rows } = setup();
     await activity.startTraining({ mode: "srs" });
-    const state = training(await activity.trainingMove("e2e4"));
+    const state = training(await activity.trainingAnswer("e2e4"));
     expect(state).toMatchObject({
       status: "failed",
       input_enabled: false,
@@ -150,7 +165,7 @@ describe("a card item", () => {
     const before = getCard(db, id)?.nextReviewAt;
     const { activity } = setup();
     const start = training(await activity.startTraining({ mode: "srs" }));
-    await activity.trainingMove("d2d4");
+    await activity.trainingAnswer("d2d4");
     const rated = training(
       await activity.rateCard((start.item as { exposure_id: string }).exposure_id, 4),
     );
@@ -162,7 +177,7 @@ describe("a card item", () => {
     addCard();
     const { activity } = setup();
     await activity.startTraining({ mode: "srs" });
-    expect(await code(activity.trainingMove("e2e5"))).toBe("illegal_move");
+    expect(await code(activity.trainingAnswer("e2e5"))).toBe("illegal_move");
   });
 });
 
@@ -171,7 +186,7 @@ describe("a puzzle item", () => {
     addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
     const { activity, rows } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    const mid = training(await activity.trainingMove("b5c7"));
+    const mid = training(await activity.trainingAnswer("b5c7"));
     expect(mid).toMatchObject({
       status: "in_progress",
       input_enabled: true,
@@ -180,7 +195,7 @@ describe("a puzzle item", () => {
     });
     expect(mid.legal_moves.length).toBeGreaterThan(0);
     expect(rows()).toEqual([]);
-    const done = training(await activity.trainingMove("a1c1"));
+    const done = training(await activity.trainingAnswer("a1c1"));
     expect(done).toMatchObject({ status: "solved", input_enabled: false, expected: null });
     expect(rows().map((r) => r.type)).toEqual(["puzzle_result"]);
     const attempts = db.prepare("SELECT solved FROM puzzle_attempts").all();
@@ -191,7 +206,7 @@ describe("a puzzle item", () => {
     addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
     const { activity, rows } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    const state = training(await activity.trainingMove("f4e5"));
+    const state = training(await activity.trainingAnswer("f4e5"));
     expect(state).toMatchObject({
       status: "failed",
       input_enabled: false,
@@ -210,13 +225,13 @@ describe("command routing and refusals", () => {
     addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
     const { activity } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    await activity.trainingMove("a1a8");
+    await activity.trainingAnswer("a1a8");
     expect(await code(activity.rateCard("anything", 3))).toBe("exposure_unknown");
     await activity.endTraining();
 
     addCard();
     const first = training(await activity.startTraining({ mode: "srs" }));
-    await activity.trainingMove("d2d4");
+    await activity.trainingAnswer("d2d4");
     expect(await code(activity.rateCard("not-the-serving", 3))).toBe("exposure_unknown");
     const exposure = (first.item as { exposure_id: string }).exposure_id;
     expect(await code(activity.rateCard(exposure, 9))).toBe("invalid_quality");
@@ -229,7 +244,7 @@ describe("command routing and refusals", () => {
     addCard();
     const { activity } = setup();
     const first = training(await activity.startTraining({ mode: "srs" }));
-    await activity.trainingMove("d2d4");
+    await activity.trainingAnswer("d2d4");
     await activity.nextTrainingItem();
     const earlier = (first.item as { exposure_id: string }).exposure_id;
     expect(await code(activity.rateCard(earlier, 3))).toBe("exposure_unknown");
@@ -252,7 +267,7 @@ describe("command routing and refusals", () => {
     await activity.endTraining();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
     expect(await code(activity.nextTrainingItem())).toBe("item_unfinished");
-    await activity.trainingMove("b5c7");
+    await activity.trainingAnswer("b5c7");
     expect(await code(activity.nextTrainingItem())).toBe("item_unfinished");
   });
 
@@ -261,7 +276,7 @@ describe("command routing and refusals", () => {
     addCard();
     const { activity } = setup();
     await activity.startTraining({ mode: "srs" });
-    await activity.trainingMove("d2d4");
+    await activity.trainingAnswer("d2d4");
     const next = training(await activity.nextTrainingItem());
     expect(next).toMatchObject({ status: "prompt", item: { position_in_queue: 2 } });
   });
@@ -271,9 +286,11 @@ describe("command routing and refusals", () => {
     const { activity } = setup();
     expect(await code(activity.nextTrainingItem())).toBe("not_in_training");
     const state = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
-    expect(await code(activity.trainingMove("a1a8", state.activity_id + 1))).toBe("stale_activity");
-    await activity.trainingMove("a1a8");
-    expect(await code(activity.trainingMove("a1a8"))).toBe("item_finished");
+    expect(await code(activity.trainingAnswer("a1a8", state.activity_id + 1))).toBe(
+      "stale_activity",
+    );
+    await activity.trainingAnswer("a1a8");
+    expect(await code(activity.trainingAnswer("a1a8"))).toBe("item_finished");
   });
 });
 
@@ -283,9 +300,9 @@ describe("the end of a queue", () => {
     addPuzzle("f2", "fork", BACK_RANK, ["a1a8"]);
     const { activity, rows } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    await activity.trainingMove("a1a8");
+    await activity.trainingAnswer("a1a8");
     await activity.nextTrainingItem();
-    await activity.trainingMove("g1h1");
+    await activity.trainingAnswer("g1h1");
     expect(rows().filter((r) => r.type === "training_summary")).toEqual([]);
     const ended = training(await activity.nextTrainingItem());
     expect(ended.summary).toEqual({ solved: 1, failed: 1 });
@@ -308,5 +325,197 @@ describe("the end of a queue", () => {
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
     expect(await activity.endTraining()).toBeNull();
     expect(activity.current()).toBeNull();
+  });
+});
+
+// A clock the test moves by hand, so offsets from the moment an item was served are exact.
+function steppingClock(): Clock & { advance(seconds: number): void } {
+  let now = T0.getTime();
+  return {
+    now: () => new Date(now),
+    advance: (seconds) => {
+      now += seconds * 1000;
+    },
+  };
+}
+
+const events = () =>
+  db.prepare("SELECT seq, at_ms, kind, uci FROM exploration_events ORDER BY seq").all();
+
+describe("exploration", () => {
+  it("records moves with the server clock and shows the explored position", async () => {
+    addCard("d2d4");
+    const clock = steppingClock();
+    const { activity } = setup(clock);
+    await activity.startTraining({ mode: "srs" });
+    clock.advance(12);
+    const state = training(await activity.trainingExplore({ kind: "move", uci: "e2e4" }));
+    expect(state.exploring).toEqual({
+      fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+      line_san: ["e4"],
+    });
+    expect(state).toMatchObject({ fen: START_FEN, turn: "black", status: "prompt" });
+    expect(state.legal_moves).toHaveLength(20);
+    expect(state.last_move).toEqual({ from: "e2", to: "e4" });
+    clock.advance(3);
+    await activity.trainingExplore({ kind: "move", uci: "e7e5" });
+    expect(events()).toEqual([
+      { seq: 1, at_ms: 12_000, kind: "move", uci: "e2e4" },
+      { seq: 2, at_ms: 15_000, kind: "move", uci: "e7e5" },
+    ]);
+  });
+
+  it("never grades: the card stays unanswered and no notification is written", async () => {
+    addCard("d2d4");
+    const { activity, rows } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const state = training(await activity.trainingExplore({ kind: "move", uci: "d2d4" }));
+    expect(state.status).toBe("prompt");
+    expect(rows()).toEqual([]);
+    expect(db.prepare("SELECT answered_at FROM training_items").all()).toEqual([
+      { answered_at: null },
+    ]);
+  });
+
+  it("takes one move back on undo and returns to the served position on reset", async () => {
+    addCard();
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingExplore({ kind: "move", uci: "e2e4" });
+    await activity.trainingExplore({ kind: "move", uci: "e7e5" });
+    const undone = training(await activity.trainingExplore({ kind: "undo" }));
+    expect(undone.exploring.line_san).toEqual(["e4"]);
+    expect(undone.turn).toBe("black");
+    const reset = training(await activity.trainingExplore({ kind: "reset" }));
+    expect(reset.exploring).toEqual({ fen: START_FEN, line_san: [] });
+    expect(reset.last_move).toBeNull();
+    expect(events().map((e) => (e as { kind: string }).kind)).toEqual([
+      "move",
+      "move",
+      "undo",
+      "reset",
+    ]);
+  });
+
+  it("refuses an illegal exploration move, or one with nothing to undo, and records nothing", async () => {
+    addCard();
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    expect(await code(activity.trainingExplore({ kind: "move", uci: "e2e5" }))).toBe(
+      "illegal_exploration",
+    );
+    expect(await code(activity.trainingExplore({ kind: "move" }))).toBe("illegal_exploration");
+    expect(await code(activity.trainingExplore({ kind: "undo" }))).toBe("illegal_exploration");
+    expect(await code(activity.trainingExplore({ kind: "reset" }))).toBe("illegal_exploration");
+    expect(events()).toEqual([]);
+  });
+
+  it("refuses to explore outside a training item and once the item is answered", async () => {
+    addCard();
+    const { activity } = setup();
+    expect(await code(activity.trainingExplore({ kind: "undo" }))).toBe("not_exploring");
+    const state = training(await activity.startTraining({ mode: "srs" }));
+    expect(await code(activity.trainingExplore({ kind: "undo" }, state.activity_id + 1))).toBe(
+      "stale_activity",
+    );
+    await activity.trainingAnswer("d2d4");
+    expect(await code(activity.trainingExplore({ kind: "move", uci: "e2e4" }))).toBe(
+      "not_exploring",
+    );
+  });
+
+  it("grades the answer against the served position, ignoring what was explored", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingExplore({ kind: "move", uci: "e2e4" });
+    await activity.trainingExplore({ kind: "move", uci: "e7e5" });
+    const done = training(await activity.trainingAnswer("d2d4"));
+    expect(done).toMatchObject({
+      status: "solved",
+      exploring: { fen: START_FEN, line_san: [] },
+      legal_moves: [],
+    });
+    expect(db.prepare("SELECT answer_uci, correct, answered_at FROM training_items").all()).toEqual(
+      [{ answer_uci: "d2d4", correct: 1, answered_at: T0.toISOString() }],
+    );
+    expect(await code(activity.trainingAnswer("d2d4"))).toBe("item_finished");
+  });
+
+  it("links chat lines to the open item and not to the gap before the next one", async () => {
+    addCard();
+    addCard();
+    const { activity, say } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const during = say("I think the centre matters");
+    await activity.trainingAnswer("d2d4");
+    say("that was easy");
+    await activity.nextTrainingItem();
+    const second = say("now this one");
+    const links = db
+      .prepare("SELECT item_id, message_id FROM item_messages ORDER BY message_id")
+      .all();
+    expect(links).toEqual([
+      { item_id: 1, message_id: during },
+      { item_id: 2, message_id: second },
+    ]);
+  });
+
+  it("keeps a multi-move puzzle open and restarts exploring from the position after the reply", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const { activity, rows } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingExplore({ kind: "move", uci: "f4e5" });
+    const mid = training(await activity.trainingAnswer("b5c7"));
+    expect(mid.status).toBe("in_progress");
+    expect(mid.exploring).toEqual({ fen: mid.fen, line_san: [] });
+    expect(db.prepare("SELECT answered_at FROM training_items").all()).toEqual([
+      { answered_at: null },
+    ]);
+    const next = training(await activity.trainingExplore({ kind: "move", uci: "a1c1" }));
+    expect(next.exploring.line_san).toEqual(["Rc1"]);
+    await activity.trainingAnswer("a1c1");
+    expect(db.prepare("SELECT answer_uci, correct FROM training_items").all()).toEqual([
+      { answer_uci: "a1c1", correct: 1 },
+    ]);
+    expect(rows().map((r) => r.type)).toEqual(["puzzle_result"]);
+  });
+
+  it("hands the coach what was written, what was tried and the wrong answer", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const clock = steppingClock();
+    const { activity, say, notes } = setup(clock);
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    clock.advance(5);
+    await activity.trainingExplore({ kind: "move", uci: "f4e5" });
+    clock.advance(4);
+    await activity.trainingExplore({ kind: "move", uci: "d8d5" });
+    clock.advance(3);
+    await activity.trainingExplore({ kind: "move", uci: "e5d4" });
+    clock.advance(2);
+    await activity.trainingExplore({ kind: "undo" });
+    say("looking at the bishop first");
+    await activity.trainingAnswer("f4e5");
+    const text = renderNotifications(notes());
+    expect(text).toContain("looking at the bishop first");
+    expect(text).toContain("+5s  14. Be5");
+    expect(text).toContain("+9s  14. Be5 Qd5");
+    expect(text).toContain("+12s  14. Be5 Qd5 Bd4");
+    expect(text).toContain("+14s  undo");
+    expect(text).toContain("Answer: f4e5 (wrong)");
+  });
+
+  it("attaches the reasoning to the review card answer the desk wrote", async () => {
+    addCard("d2d4");
+    const { activity, say, notes } = setup();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingExplore({ kind: "move", uci: "e2e4" });
+    await activity.trainingExplore({ kind: "reset" });
+    say("e4 or d4?");
+    await activity.trainingAnswer("e2e4");
+    const text = renderNotifications(notes());
+    expect(text).toContain("What the student wrote:\n- e4 or d4?");
+    expect(text).toContain("+0s  1. e4\n+0s  reset");
+    expect(text).toContain("Answer: e4 (wrong)");
   });
 });

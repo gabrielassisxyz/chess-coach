@@ -79,6 +79,7 @@ const variants: ActivityState[] = [
     },
     status: "prompt",
     expected: null,
+    exploring: { fen: "8/8/8/8/8/8/8/K6k w - - 0 1", line_san: [] },
     summary: null,
   },
   {
@@ -97,6 +98,7 @@ const variants: ActivityState[] = [
     status: "failed",
     exposure_id: "x1",
     expected: { uci: "a1a2", san: "Ka2" },
+    exploring: { fen: "8/8/8/8/8/8/8/K6k w - - 0 1", line_san: [] },
     summary: { solved: 0, failed: 1 },
   },
   { kind: "demo", ...board, returns_to: "live_game", moves_played: ["e4", "e5"] },

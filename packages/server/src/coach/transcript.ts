@@ -1,10 +1,15 @@
 import { type Clock, systemClock } from "../clock.js";
-import { appendChatMessage, listChatTail } from "../db/chat.js";
+import { appendChatMessage, type ChatMessage, listChatTail } from "../db/chat.js";
 import type { Database } from "../db/open.js";
 import type { FinalizedItem } from "./events.js";
 
-export function recordUserText(db: Database, sessionId: number, text: string, clock: Clock): void {
-  appendChatMessage(
+export function recordUserText(
+  db: Database,
+  sessionId: number,
+  text: string,
+  clock: Clock,
+): ChatMessage {
+  return appendChatMessage(
     db,
     sessionId,
     { role: "user", kind: "text", contentJson: JSON.stringify({ text }) },

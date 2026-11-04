@@ -140,6 +140,7 @@ const card = {
   status: "solved" as const,
   exposure_id: "ex-1",
   expected: null,
+  exploring: { fen: START_FEN, line_san: [] },
   summary: null,
 };
 

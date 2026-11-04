@@ -11,7 +11,10 @@ export type ActivityErrorCode =
   | "not_in_training"
   | "empty_queue"
   | "item_unfinished"
-  | "item_finished";
+  | "item_finished"
+  | "use_answer"
+  | "not_exploring"
+  | "illegal_exploration";
 
 export class ActivityError extends Error {
   constructor(

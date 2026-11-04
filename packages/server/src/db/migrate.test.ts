@@ -53,6 +53,23 @@ describe("runMigrations", () => {
     expect(count(db, "schema_migrations")).toBe(2);
   });
 
+  it("applies a file numbered below one already applied, so a gap can be filled later", () => {
+    const create =
+      "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL);";
+    const db = new BetterSqlite3(":memory:");
+    const first = migrationsDir({
+      "001_a.sql": create,
+      "003_c.sql": "CREATE TABLE c (x INTEGER);",
+    });
+    expect(runMigrations(db, first)).toEqual(["001_a.sql", "003_c.sql"]);
+    const later = migrationsDir({
+      "001_a.sql": create,
+      "002_b.sql": "CREATE TABLE b (x INTEGER);",
+      "003_c.sql": "CREATE TABLE c (x INTEGER);",
+    });
+    expect(runMigrations(db, later)).toEqual(["002_b.sql"]);
+  });
+
   it("rolls a failing migration back and records nothing for it", () => {
     const dir = migrationsDir({
       "001_a.sql":

@@ -114,7 +114,41 @@ export function renderSrsAnswer(answer: SrsAnswerNotification): string {
   const verdict = answer.correct
     ? `The student answered review card ${answer.card_id} correctly with ${played}.`
     : `The student missed review card ${answer.card_id}: they played ${played} and the expected move was ${expected}.`;
-  return `${verdict}\nPosition (FEN): ${answer.prompt_fen}`;
+  const lines = [verdict, `Position (FEN): ${answer.prompt_fen}`];
+  if (answer.reasoning) lines.push(renderReasoning(answer.reasoning, played, answer.correct));
+  return lines.join("\n");
+}
+
+const explorationOffset = (atMs: number): string => `+${Math.round(atMs / 1000)}s`;
+
+function exploredLine(event: ExploredEvent): string {
+  return `${explorationOffset(event.at_ms)}  ${event.line ?? event.kind}`;
+}
+
+// What the student thought before answering, so the coach can name what they never looked at.
+function renderReasoning(reasoning: TrainingReasoning, played: string, correct: boolean): string {
+  const wrote =
+    reasoning.messages.length === 0
+      ? ["What the student wrote: nothing"]
+      : ["What the student wrote:", ...reasoning.messages.map((text) => `- ${text}`)];
+  const explored =
+    reasoning.explored.length === 0
+      ? ["Explored: nothing"]
+      : ["Explored:", ...reasoning.explored.map(exploredLine)];
+  return [...wrote, ...explored, `Answer: ${played} (${correct ? "correct" : "wrong"})`].join("\n");
+}
+
+/** One step of the student's scratch play; `line` is the whole line after a move, else null. */
+export interface ExploredEvent {
+  at_ms: number;
+  kind: "move" | "undo" | "reset";
+  line: string | null;
+}
+
+/** What the student typed and tried on the board while an item was open. */
+export interface TrainingReasoning {
+  messages: string[];
+  explored: ExploredEvent[];
 }
 
 /** Row content written when the student answers a review card; the coach comments on a miss. */
@@ -127,6 +161,7 @@ export interface SrsAnswerNotification {
   expected_uci: string;
   expected_san: string | null;
   correct: boolean;
+  reasoning?: TrainingReasoning;
 }
 
 /** Row content written when a puzzle ends, solved or failed. */
@@ -140,6 +175,7 @@ export interface PuzzleResultNotification {
   answered_uci: string[];
   expected_uci: string | null;
   expected_san: string | null;
+  reasoning?: TrainingReasoning;
 }
 
 /** Row content written once when a training queue ends. */
@@ -165,15 +201,15 @@ function isTrainingRow(item: CoachNotification): item is TrainingRow {
 }
 
 function renderPuzzleResult(result: PuzzleResultNotification): string {
-  if (result.solved) {
-    return `The student solved the ${result.motif} puzzle ${result.puzzle_id} (${result.difficulty}).`;
-  }
-  const expected = result.expected_san ?? result.expected_uci ?? "unknown";
   const played = result.answered_uci.at(-1) ?? "nothing";
-  return [
-    `The student failed the ${result.motif} puzzle ${result.puzzle_id} (${result.difficulty}): they played ${played} and the expected move was ${expected}.`,
-    `Position (FEN): ${result.fen}`,
-  ].join("\n");
+  const lines = result.solved
+    ? [`The student solved the ${result.motif} puzzle ${result.puzzle_id} (${result.difficulty}).`]
+    : [
+        `The student failed the ${result.motif} puzzle ${result.puzzle_id} (${result.difficulty}): they played ${played} and the expected move was ${result.expected_san ?? result.expected_uci ?? "unknown"}.`,
+        `Position (FEN): ${result.fen}`,
+      ];
+  if (result.reasoning) lines.push(renderReasoning(result.reasoning, played, result.solved));
+  return lines.join("\n");
 }
 
 function renderTrainingSummary(summary: TrainingSummaryNotification): string {

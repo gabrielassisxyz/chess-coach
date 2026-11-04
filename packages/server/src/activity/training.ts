@@ -8,18 +8,32 @@ import type {
 } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { type Clock, systemClock } from "../clock.js";
-import type { PuzzleResultNotification, TrainingSummaryNotification } from "../coach/notify.js";
+import type {
+  ExploredEvent,
+  PuzzleResultNotification,
+  TrainingReasoning,
+  TrainingSummaryNotification,
+} from "../coach/notify.js";
 import { appendChatMessage } from "../db/chat.js";
 import type { PlayerColor } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import { getPuzzle, listPuzzles, recordPuzzleAttempt } from "../db/puzzles.js";
+import {
+  amendPendingNotification,
+  closeTrainingItem,
+  type ExplorationKind,
+  insertExplorationEvent,
+  linkItemMessage,
+  listItemMessageTexts,
+  openTrainingItem,
+} from "../db/training.js";
 import type { NotificationSink } from "../game/notifications.js";
-import { legalMoves } from "../game/snapshot.js";
 import { type AttemptState, answer as answerPuzzle, startAttempt } from "../puzzles/attempt.js";
 import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
 import type { ReviewDesk } from "../srs/review.js";
 import { ActivityError } from "./errors.js";
+import { Exploration } from "./exploration.js";
 
 export type DeskPort = Pick<ReviewDesk, "listDueCards" | "serveCard" | "answer" | "rate">;
 
@@ -47,6 +61,11 @@ interface Served {
   lastMove: string | null;
   expected: ExpectedMove | null;
   attempt: AttemptState | null;
+  itemId: number;
+  servedAtMs: number;
+  explore: Exploration;
+  seq: number;
+  trail: ExploredEvent[];
 }
 
 const turnOf = (fen: string): PlayerColor => (fen.split(" ")[1] === "b" ? "black" : "white");
@@ -111,16 +130,18 @@ export class TrainingRun {
 
   state(activityId: number): TrainingActivity {
     const s = this.served;
-    const open = this.summary === null && (s.status === "prompt" || s.status === "in_progress");
-    const chess = new Chess(s.fen);
+    const open = this.isOpen();
+    const lastMove = open ? s.explore.lastMove : null;
     return {
       kind: "training",
       activity_id: activityId,
       orientation: s.orientation,
       fen: s.fen,
-      turn: turnOf(s.fen),
-      last_move: s.lastMove ? { from: s.lastMove.slice(0, 2), to: s.lastMove.slice(2, 4) } : null,
-      legal_moves: open ? legalMoves(chess) : [],
+      turn: open ? s.explore.turn : turnOf(s.fen),
+      last_move:
+        lastMove ??
+        (s.lastMove ? { from: s.lastMove.slice(0, 2), to: s.lastMove.slice(2, 4) } : null),
+      legal_moves: open ? s.explore.legal() : [],
       input_enabled: open,
       pending: "none",
       mode: this.mode,
@@ -128,13 +149,65 @@ export class TrainingRun {
       status: s.status,
       ...(s.item.kind === "card" ? { exposure_id: s.item.exposure_id } : {}),
       expected: s.expected,
+      exploring: open
+        ? { fen: s.explore.fen, line_san: s.explore.lineSan }
+        : { fen: s.fen, line_san: [] },
       summary: this.summary,
     };
   }
 
+  private isOpen(): boolean {
+    const { status } = this.served;
+    return this.summary === null && (status === "prompt" || status === "in_progress");
+  }
+
+  // Exploration is recorded and never graded; the server clock stamps it, the browser's is not trusted.
+  explore(kind: ExplorationKind, uci?: string): void {
+    const s = this.served;
+    if (!this.isOpen()) throw new ActivityError("not_exploring", "no item is open to explore");
+    if (kind === "move") {
+      if (uci === undefined || !s.explore.play(uci)) {
+        throw new ActivityError("illegal_exploration", `${uci ?? "no move"} is not legal here`);
+      }
+    } else if (!(kind === "undo" ? s.explore.undo() : s.explore.reset())) {
+      throw new ActivityError("illegal_exploration", `nothing to ${kind}`);
+    }
+    s.seq += 1;
+    const atMs = Math.max(0, this.clock.now().getTime() - s.servedAtMs);
+    insertExplorationEvent(this.deps.db, {
+      itemId: s.itemId,
+      seq: s.seq,
+      atMs,
+      kind,
+      uci: kind === "move" ? (uci as string) : null,
+      fenAfter: s.explore.fen,
+    });
+    s.trail.push({ at_ms: atMs, kind, line: kind === "move" ? s.explore.line() : null });
+  }
+
+  /** Ties a chat line the student typed to the open item; a line sent between items belongs to none. */
+  linkMessage(messageId: number): void {
+    if (this.isOpen()) linkItemMessage(this.deps.db, this.served.itemId, messageId);
+  }
+
+  private reasoning(s: Served): TrainingReasoning {
+    return {
+      messages: listItemMessageTexts(this.deps.db, s.itemId),
+      explored: [...s.trail],
+    };
+  }
+
+  private closeItem(s: Served, uci: string, correct: boolean): void {
+    closeTrainingItem(this.deps.db, s.itemId, {
+      answeredAt: this.clock.now().toISOString(),
+      answerUci: uci,
+      correct,
+    });
+  }
+
   answer(uci: string): void {
     const s = this.served;
-    if (this.summary !== null || (s.status !== "prompt" && s.status !== "in_progress")) {
+    if (!this.isOpen()) {
       throw new ActivityError("item_finished", "this item is already answered");
     }
     if (s.item.kind === "card") this.answerCard(s, s.item.exposure_id, uci);
@@ -185,6 +258,9 @@ export class TrainingRun {
       throw new ActivityError("illegal_move", `${uci} is not legal in this position`);
     }
     const result = this.deps.desk.answer(exposureId, uci);
+    this.closeItem(s, uci, result.correct);
+    this.attachReasoning(s);
+    s.explore.restart(s.fen);
     s.status = result.correct ? "solved" : "failed";
     s.expected = { uci: result.expected_uci, san: result.expected_san };
     s.lastMove = result.expected_uci;
@@ -203,6 +279,7 @@ export class TrainingRun {
     s.attempt = state;
     s.fen = state.fen;
     s.status = state.status;
+    s.explore.restart(s.fen);
     if (state.status === "in_progress") {
       s.lastMove = outcome.reply;
       s.item = { ...item, cursor: state.cursor, reply_uci: outcome.reply };
@@ -216,7 +293,19 @@ export class TrainingRun {
       s.expected = { uci: expectedUci, san: sanFor(attempt.fen, expectedUci) };
       s.lastMove = expectedUci;
     }
-    this.recordPuzzle(item, state, s.expected, attempt.fen);
+    this.closeItem(s, uci, state.status === "solved");
+    this.recordPuzzle(item, state, s.expected, attempt.fen, this.reasoning(s));
+  }
+
+  // The desk writes the srs_answer row itself, so the reasoning is merged in before the coach wakes.
+  private attachReasoning(s: Served): void {
+    const sink = this.deps.notifications;
+    if (!sink || s.item.kind !== "card") return;
+    amendPendingNotification(
+      this.deps.db,
+      { sessionId: sink.sessionId(), type: "srs_answer", cardId: s.item.card_id },
+      { reasoning: this.reasoning(s) },
+    );
   }
 
   private recordPuzzle(
@@ -224,6 +313,7 @@ export class TrainingRun {
     state: AttemptState,
     expected: ExpectedMove | null,
     failedFen: string,
+    reasoning: TrainingReasoning,
   ): void {
     const solved = state.status === "solved";
     recordPuzzleAttempt(this.deps.db, {
@@ -244,6 +334,7 @@ export class TrainingRun {
       answered_uci: [...state.answered],
       expected_uci: expected?.uci ?? null,
       expected_san: expected?.san ?? null,
+      reasoning,
     });
   }
 
@@ -255,6 +346,17 @@ export class TrainingRun {
   private serve(index: number): Served {
     const entry = this.queue[index] as QueueEntry;
     const position = { position_in_queue: index + 1, queue_length: this.queue.length };
+    const servedAt = this.clock.now();
+    const ledger = (
+      item: Omit<Parameters<typeof openTrainingItem>[1], "servedAt">,
+      fen: string,
+    ) => ({
+      itemId: openTrainingItem(this.deps.db, { ...item, servedAt: servedAt.toISOString() }),
+      servedAtMs: servedAt.getTime(),
+      explore: new Exploration(fen),
+      seq: 0,
+      trail: [] as ExploredEvent[],
+    });
     if (entry.kind === "card") {
       const card = this.deps.desk.serveCard(entry.cardId);
       return {
@@ -272,6 +374,15 @@ export class TrainingRun {
         lastMove: null,
         expected: null,
         attempt: null,
+        ...ledger(
+          {
+            kind: "card",
+            cardId: card.cardId,
+            puzzleId: null,
+            exposureId: card.exposureId,
+          },
+          card.promptFen,
+        ),
       };
     }
     const puzzle = getPuzzle(this.deps.db, entry.id);
@@ -293,6 +404,7 @@ export class TrainingRun {
       lastMove: null,
       expected: null,
       attempt: startAttempt(puzzle.fen, puzzle.solution),
+      ...ledger({ kind: "puzzle", cardId: null, puzzleId: entry.id, exposureId: null }, puzzle.fen),
     };
   }
 
