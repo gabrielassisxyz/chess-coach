@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ActivityService } from "./activity/service.js";
 import { buildApp, type Readiness } from "./app.js";
@@ -12,6 +13,8 @@ import { poolGameEngine } from "./game/engine.js";
 import { GameService } from "./game/service.js";
 import { ChessComSource, httpFetcher } from "./import/chesscom.js";
 import { ImportGrader } from "./import/grader.js";
+import { httpExplorerFetcher, systemExplorerClock } from "./openings/explorer-client.js";
+import { generateExplorerPuzzles } from "./openings/from-explorer.js";
 import { generateOpeningPuzzles } from "./openings/from-games.js";
 import { contentDir, dataDir } from "./paths.js";
 import { seedPuzzles } from "./puzzles/seed.js";
@@ -43,6 +46,14 @@ const activity = new ActivityService({
   training: { desk, notifications, onNotification: () => coach.flushNotifications() },
 });
 const generateOpenings = () => generateOpeningPuzzles(db, pool.evaluation);
+const generateExplorerOpenings = () =>
+  generateExplorerPuzzles(
+    db,
+    pool.evaluation,
+    httpExplorerFetcher(process.env.LICHESS_API_TOKEN),
+    join(dataDir(), "explorer-cache"),
+    systemExplorerClock,
+  );
 const importGrader = new ImportGrader({
   db,
   onGraded: generateOpenings,
@@ -87,6 +98,7 @@ const app = buildApp({
   readiness: () => readiness,
   db,
   generateOpenings,
+  generateExplorerOpenings,
   importer: {
     source: new ChessComSource(httpFetcher()),
     grader: importGrader,

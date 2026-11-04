@@ -8,6 +8,7 @@ import { type ImportRoutesOptions, registerImportRoutes } from "./http/import.js
 import { registerOpeningRoutes } from "./http/openings.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
 import { registerRoutineRoutes } from "./http/routine.js";
+import type { ExplorerResult } from "./openings/from-explorer.js";
 import type { GenerationResult } from "./openings/from-games.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
 
@@ -24,6 +25,8 @@ export interface AppOptions {
   importer?: Omit<ImportRoutesOptions, "db">;
   /** Builds the opening drills from graded games; without it the route is not mounted. */
   generateOpenings?: () => Promise<GenerationResult>;
+  /** Expands the drills with the Lichess explorer; only asked for by name, never after an import. */
+  generateExplorerOpenings?: () => Promise<ExplorerResult>;
 }
 
 export function buildApp(options: AppOptions = {}): FastifyInstance {
@@ -42,7 +45,8 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     registerPuzzleRoutes(app, options.db);
     registerRoutineRoutes(app, options.db);
     if (options.importer) registerImportRoutes(app, { db: options.db, ...options.importer });
-    if (options.generateOpenings) registerOpeningRoutes(app, options.generateOpenings);
+    if (options.generateOpenings)
+      registerOpeningRoutes(app, options.generateOpenings, options.generateExplorerOpenings);
   }
 
   if (options.hub) {
