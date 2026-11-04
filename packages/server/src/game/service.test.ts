@@ -264,6 +264,22 @@ describe("restart recovery", () => {
     expect(reports).toHaveLength(1);
   });
 
+  it("keeps a game waiting for the player's move exactly as it was", async () => {
+    const before = serviceWith(new ScriptedEngine(["e7e5"]));
+    const { gameId } = await before.newGame({ color: "white", elo: 1200 });
+    await before.playerMove(move("e2", "e4"));
+    const seen = before.snapshot();
+    expect(seen?.phase).toBe("player_turn");
+
+    const idle = new ScriptedEngine([]);
+    const after = serviceWith(idle);
+    expect(after.snapshot()).toEqual(seen);
+    await after.recover();
+    expect(after.snapshot()).toEqual(seen);
+    expect(idle.evaluated.concat(idle.planned)).toEqual([]);
+    expect(plies(gameId)).toHaveLength(2);
+  });
+
   it("retries after an engine failure instead of leaving the game wedged", async () => {
     const broken = serviceWith({
       evaluate: async () => EVALUATION,

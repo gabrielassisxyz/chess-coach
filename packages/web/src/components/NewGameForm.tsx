@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 
 export const MIN_ELO = 100;
 export const MAX_ELO = 3190;
@@ -14,6 +14,7 @@ export function NewGameForm({ onStart, onCancel }: NewGameFormProps) {
   const [elo, setElo] = useState(String(DEFAULT_ELO));
   const value = Number(elo);
   const valid = Number.isInteger(value) && value >= MIN_ELO && value <= MAX_ELO;
+  const errorId = useId();
 
   const submit = (event: FormEvent): void => {
     event.preventDefault();
@@ -37,17 +38,27 @@ export function NewGameForm({ onStart, onCancel }: NewGameFormProps) {
           </label>
         ))}
       </fieldset>
-      <label className="new-game__elo">
-        Engine Elo
-        <input
-          type="number"
-          min={MIN_ELO}
-          max={MAX_ELO}
-          step={1}
-          value={elo}
-          onChange={(event) => setElo(event.target.value)}
-        />
-      </label>
+      <div className="new-game__elo">
+        <label className="new-game__elo-field">
+          Engine Elo
+          <input
+            className="input"
+            type="number"
+            min={MIN_ELO}
+            max={MAX_ELO}
+            step={1}
+            value={elo}
+            aria-invalid={!valid}
+            aria-describedby={valid ? undefined : errorId}
+            onChange={(event) => setElo(event.target.value)}
+          />
+        </label>
+        {valid ? null : (
+          <p id={errorId} className="new-game__error" role="alert">
+            {`Enter a whole number from ${MIN_ELO} to ${MAX_ELO}.`}
+          </p>
+        )}
+      </div>
       <div className="new-game__actions">
         <button type="submit" className="button button--primary" disabled={!valid}>
           Start

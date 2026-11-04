@@ -23,7 +23,8 @@ export function Play({ server, createBoard, notice = null }: PlayProps) {
   };
 
   return (
-    <section className="play" aria-label="Play">
+    <section className="screen play" aria-label="Play">
+      <h2 className="screen__title">Play</h2>
       <ServiceBanner notice={notice} />
       <EvalBar view={evalView(moves)} />
       {activity ? (
@@ -34,7 +35,7 @@ export function Play({ server, createBoard, notice = null }: PlayProps) {
           createBoard={createBoard}
         />
       ) : (
-        <p className="play__empty">No game on the board. Start one with New game.</p>
+        <p className="screen__note">No game on the board. Start one with New game.</p>
       )}
       <Controls activity={activity} send={server.send} newGameBlocked={notice !== null} />
       <MoveList moves={moves} />

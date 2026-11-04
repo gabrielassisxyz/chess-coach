@@ -17,6 +17,8 @@ function api(activity: ActivityState | null, overrides: Partial<ServerApi> = {})
     permissions: [],
     lastError: null,
     errorCount: 0,
+    lastErrorCode: null,
+    turn: "idle",
     localCount: 0,
     activity,
     cardsCreated: {},
@@ -163,6 +165,24 @@ describe("controls send commands against the current activity", () => {
       );
     }
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("explains an invalid Elo next to the field and clears the message when it is fixed", () => {
+    render(<Play server={api(null)} createBoard={inertBoard} />);
+    fireEvent.click(screen.getByRole("button", { name: "New game" }));
+    const input = screen.getByLabelText("Engine Elo");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(input.getAttribute("aria-invalid")).toBe("false");
+    for (const bad of ["99", "3191", "", "12.5"]) {
+      fireEvent.change(input, { target: { value: bad } });
+      const message = screen.getByRole("alert");
+      expect(message.textContent).toBe("Enter a whole number from 100 to 3190.");
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+      expect(input.getAttribute("aria-describedby")).toBe(message.id);
+    }
+    fireEvent.change(input, { target: { value: "1500" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(input.getAttribute("aria-invalid")).toBe("false");
   });
 
   it("sends a move command carrying the promotion and the activity id", () => {

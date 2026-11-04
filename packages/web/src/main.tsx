@@ -5,6 +5,7 @@ import "@lichess-org/chessground/assets/chessground.base.css";
 import "@lichess-org/chessground/assets/chessground.cburnett.css";
 import "./styles/tokens.css";
 import "./styles/chat.css";
+import "./styles/focus.css";
 import "./styles/board.css";
 import "./styles/layout.css";
 import "./styles/train.css";

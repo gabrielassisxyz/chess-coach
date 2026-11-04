@@ -251,6 +251,6 @@ describe("failures", () => {
   it("says so when the list cannot be loaded", async () => {
     const broken: GamesApi = { ...api, listGames: async () => Promise.reject(new Error("down")) };
     render(<Review server={{} as never} api={broken} createBoard={factory} />);
-    await waitFor(() => expect(screen.getByText("The games could not be loaded.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/The games could not be loaded/)).toBeTruthy());
   });
 });

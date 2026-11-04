@@ -79,6 +79,8 @@ function api(activity: TrainingActivity | null): ServerApi {
     permissions: [],
     lastError: null,
     errorCount: 0,
+    lastErrorCode: null,
+    turn: "idle",
     localCount: 0,
     cardsCreated: {},
     activity,

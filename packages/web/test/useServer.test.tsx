@@ -148,6 +148,21 @@ describe("useServer", () => {
     expect(second.sent).toEqual([]);
   });
 
+  it("settles the coach turn to idle when the socket drops mid-turn", () => {
+    const { result } = mount();
+    act(() => FakeSocket.latest.open());
+    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+    act(() => FakeSocket.latest.receive(delta(1, 1, "partial")));
+    expect(result.current.turn).toBe("streaming");
+
+    act(() => FakeSocket.latest.drop());
+    act(() => vi.advanceTimersByTime(500));
+    act(() => FakeSocket.latest.open());
+    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+    expect(result.current.turn).toBe("idle");
+    expect(result.current.items).toEqual([]);
+  });
+
   it("backs off from 500 ms doubling up to 10 s and resets after a successful open", () => {
     mount();
     const attempts = () => FakeSocket.instances.length;

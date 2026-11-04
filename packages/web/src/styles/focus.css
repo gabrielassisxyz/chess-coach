@@ -1,0 +1,13 @@
+/*
+ * One focus ring for every interactive element, drawn from the accent so it follows the theme.
+ * The outline is never removed anywhere else: a rule that needs a different focus look
+ * restyles this ring rather than switching it off.
+ */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.board:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
