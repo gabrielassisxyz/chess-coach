@@ -22,8 +22,26 @@
   `packages/shared` (types both sides import). `tools/` holds offline Python scripts that
   produce JSON (puzzle generation) and is never part of the runtime.
 - **Install:** `pnpm install`
-- **Dev:** `pnpm dev` (server on 127.0.0.1:3210, web on the Vite port proxying `/api`)
-- **Test:** `pnpm test` (vitest, per package)
+- **Dev:** `pnpm dev` runs both packages. The server listens on `127.0.0.1:3210` (`PORT`
+  overrides) and Vite serves the app on `http://localhost:5173`, proxying `/api` and the
+  WebSocket. The socket only accepts those two origins; `CHESS_COACH_ALLOWED_ORIGINS`
+  (comma-separated) replaces them.
+- **Data:** one SQLite file, `data/chess-coach.db`, under the repository root and git-ignored.
+  `CHESS_COACH_DATA_DIR` moves it, `CHESS_COACH_CONTENT_DIR` moves the teaching content
+  (`content/`). Puzzles are seeded from `content/puzzles` at every server start.
+- **Test:** `pnpm test` (vitest, per package). Opt-in flags, off by default and never in
+  `bin/ci`: `CHESS_COACH_STOCKFISH=1` runs the real-engine grading suite
+  (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
+  Claude session probe (`test:sdk`, stdin closed); `CHESS_COACH_RECORD=<file>` records the SDK
+  stream to that file.
+- **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
+  proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
+  Stockfish missing, engine fault, dropped socket, restart per game phase, undelivered
+  notifications, refresh per activity kind) and reads the files from disk. Renaming or
+  deleting one of those tests means updating the inventory in the same change.
+- **Design:** `packages/web/src/styles/tokens.css` is the only file allowed a colour literal;
+  `packages/web/DESIGN-CHECK.md` is the rule-by-screen checklist. Change a screen, re-check
+  its column.
 - **Typecheck / lint:** `pnpm typecheck`, `pnpm lint` (Biome, lint and format in one)
 - **Gate:** `bin/ci`, the exact thing GitHub Actions runs. Green locally means green in CI.
 - **After clone:** `bin/install-hooks` once (gitleaks pre-commit, attribution commit-msg).
@@ -207,6 +225,10 @@
 | hurdle | class | gate |
 |---|---|---|
 | `pnpm` is a mise shim with no global version; run from the repo so `mise.toml` resolves it | tripwire | none yet |
+| Port 3000 is taken on the owner's machine, so the server defaults to 3210; a new listener must not assume 3000 | tripwire | none yet |
+| The Agent SDK needs `strictMcpConfig: true`, or the owner's claude.ai connector tools leak into the coach's tool list | tripwire | `session.test.ts` asserts the option; only the opt-in SDK probe proves the tool list |
+| A merge that keeps both sides of "append at end of file" can join two functions across the conflict seam, and the result compiles or fails far from the conflict: read the merged hunk, not just the markers | tripwire | none yet |
+| `grep` (and `find`) are shell functions in an agent session and silently skip git-ignored trees; use `command grep` | tripwire | none yet |
 
 **A hurdle promoted to a gate is deleted from this table, not duplicated.** The gate is the
 instruction; a line here restating it only dilutes the ones still unguarded.
