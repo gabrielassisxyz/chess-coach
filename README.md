@@ -43,7 +43,10 @@ pnpm dev
 Open <http://localhost:5173>. The server listens on `127.0.0.1:3210` (`PORT` overrides it)
 and the web dev server proxies `/api` to it. The server only accepts browser tabs from
 `http://localhost:5173` and `http://127.0.0.1:5173`; `CHESS_COACH_ALLOWED_ORIGINS` takes a
-comma-separated list to change that.
+comma-separated list to change that. The same list opens Vite's host check, so one value
+covers both: for a tailnet, `tailscale serve --bg 5173` on the machine and
+`CHESS_COACH_ALLOWED_ORIGINS=https://<machine>.<tailnet>.ts.net` in the environment is all
+it takes to use the app from a phone or a laptop on the tailnet.
 
 If Stockfish is missing the app still opens and says so on the Play screen. If the coach
 reports a login problem, run `claude` in a terminal, sign in with `/login` and restart the
