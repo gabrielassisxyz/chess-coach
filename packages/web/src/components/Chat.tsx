@@ -59,11 +59,6 @@ export function Chat({ server }: { server: ServerApi }) {
           {server.permissions.map((request) => (
             <ApprovalCard key={request.requestId} request={request} onAnswer={server.approve} />
           ))}
-          {server.lastError ? (
-            <p className="message message--error" role="alert">
-              {server.lastError}
-            </p>
-          ) : null}
           <div ref={endRef} />
         </div>
       </div>
