@@ -101,7 +101,7 @@ describe("CoachSession", () => {
     expect(options?.includePartialMessages).toBe(true);
     expect(options?.strictMcpConfig).toBe(true);
     expect(options?.allowedTools).toEqual(COACH_TOOL_NAMES);
-    expect(options?.allowedTools).toHaveLength(12);
+    expect(options?.allowedTools).toHaveLength(13);
     expect(options?.resume).toBeUndefined();
     await session.stop();
   });
