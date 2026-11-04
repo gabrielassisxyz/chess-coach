@@ -121,4 +121,62 @@ export function listCardsNewestFirst(db: Database, limit: number): CardRecord[] 
 export function findCardIdByMove(db: Database, moveId: number): number | null {
   const row = db.prepare("SELECT id FROM srs_cards WHERE source_move_id = ?").get(moveId);
   return row ? (row as { id: number }).id : null;
+export const DEFAULT_DUE_LIMIT = 20;
+export const MAX_DUE_LIMIT = 100;
+
+export function listDueCards(
+  db: Database,
+  now: Date,
+  limit: number = DEFAULT_DUE_LIMIT,
+): CardRecord[] {
+  const capped = Math.min(Math.max(Math.trunc(limit), 1), MAX_DUE_LIMIT);
+  const rows = db
+    .prepare(
+      "SELECT * FROM srs_cards WHERE next_review_at <= ? ORDER BY next_review_at, id LIMIT ?",
+    )
+    .all(now.toISOString(), capped);
+  return (rows as CardRow[]).map(toCard);
+}
+
+export interface NewReview {
+  cardId: number;
+  reviewedAt: string;
+  quality: number;
+  answeredUci: string;
+  correct: boolean;
+}
+
+export function insertReview(db: Database, review: NewReview): void {
+  db.prepare(
+    `INSERT INTO srs_reviews (card_id, reviewed_at, quality, answered_uci, correct)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    review.cardId,
+    review.reviewedAt,
+    review.quality,
+    review.answeredUci,
+    review.correct ? 1 : 0,
+  );
+}
+
+export function updateSchedule(
+  db: Database,
+  id: number,
+  schedule: {
+    nextReviewAt: string;
+    intervalHours: number;
+    easeFactor: number;
+    repetitions: number;
+  },
+): void {
+  db.prepare(
+    `UPDATE srs_cards SET next_review_at = ?, interval_hours = ?, ease_factor = ?, repetitions = ?
+     WHERE id = ?`,
+  ).run(
+    schedule.nextReviewAt,
+    schedule.intervalHours,
+    schedule.easeFactor,
+    schedule.repetitions,
+    id,
+  );
 }

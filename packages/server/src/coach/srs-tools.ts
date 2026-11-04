@@ -3,9 +3,9 @@ import { Chess } from "chess.js";
 import { z } from "zod";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/open.js";
-import { getCard, insertCard, setExplanation } from "../db/srs.js";
+import { getCard, insertCard, listDueCards, setExplanation } from "../db/srs.js";
 import { applyUci } from "../engine/moves.js";
-import { createCardsFromGame } from "../srs/cards.js";
+import { cardView, createCardsFromGame } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
 import type { SrsEvaluator } from "./game-tools.js";
 
@@ -37,6 +37,7 @@ const isFen = (value: string): boolean => {
 
 const fenSchema = z.string().min(1).max(120).refine(isFen, "not a valid FEN");
 const uciSchema = z.string().regex(/^[a-h][1-8][a-h][1-8][qrbn]?$/, "not a UCI move");
+const MAX_DUE_CARDS = 20;
 const explanationSchema = z.string().min(1).max(2000);
 
 function isLegal(fen: string, uci: string): boolean {
@@ -123,6 +124,20 @@ export function buildSrsTools(deps: SrsToolDeps): SdkMcpToolDefinition<any>[] {
           }
           return ok({ card_id });
         }),
+    ),
+    tool(
+      "get_due_cards",
+      "List the cards due for review now, oldest first, up to 20. Read-only: it does not serve or grade a card.",
+      { limit: z.number().int().min(1).max(MAX_DUE_CARDS).optional() },
+      async ({ limit }) =>
+        guarded(() =>
+          ok(
+            listDueCards(deps.db, deps.clock.now(), limit ?? MAX_DUE_CARDS).map((card) => ({
+              ...cardView(card),
+              student_color: card.studentColor,
+            })),
+          ),
+        ),
     ),
   ];
 }
