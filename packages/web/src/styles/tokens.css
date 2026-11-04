@@ -1,0 +1,73 @@
+/*
+ * Design tokens. The only file in the web package allowed to hold a colour literal.
+ * Derived from the owner's "Design taste" note; which rule each group follows:
+ *
+ * - Grounds: neutral charcoal #17171A on dark, soft off-white #FAF9F7 on light; never pure
+ *   white or black, never cream. Both themes exist; this is a desktop app, so light is the
+ *   default and dark follows prefers-color-scheme.
+ * - Accent: exactly one hue (teal, 175) and the only chromatic colour besides the error
+ *   tone. Saturation inside 30-45%, lightness 52-60% on dark and 42-50% on light.
+ *   Labels on the accent use the charcoal ground, because off-white on a light-theme accent
+ *   falls below readable contrast.
+ * - Error: one muted warning hue, used only for a failed turn. No severity ramp anywhere.
+ * - Type: a grotesque sans for UI and titles (never serif, never Space Grotesk), a clean
+ *   sans for running text near 65ch, mono only for tool input and output with tabular
+ *   numerals. Titles are the largest step.
+ * - Space and radii: a spacious 4px-based scale, small radii, hairline borders, no shadows.
+ * - Motion: under 300ms, ease-out only, transform and opacity only, no bounce; movement is
+ *   dropped under prefers-reduced-motion.
+ */
+:root {
+  color-scheme: light dark;
+
+  --ground: #faf9f7;
+  --surface: #f2f1ee;
+  --hairline: #dcdad5;
+  --text: #17171a;
+  --text-muted: #5f5e5a;
+  --accent: hsl(175 45% 42%);
+  --accent-hover: hsl(175 45% 38%);
+  --on-accent: #17171a;
+  --error: hsl(8 45% 42%);
+
+  --font-ui: "Geist", "Hanken Grotesk", "Schibsted Grotesk", system-ui, sans-serif;
+  --font-body: system-ui, "Hanken Grotesk", sans-serif;
+  --font-mono: "Cascadia Code", "Iosevka", "Commit Mono", ui-monospace, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-title: 1.75rem;
+  --leading-body: 1.6;
+  --measure: 65ch;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #17171a;
+    --surface: #202024;
+    --hairline: #34343a;
+    --text: #ecebe8;
+    --text-muted: #9b9a96;
+    --accent: hsl(175 38% 56%);
+    --accent-hover: hsl(175 38% 60%);
+    --on-accent: #17171a;
+    --error: hsl(8 38% 58%);
+  }
+}
