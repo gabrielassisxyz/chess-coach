@@ -93,3 +93,14 @@ export function recordPuzzleAttempt(db: Database, attempt: AttemptRecord): void 
     attempt.failedPly,
   );
 }
+
+export interface MotifCount {
+  motif: string;
+  count: number;
+}
+
+export function listMotifs(db: Database): MotifCount[] {
+  return db
+    .prepare("SELECT motif, COUNT(*) AS count FROM puzzles GROUP BY motif ORDER BY motif")
+    .all() as MotifCount[];
+}

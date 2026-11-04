@@ -66,13 +66,13 @@ function renderEarlier(turns: TurnNotification[]): string {
  * One message for everything the coach has not seen yet. A single row is rendered in full; several
  * are folded so the coach comments on where the game stands now rather than replaying each move.
  */
-export function renderNotifications(items: NotificationContent[]): string {
+export function renderNotifications(items: CoachNotification[]): string {
   const turns = items.filter((item): item is TurnNotification => item.type === "turn");
   const ends = items.filter((item): item is GameEndNotification => item.type === "game_end");
   const last = turns.at(-1);
   if (items.length === 1) {
-    const only = items[0] as NotificationContent;
-    return only.type === "turn" ? renderTurn(only) : renderEnd(only);
+    const only = items[0] as CoachNotification;
+    return renderOne(only);
   }
   const parts = [`Several updates arrived while you were busy (${items.length} in all).`];
   if (last) {
@@ -81,6 +81,7 @@ export function renderNotifications(items: NotificationContent[]): string {
     parts.push(`The latest move in full:\n${renderTurn(last)}`);
   }
   for (const end of ends) parts.push(renderEnd(end));
+  for (const item of items) if (isTrainingRow(item)) parts.push(renderOne(item));
   return parts.join("\n\n");
 }
 
@@ -103,4 +104,72 @@ export interface SrsAnswerNotification {
   expected_uci: string;
   expected_san: string | null;
   correct: boolean;
+}
+
+/** Row content written when a puzzle ends, solved or failed. */
+export interface PuzzleResultNotification {
+  type: "puzzle_result";
+  puzzle_id: string;
+  motif: string;
+  difficulty: string;
+  fen: string;
+  solved: boolean;
+  answered_uci: string[];
+  expected_uci: string | null;
+  expected_san: string | null;
+}
+
+/** Row content written once when a training queue ends. */
+export interface TrainingSummaryNotification {
+  type: "training_summary";
+  mode: "srs" | "puzzles";
+  solved: number;
+  failed: number;
+}
+
+export type CoachNotification =
+  | NotificationContent
+  | SrsAnswerNotification
+  | PuzzleResultNotification
+  | TrainingSummaryNotification;
+
+type TrainingRow = SrsAnswerNotification | PuzzleResultNotification | TrainingSummaryNotification;
+
+function isTrainingRow(item: CoachNotification): item is TrainingRow {
+  return (
+    item.type === "srs_answer" || item.type === "puzzle_result" || item.type === "training_summary"
+  );
+}
+
+function renderPuzzleResult(result: PuzzleResultNotification): string {
+  if (result.solved) {
+    return `The student solved the ${result.motif} puzzle ${result.puzzle_id} (${result.difficulty}).`;
+  }
+  const expected = result.expected_san ?? result.expected_uci ?? "unknown";
+  const played = result.answered_uci.at(-1) ?? "nothing";
+  return [
+    `The student failed the ${result.motif} puzzle ${result.puzzle_id} (${result.difficulty}): they played ${played} and the expected move was ${expected}.`,
+    `Position (FEN): ${result.fen}`,
+  ].join("\n");
+}
+
+function renderTrainingSummary(summary: TrainingSummaryNotification): string {
+  const what = summary.mode === "srs" ? "review cards" : "puzzles";
+  const total = summary.solved + summary.failed;
+  return `The training queue is finished: ${summary.solved} of ${total} ${what} solved, ${summary.failed} failed.`;
+}
+
+function renderOne(item: CoachNotification): string {
+  switch (item.type) {
+    case "turn":
+      return renderTurn(item);
+    case "game_end":
+      return renderEnd(item);
+    case "srs_answer":
+      return renderSrsAnswer(item);
+    case "puzzle_result":
+      return renderPuzzleResult(item);
+    case "training_summary":
+      return renderTrainingSummary(item);
+  }
 }

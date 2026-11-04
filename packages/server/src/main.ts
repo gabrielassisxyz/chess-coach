@@ -12,6 +12,7 @@ import { poolGameEngine } from "./game/engine.js";
 import { GameService } from "./game/service.js";
 import { contentDir, dataDir } from "./paths.js";
 import { seedPuzzles } from "./puzzles/seed.js";
+import { ReviewDesk } from "./srs/review.js";
 import { allowedOriginsFrom } from "./ws/origin.js";
 
 assertSubscriptionAuth();
@@ -31,7 +32,13 @@ const game = new GameService({
   engine: poolGameEngine(pool),
   notifications: { sessionId: () => coach.ensureSessionId() },
 });
-const activity = new ActivityService({ db, game });
+const notifications = { sessionId: () => coach.ensureSessionId() };
+const desk = new ReviewDesk({ db, notifications });
+const activity = new ActivityService({
+  db,
+  game,
+  training: { desk, notifications, onNotification: () => coach.flushNotifications() },
+});
 const coach = new CoachSession({
   db,
   query,

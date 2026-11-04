@@ -5,6 +5,7 @@ import {
   type ErrorCode,
   ErrorCodeSchema,
   type ServerEvent,
+  type TrainingActivity,
   type TranscriptEntry,
 } from "@chess-coach/shared";
 import type { WebSocket } from "@fastify/websocket";
@@ -16,6 +17,7 @@ import type { PermissionRequest } from "../coach/session.js";
 import { type ChatMessage, listChatTail } from "../db/chat.js";
 import type { Database } from "../db/open.js";
 import { GameError } from "../game/errors.js";
+import { SrsError } from "../srs/errors.js";
 import { ChatEventNumbering } from "./chat-events.js";
 import { isUpgradeAllowed } from "./origin.js";
 
@@ -41,6 +43,11 @@ export type ActivityPort = Pick<
   | "abort"
   | "playerMove"
   | "undo"
+  | "startTraining"
+  | "trainingMove"
+  | "rateCard"
+  | "nextTrainingItem"
+  | "endTraining"
 >;
 
 export interface HubOptions {
@@ -82,12 +89,27 @@ function errorFrame(code: ErrorCode, message: string, commandId?: string): strin
 
 // Game and activity refusals carry a code the browser can switch on; anything else is a fault.
 function errorCodeOf(error: unknown): ErrorCode {
-  if (error instanceof GameError || error instanceof ActivityError) {
+  if (error instanceof GameError || error instanceof ActivityError || error instanceof SrsError) {
     const code = ErrorCodeSchema.safeParse(error.code);
     if (code.success) return code.data;
   }
   return "coach_error";
 }
+
+function trainingEventOf(state: TrainingActivity): ServerEvent {
+  return {
+    type: "training",
+    activity_id: state.activity_id,
+    mode: state.mode,
+    item: state.item,
+    status: state.status,
+    expected: state.expected,
+    summary: state.summary,
+  };
+}
+
+const uciOf = (move: { from: string; to: string; promotion?: string | undefined }): string =>
+  `${move.from}${move.to}${move.promotion ?? ""}`;
 
 function commandIdOf(raw: unknown): string | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
@@ -117,9 +139,10 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
       }),
     ),
   );
-  const unsubscribeActivity = activity.onState((state: ActivityState | null) =>
-    broadcast(frame({ type: "activity", state })),
-  );
+  const unsubscribeActivity = activity.onState((state: ActivityState | null) => {
+    broadcast(frame({ type: "activity", state }));
+    if (state?.kind === "training") broadcast(frame(trainingEventOf(state)));
+  });
   app.addHook("onClose", async () => {
     unsubscribeActivity();
     unsubscribeEvents();
@@ -165,6 +188,10 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         await activity.abort(command.activity_id);
         return;
       case "move":
+        if (activity.current()?.kind === "training") {
+          await activity.trainingMove(uciOf(command), command.activity_id);
+          return;
+        }
         await activity.playerMove(
           {
             from: command.from,
@@ -176,6 +203,21 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         return;
       case "undo":
         await activity.undo(command.activity_id);
+        return;
+      case "start_training":
+        await activity.startTraining({
+          mode: command.mode,
+          ...(command.motif === undefined ? {} : { motif: command.motif }),
+        });
+        return;
+      case "rate_card":
+        await activity.rateCard(command.exposure_id, command.quality, command.activity_id);
+        return;
+      case "next_training_item":
+        await activity.nextTrainingItem(command.activity_id);
+        return;
+      case "end_training":
+        await activity.endTraining(command.activity_id);
         return;
     }
   };
