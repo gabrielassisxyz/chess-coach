@@ -246,6 +246,8 @@ export const EndTrainingCommandSchema = z.object({
   type: z.literal("end_training"),
   command_id: commandId,
   activity_id: activityId,
+});
+
 export const CreateCardsCommandSchema = z.object({
   type: z.literal("create_cards"),
   command_id: commandId,
