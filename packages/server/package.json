@@ -9,6 +9,7 @@
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:sdk": "vitest run test/sdk",
     "test:stockfish": "CHESS_COACH_STOCKFISH=1 vitest run stockfish.real"
   },
   "dependencies": {

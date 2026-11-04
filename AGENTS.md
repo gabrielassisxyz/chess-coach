@@ -156,6 +156,9 @@
 - Tests run with `pnpm test`, no manual setup, no credential. Anything that needs the real
   Stockfish binary or a live Claude session is an integration test behind an explicit
   opt-in flag, never in the default run.
+- The Claude session probe is `CHESS_COACH_SDK=1 pnpm --filter @chess-coach/server test:sdk`;
+  run it with stdin closed. The SDK needs `strictMcpConfig: true`, or the owner's claude.ai
+  connector tools leak into the coach's tool list.
 - Mock external I/O (engine process, Claude session, filesystem) with a named fake, not an
   inline stub.
 - Before saying "done", run `bin/ci`; report the result.
