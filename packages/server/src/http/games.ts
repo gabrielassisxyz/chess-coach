@@ -3,7 +3,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   type GameRecord,
-  getGame,
+  type GameSummaryRow,
+  getGameSummary,
   listFinishedGames,
   listMoves,
   type MoveRecord,
@@ -29,6 +30,19 @@ function gameMove(move: MoveRecord): GameMove {
     classification: move.classification,
     best_move_san: move.bestMoveSan,
     fen_after: move.fenAfter,
+  };
+}
+
+function momentFields(row: GameSummaryRow) {
+  return {
+    worst_moment: row.worstMoment && {
+      ply: row.worstMoment.ply,
+      san: row.worstMoment.san,
+      cp_loss: row.worstMoment.cpLoss,
+      classification: row.worstMoment.classification,
+    },
+    cards_count: row.cardsCount,
+    mistakes_count: row.mistakesCount,
   };
 }
 
@@ -65,6 +79,7 @@ export function registerGameRoutes(app: FastifyInstance, db: Database): void {
         move_count: row.moveCount,
         accuracy:
           row.gradedStudentMoves === 0 ? null : row.accurateStudentMoves / row.gradedStudentMoves,
+        ...momentFields(row),
         ...sourceFields(row.game),
       })),
     };
@@ -72,11 +87,12 @@ export function registerGameRoutes(app: FastifyInstance, db: Database): void {
 
   app.get("/api/games/:id", async (request, reply): Promise<GameDetailResponse | undefined> => {
     const id = Number((request.params as { id: string }).id);
-    const game = Number.isSafeInteger(id) && id > 0 ? getGame(db, id) : undefined;
-    if (!game) {
+    const summary = Number.isSafeInteger(id) && id > 0 ? getGameSummary(db, id) : undefined;
+    if (!summary) {
       await reply.code(404).send({ error: "game_not_found", message: "no such game" });
       return undefined;
     }
+    const game = summary.game;
     return {
       game: {
         id: game.id,
@@ -87,6 +103,7 @@ export function registerGameRoutes(app: FastifyInstance, db: Database): void {
         result: game.result,
         termination: game.termination,
         initial_fen: game.initialFen,
+        ...momentFields(summary),
         ...sourceFields(game),
         moves: listMoves(db, game.id).map(gameMove),
       },

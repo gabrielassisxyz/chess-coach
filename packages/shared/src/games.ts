@@ -4,6 +4,14 @@ import { ActivityMoveSchema } from "./activity.js";
 // The two read-only game routes. A move carries the same fields the review activity does, plus
 // the position after it, which is what lets the browser step through a game without the server.
 
+export const WorstMomentSchema = z.object({
+  ply: z.number().int().positive(),
+  san: z.string(),
+  cp_loss: z.number(),
+  classification: z.enum(["best", "great", "good", "inaccuracy", "mistake", "blunder"]),
+});
+export type WorstMoment = z.infer<typeof WorstMomentSchema>;
+
 export const GameSummarySchema = z.object({
   id: z.number().int(),
   started_at: z.string(),
@@ -15,6 +23,11 @@ export const GameSummarySchema = z.object({
   move_count: z.number().int().nonnegative(),
   // Share of graded student moves with a cp loss of 30 or less; null when none was graded.
   accuracy: z.number().min(0).max(1).nullable(),
+  // The student ply with the largest loss (earliest on a tie); null while nothing is graded.
+  worst_moment: WorstMomentSchema.nullable().default(null),
+  // Review cards born from this game, and student plies marked mistake or blunder.
+  cards_count: z.number().int().nonnegative().default(0),
+  mistakes_count: z.number().int().nonnegative().default(0),
   source: z.enum(["coach", "chesscom", "pgn"]),
   source_url: z.string().nullable(),
   opponent: z.string().nullable(),
@@ -25,7 +38,9 @@ export const GameSummarySchema = z.object({
   // An imported game shows its moves without badges until the background grading is done.
   grading: z.enum(["pending", "running", "done", "failed"]),
 });
-export type GameSummary = z.infer<typeof GameSummarySchema>;
+// The three game-list fields default on parse; the input type keeps them optional so a hand-built
+// summary that predates them still typechecks.
+export type GameSummary = z.input<typeof GameSummarySchema>;
 
 export const GameListResponseSchema = z.object({ games: z.array(GameSummarySchema) });
 export type GameListResponse = z.infer<typeof GameListResponseSchema>;
@@ -42,7 +57,7 @@ export const GameDetailSchema = GameSummarySchema.omit({
   initial_fen: z.string(),
   moves: z.array(GameMoveSchema),
 });
-export type GameDetail = z.infer<typeof GameDetailSchema>;
+export type GameDetail = z.input<typeof GameDetailSchema>;
 
 export const GameDetailResponseSchema = z.object({ game: GameDetailSchema });
 export type GameDetailResponse = z.infer<typeof GameDetailResponseSchema>;

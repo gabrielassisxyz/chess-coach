@@ -289,36 +289,88 @@ export function removeLastPlies(db: Database, gameId: number, count: number, pgn
   })();
 }
 
+export interface WorstMoment {
+  ply: number;
+  san: string;
+  cpLoss: number;
+  classification: Classification;
+}
+
 export interface GameSummaryRow {
   game: GameRecord;
   moveCount: number;
   gradedStudentMoves: number;
   accurateStudentMoves: number;
+  worstMoment: WorstMoment | null;
+  cardsCount: number;
+  mistakesCount: number;
 }
 
 // A move counts as accurate at a cp loss of 30 or less; the counts stay raw so the caller owns the ratio.
 export const ACCURATE_CP_LOSS = 30;
 
+type SummarySqlRow = GameRow & {
+  move_count: number;
+  graded: number;
+  accurate: number;
+  worst: string | null;
+  cards: number;
+  mistakes: number;
+};
+
+// One statement per list so each game costs no extra query; the worst moment is the student ply with
+// the largest loss, the earliest on a tie.
+const SUMMARY_SELECT = `SELECT g.*,
+    (SELECT COUNT(*) FROM moves m WHERE m.game_id = g.id) AS move_count,
+    (SELECT COUNT(*) FROM moves m
+      WHERE m.game_id = g.id AND m.is_player = 1 AND m.cp_loss IS NOT NULL) AS graded,
+    (SELECT COUNT(*) FROM moves m
+      WHERE m.game_id = g.id AND m.is_player = 1 AND m.cp_loss <= ?) AS accurate,
+    (SELECT json_object('ply', m.ply, 'san', m.san, 'cp_loss', m.cp_loss,
+        'classification', m.classification)
+      FROM moves m WHERE m.game_id = g.id AND m.is_player = 1 AND m.cp_loss IS NOT NULL
+      ORDER BY m.cp_loss DESC, m.ply ASC LIMIT 1) AS worst,
+    (SELECT COUNT(*) FROM srs_cards c WHERE c.source_game_id = g.id) AS cards,
+    (SELECT COUNT(*) FROM moves m
+      WHERE m.game_id = g.id AND m.is_player = 1
+        AND m.classification IN ('mistake', 'blunder')) AS mistakes
+  FROM games g`;
+
+function toSummary(row: SummarySqlRow): GameSummaryRow {
+  const worst = row.worst
+    ? (JSON.parse(row.worst) as {
+        ply: number;
+        san: string;
+        cp_loss: number;
+        classification: Classification;
+      })
+    : null;
+  return {
+    game: toGame(row),
+    moveCount: row.move_count,
+    gradedStudentMoves: row.graded,
+    accurateStudentMoves: row.accurate,
+    worstMoment: worst && {
+      ply: worst.ply,
+      san: worst.san,
+      cpLoss: worst.cp_loss,
+      classification: worst.classification,
+    },
+    cardsCount: row.cards,
+    mistakesCount: row.mistakes,
+  };
+}
+
 export function listFinishedGames(db: Database, limit: number): GameSummaryRow[] {
   const rows = db
-    .prepare(
-      `SELECT g.*,
-         (SELECT COUNT(*) FROM moves m WHERE m.game_id = g.id) AS move_count,
-         (SELECT COUNT(*) FROM moves m
-           WHERE m.game_id = g.id AND m.is_player = 1 AND m.cp_loss IS NOT NULL) AS graded,
-         (SELECT COUNT(*) FROM moves m
-           WHERE m.game_id = g.id AND m.is_player = 1 AND m.cp_loss <= ?) AS accurate
-       FROM games g WHERE g.finished_at IS NOT NULL ORDER BY g.id DESC LIMIT ?`,
-    )
+    .prepare(`${SUMMARY_SELECT} WHERE g.finished_at IS NOT NULL ORDER BY g.id DESC LIMIT ?`)
     .all(ACCURATE_CP_LOSS, limit);
-  return (rows as (GameRow & { move_count: number; graded: number; accurate: number })[]).map(
-    (row) => ({
-      game: toGame(row),
-      moveCount: row.move_count,
-      gradedStudentMoves: row.graded,
-      accurateStudentMoves: row.accurate,
-    }),
-  );
+  return (rows as SummarySqlRow[]).map(toSummary);
+}
+
+export function getGameSummary(db: Database, id: number): GameSummaryRow | undefined {
+  const row = db.prepare(`${SUMMARY_SELECT} WHERE g.id = ?`).get(ACCURATE_CP_LOSS, id);
+  return row ? toSummary(row as SummarySqlRow) : undefined;
 }
 
 export interface ImportedGame {
