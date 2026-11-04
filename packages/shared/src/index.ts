@@ -10,3 +10,4 @@ export interface HealthResponse {
 
 export * from "./activity.js";
 export * from "./events.js";
+export * from "./games.js";
