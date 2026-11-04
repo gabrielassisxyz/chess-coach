@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runMigrations } from "./migrate.js";
+import { defaultMigrationsDir, listMigrations, runMigrations } from "./migrate.js";
 import { openDatabase } from "./open.js";
 
 let tmp: string;
@@ -35,7 +35,7 @@ describe("openDatabase", () => {
     first.close();
 
     const second = openDatabase(dir);
-    expect(count(second, "schema_migrations")).toBe(1);
+    expect(count(second, "schema_migrations")).toBe(listMigrations(defaultMigrationsDir).length);
     second.close();
   });
 });
