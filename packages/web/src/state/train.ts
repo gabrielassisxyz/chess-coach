@@ -6,6 +6,8 @@ import type {
   TrainingStatus,
 } from "@chess-coach/shared";
 
+import { Chess } from "chess.js";
+
 export interface MotifCount {
   motif: string;
   count: number;
@@ -34,6 +36,8 @@ export interface TrainingView {
   expected: string | null;
   canRate: boolean;
   canAdvance: boolean;
+  canExplore: boolean;
+  canAnswer: boolean;
   advanceLabel: "Next" | "Finish";
   summary: TrainingActivity["summary"];
 }
@@ -49,10 +53,28 @@ function headerOf(training: TrainingActivity): string {
   return `${item.motif} puzzle ${place}`;
 }
 
+// The board shows the explored position while the item is served in another one.
+export function boardOf(training: TrainingActivity): TrainingActivity {
+  return { ...training, fen: training.exploring.fen };
+}
+
+// The answer is the first move of the explored line, played from the position the item was served in.
+export function answerUciOf(training: TrainingActivity): string | null {
+  const first = training.exploring.line_san[0];
+  if (first === undefined) return null;
+  try {
+    const move = new Chess(training.fen).move(first);
+    return `${move.from}${move.to}${move.promotion ?? ""}`;
+  } catch {
+    return null;
+  }
+}
+
 export function trainingView(training: TrainingActivity): TrainingView {
   const { item, status, summary } = training;
   const answered = status === "solved" || status === "failed";
   const ended = summary !== null;
+  const open = !ended && (status === "prompt" || status === "in_progress");
   const card = item.kind === "card";
   return {
     header: headerOf(training),
@@ -60,6 +82,8 @@ export function trainingView(training: TrainingActivity): TrainingView {
     expected: training.expected ? (training.expected.san ?? training.expected.uci) : null,
     canRate: card && answered && !ended,
     canAdvance: !ended && (answered || (card && status === "rated")),
+    canExplore: open,
+    canAnswer: open && training.exploring.line_san.length > 0,
     advanceLabel: item.position_in_queue === item.queue_length ? "Finish" : "Next",
     summary,
   };

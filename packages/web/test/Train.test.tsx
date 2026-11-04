@@ -37,6 +37,7 @@ function card(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
     status: "prompt",
     exposure_id: "ex-1",
     expected: null,
+    exploring: { fen: START_FEN, line_san: [] },
     summary: null,
     ...overrides,
   };
@@ -60,6 +61,7 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
     },
     status: "prompt",
     expected: null,
+    exploring: { fen: START_FEN, line_san: [] },
     summary: null,
     ...overrides,
   };
@@ -92,12 +94,14 @@ function api(activity: TrainingActivity | null): ServerApi {
   };
 }
 
-const boards: { movableColor: unknown }[] = [];
+const boards: { movableColor: unknown; fen: unknown }[] = [];
+let boardMove: ((from: string, to: string) => void) | undefined;
 const spyBoard: BoardFactory = (_element, config) => {
-  boards.push({ movableColor: config.movable?.color });
+  boards.push({ movableColor: config.movable?.color, fen: config.fen });
+  boardMove = config.events?.move as typeof boardMove;
   return {
-    set: (next: { movable?: { color?: unknown } }) => {
-      boards.push({ movableColor: next.movable?.color });
+    set: (next: { movable?: { color?: unknown }; fen?: unknown }) => {
+      boards.push({ movableColor: next.movable?.color, fen: next.fen });
     },
     destroy: vi.fn(),
   } as never;
@@ -161,7 +165,7 @@ describe("a card on the board", () => {
   it("lets the student move while the card is open", () => {
     boards.length = 0;
     render(<Train server={api(card())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(boards.at(-1)?.movableColor).toBe("white");
+    expect(boards.at(-1)?.movableColor).toBe("both");
   });
 
   it("allows next once rated and stops offering the rating", () => {
@@ -236,5 +240,61 @@ describe("the end of the queue", () => {
     expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(ended.send).toHaveBeenCalledWith({ type: "end_training", activity_id: 4 });
+  });
+});
+
+const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+
+describe("exploring before answering", () => {
+  it("sends a board move as exploration and never as a grade", () => {
+    const server = api(card());
+    render(<Train server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    (boardMove as (from: string, to: string) => void)("e2", "e4");
+    expect(server.send).toHaveBeenCalledWith({
+      type: "explore",
+      kind: "move",
+      uci: "e2e4",
+      activity_id: 4,
+    });
+    expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "answer" }));
+  });
+
+  it("draws the explored position, not the served one", () => {
+    boards.length = 0;
+    const explored = card({ exploring: { fen: AFTER_E4, line_san: ["e4"] }, turn: "black" });
+    render(<Train server={api(explored)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(boards.at(-1)?.fen).toBe(AFTER_E4);
+  });
+
+  it("keeps Answer disabled until something is explored, then sends the first move", () => {
+    const empty = api(card());
+    const { unmount } = render(
+      <Train server={empty} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    const answer = () => screen.getByRole("button", { name: "Answer" }) as HTMLButtonElement;
+    expect(answer().disabled).toBe(true);
+    for (const name of ["Take back", "Reset"]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    unmount();
+
+    const server = api(card({ exploring: { fen: AFTER_E4, line_san: ["e4", "e5"] } }));
+    render(<Train server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(answer().disabled).toBe(false);
+    fireEvent.click(answer());
+    expect(server.send).toHaveBeenCalledWith({ type: "answer", uci: "e2e4", activity_id: 4 });
+  });
+
+  it("offers take back and reset while open, and no exploring controls once answered", () => {
+    const server = api(card({ exploring: { fen: AFTER_E4, line_san: ["e4"] } }));
+    const { rerender } = render(
+      <Train server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Take back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "undo", activity_id: 4 });
+    expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "reset", activity_id: 4 });
+    rerender(<Train server={api(card(failed))} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.queryByRole("button", { name: "Answer" })).toBeNull();
   });
 });

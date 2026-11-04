@@ -48,7 +48,8 @@ export type ActivityPort = Pick<
   | "playerMove"
   | "undo"
   | "startTraining"
-  | "trainingMove"
+  | "trainingExplore"
+  | "trainingAnswer"
   | "rateCard"
   | "nextTrainingItem"
   | "endTraining"
@@ -112,9 +113,6 @@ function trainingEventOf(state: TrainingActivity): ServerEvent {
     summary: state.summary,
   };
 }
-
-const uciOf = (move: { from: string; to: string; promotion?: string | undefined }): string =>
-  `${move.from}${move.to}${move.promotion ?? ""}`;
 
 function commandIdOf(raw: unknown): string | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
@@ -195,8 +193,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         return;
       case "move":
         if (activity.current()?.kind === "training") {
-          await activity.trainingMove(uciOf(command), command.activity_id);
-          return;
+          throw new ActivityError("use_answer", "grade a training item with answer, not move");
         }
         await activity.playerMove(
           {
@@ -215,6 +212,15 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
           mode: command.mode,
           ...(command.motif === undefined ? {} : { motif: command.motif }),
         });
+        return;
+      case "explore":
+        await activity.trainingExplore(
+          { kind: command.kind, ...(command.uci === undefined ? {} : { uci: command.uci }) },
+          command.activity_id,
+        );
+        return;
+      case "answer":
+        await activity.trainingAnswer(command.uci, command.activity_id);
         return;
       case "rate_card":
         await activity.rateCard(command.exposure_id, command.quality, command.activity_id);

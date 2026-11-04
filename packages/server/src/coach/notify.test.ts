@@ -5,7 +5,12 @@ import type {
   PlyQuestionNotification,
   TurnNotification,
 } from "../game/notifications.js";
-import { renderNotifications, renderSrsAnswer, type SrsAnswerNotification } from "./notify.js";
+import {
+  type PuzzleResultNotification,
+  renderNotifications,
+  renderSrsAnswer,
+  type SrsAnswerNotification,
+} from "./notify.js";
 
 const FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
 
@@ -203,5 +208,78 @@ describe("renderSrsAnswer", () => {
     expect(renderSrsAnswer({ ...base, answered_san: null, expected_san: null })).toContain(
       "they played g1f3 and the expected move was d2d4",
     );
+  });
+});
+
+describe("the student's reasoning in a training result", () => {
+  const reasoning = {
+    messages: ["I want to look at the knight", "maybe the bishop instead"],
+    explored: [
+      { at_ms: 12_000, kind: "move" as const, line: "1... Nf6 Bxf7+ Kxf7" },
+      { at_ms: 15_400, kind: "move" as const, line: "1... Nf6" },
+      { at_ms: 20_000, kind: "undo" as const, line: null },
+      { at_ms: 22_000, kind: "move" as const, line: "1... Nc6" },
+      { at_ms: 25_000, kind: "reset" as const, line: null },
+    ],
+  };
+  const miss: SrsAnswerNotification = {
+    type: "srs_answer",
+    card_id: 7,
+    prompt_fen: FEN,
+    answered_uci: "g1f3",
+    answered_san: "Nf3",
+    expected_uci: "d2d4",
+    expected_san: "d4",
+    correct: false,
+  };
+
+  it("lists the messages, one line per explored event and the verdict on a review card", () => {
+    expect(renderSrsAnswer({ ...miss, reasoning })).toBe(
+      [
+        `The student missed review card 7: they played Nf3 and the expected move was d4.`,
+        `Position (FEN): ${FEN}`,
+        "What the student wrote:",
+        "- I want to look at the knight",
+        "- maybe the bishop instead",
+        "Explored:",
+        "+12s  1... Nf6 Bxf7+ Kxf7",
+        "+15s  1... Nf6",
+        "+20s  undo",
+        "+22s  1... Nc6",
+        "+25s  reset",
+        "Answer: Nf3 (wrong)",
+      ].join("\n"),
+    );
+  });
+
+  it("says nothing was written or explored instead of leaving the block out", () => {
+    const text = renderSrsAnswer({
+      ...miss,
+      correct: true,
+      reasoning: { messages: [], explored: [] },
+    });
+    expect(text).toContain("What the student wrote: nothing");
+    expect(text).toContain("Explored: nothing");
+    expect(text).toContain("Answer: Nf3 (correct)");
+  });
+
+  it("adds the same blocks to a puzzle result and leaves old rows unchanged", () => {
+    const puzzle: PuzzleResultNotification = {
+      type: "puzzle_result",
+      puzzle_id: "f1",
+      motif: "fork",
+      difficulty: "easy",
+      fen: FEN,
+      solved: false,
+      answered_uci: ["g1f3"],
+      expected_uci: "d2d4",
+      expected_san: "d4",
+    };
+    const plain = renderNotifications([puzzle]);
+    expect(plain).not.toContain("What the student wrote");
+    const text = renderNotifications([{ ...puzzle, reasoning }]);
+    expect(text).toContain("- maybe the bishop instead");
+    expect(text).toContain("+20s  undo");
+    expect(text).toContain("Answer: g1f3 (wrong)");
   });
 });
