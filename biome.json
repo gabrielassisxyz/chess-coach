@@ -20,6 +20,12 @@
       "preset": "recommended"
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/web/src/styles/board.css"],
+      "linter": { "rules": { "correctness": { "noUnknownTypeSelector": "off" } } }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "double",

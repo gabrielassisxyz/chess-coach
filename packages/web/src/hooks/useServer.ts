@@ -23,6 +23,7 @@ export interface ServerApi extends ChatState {
   connection: ConnectionState;
   say(text: string): boolean;
   approve(requestId: string, allow: boolean): void;
+  dismissError(): void;
   send(command: DistributiveOmit<ActivityCommand, "command_id">): boolean;
 }
 
@@ -114,13 +115,15 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
     [sendCommand],
   );
 
+  const dismissError = useCallback(() => dispatch({ type: "dismiss_error" }), []);
+
   const send = useCallback(
     (command: DistributiveOmit<ActivityCommand, "command_id">): boolean =>
       sendCommand((command_id) => ({ ...command, command_id })),
     [sendCommand],
   );
 
-  return { ...state, connection, say, approve, send };
+  return { ...state, connection, say, approve, dismissError, send };
 }
 
 function parseJson(data: unknown): unknown {

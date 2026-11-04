@@ -29,6 +29,7 @@ export interface ChatState {
   items: ChatItem[];
   permissions: PendingPermission[];
   lastError: string | null;
+  errorCount: number;
   localCount: number;
   activity: ActivityState | null;
 }
@@ -37,6 +38,7 @@ export const initialChatState: ChatState = {
   items: [],
   permissions: [],
   lastError: null,
+  errorCount: 0,
   localCount: 0,
   activity: null,
 };
@@ -111,11 +113,17 @@ function addPermission(state: ChatState, event: PermissionRequestEvent): ChatSta
   return { ...state, permissions: [...state.permissions, request] };
 }
 
+// errorCount lets a view react to every refusal, including a repeat of the same message.
+function withError(state: ChatState, message: string): ChatState {
+  return { ...state, lastError: message, errorCount: state.errorCount + 1 };
+}
+
 export type ChatAction =
   | { type: "server"; event: ServerEvent }
   | { type: "local_say"; text: string }
   | { type: "permission_answered"; requestId: string }
-  | { type: "protocol_error"; message: string };
+  | { type: "protocol_error"; message: string }
+  | { type: "dismiss_error" };
 
 // A bootstrap replaces everything: after a reconnect the server's transcript is the truth, so
 // nothing from the previous socket (half-streamed text, open approval cards) survives it.
@@ -129,7 +137,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     const permissions = state.permissions.filter((p) => p.requestId !== action.requestId);
     return { ...state, permissions };
   }
-  if (action.type === "protocol_error") return { ...state, lastError: action.message };
+  if (action.type === "protocol_error") return withError(state, action.message);
+  if (action.type === "dismiss_error") return { ...state, lastError: null };
 
   const event = action.event;
   switch (event.type) {
@@ -145,6 +154,6 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "activity":
       return { ...state, activity: event.state };
     case "error":
-      return { ...state, lastError: event.message };
+      return withError(state, event.message);
   }
 }
