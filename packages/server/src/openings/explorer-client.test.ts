@@ -1,0 +1,62 @@
+import { describe, expect, it } from "vitest";
+import {
+  ExplorerError,
+  explorerUrl,
+  httpExplorerFetcher,
+  MAX_RESPONSE_BYTES,
+  parsePosition,
+} from "./explorer-client.js";
+
+const FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+function answering(
+  status: number,
+  body = "{}",
+  headers: Record<string, string> = {},
+): typeof fetch {
+  return (async () => new Response(body, { status, headers })) as unknown as typeof fetch;
+}
+
+describe("explorer client", () => {
+  it("builds the query from constants and the encoded position", () => {
+    const url = new URL(explorerUrl(FEN));
+    expect(url.origin).toBe("https://explorer.lichess.ovh");
+    expect(url.searchParams.get("ratings")).toBe("400,600");
+    expect(url.searchParams.get("speeds")).toBe("rapid,blitz");
+    expect(url.searchParams.get("fen")).toBe(FEN);
+  });
+
+  it("names the app and sends the token when there is one", async () => {
+    let seen: Headers | undefined;
+    const spy = (async (_url: string, init: RequestInit) => {
+      seen = new Headers(init.headers);
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    await httpExplorerFetcher("secret", spy).fetch(FEN);
+    expect(seen?.get("user-agent")).toContain("chess-coach");
+    expect(seen?.get("authorization")).toBe("Bearer secret");
+    await httpExplorerFetcher(undefined, spy).fetch(FEN);
+    expect(seen?.get("authorization")).toBeNull();
+  });
+
+  it("reports a missing token as unauthorized and an oversized answer as upstream", async () => {
+    await expect(httpExplorerFetcher(undefined, answering(401)).fetch(FEN)).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+    const huge = "x".repeat(MAX_RESPONSE_BYTES + 1);
+    await expect(httpExplorerFetcher("t", answering(200, huge)).fetch(FEN)).rejects.toMatchObject({
+      code: "upstream",
+    });
+    await expect(
+      httpExplorerFetcher(
+        "t",
+        answering(200, "{}", { "content-length": String(MAX_RESPONSE_BYTES + 1) }),
+      ).fetch(FEN),
+    ).rejects.toMatchObject({ code: "upstream" });
+  });
+
+  it("rejects an answer that is not the expected shape", () => {
+    expect(() => parsePosition("nope")).toThrow(ExplorerError);
+    expect(() => parsePosition('{"white":1}')).toThrow(ExplorerError);
+  });
+});

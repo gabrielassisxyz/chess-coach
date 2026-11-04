@@ -38,9 +38,9 @@ interface StudentPlyRow {
 }
 
 // Placement, side, castling and en passant: the move counters differ between games reaching one position.
-const positionKey = (fen: string): string => fen.split(" ").slice(0, 4).join(" ");
+export const positionKey = (fen: string): string => fen.split(" ").slice(0, 4).join(" ");
 
-const puzzleId = (key: string): string =>
+export const puzzleId = (key: string): string =>
   `own:${createHash("sha256").update(key).digest("hex").slice(0, 16)}`;
 
 function collectPositions(db: Database): OpeningPosition[] {
