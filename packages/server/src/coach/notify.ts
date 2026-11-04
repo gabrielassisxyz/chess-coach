@@ -83,3 +83,24 @@ export function renderNotifications(items: NotificationContent[]): string {
   for (const end of ends) parts.push(renderEnd(end));
   return parts.join("\n\n");
 }
+
+export function renderSrsAnswer(answer: SrsAnswerNotification): string {
+  const played = answer.answered_san ?? answer.answered_uci;
+  const expected = answer.expected_san ?? answer.expected_uci;
+  const verdict = answer.correct
+    ? `The student answered review card ${answer.card_id} correctly with ${played}.`
+    : `The student missed review card ${answer.card_id}: they played ${played} and the expected move was ${expected}.`;
+  return `${verdict}\nPosition (FEN): ${answer.prompt_fen}`;
+}
+
+/** Row content written when the student answers a review card; the coach comments on a miss. */
+export interface SrsAnswerNotification {
+  type: "srs_answer";
+  card_id: number;
+  prompt_fen: string;
+  answered_uci: string;
+  answered_san: string | null;
+  expected_uci: string;
+  expected_san: string | null;
+  correct: boolean;
+}
