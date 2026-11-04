@@ -80,6 +80,7 @@ function api(activity: TrainingActivity | null): ServerApi {
     lastError: null,
     errorCount: 0,
     localCount: 0,
+    cardsCreated: {},
     activity,
     connection: "connected",
     say: vi.fn(() => true),
