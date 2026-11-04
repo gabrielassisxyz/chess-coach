@@ -11,7 +11,8 @@ const fixture = readFileSync(
   new URL("../fixtures/chess-rocket-routine.md", import.meta.url),
   "utf8",
 );
-const withEmDash = fixture.replace("exists and", "exists —");
+const EM_DASH = String.fromCharCode(0x2014);
+const withEmDash = fixture.replace("exists and", `exists ${EM_DASH}`);
 
 describe("importRoutine", () => {
   let db: Database;
@@ -36,9 +37,9 @@ describe("importRoutine", () => {
 
   it("replaces em-dashes before storing", () => {
     importRoutine(db, withEmDash);
-    expect(withEmDash).toContain("—");
-    expect(rows()[0]?.body).not.toContain("—");
-    expect(stripEmDashes("a — b")).toBe("a, b");
+    expect(withEmDash).toContain(EM_DASH);
+    expect(rows()[0]?.body).not.toContain(EM_DASH);
+    expect(stripEmDashes(`a ${EM_DASH} b`)).toBe("a, b");
   });
 
   it("serves the imported row through read_routine and GET /api/routine alike", async () => {
