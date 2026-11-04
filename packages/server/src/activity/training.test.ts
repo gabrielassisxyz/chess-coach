@@ -609,7 +609,7 @@ describe("the training state a client renders", () => {
     ] as const) {
       const { activity } = setup();
       const state = training(
-        await activity.startTraining({ mode: "puzzles", motif: "fork", size }),
+        await activity.startTraining({ mode: "puzzles", motif: "fork", ...(size ? { size } : {}) }),
       );
       expect(state.item).toMatchObject({ queue_length: length });
       await activity.endTraining();
