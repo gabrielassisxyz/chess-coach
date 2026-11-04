@@ -28,7 +28,7 @@ pnpm install
 pnpm dev
 ```
 
-The server listens on `127.0.0.1:3000`; the web dev server proxies `/api` to it.
+The server listens on `127.0.0.1:3210`; the web dev server proxies `/api` to it.
 
 ## Develop
 

@@ -22,7 +22,7 @@
   `packages/shared` (types both sides import). `tools/` holds offline Python scripts that
   produce JSON (puzzle generation) and is never part of the runtime.
 - **Install:** `pnpm install`
-- **Dev:** `pnpm dev` (server on 127.0.0.1:3000, web on the Vite port proxying `/api`)
+- **Dev:** `pnpm dev` (server on 127.0.0.1:3210, web on the Vite port proxying `/api`)
 - **Test:** `pnpm test` (vitest, per package)
 - **Typecheck / lint:** `pnpm typecheck`, `pnpm lint` (Biome, lint and format in one)
 - **Gate:** `bin/ci`, the exact thing GitHub Actions runs. Green locally means green in CI.

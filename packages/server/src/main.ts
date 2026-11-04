@@ -8,7 +8,7 @@ import { allowedOriginsFrom } from "./ws/origin.js";
 
 assertSubscriptionAuth();
 
-const port = Number(process.env.PORT ?? 3000);
+const port = Number(process.env.PORT ?? 3210);
 let readiness: Readiness = { ready: false, reason: "coach is starting" };
 const db = openDatabase(dataDir());
 const coach = new CoachSession({
