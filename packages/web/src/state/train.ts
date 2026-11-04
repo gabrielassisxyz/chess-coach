@@ -99,6 +99,9 @@ export function startFailureText(
   if (code === "empty_queue" && mode === "srs") {
     return "Nothing is due right now. Cards come from the mistakes in a finished game: open one in Review and choose Create cards, or drill puzzles instead.";
   }
+  if (code === "empty_queue" && mode === "openings") {
+    return `There are no ${motif} opening drills yet. Import and grade some of your games in Review, then try again.`;
+  }
   if (code === "empty_queue") {
     return motif === ""
       ? "There are no puzzles to drill. Restart the server to load the puzzle library."

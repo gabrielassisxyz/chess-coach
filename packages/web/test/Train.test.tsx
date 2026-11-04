@@ -127,6 +127,18 @@ describe("mode chooser", () => {
     });
   });
 
+  it("starts an opening drill for the chosen colour", () => {
+    const server = api(null);
+    render(<Train server={server} fetchMotifs={noMotifs} />);
+    fireEvent.change(screen.getByLabelText("Colour"), { target: { value: "black" } });
+    fireEvent.click(screen.getByRole("button", { name: "Drill openings" }));
+    expect(server.send).toHaveBeenCalledWith({
+      type: "start_training",
+      mode: "openings",
+      color: "black",
+    });
+  });
+
   it("starts the due-card review without a motif", () => {
     const server = api(null);
     render(<Train server={server} fetchMotifs={noMotifs} />);

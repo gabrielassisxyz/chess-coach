@@ -49,6 +49,12 @@ export interface TrainingDeps {
   onNotification?: () => void;
 }
 
+export interface TrainingInput {
+  mode: TrainingMode;
+  motif?: string | undefined;
+  color?: PlayerColor | undefined;
+}
+
 type QueueEntry =
   | { kind: "card"; cardId: number }
   | { kind: "puzzle"; id: string; motif: string; difficulty: string };
@@ -98,7 +104,7 @@ export class TrainingRun {
   }
 
   // A queue that would hold nothing is refused, so the board never shows an item that is not there.
-  static begin(deps: TrainingDeps, input: { mode: TrainingMode; motif?: string }): TrainingRun {
+  static begin(deps: TrainingDeps, input: TrainingInput): TrainingRun {
     const queue = TrainingRun.materialize(deps, input);
     if (queue.length === 0) {
       const what = input.mode === "srs" ? "no review card is due" : "no puzzle matches";
@@ -107,17 +113,18 @@ export class TrainingRun {
     return new TrainingRun(deps, input.mode, queue);
   }
 
-  private static materialize(
-    deps: TrainingDeps,
-    input: { mode: TrainingMode; motif?: string },
-  ): QueueEntry[] {
+  private static materialize(deps: TrainingDeps, input: TrainingInput): QueueEntry[] {
     if (input.mode === "srs") {
       return deps.desk
         .listDueCards(DUE_QUEUE_SIZE)
         .map((card) => ({ kind: "card", cardId: card.id }));
     }
+    if (input.mode === "openings" && !input.color) {
+      throw new ActivityError("empty_queue", "choose White or Black for the opening drill");
+    }
+    const motif = input.mode === "openings" ? `opening-${input.color}` : input.motif;
     const { puzzles } = listPuzzles(deps.db, {
-      motif: input.motif,
+      motif,
       limit: PUZZLE_QUEUE_SIZE,
     });
     return puzzles.map((p) => ({

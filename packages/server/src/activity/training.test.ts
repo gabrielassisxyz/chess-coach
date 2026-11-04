@@ -126,6 +126,22 @@ describe("queue materialization", () => {
     expect(activity.current()).toBeNull();
   });
 
+  it("serves only the chosen colour in openings mode and refuses an empty inventory", async () => {
+    addPuzzle("w1", "opening-white", BACK_RANK, ["a1a8"]);
+    addPuzzle("b1", "opening-black", FORK, ["b5c7"]);
+    addPuzzle("b2", "opening-black", BACK_RANK, ["a1a8"]);
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    const black = training(await activity.startTraining({ mode: "openings", color: "black" }));
+    expect(black).toMatchObject({ mode: "openings", item: { motif: "opening-black" } });
+    expect(black.item.queue_length).toBe(2);
+    db.prepare("DELETE FROM puzzles WHERE motif = 'opening-white'").run();
+    expect(await code(activity.startTraining({ mode: "openings", color: "white" }))).toBe(
+      "empty_queue",
+    );
+    expect(await code(activity.startTraining({ mode: "openings" }))).toBe("empty_queue");
+  });
+
   it("materializes the due cards for review mode", async () => {
     addCard();
     addCard();
