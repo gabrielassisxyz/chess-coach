@@ -160,14 +160,14 @@ async function analyze(world: CoachWorld, fen: string | undefined): Promise<Tool
 async function startGame(
   world: CoachWorld,
   color: "white" | "black",
-  elo: number,
+  elo: number | undefined,
 ): Promise<ToolResult> {
-  const state = await world.activity.newGame({ color, elo });
+  const state = await world.activity.newGame({ color, ...(elo === undefined ? {} : { elo }) });
   if (state.kind !== "live_game") return ok(stateSummary(state));
   return ok({
     game_id: state.game_id,
     student_color: color,
-    elo,
+    ...(elo === undefined ? { elo: "current setting, see get_progress" } : { elo }),
     fen: state.fen,
     turn: state.turn,
   });
@@ -202,10 +202,10 @@ export function buildGameTools(world: CoachWorld): SdkMcpToolDefinition<any>[] {
     ),
     tool(
       "new_game",
-      "Start a game for the student. Refused with game_in_progress while one is unfinished.",
+      "Start a game for the student at the given engine Elo, or at the current setting when elo is omitted. Refused with game_in_progress while one is unfinished.",
       {
         color: z.enum(["white", "black"]),
-        elo: z.number().int().min(MIN_ELO).max(MAX_ELO),
+        elo: z.number().int().min(MIN_ELO).max(MAX_ELO).optional(),
       },
       async ({ color, elo }) => guarded(() => startGame(world, color, elo)),
     ),

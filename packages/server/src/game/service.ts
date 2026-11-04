@@ -16,6 +16,7 @@ import {
   removeLastPlies,
 } from "../db/games.js";
 import type { Database } from "../db/open.js";
+import { applyStreakAdjustment, getCurrentElo } from "../db/settings.js";
 import { EngineFault } from "../engine/errors.js";
 import type { PlayerMoveEvaluation } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
@@ -147,18 +148,19 @@ export class GameService {
     });
   }
 
-  newGame(input: { color: PlayerColor; elo: number; fen?: string }): Promise<GameSnapshot> {
+  newGame(input: { color: PlayerColor; elo?: number; fen?: string }): Promise<GameSnapshot> {
     return this.enqueue(async () => {
       if (this.state && this.state.game.finishedAt === null) {
         throw new GameError("game_in_progress", "a game is already running");
       }
-      if (!Number.isInteger(input.elo) || input.elo < MIN_ELO || input.elo > MAX_ELO) {
+      const elo = input.elo ?? getCurrentElo(this.db);
+      if (!Number.isInteger(elo) || elo < MIN_ELO || elo > MAX_ELO) {
         throw new GameError("invalid_elo", `elo must be an integer in ${MIN_ELO}..${MAX_ELO}`);
       }
       const initialFen = this.startFen(input.fen);
       const game = createGame(this.db, {
         playerColor: input.color,
-        targetElo: input.elo,
+        targetElo: elo,
         initialFen,
         phase: input.color === "white" ? "player_turn" : "engine_turn",
         startedAt: this.clock.now().toISOString(),
@@ -366,13 +368,14 @@ export class GameService {
       finish,
       fen: after.fen(),
     });
+    const hook = this.withDifficulty(notify, live.game.id, finish);
     completeTurn(this.db, {
       gameId: live.game.id,
       evaluation: playerPly && evaluation ? { ply: playerPly.ply, value: evaluation } : null,
       engineMove,
       pgn,
       finish,
-      ...(notify ? { notify } : {}),
+      ...(hook ? { notify: hook } : {}),
     });
     const settled = this.reload();
     this.emitSnapshot();
@@ -411,12 +414,38 @@ export class GameService {
       live.game.id,
       finish,
       pgnOf(replay(live.game, live.moves), finish.result),
-      notify,
+      this.withDifficulty(notify, live.game.id, finish),
     );
     this.reload();
     this.emitSnapshot();
     if (notify) this.emitNotification();
     return this.requireSnapshot();
+  }
+
+  // The level moves in the finish transaction so a game and its effect on the level cannot disagree.
+  private withDifficulty(
+    notify: ((db: Database) => void) | undefined,
+    gameId: number,
+    finish: Finish | null,
+  ): ((db: Database) => void) | undefined {
+    if (!finish || finish.termination === "abort") return notify;
+    return (db) => {
+      notify?.(db);
+      const change = applyStreakAdjustment(db, gameId, this.clock);
+      if (!change || !this.notifications) return;
+      writeNotification(
+        db,
+        this.notifications.sessionId(),
+        {
+          type: "difficulty_change",
+          from_elo: change.from_elo,
+          to_elo: change.to_elo,
+          reason: change.reason,
+          game_id: gameId,
+        },
+        this.clock,
+      );
+    };
   }
 
   // The rows are written by the turn's own transaction: a failed write must undo the turn, never leave it unannounced.

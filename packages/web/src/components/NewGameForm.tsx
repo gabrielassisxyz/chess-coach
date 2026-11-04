@@ -7,11 +7,13 @@ export const DEFAULT_ELO = 600;
 export interface NewGameFormProps {
   onStart(color: "white" | "black", elo: number): void;
   onCancel(): void;
+  // The engine level the server currently has; the field starts there.
+  defaultElo?: number | null | undefined;
 }
 
-export function NewGameForm({ onStart, onCancel }: NewGameFormProps) {
+export function NewGameForm({ onStart, onCancel, defaultElo }: NewGameFormProps) {
   const [color, setColor] = useState<"white" | "black">("white");
-  const [elo, setElo] = useState(String(DEFAULT_ELO));
+  const [elo, setElo] = useState(String(defaultElo ?? DEFAULT_ELO));
   const value = Number(elo);
   const valid = Number.isInteger(value) && value >= MIN_ELO && value <= MAX_ELO;
   const errorId = useId();

@@ -21,6 +21,7 @@ function api(activity: ActivityState | null, overrides: Partial<ServerApi> = {})
     turn: "idle",
     localCount: 0,
     activity,
+    currentElo: null,
     cardsCreated: {},
     connection: "connected",
     say: vi.fn(() => true),
@@ -151,6 +152,16 @@ describe("controls send commands against the current activity", () => {
     fireEvent.click(within(dialog).getByLabelText("black"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
     expect(send).toHaveBeenCalledWith({ type: "new_game", color: "black", elo: 600 });
+  });
+
+  it("starts the dialog at the server's current Elo and sends the value it shows", () => {
+    const send = vi.fn(() => true);
+    render(<Play server={api(null, { send, currentElo: 850 })} createBoard={inertBoard} />);
+    fireEvent.click(screen.getByRole("button", { name: "New game" }));
+    const dialog = screen.getByRole("dialog", { name: "New game" });
+    expect((within(dialog).getByLabelText("Engine Elo") as HTMLInputElement).value).toBe("850");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
+    expect(send).toHaveBeenCalledWith({ type: "new_game", color: "white", elo: 850 });
   });
 
   it("refuses an Elo outside 100..3190", () => {

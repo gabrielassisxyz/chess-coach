@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { Database } from "../db/open.js";
+import { getCurrentElo, lastDifficultyChange } from "../db/settings.js";
+import { buildDifficultyTools } from "./difficulty-tools.js";
 import { buildGameTools, type CoachWorld } from "./game-tools.js";
 import { buildPuzzleTools } from "./puzzle-tools.js";
 import { buildRoutineTools } from "./routine-tools.js";
@@ -34,6 +36,7 @@ export const COACH_TOOL_BASE_NAMES = [
   "explain_card",
   "get_puzzles",
   "get_due_cards",
+  "set_difficulty",
   "read_routine",
   "write_routine",
 ] as const;
@@ -47,6 +50,7 @@ export const referenceInput = { name: z.enum(REFERENCE_NAMES) };
 
 export interface Progress {
   current_elo: number;
+  last_difficulty_change: { to_elo: number; reason: string; changed_at: string } | null;
   games_played: number;
   cards_total: number;
   cards_due: number;
@@ -65,17 +69,11 @@ function countRows(db: Database, table: string, where = "1 = 1", ...params: stri
   return (row as { n: number }).n;
 }
 
-function readElo(db: Database): number {
-  if (!tableExists(db, "settings")) return 0;
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'current_elo'").get();
-  const parsed = Number((row as { value: string } | undefined)?.value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 // Later migrations create the tables; until then every count is zero rather than an error.
 export function getProgress(db: Database, now: Date = new Date()): Progress {
   return {
-    current_elo: readElo(db),
+    current_elo: getCurrentElo(db),
+    last_difficulty_change: lastDifficultyChange(db),
     games_played: countRows(db, "games"),
     cards_total: countRows(db, "srs_cards"),
     cards_due: countRows(db, "srs_cards", "next_review_at <= ?", now.toISOString()),
@@ -118,6 +116,7 @@ export function buildCoachTools(deps: CoachToolDeps) {
     ...buildGameTools(deps.world),
     ...buildSrsTools({ db: deps.db, clock: { now }, evaluateMove: deps.world.evaluateMove }),
     ...buildPuzzleTools(deps.db),
+    ...buildDifficultyTools(deps.db, { now }),
     ...buildRoutineTools({ db: deps.db, now }),
   ];
 }
