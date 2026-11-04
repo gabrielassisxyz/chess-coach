@@ -68,6 +68,7 @@ const coach = new CoachSession({
   world: {
     game,
     activity,
+    training: activity,
     analyze: (fen) => pool.analyze(fen),
     evaluateMove: (fen, moveUci, color) => evaluatePlayerMove(pool.evaluation, fen, moveUci, color),
   },

@@ -17,7 +17,8 @@ import type {
 import { appendChatMessage } from "../db/chat.js";
 import type { PlayerColor } from "../db/games.js";
 import type { Database } from "../db/open.js";
-import { getPuzzle, listPuzzles, recordPuzzleAttempt } from "../db/puzzles.js";
+import { getPuzzle, getPuzzleHeader, listPuzzles, recordPuzzleAttempt } from "../db/puzzles.js";
+import { getCard, insertCard } from "../db/srs.js";
 import {
   amendPendingNotification,
   closeTrainingItem,
@@ -54,6 +55,8 @@ export interface TrainingInput {
   motif?: string | undefined;
   color?: PlayerColor | undefined;
 }
+
+export type TrainingItemRef = { kind: "card"; id: number } | { kind: "puzzle"; id: string };
 
 type QueueEntry =
   | { kind: "card"; cardId: number }
@@ -111,6 +114,25 @@ export class TrainingRun {
       throw new ActivityError("empty_queue", what);
     }
     return new TrainingRun(deps, input.mode, queue);
+  }
+
+  /** A queue of one item the coach picked; unlike `begin`, an unknown id is refused by name. */
+  static beginWith(deps: TrainingDeps, item: TrainingItemRef): TrainingRun {
+    if (item.kind === "card") {
+      if (!getCard(deps.db, item.id)) {
+        throw new ActivityError("card_not_found", `card ${item.id} does not exist`);
+      }
+      return new TrainingRun(deps, "srs", [{ kind: "card", cardId: item.id }]);
+    }
+    const header = getPuzzleHeader(deps.db, item.id);
+    if (!header) throw new ActivityError("puzzle_not_found", `puzzle ${item.id} does not exist`);
+    const entry: QueueEntry = {
+      kind: "puzzle",
+      id: item.id,
+      motif: header.motif,
+      difficulty: header.difficulty,
+    };
+    return new TrainingRun(deps, "puzzles", [entry]);
   }
 
   private static materialize(deps: TrainingDeps, input: TrainingInput): QueueEntry[] {
@@ -331,6 +353,7 @@ export class TrainingRun {
       failedPly: state.failedPly,
     });
     this.tally(solved);
+    if (!solved) this.cardFromFailure(item, state);
     this.notify({
       type: "puzzle_result",
       puzzle_id: item.puzzle_id,
@@ -342,6 +365,24 @@ export class TrainingRun {
       expected_uci: expected?.uci ?? null,
       expected_san: expected?.san ?? null,
       reasoning,
+    });
+  }
+
+  // Every failed puzzle comes back as a review card; the unique puzzle_id makes a repeat failure a no-op.
+  private cardFromFailure(item: TrainingItem & { kind: "puzzle" }, state: AttemptState): void {
+    insertCard(this.deps.db, {
+      sourceKind: "teaching",
+      sourceGameId: null,
+      sourceMoveId: null,
+      promptFen: item.fen,
+      studentColor: turnOf(item.fen),
+      playedUci: state.answered.at(-1) ?? null,
+      expectedUci: state.solution[0] as string,
+      cpLoss: null,
+      classification: null,
+      explanation: getPuzzleHeader(this.deps.db, item.puzzle_id)?.explanation ?? null,
+      createdAt: this.clock.now().toISOString(),
+      puzzleId: item.puzzle_id,
     });
   }
 

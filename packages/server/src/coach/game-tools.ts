@@ -24,6 +24,7 @@ export type SrsEvaluator = (
 export interface CoachWorld {
   game: Pick<GameService, "snapshot" | "resign">;
   activity: Pick<ActivityService, "current" | "startDemo" | "demoMove" | "newGame">;
+  training: Pick<ActivityService, "startTrainingItem" | "current">;
   analyze(fen: string): Promise<SearchResult>;
   evaluateMove: SrsEvaluator;
 }

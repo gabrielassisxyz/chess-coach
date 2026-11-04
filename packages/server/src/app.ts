@@ -6,6 +6,7 @@ import { registerCardRoutes } from "./http/cards.js";
 import { registerGameRoutes } from "./http/games.js";
 import { type ImportRoutesOptions, registerImportRoutes } from "./http/import.js";
 import { registerOpeningRoutes } from "./http/openings.js";
+import { registerProgressRoutes } from "./http/progress.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
 import { registerRoutineRoutes } from "./http/routine.js";
 import type { ExplorerResult } from "./openings/from-explorer.js";
@@ -42,6 +43,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   if (options.db) {
     registerCardRoutes(app, options.db);
     registerGameRoutes(app, options.db);
+    registerProgressRoutes(app, options.db);
     registerPuzzleRoutes(app, options.db);
     registerRoutineRoutes(app, options.db);
     if (options.importer) registerImportRoutes(app, { db: options.db, ...options.importer });

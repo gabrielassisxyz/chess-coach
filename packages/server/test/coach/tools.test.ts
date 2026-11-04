@@ -3,14 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import {
-  getProgress,
-  REFERENCE_NAMES,
-  readReference,
-  referenceInput,
-} from "../../src/coach/tools.js";
+import { REFERENCE_NAMES, readReference, referenceInput } from "../../src/coach/tools.js";
 import { openDatabase } from "../../src/db/open.js";
 import { contentDir } from "../../src/paths.js";
+import { computeCoachProgress } from "../../src/progress/compute.js";
 
 const schema = z.object(referenceInput);
 
@@ -45,34 +41,21 @@ describe("read_reference", () => {
 });
 
 describe("get_progress", () => {
-  it("starts at the seeded level with nothing else", () => {
-    expect(getProgress(freshDb())).toEqual({
-      current_elo: 600,
-      last_difficulty_change: null,
-      games_played: 0,
-      cards_total: 0,
-      cards_due: 0,
+  it("returns the progress object without the game list and with games_played", () => {
+    const progress = computeCoachProgress(freshDb(), {
+      now: () => new Date("2026-06-01T00:00:00Z"),
     });
-  });
-
-  it("reads what exists", () => {
-    const db = freshDb();
-    db.exec(`UPDATE settings SET value = '950' WHERE key = 'current_elo';
-      INSERT INTO difficulty_changes (changed_at, from_elo, to_elo, reason)
-      VALUES ('2026-05-01T00:00:00Z', 900, 950, 'streak_up');
-      INSERT INTO srs_cards (source_kind, prompt_fen, student_color, expected_uci, created_at, next_review_at)
-      VALUES ('teaching', 'f', 'white', 'd2d4', 't', '2026-01-01T00:00:00Z'),
-             ('teaching', 'f', 'white', 'd2d4', 't', '2999-01-01T00:00:00Z');`);
-    expect(getProgress(db, new Date("2026-06-01T00:00:00Z"))).toEqual({
-      current_elo: 950,
-      last_difficulty_change: {
-        to_elo: 950,
-        reason: "streak_up",
-        changed_at: "2026-05-01T00:00:00Z",
-      },
-      games_played: 0,
-      cards_total: 2,
-      cards_due: 1,
-    });
+    expect(Object.keys(progress).sort()).toEqual(
+      [
+        "cards",
+        "difficulty",
+        "games_played",
+        "puzzles_by_motif",
+        "rating_history",
+        "streak_days",
+      ].sort(),
+    );
+    expect(progress.games_played).toBe(0);
+    expect(progress.difficulty).toEqual({ current_elo: 600, last_change: null });
   });
 });

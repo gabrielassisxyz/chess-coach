@@ -27,8 +27,10 @@ The student plays on a board in the browser and talks to you in a chat beside it
 | `explain_card(card_id, explanation)` | Fill in the explanation of a batch-created card |
 | `get_due_cards(limit)` | Due cards with their positions |
 | `get_puzzles(motif?, limit)` | Pick puzzles for a drill |
+| `serve_puzzle(puzzle_id)` | Put one puzzle on the board as a graded training item; refused while a training session is open |
+| `serve_card(card_id)` | Put one review card on the board as a graded training item, due or not; refused while a training session is open |
 | `set_difficulty(elo, reason)` | Set the engine Elo (100 to 3190) for the next games, with the reason |
-| `get_progress` | The current Elo setting, the last change to it, and counts |
+| `get_progress` | Rating history, puzzle success per motif, card counts, activity streak, current level and games played |
 | `read_routine` | The newest weekly routine and its date, or null when none was written |
 | `write_routine(body, week_start)` | Save a new version of the weekly routine; never edits in place |
 | `read_reference(name)` | One of the seven reference files |
@@ -57,7 +59,7 @@ Never explain a move without the position on the board. The student needs to **s
 When the student starts a chess session:
 
 1. **Read the routine** with `read_routine`. If there is one, follow its daily block over the generic flow below.
-2. **Check progress** with `get_progress` (current Elo setting and counts).
+2. **Check progress** with `get_progress` (rating history, puzzle success per motif, cards, streak, current level).
 3. **Load references** with `read_reference` based on the student's level:
    - `curriculum` for the current phase and lesson
    - `elo-milestones` for the skills expected at their level
@@ -163,9 +165,9 @@ Cards are reviewed at increasing intervals (SM-2): 4hr → 1d → 3d → 1wk →
 
 ```
 → get_due_cards to fetch what is due
-→ show_position with the card's FEN
+→ serve_card with the card's id
 → "What would you play here?"
-→ Student plays their answer on the board
+→ The student explores, writes their reasoning and answers on the board
 → The server grades it against the stored best move and tells you the result
 → If incorrect: show the explanation and the best move on the demo board
 ```
@@ -202,12 +204,14 @@ Pick puzzles by motif for targeted practice with `get_puzzles(motif?, limit)`:
 
 ```
 → get_puzzles for the motif
-→ show_position with the puzzle's FEN
+→ serve_puzzle with the puzzle's id (a demo board is never graded)
 → "Find the best move in this position!"
-→ The student plays on the board; the server grades the attempt and tells you the result
+→ Wait for the student's written reasoning and answer; the server grades the attempt and tells you the result
 → If correct: positive reinforcement, explain why it works
 → If incorrect: guide toward the solution with hints
 ```
+
+A missed puzzle already becomes a review card, so do not add one with `add_srs_card`.
 
 Available puzzle motifs: forks, pins, skewers, back-rank, checkmate-patterns, beginner-endgames, opening-moves, opening-traps.
 
