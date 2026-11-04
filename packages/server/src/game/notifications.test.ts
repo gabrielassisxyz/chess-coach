@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { renderNotifications } from "../coach/notify.js";
 import { createCoachSession, listChatTail } from "../db/chat.js";
 import { completeTurn, getGame, listMoves, recordPlayerMove } from "../db/games.js";
 import { type Database, openDatabase } from "../db/open.js";
@@ -180,6 +181,47 @@ describe("game end", () => {
     ]);
     expect(rows()).toHaveLength(5);
     expect(seen).toEqual([1]);
+  });
+
+  it("creates the cards in the finishing transaction and names three moves with three card ids", async () => {
+    const game = service(new GradedEngine(["e7e5", "b8c6", "g8f6", "d7d6"], [150, 420, 300, 10]));
+    await playFourMoves(game);
+    await game.resign();
+
+    const end = contents().at(-1) as GameEndNotification;
+    expect(end.cards).toEqual({ created: 3, skipped: 0 });
+    const ids = end.costliest_moves.map((m) => m.card_id);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(3);
+    const stored = db.prepare("SELECT id, source_move_id FROM srs_cards ORDER BY id").all();
+    expect(stored).toHaveLength(3);
+    const text = renderNotifications([end]);
+    for (const move of end.costliest_moves) {
+      expect(text).toContain(`card id ${move.card_id}`);
+      expect(text).toContain(`position before (FEN): ${move.fen_before}`);
+    }
+    expect(end.costliest_moves.map((m) => m.san)).toEqual(["Nf3", "Bc4", "e4"]);
+  });
+
+  it("gives a move under the card threshold a null card id", async () => {
+    const game = service(scripted());
+    await playFourMoves(game);
+    await game.resign();
+    const end = contents().at(-1) as GameEndNotification;
+    expect(end.costliest_moves.map((m) => [m.san, m.card_id === null])).toEqual([
+      ["Nf3", false],
+      ["Bc4", false],
+      ["e4", true],
+    ]);
+    expect(end.cards.created).toBe(2);
+  });
+
+  it("rolls the finish back when the card batch fails", async () => {
+    const game = service(scripted());
+    await playFourMoves(game);
+    db.exec("DROP TABLE srs_cards");
+    await expect(game.resign()).rejects.toThrow(/srs_cards/);
+    expect(getGame(db, game.current()?.id as number)?.finishedAt).toBeNull();
   });
 
   it("aborting writes no end notification", async () => {
