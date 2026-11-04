@@ -87,8 +87,7 @@ describe("get_progress", () => {
     await call("set_difficulty", { elo: 700, reason: "r" });
     const out = await call("get_progress");
     expect(out.body).toMatchObject({
-      current_elo: 700,
-      last_difficulty_change: { to_elo: 700, reason: "coach" },
+      difficulty: { current_elo: 700, last_change: { to_elo: 700, reason: "coach" } },
     });
   });
 });
