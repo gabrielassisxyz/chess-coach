@@ -17,6 +17,10 @@ interface HappyWindow {
 beforeEach(() => {
   FakeSocket.reset();
   vi.stubGlobal("WebSocket", FakeSocket);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ status: "ok", version: "0.0.0", ready: true })),
+  );
 });
 
 afterEach(() => {

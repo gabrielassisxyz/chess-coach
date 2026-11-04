@@ -3,15 +3,18 @@ import { Board, type BoardFactory } from "../components/Board.js";
 import { Controls } from "../components/Controls.js";
 import { EvalBar } from "../components/EvalBar.js";
 import { MoveList } from "../components/MoveList.js";
+import { ServiceBanner } from "../components/ServiceBanner.js";
 import type { ServerApi } from "../hooks/useServer.js";
+import type { ServiceNotice } from "../state/health.js";
 import { evalView, movesOf } from "../state/play.js";
 
 export interface PlayProps {
   server: ServerApi;
   createBoard?: BoardFactory | undefined;
+  notice?: ServiceNotice | null;
 }
 
-export function Play({ server, createBoard }: PlayProps) {
+export function Play({ server, createBoard, notice = null }: PlayProps) {
   const { activity } = server;
   const moves = movesOf(activity);
 
@@ -21,6 +24,7 @@ export function Play({ server, createBoard }: PlayProps) {
 
   return (
     <section className="play" aria-label="Play">
+      <ServiceBanner notice={notice} />
       <EvalBar view={evalView(moves)} />
       {activity ? (
         <Board
@@ -32,7 +36,7 @@ export function Play({ server, createBoard }: PlayProps) {
       ) : (
         <p className="play__empty">No game on the board. Start one with New game.</p>
       )}
-      <Controls activity={activity} send={server.send} />
+      <Controls activity={activity} send={server.send} newGameBlocked={notice !== null} />
       <MoveList moves={moves} />
     </section>
   );
