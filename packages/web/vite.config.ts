@@ -18,8 +18,9 @@ export default defineConfig({
   plugins: [react()],
   test: { environment: "happy-dom" },
   server: {
-    // "localhost" resolves to ::1 here, and tailscale serve dials 127.0.0.1.
-    host: "127.0.0.1",
+    // "localhost" resolves to ::1 here and proxies dial 127.0.0.1, so the address is
+    // explicit; CHESS_COACH_WEB_HOST binds another one, a tailnet address for instance.
+    host: process.env.CHESS_COACH_WEB_HOST ?? "127.0.0.1",
     allowedHosts: extraHosts,
     proxy: {
       "/api": {
