@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules", "!tools", "!**/*.md"]
+    "includes": ["**", "!**/dist", "!**/node_modules", "!tools", "!content/puzzles", "!**/*.md"]
   },
   "formatter": {
     "enabled": true,

@@ -1,0 +1,30 @@
+Teaching content in this directory comes from chess_rocket
+https://github.com/suvojit-0x55aa/chess_rocket
+commit 09bd51d12d44694f5f6527eb940d4a3eb0d4fd7f
+Licence: GNU General Public License v3.0, the licence of this repository.
+
+Files marked adapted differ from upstream: em-dashes replaced for the repository prose
+rule, and, where noted, text about tools and mechanics this project does not have.
+Files marked verbatim are byte-identical to upstream.
+
+prompts/coach.md        adapted (rewritten from upstream CLAUDE.md for the web coach and its tool set)
+references/chess-pedagogy.md adapted (em-dashes)
+references/common-mistakes.md verbatim
+references/curriculum.md adapted (em-dashes, opening-tool text removed)
+references/elo-milestones.md verbatim
+references/learning-science.md adapted (em-dashes)
+references/opening-guide.md adapted (em-dashes, opening-tool text removed)
+references/tactical-patterns.md verbatim
+puzzles/back-rank.json   verbatim
+puzzles/beginner-endgames.json verbatim
+puzzles/checkmate-patterns.json verbatim
+puzzles/forks.json       verbatim
+puzzles/from-games.json  verbatim
+puzzles/opening-moves.json verbatim
+puzzles/opening-traps.json verbatim
+puzzles/pins.json        verbatim
+puzzles/skewers.json     verbatim
+tools/generate_puzzles.py adapted (paths and imports for the new layout)
+tools/import_lichess_puzzles.py adapted (data directory moved to tools/data)
+tools/motif_detector.py  verbatim
+tools/validate_puzzles.py adapted (paths, imports, em-dashes, Stockfish lookup)
