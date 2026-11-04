@@ -27,11 +27,6 @@
   color: var(--text);
 }
 
-.topbar__tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .banner {
   display: flex;
   align-items: center;
@@ -52,20 +47,29 @@
   min-height: 0;
 }
 
-.play,
-.placeholder {
+/* The frame every screen shares: spacing, font and scrolling are decided here once. */
+.screen {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
   min-height: 0;
   padding: var(--space-6) 0 var(--space-6) var(--space-8);
   overflow-y: auto;
+  font-family: var(--font-ui);
 }
 
-.play__empty,
-.placeholder p {
-  color: var(--text-muted);
+.screen__title {
+  margin: 0;
   font-family: var(--font-ui);
+  font-size: var(--text-title);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.screen__note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
 
 .controls__row {
@@ -89,7 +93,6 @@
   padding: var(--space-4);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
-  font-family: var(--font-ui);
   font-size: var(--text-sm);
 }
 
@@ -121,12 +124,6 @@
 
 .new-game__elo input {
   width: 8ch;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--ground);
-  color: var(--text);
-  font: inherit;
   font-variant-numeric: tabular-nums;
 }
 
@@ -139,7 +136,6 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-family: var(--font-ui);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
@@ -171,20 +167,10 @@
   font-size: var(--text-xs);
 }
 
-.badge--best,
-.badge--great {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-.badge--mistake {
-  color: var(--text);
-  font-weight: 600;
-}
-
+/* Weight alone separates the costly grades: a colour per grade would be a severity ramp. */
+.badge--mistake,
 .badge--blunder {
-  border-color: var(--error);
-  color: var(--error);
+  color: var(--text);
   font-weight: 600;
 }
 
@@ -199,8 +185,7 @@
     gap: 0;
   }
 
-  .play,
-  .placeholder {
+  .screen {
     padding: var(--space-4);
     overflow-y: visible;
   }

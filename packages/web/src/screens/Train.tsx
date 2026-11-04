@@ -100,7 +100,7 @@ function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: 
 
   return (
     <div className="train__chooser" aria-busy={busy}>
-      <h2 className="train__title">Train</h2>
+      <h2 className="screen__title train__title">Train</h2>
       <section className="train__mode" aria-label="Review due cards">
         <p>Answer the cards that are due, then rate how well you knew each one.</p>
         <button
@@ -116,6 +116,7 @@ function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: 
         <label className="train__field">
           Motif
           <select
+            className="input"
             value={motif}
             disabled={busy || motifs.status === "loading"}
             onChange={(event) => setMotif(event.target.value)}
@@ -151,7 +152,7 @@ export function Train({ server, createBoard, fetchMotifs = fetchMotifsFromServer
   const training = trainingOf(server.activity);
   if (!training) {
     return (
-      <section className="train" aria-label="Train">
+      <section className="screen train" aria-label="Train">
         <ModeChooser server={server} fetchMotifs={fetchMotifs} />
       </section>
     );
@@ -165,10 +166,10 @@ export function Train({ server, createBoard, fetchMotifs = fetchMotifsFromServer
   const exposureId = training.exposure_id;
 
   return (
-    <section className="train" aria-label="Train">
+    <section className="screen train" aria-label="Train">
       <header className="train__header">
-        <h2 className="train__title">{view.header}</h2>
-        <p className="train__status" role="status">
+        <h2 className="screen__title train__title">{view.header}</h2>
+        <p className="screen__note" role="status">
           {view.status}
           {view.expected ? (
             <span className="train__expected"> Expected {view.expected}</span>

@@ -54,7 +54,7 @@ export function Chat({ server }: { server: ServerApi }) {
   return (
     <div className="chat">
       <header className="chat__header">
-        <h1 className="chat__title">chess-coach</h1>
+        <h1 className="screen__title">chess-coach</h1>
         <div className="chat__state">
           <span className="chat__status" role="status">
             {server.connection === "connected" ? "connected" : "reconnecting"}
@@ -79,7 +79,7 @@ export function Chat({ server }: { server: ServerApi }) {
       </div>
       <div className="composer">
         <textarea
-          className="composer__input"
+          className="input composer__input"
           aria-label="Message to the coach"
           placeholder="Ask the coach"
           value={draft}

@@ -105,7 +105,9 @@ export function Board({ activity, onMove, syncToken = 0, createBoard = Chessgrou
   };
 
   return (
-    <div className="board">
+    // tabIndex -1 keeps the container out of the tab order but lets it take focus, so the shared
+    // focus ring has something to draw on if a script or a click lands there.
+    <div className="board" tabIndex={-1}>
       <div ref={elementRef} className="board__surface" data-testid="board" />
       {pending ? (
         <PromotionChooser

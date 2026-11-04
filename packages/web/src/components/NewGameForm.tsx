@@ -42,6 +42,7 @@ export function NewGameForm({ onStart, onCancel }: NewGameFormProps) {
         <label className="new-game__elo-field">
           Engine Elo
           <input
+            className="input"
             type="number"
             min={MIN_ELO}
             max={MAX_ELO}

@@ -9,7 +9,8 @@
  *   tone. Saturation inside 30-45%, lightness 52-60% on dark and 42-50% on light.
  *   Labels on the accent use the charcoal ground, because off-white on a light-theme accent
  *   falls below readable contrast.
- * - Error: one muted warning hue, used only for a failed turn. No severity ramp anywhere.
+ * - Error: one muted warning hue, used only for something that failed (a turn, a refused
+ *   command, an invalid field) and for a king in check. No severity ramp anywhere.
  * - Type: a grotesque sans for UI and titles (never serif, never Space Grotesk), a clean
  *   sans for running text near 65ch, mono only for tool input and output with tabular
  *   numerals. Titles are the largest step.

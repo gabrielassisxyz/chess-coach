@@ -56,7 +56,7 @@ interface GameListProps {
 function GameList({ listing, onOpen, onRetry }: GameListProps) {
   if (listing.status === "loading") {
     return (
-      <p className="review__note" role="status">
+      <p className="screen__note" role="status">
         Loading games.
       </p>
     );
@@ -64,7 +64,7 @@ function GameList({ listing, onOpen, onRetry }: GameListProps) {
   if (listing.status === "failed") {
     return (
       <div className="review__empty" role="alert">
-        <p className="review__note">
+        <p className="screen__note">
           The games could not be loaded. Check that the server is running, then try again.
         </p>
         <button type="button" className="button" onClick={onRetry}>
@@ -75,7 +75,7 @@ function GameList({ listing, onOpen, onRetry }: GameListProps) {
   }
   if (listing.games.length === 0) {
     return (
-      <p className="review__note" role="status">
+      <p className="screen__note" role="status">
         No finished games yet. Finish a game on the Play screen and it will show up here.
       </p>
     );
@@ -245,9 +245,10 @@ export function Review({ server, api = serverGamesApi, createBoard }: ReviewProp
   );
 
   return (
-    <section className="review" aria-label="Review">
+    <section className="screen review" aria-label="Review">
+      <h2 className="screen__title">Review</h2>
       {failed ? (
-        <p className="review__note" role="alert">
+        <p className="screen__note" role="alert">
           That game could not be loaded. Try it again, or pick another game.
         </p>
       ) : null}

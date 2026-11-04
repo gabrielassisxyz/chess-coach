@@ -11,14 +11,6 @@ import { serviceNotice } from "./state/health.js";
 const SCREENS = ["Play", "Review", "Train"] as const;
 type Screen = (typeof SCREENS)[number];
 
-function Placeholder({ name }: { name: Screen }) {
-  return (
-    <section className="placeholder" aria-label={name}>
-      <p>{name} is not available yet.</p>
-    </section>
-  );
-}
-
 export interface AppProps {
   fetchHealth?: FetchHealth;
 }

@@ -1,14 +1,3 @@
-.review {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-height: 0;
-  padding: var(--space-6) 0 var(--space-6) var(--space-8);
-  overflow-y: auto;
-  font-family: var(--font-ui);
-}
-
-.review__note,
 .review__detail {
   margin: 0;
   color: var(--text-muted);
@@ -64,12 +53,6 @@
   color: var(--accent-hover);
 }
 
-.review__game:focus-visible,
-.review-moves__ply:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .review-moves__ply {
   display: flex;
   align-items: baseline;
@@ -86,11 +69,4 @@
 .review-moves__loss {
   color: var(--text-muted);
   font-size: var(--text-xs);
-}
-
-@media (max-width: 899px) {
-  .review {
-    padding: var(--space-4);
-    overflow-y: visible;
-  }
 }
