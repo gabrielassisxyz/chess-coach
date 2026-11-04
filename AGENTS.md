@@ -34,7 +34,8 @@
   (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
   Claude session probe (`test:sdk`, stdin closed); `CHESS_COACH_RECORD=<file>` records the SDK
   stream to that file. `CHESS_COACH_CHESSCOM=1` makes one real call to the public Chess.com API
-  (`chesscom.real.test.ts`, shape only).
+  (`chesscom.real.test.ts`, shape only). `CHESS_COACH_EXPLORER=1` does the same for one Lichess explorer
+  call (`explorer.real.test.ts`, needs `LICHESS_API_TOKEN`).
 - **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
   proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
   Stockfish missing, engine fault, dropped socket, restart per game phase, undelivered
@@ -51,7 +52,11 @@
   student's accounts so a pasted PGN finds its side; without it the form asks for the colour.
 - **Openings:** `POST /api/openings/generate` turns the first fifteen moves of every graded game into
   "find the best move" puzzles (`own:` ids, source `own-games`, motifs `opening-white` and
-  `opening-black`); the import grader runs it after each game. Train's openings mode drills them.
+  `opening-black`); the import grader runs it after each game. Train's openings mode drills them. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
+  student's first moves with the replies most played at 400-600 on the Lichess explorer (`explorer:` ids, source
+  `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
+  is opt-in at the call and never runs after an import. The explorer now answers 401 without a Lichess API
+  token: set `LICHESS_API_TOKEN`.
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
 
