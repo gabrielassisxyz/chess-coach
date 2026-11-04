@@ -55,6 +55,22 @@ describe("useServer", () => {
     expect(result.current.activity).toBeNull();
   });
 
+  it("takes the current Elo from the bootstrap and clears it when a bootstrap carries none", () => {
+    const { result } = mount();
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        transcript: [],
+        activity: null,
+        current_elo: 700,
+      }),
+    );
+    expect(result.current.currentElo).toBe(700);
+    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+    expect(result.current.currentElo).toBeNull();
+  });
+
   it("sends a board command with a command_id and drops a malformed one", () => {
     const { result } = mount();
     act(() => FakeSocket.latest.open());

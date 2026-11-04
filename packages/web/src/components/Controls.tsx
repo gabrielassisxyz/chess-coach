@@ -9,9 +9,10 @@ export interface ControlsProps {
   send: ServerApi["send"];
   // True while the engine is unavailable: a game could be opened but never played.
   newGameBlocked?: boolean;
+  currentElo?: number | null | undefined;
 }
 
-export function Controls({ activity, send, newGameBlocked = false }: ControlsProps) {
+export function Controls({ activity, send, newGameBlocked = false, currentElo }: ControlsProps) {
   const [choosing, setChoosing] = useState(false);
   const enabled = controlState(activity);
   const canStart = enabled.newGame && !newGameBlocked;
@@ -67,7 +68,7 @@ export function Controls({ activity, send, newGameBlocked = false }: ControlsPro
         ) : null}
       </div>
       {choosing && canStart ? (
-        <NewGameForm onStart={start} onCancel={() => setChoosing(false)} />
+        <NewGameForm onStart={start} onCancel={() => setChoosing(false)} defaultElo={currentElo} />
       ) : null}
     </div>
   );
