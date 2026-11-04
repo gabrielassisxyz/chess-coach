@@ -25,6 +25,10 @@ export const MotifProgressSchema = z.object({
   attempts: z.number().int().nonnegative(),
   solved: z.number().int().nonnegative(),
   success_rate: z.number().min(0).max(1),
+  attempts_30d: z.number().int().nonnegative(),
+  solved_30d: z.number().int().nonnegative(),
+  // Null when the motif has no attempt in the last 30 days.
+  success_rate_30d: z.number().min(0).max(1).nullable(),
 });
 
 export const CardProgressSchema = z.object({
@@ -32,6 +36,13 @@ export const CardProgressSchema = z.object({
   due_now: z.number().int().nonnegative(),
   reviewed_7d: z.number().int().nonnegative(),
   correct_rate_7d: z.number().min(0).max(1).nullable(),
+  // Due cards by classification; cards without one count under "teaching".
+  due_by_classification: z.record(z.string(), z.number().int().nonnegative()),
+  due_from_games: z.number().int().nonnegative(),
+  // Earliest review strictly after now, and how many cards fall due within an hour of it.
+  next_due_at: z.string().nullable(),
+  next_due_count: z.number().int().nonnegative(),
+  correct_rate_30d: z.number().min(0).max(1).nullable(),
 });
 
 export const DifficultyProgressSchema = z.object({
