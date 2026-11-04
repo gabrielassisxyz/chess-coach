@@ -27,6 +27,12 @@ async function start() {
     `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
      VALUES ('f1', 'test', 'fork', 'easy', ?, '["a1a8"]', '["Ra8#"]', 'why')`,
   ).run(BACK_RANK);
+  for (let i = 0; i < 12; i++) {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
+       VALUES (?, 'test', 'drill', 'easy', ?, '["a1a8"]', '["Ra8#"]', 'why')`,
+    ).run(`d${i}`, BACK_RANK);
+  }
   const session = createCoachSession(db, { promptVersion: "v" });
   const notifications = { sessionId: () => session.id };
   const activity = new ActivityService({
@@ -74,6 +80,8 @@ describe("training over the socket", () => {
     const ok = [
       { type: "start_training", mode: "puzzles", motif: "fork" },
       { type: "start_training", mode: "srs" },
+      { type: "start_training", mode: "puzzles", size: 5 },
+      { type: "start_training", mode: "openings", color: "white", size: 20 },
       { type: "rate_card", exposure_id: "x", quality: 5 },
       { type: "next_training_item" },
       { type: "end_training", activity_id: 3 },
@@ -86,6 +94,8 @@ describe("training over the socket", () => {
     }
     const bad = [
       { type: "start_training", mode: "nope" },
+      { type: "start_training", mode: "puzzles", size: 7 },
+      { type: "start_training", mode: "puzzles", size: "5" },
       { type: "rate_card", exposure_id: "x", quality: 6 },
       { type: "rate_card", quality: 3 },
       { type: "explore", kind: "jump" },
@@ -119,6 +129,55 @@ describe("training over the socket", () => {
     const ended = await next("training");
     expect(ended).toMatchObject({ summary: { solved: 1, failed: 0 } });
     socket.close();
+  });
+
+  it("routes size to the queue and refuses an unlisted one with invalid_command", async () => {
+    const server = await start();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", size: 7 }),
+    );
+    expect(await next("error")).toMatchObject({ code: "invalid_command" });
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c2",
+        mode: "puzzles",
+        motif: "drill",
+        size: 5,
+      }),
+    );
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      status: "prompt",
+      item: { queue_length: 5 },
+    });
+    socket.close();
+  });
+
+  it("shows a reconnecting client the same trail and served_at in bootstrap", async () => {
+    const server = await start();
+    const first = await connect(server);
+    await first.next("bootstrap");
+    first.socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    await first.next("training");
+    await first.next("activity");
+    first.socket.send(
+      JSON.stringify({ type: "explore", command_id: "c2", kind: "move", uci: "g1h1" }),
+    );
+    const live = ServerEventSchema.parse(await first.next("activity"));
+    first.socket.close();
+    const second = await connect(server);
+    const boot = ServerEventSchema.parse(await second.next("bootstrap"));
+    const state = (boot as { activity: unknown }).activity;
+    expect(state).toEqual((live as { state: unknown }).state);
+    expect(state).toMatchObject({
+      served_at: expect.any(String),
+      exploring: { trail: [{ seq: 1, kind: "move", line_san: ["Kh1"] }] },
+    });
+    second.socket.close();
   });
 
   it("routes explore without grading, and refuses move inside training with use_answer", async () => {

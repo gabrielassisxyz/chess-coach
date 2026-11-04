@@ -1,5 +1,6 @@
 import type {
   ExpectedMove,
+  ExploredEvent as ShownEvent,
   TrainingActivity,
   TrainingItem,
   TrainingMode,
@@ -36,10 +37,14 @@ import type { ReviewDesk } from "../srs/review.js";
 import { ActivityError } from "./errors.js";
 import { Exploration } from "./exploration.js";
 
-export type DeskPort = Pick<ReviewDesk, "listDueCards" | "serveCard" | "answer" | "rate">;
+export type DeskPort = Pick<
+  ReviewDesk,
+  "listDueCards" | "serveCard" | "answer" | "rate" | "previewRatings"
+>;
 
 export const DUE_QUEUE_SIZE = 20;
-export const PUZZLE_QUEUE_SIZE = 10;
+export const DEFAULT_DRILL_SIZE = 10;
+export type DrillSize = 5 | 10 | 20;
 
 export interface TrainingDeps {
   db: Database;
@@ -54,6 +59,8 @@ export interface TrainingInput {
   mode: TrainingMode;
   motif?: string | undefined;
   color?: PlayerColor | undefined;
+  /** How many positions a puzzle or opening drill holds; a review queue ignores it. */
+  size?: DrillSize | undefined;
 }
 
 export type TrainingItemRef = { kind: "card"; id: number } | { kind: "puzzle"; id: string };
@@ -75,6 +82,8 @@ interface Served {
   explore: Exploration;
   seq: number;
   trail: ExploredEvent[];
+  // What the client sees; unlike `trail`, which the coach reads whole, it restarts when a puzzle advances.
+  shown: ShownEvent[];
 }
 
 const turnOf = (fen: string): PlayerColor => (fen.split(" ")[1] === "b" ? "black" : "white");
@@ -147,7 +156,7 @@ export class TrainingRun {
     const motif = input.mode === "openings" ? `opening-${input.color}` : input.motif;
     const { puzzles } = listPuzzles(deps.db, {
       motif,
-      limit: PUZZLE_QUEUE_SIZE,
+      limit: input.size ?? DEFAULT_DRILL_SIZE,
     });
     return puzzles.map((p) => ({
       kind: "puzzle",
@@ -176,11 +185,12 @@ export class TrainingRun {
       mode: this.mode,
       item: s.item,
       status: s.status,
+      served_at: new Date(s.servedAtMs).toISOString(),
       ...(s.item.kind === "card" ? { exposure_id: s.item.exposure_id } : {}),
       expected: s.expected,
       exploring: open
-        ? { fen: s.explore.fen, line_san: s.explore.lineSan }
-        : { fen: s.fen, line_san: [] },
+        ? { fen: s.explore.fen, line_san: s.explore.lineSan, trail: [...s.shown] }
+        : { fen: s.fen, line_san: [], trail: [...s.shown] },
       summary: this.summary,
     };
   }
@@ -212,6 +222,7 @@ export class TrainingRun {
       fenAfter: s.explore.fen,
     });
     s.trail.push({ at_ms: atMs, kind, line: kind === "move" ? s.explore.line() : null });
+    s.shown.push({ seq: s.seq, at_ms: atMs, kind, line_san: s.explore.lineSan });
   }
 
   /** Ties a chat line the student typed to the open item; a line sent between items belongs to none. */
@@ -310,6 +321,7 @@ export class TrainingRun {
     s.status = state.status;
     s.explore.restart(s.fen);
     if (state.status === "in_progress") {
+      s.shown = [];
       s.lastMove = outcome.reply;
       s.item = { ...item, cursor: state.cursor, reply_uci: outcome.reply };
       return;
@@ -404,6 +416,7 @@ export class TrainingRun {
       explore: new Exploration(fen),
       seq: 0,
       trail: [] as ExploredEvent[],
+      shown: [] as ShownEvent[],
     });
     if (entry.kind === "card") {
       const card = this.deps.desk.serveCard(entry.cardId);
@@ -414,6 +427,7 @@ export class TrainingRun {
           exposure_id: card.exposureId,
           prompt_fen: card.promptFen,
           student_color: card.studentColor,
+          rating_preview: this.deps.desk.previewRatings(card.cardId),
           ...position,
         },
         status: "prompt",

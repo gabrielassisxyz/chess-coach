@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { RatingPreview } from "@chess-coach/shared";
 import { type Clock, systemClock } from "../clock.js";
 import type { SrsAnswerNotification } from "../coach/notify.js";
 import { appendChatMessage } from "../db/chat.js";
@@ -108,6 +109,25 @@ export class ReviewDesk {
       correct: exposure.correct,
     });
     return { correct: exposure.correct, expected_uci: card.expectedUci, expected_san: expectedSan };
+  }
+
+  /** Hours until the card would be due again for each quality, exactly as `rate` would set them. */
+  previewRatings(cardId: number): RatingPreview {
+    const card = this.requireCard(cardId);
+    const schedule = {
+      interval_hours: card.intervalHours,
+      ease_factor: card.easeFactor,
+      repetitions: card.repetitions,
+    };
+    const hours = (quality: Quality): number => review(schedule, quality).interval_hours;
+    return {
+      "0": hours(0),
+      "1": hours(1),
+      "2": hours(2),
+      "3": hours(3),
+      "4": hours(4),
+      "5": hours(5),
+    };
   }
 
   rate(exposureId: string, quality: number): void {

@@ -217,6 +217,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
           mode: command.mode,
           ...(command.motif === undefined ? {} : { motif: command.motif }),
           ...(command.color === undefined ? {} : { color: command.color }),
+          ...(command.size === undefined ? {} : { size: command.size }),
         });
         return;
       case "explore":

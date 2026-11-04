@@ -9,7 +9,7 @@ import type { Clock } from "../clock.js";
 import { type CoachNotification, renderNotifications } from "../coach/notify.js";
 import { appendChatMessage, createCoachSession, listChatTail } from "../db/chat.js";
 import { type Database, openDatabase } from "../db/open.js";
-import { getCard, insertCard } from "../db/srs.js";
+import { getCard, insertCard, updateSchedule } from "../db/srs.js";
 import { GameService } from "../game/service.js";
 import { ReviewDesk } from "../srs/review.js";
 import { ActivityService } from "./service.js";
@@ -369,6 +369,7 @@ describe("exploration", () => {
     expect(state.exploring).toEqual({
       fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
       line_san: ["e4"],
+      trail: [{ seq: 1, at_ms: 12_000, kind: "move", line_san: ["e4"] }],
     });
     expect(state).toMatchObject({ fen: START_FEN, turn: "black", status: "prompt" });
     expect(state.legal_moves).toHaveLength(20);
@@ -403,7 +404,7 @@ describe("exploration", () => {
     expect(undone.exploring.line_san).toEqual(["e4"]);
     expect(undone.turn).toBe("black");
     const reset = training(await activity.trainingExplore({ kind: "reset" }));
-    expect(reset.exploring).toEqual({ fen: START_FEN, line_san: [] });
+    expect(reset.exploring).toMatchObject({ fen: START_FEN, line_san: [] });
     expect(reset.last_move).toBeNull();
     expect(events().map((e) => (e as { kind: string }).kind)).toEqual([
       "move",
@@ -484,7 +485,7 @@ describe("exploration", () => {
     await activity.trainingExplore({ kind: "move", uci: "f4e5" });
     const mid = training(await activity.trainingAnswer("b5c7"));
     expect(mid.status).toBe("in_progress");
-    expect(mid.exploring).toEqual({ fen: mid.fen, line_san: [] });
+    expect(mid.exploring).toEqual({ fen: mid.fen, line_san: [], trail: [] });
     expect(db.prepare("SELECT answered_at FROM training_items").all()).toEqual([
       { answered_at: null },
     ]);
@@ -533,6 +534,93 @@ describe("exploration", () => {
     expect(text).toContain("What the student wrote:\n- e4 or d4?");
     expect(text).toContain("+0s  1. e4\n+0s  reset");
     expect(text).toContain("Answer: e4 (wrong)");
+  });
+});
+
+describe("the training state a client renders", () => {
+  it("lists two moves, an undo and a reset as four events with rising offsets", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const clock = steppingClock();
+    const { activity } = setup(clock);
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    for (const step of [
+      { kind: "move", uci: "g1h1" },
+      { kind: "move", uci: "g8h8" },
+      { kind: "undo" },
+      { kind: "reset" },
+    ] as const) {
+      clock.advance(2);
+      await activity.trainingExplore(step);
+    }
+    const { trail } = training(activity.current()).exploring;
+    expect(trail.map((e) => e.kind)).toEqual(["move", "move", "undo", "reset"]);
+    expect(trail.map((e) => e.at_ms)).toEqual([2000, 4000, 6000, 8000]);
+    expect(trail.map((e) => e.seq)).toEqual([1, 2, 3, 4]);
+    expect(trail.map((e) => e.line_san)).toEqual([["Kh1"], ["Kh1", "Kh8"], ["Kh1"], []]);
+  });
+
+  it("stamps served_at and starts each served item with an empty trail", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    addPuzzle("f2", "fork", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    const first = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    expect(first.served_at).toBe(T0.toISOString());
+    await activity.trainingExplore({ kind: "move", uci: "g1h1" });
+    await activity.trainingAnswer("a1a8");
+    const second = training(await activity.nextTrainingItem());
+    expect(second.exploring.trail).toEqual([]);
+  });
+
+  it("restarts the trail when a multi-move puzzle advances", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingExplore({ kind: "move", uci: "f4e5" });
+    const mid = training(await activity.trainingAnswer("b5c7"));
+    expect(mid.exploring.trail).toEqual([]);
+    const next = training(await activity.trainingExplore({ kind: "move", uci: "a1c1" }));
+    expect(next.exploring.trail.map((e) => e.line_san)).toEqual([["Rc1"]]);
+  });
+
+  it("previews the interval each quality would set, and rating applies the previewed one", async () => {
+    const id = addCard("d2d4");
+    updateSchedule(db, id, {
+      nextReviewAt: T0.toISOString(),
+      intervalHours: 24,
+      easeFactor: 2.5,
+      repetitions: 1,
+    });
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "srs" }));
+    const item = start.item as Extract<typeof start.item, { kind: "card" }>;
+    expect(item.rating_preview).toEqual({ "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 24 });
+    await activity.trainingAnswer("d2d4");
+    await activity.rateCard(item.exposure_id, 3);
+    expect(getCard(db, id)?.intervalHours).toBe(item.rating_preview["3"]);
+  });
+
+  it("sizes a puzzle or opening drill at 5, 10 or 20 and defaults to 10", async () => {
+    for (let i = 0; i < 25; i++)
+      addPuzzle(`p${String(i).padStart(2, "0")}`, "fork", BACK_RANK, ["a1a8"]);
+    for (const [size, length] of [
+      [5, 5],
+      [20, 20],
+      [undefined, 10],
+    ] as const) {
+      const { activity } = setup();
+      const state = training(
+        await activity.startTraining({ mode: "puzzles", motif: "fork", size }),
+      );
+      expect(state.item).toMatchObject({ queue_length: length });
+      await activity.endTraining();
+    }
+  });
+
+  it("ignores size for review cards", async () => {
+    for (let i = 0; i < 7; i++) addCard();
+    const { activity } = setup();
+    const state = training(await activity.startTraining({ mode: "srs", size: 5 }));
+    expect(state.item).toMatchObject({ queue_length: 7 });
   });
 });
 
