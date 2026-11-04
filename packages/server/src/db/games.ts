@@ -52,6 +52,8 @@ export interface TurnCompletion {
   engineMove: NewMove | null;
   pgn: string;
   finish: Finish | null;
+  /** Runs inside the same transaction, after the turn is written; a throw rolls the turn back too. */
+  notify?: (db: Database) => void;
 }
 
 interface GameRow {
@@ -216,6 +218,7 @@ export function completeTurn(db: Database, input: TurnCompletion): void {
     if (input.engineMove) insertMove(db, input.gameId, input.engineMove);
     db.prepare("UPDATE games SET pgn = ? WHERE id = ?").run(input.pgn, input.gameId);
     if (input.finish) writeFinish(db, input.gameId, input.finish);
+    input.notify?.(db);
   })();
 }
 
@@ -228,11 +231,18 @@ function writeFinish(db: Database, gameId: number, finish: Finish): void {
   );
 }
 
-export function finishGame(db: Database, gameId: number, finish: Finish, pgn: string): void {
+export function finishGame(
+  db: Database,
+  gameId: number,
+  finish: Finish,
+  pgn: string,
+  notify?: (db: Database) => void,
+): void {
   db.transaction(() => {
     requireUnfinished(db, gameId, "finished");
     db.prepare("UPDATE games SET pgn = ? WHERE id = ?").run(pgn, gameId);
     writeFinish(db, gameId, finish);
+    notify?.(db);
   })();
 }
 
