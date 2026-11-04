@@ -13,6 +13,8 @@
  * - Type: a grotesque sans for UI and titles (never serif, never Space Grotesk), a clean
  *   sans for running text near 65ch, mono only for tool input and output with tabular
  *   numerals. Titles are the largest step.
+ * - Board: two cool-grey squares per theme; highlights are the accent at low alpha, so the
+ *   board adds no second chromatic colour.
  * - Space and radii: a spacious 4px-based scale, small radii, hairline borders, no shadows.
  * - Motion: under 300ms, ease-out only, transform and opacity only, no bounce; movement is
  *   dropped under prefers-reduced-motion.
@@ -29,6 +31,8 @@
   --accent-hover: hsl(175 45% 38%);
   --on-accent: #17171a;
   --error: hsl(8 45% 42%);
+  --board-light: #e9e8e4;
+  --board-dark: #b4bab7;
 
   --font-ui: "Geist", "Hanken Grotesk", "Schibsted Grotesk", system-ui, sans-serif;
   --font-body: system-ui, "Hanken Grotesk", sans-serif;
@@ -69,5 +73,7 @@
     --accent-hover: hsl(175 38% 60%);
     --on-accent: #17171a;
     --error: hsl(8 38% 58%);
+    --board-light: #8e918f;
+    --board-dark: #5d6361;
   }
 }
