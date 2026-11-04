@@ -19,7 +19,12 @@ import type { GameService, TurnReport } from "../game/service.js";
 import type { GameSnapshot } from "../game/snapshot.js";
 import { ActivityError } from "./errors.js";
 import { demoState, liveGameState, reviewState } from "./state.js";
-import { type TrainingDeps, type TrainingItemRef, TrainingRun } from "./training.js";
+import {
+  type DrillSize,
+  type TrainingDeps,
+  type TrainingItemRef,
+  TrainingRun,
+} from "./training.js";
 
 export type LiveGamePort = Pick<
   GameService,
@@ -166,6 +171,7 @@ export class ActivityService {
     mode: TrainingMode;
     motif?: string;
     color?: PlayerColor;
+    size?: DrillSize;
   }): Promise<ActivityState> {
     return this.enqueue("training", async () => {
       if (!this.trainingDeps) {
