@@ -18,6 +18,8 @@ export default defineConfig({
   plugins: [react()],
   test: { environment: "happy-dom" },
   server: {
+    // "localhost" resolves to ::1 here, and tailscale serve dials 127.0.0.1.
+    host: "127.0.0.1",
     allowedHosts: extraHosts,
     proxy: {
       "/api": {
