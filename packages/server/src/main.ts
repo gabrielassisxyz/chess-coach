@@ -4,18 +4,22 @@ import { assertSubscriptionAuth } from "./coach/auth.js";
 import { CoachSession } from "./coach/session.js";
 import { openDatabase } from "./db/open.js";
 import { contentDir, dataDir } from "./paths.js";
+import { allowedOriginsFrom } from "./ws/origin.js";
 
 assertSubscriptionAuth();
 
 const port = Number(process.env.PORT ?? 3000);
 let readiness: Readiness = { ready: false, reason: "coach is starting" };
-const app = buildApp({ readiness: () => readiness });
-
+const db = openDatabase(dataDir());
 const coach = new CoachSession({
-  db: openDatabase(dataDir()),
+  db,
   query,
   contentDir: contentDir(),
   dataDir: dataDir(),
+});
+const app = buildApp({
+  readiness: () => readiness,
+  hub: { coach, db, allowedOrigins: allowedOriginsFrom() },
 });
 
 app.listen({ port, host: "127.0.0.1" }).then(async (address) => {
