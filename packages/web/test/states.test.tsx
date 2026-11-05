@@ -38,7 +38,7 @@ describe("Games states", () => {
         importApi={idleImportApi}
       />,
     );
-    expect(await screen.findByText(/Finish a game on the Play screen/)).toBeTruthy();
+    expect(await screen.findByText(/appears in this list the moment it ends/)).toBeTruthy();
   });
 
   it("shows a loading note while the list is on its way", () => {
@@ -57,16 +57,16 @@ describe("Games states", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("Check that the server");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(screen.getByRole("status").textContent).toBe("Loading games.");
-    expect(await screen.findByRole("list", { name: "Finished games" })).toBeTruthy();
+    expect(await screen.findByRole("table", { name: "Finished games" })).toBeTruthy();
     expect(listGames).toHaveBeenCalledTimes(2);
   });
 
   it("says a game could not be opened and keeps the list to pick another", async () => {
     const getGame = vi.fn<GamesApi["getGame"]>().mockRejectedValue(new Error("gone"));
     render(<Games server={serverApi()} api={gamesApi({ getGame })} importApi={idleImportApi} />);
-    fireEvent.click(await screen.findByRole("button", { name: /1200/ }));
+    fireEvent.doubleClick(await screen.findByRole("row", { name: /1200/ }));
     expect((await screen.findByRole("alert")).textContent).toContain("pick another game");
-    expect(screen.getByRole("list", { name: "Finished games" })).toBeTruthy();
+    expect(screen.getByRole("table", { name: "Finished games" })).toBeTruthy();
   });
 });
 

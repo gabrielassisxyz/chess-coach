@@ -1,27 +1,34 @@
 import type { GameDetail, GameSummary } from "@chess-coach/shared";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Board, type BoardFactory } from "../components/Board.js";
-import { GameMoves } from "../components/GameMoves.js";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { BoardFactory } from "../components/Board.js";
+import { GamesTable } from "../components/GamesTable.js";
+import { ImportFailureCard } from "../components/ImportFailureCard.js";
 import { ImportPanel } from "../components/ImportPanel.js";
+import { OpenGame } from "../components/OpenGame.js";
 import type { ServerApi } from "../hooks/useServer.js";
 import {
-  localReviewState,
-  moveAt,
-  plyCount,
-  SELECT_DEBOUNCE_MS,
-  stepTarget,
-  summaryLabel,
-  takesTyping,
+  filterGames,
+  gradingCount,
+  type ResultFilter,
+  type SourceFilter,
+  sourceCounts,
+  totalsOf,
 } from "../state/games.js";
 import { type GamesApi, serverGamesApi } from "../state/games-api.js";
+import { STATUS_POLL_MS, useGradingStatus } from "../state/grading-status.js";
 import { type ImportApi, serverImportApi } from "../state/import-api.js";
-import { CLASSIFICATION_LABEL } from "../state/play.js";
+import { useImportFailure } from "../state/import-failure.js";
 
 export interface GamesProps {
   server: ServerApi;
   api?: GamesApi;
   importApi?: ImportApi;
   createBoard?: BoardFactory | undefined;
+  pollMs?: number;
+  /** "Start a coached game" on the empty screen. */
+  onOpenPlay?(): void;
+  /** Words for the coach panel's idle state while a game is open; null puts the default back. */
+  onCoachIdle?(label: string | null): void;
 }
 
 type Listing =
@@ -29,7 +36,7 @@ type Listing =
   | { status: "failed" }
   | { status: "ready"; games: GameSummary[] };
 
-function useGameList(api: GamesApi): { listing: Listing; reload(): void } {
+function useGameList(api: GamesApi): { listing: Listing; reload(): void; retry(): void } {
   const [listing, setListing] = useState<Listing>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the retry trigger
@@ -43,193 +50,56 @@ function useGameList(api: GamesApi): { listing: Listing; reload(): void } {
       current = false;
     };
   }, [api, attempt]);
-  const reload = (): void => {
+  // A refresh after an import keeps the table on screen; only a retry after a failure blanks it.
+  const reload = useCallback((): void => setAttempt((count) => count + 1), []);
+  const retry = (): void => {
     setListing({ status: "loading" });
-    setAttempt((count) => count + 1);
+    reload();
   };
-  return { listing, reload };
+  return { listing, reload, retry };
 }
 
-interface GameListProps {
-  listing: Listing;
-  onOpen(id: number): void;
-  onRetry(): void;
+const SOURCE_TABS: { id: SourceFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "coach", label: "Coached" },
+  { id: "chesscom", label: "Chess.com" },
+  { id: "pgn", label: "PGN" },
+];
+
+const RESULT_TABS: { id: ResultFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "won", label: "Won" },
+  { id: "lost", label: "Lost" },
+  { id: "drawn", label: "Drawn" },
+];
+
+interface SegmentedProps<T extends string> {
+  label: string;
+  value: T;
+  options: { id: T; text: string }[];
+  onChange(id: T): void;
 }
 
-function GameList({ listing, onOpen, onRetry }: GameListProps) {
-  if (listing.status === "loading") {
-    return (
-      <p className="screen__note" role="status">
-        Loading games.
-      </p>
-    );
-  }
-  if (listing.status === "failed") {
-    return (
-      <div className="games__empty" role="alert">
-        <p className="screen__note">
-          The games could not be loaded. Check that the server is running, then try again.
-        </p>
-        <button type="button" className="button" onClick={onRetry}>
-          Try again
+function Segmented<T extends string>({ label, value, options, onChange }: SegmentedProps<T>) {
+  return (
+    <fieldset className="games__segmented" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          className="games__segment"
+          aria-pressed={option.id === value}
+          onClick={() => onChange(option.id)}
+        >
+          {option.text}
         </button>
-      </div>
-    );
-  }
-  if (listing.games.length === 0) {
-    return (
-      <p className="screen__note" role="status">
-        No finished games yet. Finish a game on the Play screen and it will show up here.
-      </p>
-    );
-  }
-  return (
-    <ul className="games__games" aria-label="Finished games">
-      {listing.games.map((game) => (
-        <li key={game.id}>
-          <button type="button" className="games__game" onClick={() => onOpen(game.id)}>
-            {summaryLabel(game)}
-          </button>
-        </li>
       ))}
-    </ul>
+    </fieldset>
   );
 }
 
-function PlyDetail({ game, ply }: { game: GameDetail; ply: number }) {
-  const move = moveAt(game, ply);
-  if (!move) return <p className="games__detail">Starting position.</p>;
-  const grade = move.classification ? CLASSIFICATION_LABEL[move.classification] : null;
-  return (
-    <p className="games__detail" data-testid="ply-detail">
-      <strong>{`${Math.ceil(ply / 2)}${ply % 2 === 1 ? "." : "..."} ${move.san}`}</strong>
-      {grade && move.cp_loss !== null ? `, ${grade}, cp loss ${move.cp_loss}` : ""}
-      {move.best_move_san && move.cp_loss ? `, best was ${move.best_move_san}` : ""}
-    </p>
-  );
-}
-
-interface OpenGameProps {
-  server: ServerApi;
-  game: GameDetail;
-  createBoard: BoardFactory | undefined;
-  onClose(): void;
-}
-
-function OpenGame({ server, game, createBoard, onClose }: OpenGameProps) {
-  const [ply, setPly] = useState(0);
-  const count = plyCount(game);
-  const demo = server.activity?.kind === "demo" ? server.activity : null;
-  const serverActivityId = server.activity?.activity_id ?? 1;
-
-  const sendRef = useRef(server.send);
-  sendRef.current = server.send;
-  const synced = useRef(0);
-
-  // The server learns the selection a beat after the student stops, so a held arrow key costs one
-  // command, and the coach's get_game agrees with the board once it settles.
-  useEffect(() => {
-    if (demo || ply === synced.current) return;
-    const timer = setTimeout(() => {
-      const sent = sendRef.current({ type: "select_review_ply", game_id: game.id, ply });
-      if (sent) synced.current = ply;
-    }, SELECT_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [ply, game.id, demo]);
-
-  useEffect(() => {
-    if (demo) return;
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.ctrlKey || event.altKey || event.metaKey || takesTyping(event.target)) return;
-      const target = stepTarget(event.key, ply, count);
-      if (target === null) return;
-      event.preventDefault();
-      setPly(target);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [demo, ply, count]);
-
-  const local = useMemo(
-    () => localReviewState(game, ply, serverActivityId),
-    [game, ply, serverActivityId],
-  );
-  const created = server.cardsCreated[game.id];
-  const connected = server.connection === "connected";
-
-  return (
-    <>
-      <section className="screen games" aria-label="Games">
-        <h2 className="screen__title">Games</h2>
-        <div className="games__bar">
-          <button type="button" className="button" onClick={onClose}>
-            All games
-          </button>
-          {demo ? (
-            <button
-              type="button"
-              className="button button--primary"
-              onClick={() => server.send({ type: "leave_demo", activity_id: demo.activity_id })}
-            >
-              Back to review
-            </button>
-          ) : null}
-        </div>
-        <div className="games__bar">
-          <button type="button" className="button" disabled={ply === 0} onClick={() => setPly(0)}>
-            Start
-          </button>
-          <button
-            type="button"
-            className="button"
-            disabled={ply === 0}
-            onClick={() => setPly(ply - 1)}
-          >
-            Back
-          </button>
-          <button
-            type="button"
-            className="button"
-            disabled={ply === count}
-            onClick={() => setPly(ply + 1)}
-          >
-            Forward
-          </button>
-          <button
-            type="button"
-            className="button"
-            disabled={ply === count}
-            onClick={() => setPly(count)}
-          >
-            End
-          </button>
-        </div>
-        <PlyDetail game={game} ply={ply} />
-        <div className="games__bar">
-          <button
-            type="button"
-            className="button"
-            disabled={ply === 0 || !connected}
-            onClick={() => server.send({ type: "ask_coach_about_ply", game_id: game.id, ply })}
-          >
-            Ask the coach about this move
-          </button>
-          <button
-            type="button"
-            className="button"
-            disabled={created !== undefined || !connected}
-            onClick={() => server.send({ type: "create_cards", game_id: game.id })}
-          >
-            {created === undefined ? "Create cards" : `${created} cards created`}
-          </button>
-        </div>
-        <GameMoves moves={game.moves} selectedPly={ply} onSelect={setPly} />
-      </section>
-      <div className="stage">
-        <Board activity={demo ?? local} onMove={() => {}} createBoard={createBoard} />
-      </div>
-    </>
-  );
+function gradingText(count: number): string {
+  return `Grading ${count} ${count === 1 ? "game" : "games"}…`;
 }
 
 export function Games({
@@ -237,11 +107,24 @@ export function Games({
   api = serverGamesApi,
   importApi = serverImportApi,
   createBoard,
+  pollMs = STATUS_POLL_MS,
+  onOpenPlay,
+  onCoachIdle,
 }: GamesProps) {
-  const { listing, reload } = useGameList(api);
+  const { listing, reload, retry } = useGameList(api);
   const [game, setGame] = useState<GameDetail | null>(null);
   const [failed, setFailed] = useState(false);
+  const [source, setSource] = useState<SourceFilter>("all");
+  const [result, setResult] = useState<ResultFilter>("all");
+  const [importing, setImporting] = useState(false);
   const { send } = server;
+
+  const grading = useGradingStatus(importApi, pollMs, reload);
+  const changed = (): void => {
+    reload();
+    grading.refresh();
+  };
+  const card = useImportFailure(importApi, changed);
 
   const open = useCallback(
     (id: number): void => {
@@ -257,28 +140,114 @@ export function Games({
     [api, send],
   );
 
+  const games = listing.status === "ready" ? listing.games : [];
+  const shown = useMemo(() => filterGames(games, source, result), [games, source, result]);
+  const counts = useMemo(() => sourceCounts(games), [games]);
+
   if (game) {
     return (
       <OpenGame
         key={game.id}
         server={server}
         game={game}
+        summary={games.find((entry) => entry.id === game.id)}
         createBoard={createBoard}
         onClose={() => setGame(null)}
+        {...(onCoachIdle ? { onCoachIdle } : {})}
       />
     );
   }
 
+  const queued = gradingCount(grading.status);
+  const gradingFailures = grading.status?.failed ?? 0;
+  const panel = <ImportPanel api={importApi} onChanged={changed} onImported={card.report} />;
+
   return (
     <section className="screen screen--wide games" aria-label="Games">
-      <h2 className="screen__title">Games</h2>
+      <div className="games__top">
+        <h2 className="screen__title">Games</h2>
+        {listing.status === "ready" && games.length > 0 ? (
+          <>
+            <Segmented<SourceFilter>
+              label="Source"
+              value={source}
+              options={SOURCE_TABS.filter((tab) => tab.id === "all" || counts[tab.id] > 0).map(
+                (tab) => ({ id: tab.id, text: `${tab.label} · ${counts[tab.id]}` }),
+              )}
+              onChange={setSource}
+            />
+            <Segmented<ResultFilter>
+              label="Result"
+              value={result}
+              options={RESULT_TABS.map((tab) => ({ id: tab.id, text: tab.label }))}
+              onChange={setResult}
+            />
+            <span className="games__grading" role="status">
+              {queued > 0
+                ? gradingText(queued)
+                : gradingFailures > 0
+                  ? `${gradingFailures} games could not be graded.`
+                  : ""}
+            </span>
+            <button
+              type="button"
+              className="button"
+              aria-expanded={importing}
+              onClick={() => setImporting(!importing)}
+            >
+              Import from Chess.com…
+            </button>
+          </>
+        ) : null}
+      </div>
       {failed ? (
         <p className="screen__note" role="alert">
           That game could not be loaded. Try it again, or pick another game.
         </p>
       ) : null}
-      <ImportPanel api={importApi} onChanged={reload} />
-      <GameList listing={listing} onOpen={open} onRetry={reload} />
+      <ImportFailureCard card={card} />
+      {listing.status === "loading" ? (
+        <p className="screen__note" role="status">
+          Loading games.
+        </p>
+      ) : null}
+      {listing.status === "failed" ? (
+        <div className="games__empty" role="alert">
+          <p className="screen__note">
+            The games could not be loaded. Check that the server is running, then try again.
+          </p>
+          <button type="button" className="button" onClick={retry}>
+            Try again
+          </button>
+        </div>
+      ) : null}
+      {listing.status === "ready" && games.length === 0 ? (
+        <div className="games__first">
+          {panel}
+          <section className="games__play" aria-label="Play a coached game">
+            <h3 className="import__title">Or play one here</h3>
+            <p className="screen__note">
+              A coached game against Stockfish appears in this list the moment it ends, already
+              graded.
+            </p>
+            {onOpenPlay ? (
+              <button type="button" className="button button--primary" onClick={onOpenPlay}>
+                Start a coached game →
+              </button>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+      {listing.status === "ready" && games.length > 0 ? (
+        <>
+          {importing ? panel : null}
+          {shown.length === 0 ? (
+            <p className="screen__note">No games match these filters.</p>
+          ) : (
+            <GamesTable games={shown} totals={totalsOf(shown)} onOpen={open} />
+          )}
+        </>
+      ) : null}
     </section>
   );
 }
