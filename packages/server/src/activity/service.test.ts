@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { GameService } from "../game/service.js";
+import { RecordingLog } from "../log.js";
 import { ActivityService } from "./service.js";
 
 const DEMO_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -219,6 +220,53 @@ describe("a turn in flight", () => {
     if (back?.kind !== "live_game") throw new Error("expected live_game");
     expect(back).toMatchObject({ pending: "none", input_enabled: true, phase: "player_turn" });
     expect(back.moves.map((m) => m.san)).toEqual(["e4", "e5"]);
+  });
+});
+
+describe("the log", () => {
+  it("records each board change with what replaced what and why", async () => {
+    const log = new RecordingLog();
+    const game = new GameService({ db, engine: new ScriptedEngine(["e7e5"]) });
+    const activity = new ActivityService({ db, game, log });
+    await activity.newGame({ color: "white", elo: 1200 });
+    await activity.resign();
+    await activity.startDemo(DEMO_FEN);
+    await activity.demoMove("e4");
+    await activity.leaveDemo();
+
+    const changes = log.named("activity.change").map((entry) => entry.fields);
+    expect(changes.map((change) => change.cause)).toEqual([
+      "newGame",
+      "followLiveGame",
+      "startDemo",
+      "demoMove",
+      "leaveDemo",
+    ]);
+    expect(changes[2]).toMatchObject({
+      from_kind: "live_game",
+      from_activity_id: 1,
+      to_kind: "demo",
+      to_activity_id: 2,
+      fen: DEMO_FEN,
+      returns_to: "live_game",
+    });
+    expect(changes[3]).toMatchObject({ to_kind: "demo", played: ["e4"] });
+    expect(changes[4]).toMatchObject({ from_kind: "demo", to_kind: "live_game" });
+  });
+
+  it("records a listener that throws, and the board still changes", async () => {
+    const log = new RecordingLog();
+    const game = new GameService({ db, engine: new ScriptedEngine([]) });
+    const activity = new ActivityService({ db, game, log });
+    activity.onState(() => {
+      throw new Error("listener broke");
+    });
+    const demo = await activity.startDemo(DEMO_FEN);
+    expect(activity.current()).toEqual(demo);
+    expect(log.named("activity.listener_failed")[0]?.fields).toMatchObject({
+      cause: "startDemo",
+      error_message: "listener broke",
+    });
   });
 });
 

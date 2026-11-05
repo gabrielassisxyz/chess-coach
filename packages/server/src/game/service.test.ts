@@ -5,9 +5,11 @@ import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { listMoves } from "../db/games.js";
 import { type Database, openDatabase } from "../db/open.js";
+import { EngineFault } from "../engine/errors.js";
 import type { PlayerMoveEvaluation } from "../engine/evaluate.js";
 import type { PlayChoice } from "../engine/play.js";
 import { importFinishedGame } from "../import/pgn.js";
+import { RecordingLog } from "../log.js";
 import type { GameEngine } from "./engine.js";
 import { GameError } from "./errors.js";
 import { GameService, type TurnReport } from "./service.js";
@@ -236,6 +238,99 @@ describe("resign and abort", () => {
     const snapshot = await service.abort();
     expect(snapshot).toMatchObject({ phase: "finished", result: null, termination: "abort" });
     expect(service.current()?.finishedAt).not.toBeNull();
+  });
+});
+
+describe("the log", () => {
+  it("records the game, each ply with its grade and time, the undo and the finish", async () => {
+    const log = new RecordingLog();
+    const service = new GameService({ db, engine: new ScriptedEngine(["e7e5", "b8c6"]), log });
+    const { gameId } = await service.newGame({ color: "white", elo: 1200 });
+    await service.playerMove(move("e2", "e4"));
+    await service.playerMove(move("g1", "f3"));
+    await service.undo();
+    await service.resign();
+
+    expect(log.named("game.new")[0]?.fields).toMatchObject({
+      game_id: gameId,
+      color: "white",
+      target_elo: 1200,
+    });
+    expect(log.named("game.player_move")[0]?.fields).toMatchObject({
+      game_id: gameId,
+      ply: 1,
+      san: "e4",
+      cp_loss: 30,
+      classification: "great",
+      best_san: "d4",
+    });
+    expect(log.named("game.engine_move").map((entry) => entry.fields.san)).toEqual(["e5", "Nc6"]);
+    expect(log.named("game.undo")[0]?.fields).toEqual({
+      game_id: gameId,
+      removed: [
+        { ply: 3, san: "Nf3" },
+        { ply: 4, san: "Nc6" },
+      ],
+    });
+    expect(log.named("game.finished")[0]?.fields).toMatchObject({
+      result: "0-1",
+      termination: "resign",
+    });
+    const stamped = db
+      .prepare("SELECT created_at FROM moves WHERE game_id = ? ORDER BY ply")
+      .all(gameId) as { created_at: string | null }[];
+    expect(stamped.map((row) => row.created_at)).toEqual([
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+    ]);
+  });
+
+  it("records a listener that throws instead of dropping it, and the turn still lands", async () => {
+    const log = new RecordingLog();
+    const service = new GameService({ db, engine: new ScriptedEngine(["e7e5"]), log });
+    await service.newGame({ color: "white", elo: 1200 });
+    service.onSnapshot(() => {
+      throw new Error("listener broke");
+    });
+    await service.playerMove(move("e2", "e4"));
+    expect(service.snapshot()?.moves).toHaveLength(2);
+    expect(log.named("game.listener_failed")[0]?.fields).toMatchObject({
+      error_message: "listener broke",
+    });
+  });
+});
+
+describe("the log's timings", () => {
+  it("times the grade and the engine's reply apart", async () => {
+    const log = new RecordingLog();
+    const engine = new ScriptedEngine(["e7e5"]);
+    const evaluate = engine.evaluate.bind(engine);
+    engine.evaluate = async (fen, uci) => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return evaluate(fen, uci);
+    };
+    const service = new GameService({ db, engine, log });
+    await service.newGame({ color: "white", elo: 1200 });
+    await service.playerMove(move("e2", "e4"));
+    const graded = Number(log.named("game.player_move")[0]?.fields.duration_ms);
+    const replied = Number(log.named("game.engine_move")[0]?.fields.duration_ms);
+    expect(graded).toBeGreaterThanOrEqual(55);
+    expect(replied).toBeLessThan(graded);
+  });
+
+  it("logs an engine fault with the game it hit", async () => {
+    const log = new RecordingLog();
+    const engine = new ScriptedEngine(["e7e5"]);
+    engine.evaluate = async () => {
+      throw new EngineFault("exited", "stockfish exited");
+    };
+    const service = new GameService({ db, engine, log });
+    const { gameId } = await service.newGame({ color: "white", elo: 1200 });
+    await expect(service.playerMove(move("e2", "e4"))).rejects.toBeInstanceOf(EngineFault);
+    expect(log.named("engine.fault")[0]).toMatchObject({
+      level: "error",
+      fields: { game_id: gameId, reason: "exited", error_message: "stockfish exited" },
+    });
   });
 });
 

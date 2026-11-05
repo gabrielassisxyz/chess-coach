@@ -19,6 +19,7 @@ import { type ChatMessage, listChatTail } from "../db/chat.js";
 import type { Database } from "../db/open.js";
 import { getCurrentElo } from "../db/settings.js";
 import { GameError } from "../game/errors.js";
+import { type Log, silentLog } from "../log.js";
 import { SrsError } from "../srs/errors.js";
 import { ChatEventNumbering } from "./chat-events.js";
 import { isUpgradeAllowed } from "./origin.js";
@@ -63,6 +64,7 @@ export interface HubOptions {
   allowedOrigins: readonly string[];
   pingIntervalMs?: number;
   clock?: Clock;
+  log?: Log;
 }
 
 export const BOOTSTRAP_TAIL = 200;
@@ -94,8 +96,20 @@ function errorFrame(code: ErrorCode, message: string, commandId?: string): strin
   });
 }
 
+// A refusal the hub itself raises, so it reaches the browser and the log by the same path.
+class HubRefusal extends Error {
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HubRefusal";
+  }
+}
+
 // Game and activity refusals carry a code the browser can switch on; anything else is a fault.
 function errorCodeOf(error: unknown): ErrorCode {
+  if (error instanceof HubRefusal) return error.code;
   if (error instanceof GameError || error instanceof ActivityError || error instanceof SrsError) {
     const code = ErrorCodeSchema.safeParse(error.code);
     if (code.success) return code.data;
@@ -125,7 +139,10 @@ function commandIdOf(raw: unknown): string | undefined {
 // and injectWS stay visible outside this encapsulated context.
 export async function registerHub(app: FastifyInstance, options: HubOptions): Promise<void> {
   const { coach, activity, db, allowedOrigins } = options;
+  const log = options.log ?? silentLog;
   const numbering = new ChatEventNumbering();
+  // A number per connection ties every command and refusal to the browser tab that sent it.
+  let connections = 0;
   const reviewDeps = { db, coach, ...(options.clock ? { clock: options.clock } : {}) };
 
   const broadcast = (payload: string): void => {
@@ -172,7 +189,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         return;
       case "approve_tool":
         if (!coach.resolvePermission(command.request_id, command.allow)) {
-          socket.send(errorFrame("unknown_request", "no such pending request", command.command_id));
+          throw new HubRefusal("unknown_request", "no such pending request");
         }
         return;
       case "open_game":
@@ -238,32 +255,69 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
       case "end_training":
         await activity.endTraining(command.activity_id);
         return;
-      case "create_cards":
-        socket.send(frame(createCards(reviewDeps, command.game_id)));
+      case "create_cards": {
+        const created = createCards(reviewDeps, command.game_id);
+        log.info("review.cards_created", { game_id: command.game_id, result: created });
+        socket.send(frame(created));
         return;
+      }
       case "ask_coach_about_ply":
         askCoachAboutPly(reviewDeps, command.game_id, command.ply);
         return;
     }
   };
 
-  const onMessage = (socket: WebSocket, data: Buffer | ArrayBuffer | Buffer[]): void => {
+  const onMessage = (
+    socket: WebSocket,
+    conn: number,
+    data: Buffer | ArrayBuffer | Buffer[],
+  ): void => {
+    const text = data.toString();
     let raw: unknown;
     try {
-      raw = JSON.parse(data.toString());
+      raw = JSON.parse(text);
     } catch {
+      log.warn("ws.invalid_frame", {
+        conn,
+        reason: "invalid_json",
+        bytes: text.length,
+        frame: text,
+      });
       socket.send(errorFrame("invalid_json", "frame is not valid JSON"));
       return;
     }
     const parsed = ClientCommandSchema.safeParse(raw);
     if (!parsed.success) {
-      socket.send(errorFrame("invalid_command", parsed.error.message, commandIdOf(raw)));
+      const commandId = commandIdOf(raw);
+      log.warn("ws.invalid_frame", {
+        conn,
+        reason: "invalid_command",
+        command_id: commandId,
+        message: parsed.error.message,
+        frame: raw,
+      });
+      socket.send(errorFrame("invalid_command", parsed.error.message, commandId));
       return;
     }
-    run(parsed.data, socket).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      socket.send(errorFrame(errorCodeOf(error), message, parsed.data.command_id));
-    });
+    const command = parsed.data;
+    const meta = { conn, command_id: command.command_id, type: command.type };
+    log.info("ws.command", { ...meta, command });
+    const startedAt = performance.now();
+    const elapsed = () => Math.round(performance.now() - startedAt);
+    run(command, socket).then(
+      () => log.info("ws.command_done", { ...meta, ok: true, duration_ms: elapsed() }),
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = errorCodeOf(error);
+        // A refusal is the app saying no; anything else is a fault worth its stack.
+        if (code === "coach_error") {
+          log.error("ws.command_failed", error, { ...meta, code, duration_ms: elapsed() });
+        } else {
+          log.warn("ws.command_failed", { ...meta, code, message, duration_ms: elapsed() });
+        }
+        socket.send(errorFrame(code, message, command.command_id));
+      },
+    );
   };
 
   app.get(
@@ -277,19 +331,34 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         }
       },
     },
-    (socket) => {
+    (socket, request) => {
+      const conn = ++connections;
+      const openedAt = performance.now();
+      log.info("ws.connect", { conn, origin: request.headers.origin ?? null });
       let alive = true;
       socket.on("pong", () => {
         alive = true;
       });
       // Pings keep idle proxies from dropping the socket; a peer that never answers is cut.
       const timer = setInterval(() => {
-        if (!alive) return socket.terminate();
+        if (!alive) {
+          log.warn("ws.ping_timeout", { conn });
+          return socket.terminate();
+        }
         alive = false;
         socket.ping();
       }, options.pingIntervalMs ?? PING_INTERVAL_MS);
-      socket.on("close", () => clearInterval(timer));
-      socket.on("message", (data: Buffer | ArrayBuffer | Buffer[]) => onMessage(socket, data));
+      socket.on("close", (code: number) => {
+        clearInterval(timer);
+        log.info("ws.disconnect", {
+          conn,
+          code,
+          duration_ms: Math.round(performance.now() - openedAt),
+        });
+      });
+      socket.on("message", (data: Buffer | ArrayBuffer | Buffer[]) =>
+        onMessage(socket, conn, data),
+      );
       socket.send(bootstrap());
     },
   );

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
@@ -91,5 +91,30 @@ describe("runMigrations", () => {
   it("rejects a duplicate number and names the offending file", () => {
     const dir = migrationsDir({ "001_a.sql": "SELECT 1;", "001_b.sql": "SELECT 1;" });
     expect(() => runMigrations(new BetterSqlite3(":memory:"), dir)).toThrow("001_b.sql");
+  });
+});
+
+describe("011_move_times", () => {
+  it("adds moves.created_at to a database at 010 and leaves earlier rows null", () => {
+    const db = new BetterSqlite3(":memory:");
+    const all = listMigrations(defaultMigrationsDir);
+    const upTo010 = migrationsDir(
+      Object.fromEntries(
+        all
+          .filter((name) => name < "011")
+          .map((name) => [name, readFileSync(join(defaultMigrationsDir, name), "utf8")]),
+      ),
+    );
+    runMigrations(db, upTo010);
+    db.prepare(
+      `INSERT INTO games (started_at, player_color, target_elo, initial_fen, phase)
+       VALUES ('2026-11-04T00:00:00Z', 'white', 1200, 'x', 'player_turn')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player)
+       VALUES (1, 1, 'e4', 'e2e4', 'a', 'b', 1)`,
+    ).run();
+    expect(runMigrations(db, defaultMigrationsDir)).toEqual(["011_move_times.sql"]);
+    expect(db.prepare("SELECT created_at FROM moves").get()).toEqual({ created_at: null });
   });
 });

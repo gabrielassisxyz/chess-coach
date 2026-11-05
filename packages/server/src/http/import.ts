@@ -23,6 +23,7 @@ import {
   MAX_PGN_BYTES,
   PgnImportError,
 } from "../import/pgn.js";
+import { type Log, silentLog } from "../log.js";
 
 export interface ImportRoutesOptions {
   db: Database;
@@ -30,6 +31,7 @@ export interface ImportRoutesOptions {
   grader: ImportGrader;
   /** Usernames that identify the student's side in a pasted PGN. */
   usernames: string[];
+  log?: Log;
 }
 
 const MAX_UUIDS_PER_IMPORT = 100;
@@ -102,6 +104,7 @@ function importChessComGame(db: Database, game: ChessComGame, username: string):
 
 export function registerImportRoutes(app: FastifyInstance, options: ImportRoutesOptions): void {
   const { db, source, grader } = options;
+  const log = options.log ?? silentLog;
 
   app.post(
     "/api/import/chesscom/list",
@@ -116,8 +119,16 @@ export function registerImportRoutes(app: FastifyInstance, options: ImportRoutes
           "chesscom",
           games.map((game) => game.uuid),
         );
+        log.info("import.chesscom_listed", {
+          username: body.data.username,
+          from: body.data.from,
+          to: body.data.to,
+          games: games.length,
+          already_imported: imported.size,
+        });
         return { games: games.map((game) => listed(game, body.data.username, imported)) };
       } catch (error) {
+        log.error("import.failed", error, { route: "chesscom_list", username: body.data.username });
         return failFrom(reply, error);
       }
     },
@@ -142,9 +153,17 @@ export function registerImportRoutes(app: FastifyInstance, options: ImportRoutes
         }
       }
       if (failed.length > 0) result.failed = failed;
+      log.info("import.chesscom", {
+        username,
+        requested: body.data.uuids.length,
+        imported: result.imported,
+        skipped: result.skipped,
+        failed,
+      });
       if (result.imported > 0) grader.kick();
       return result;
     } catch (error) {
+      log.error("import.failed", error, { route: "chesscom", username: body.data.username });
       return failFrom(reply, error);
     }
   });
@@ -164,9 +183,11 @@ export function registerImportRoutes(app: FastifyInstance, options: ImportRoutes
     }
     try {
       const id = importFinishedGame(db, { pgn: body.data.pgn, playerColor: color, source: "pgn" });
+      log.info("import.pgn", { game_id: id, student_color: color, skipped: id === null });
       if (id !== null) grader.kick();
       return { imported: id === null ? 0 : 1, skipped: id === null ? 1 : 0 };
     } catch (error) {
+      log.error("import.failed", error, { route: "pgn", bytes: body.data.pgn.length });
       return failFrom(reply, error);
     }
   });

@@ -21,6 +21,7 @@ import { EngineFault } from "../engine/errors.js";
 import type { PlayerMoveEvaluation } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
 import { MAX_ELO, MIN_ELO } from "../engine/play.js";
+import { type Log, silentLog } from "../log.js";
 import type { GameEngine } from "./engine.js";
 import { GameError } from "./errors.js";
 import {
@@ -43,6 +44,7 @@ export interface GameServiceOptions {
   clock?: Clock;
   /** Absent in tests that do not involve a coach; turns then write no notification rows. */
   notifications?: NotificationSink;
+  log?: Log;
 }
 
 interface LiveState {
@@ -65,6 +67,16 @@ function replay(game: GameRecord, moves: ReplayedMove[]): Chess {
     applyUci(chess, move.uci);
   }
   return chess;
+}
+
+// Times one engine call without changing what it resolves to.
+async function timed<T>(work: Promise<T>, done: (ms: number) => void): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await work;
+  } finally {
+    done(Math.round(performance.now() - startedAt));
+  }
 }
 
 function pgnOf(chess: Chess, result: string | null): string {
@@ -93,6 +105,7 @@ export class GameService {
   private readonly engine: GameEngine;
   private readonly clock: Clock;
   private readonly notifications: NotificationSink | undefined;
+  private readonly log: Log;
   private state: LiveState | null = null;
   private tail: Promise<unknown> = Promise.resolve();
   private turnInFlight = false;
@@ -106,6 +119,7 @@ export class GameService {
     this.engine = options.engine;
     this.clock = options.clock ?? systemClock;
     this.notifications = options.notifications;
+    this.log = options.log ?? silentLog;
     const unfinished = findUnfinishedGame(this.db);
     if (unfinished) this.state = this.load(unfinished);
   }
@@ -144,7 +158,10 @@ export class GameService {
   recover(): Promise<void> {
     return this.enqueue(async () => {
       const phase = this.state?.game.phase;
-      if (phase === "evaluating" || phase === "engine_turn") await this.finishTurn();
+      if (phase === "evaluating" || phase === "engine_turn") {
+        this.log.info("game.recovering", { game_id: this.state?.game.id, phase });
+        await this.finishTurn();
+      }
     });
   }
 
@@ -166,6 +183,12 @@ export class GameService {
         startedAt: this.clock.now().toISOString(),
       });
       this.state = this.load(game);
+      this.log.info("game.new", {
+        game_id: game.id,
+        color: input.color,
+        target_elo: elo,
+        initial_fen: initialFen,
+      });
       if (game.phase === "engine_turn") await this.finishTurn();
       else this.emitSnapshot();
       return this.requireSnapshot();
@@ -215,6 +238,10 @@ export class GameService {
       const kept = live.moves.slice(0, -2);
       const pgn = pgnOf(replay(live.game, kept), null);
       removeLastPlies(this.db, live.game.id, 2, pgn);
+      this.log.info("game.undo", {
+        game_id: live.game.id,
+        removed: [beforeEngine, engine].map((move) => ({ ply: move.ply, san: move.san })),
+      });
       this.reload();
       this.emitSnapshot();
       return this.requireSnapshot();
@@ -315,6 +342,7 @@ export class GameService {
       fenBefore: move.before,
       fenAfter: move.after,
       isPlayer: true,
+      createdAt: this.clock.now().toISOString(),
     };
     const pgn = pgnOf(replay(live.game, [...live.moves, record]), null);
     recordPlayerMove(this.db, live.game.id, record, pgn);
@@ -330,17 +358,22 @@ export class GameService {
     const colorLetter = live.game.playerColor === "white" ? "w" : "b";
     let evaluation: PlayerMoveEvaluation | null;
     let choice: Awaited<ReturnType<GameEngine["play"]>> | null;
+    const timing = { evaluate: 0, reply: 0 };
     try {
       [evaluation, choice] = await Promise.all([
         playerPly
-          ? this.engine.evaluate(playerPly.fenBefore, playerPly.uci, colorLetter)
+          ? timed(this.engine.evaluate(playerPly.fenBefore, playerPly.uci, colorLetter), (ms) => {
+              timing.evaluate = ms;
+            })
           : Promise.resolve(null),
         needsReply
-          ? this.engine.play(live.chess.fen(), live.game.targetElo)
+          ? timed(this.engine.play(live.chess.fen(), live.game.targetElo), (ms) => {
+              timing.reply = ms;
+            })
           : Promise.resolve(null),
       ]);
     } catch (error) {
-      if (error instanceof EngineFault) this.emitFault(error);
+      if (error instanceof EngineFault) this.emitFault(error, live.game.id);
       throw error;
     }
     // Cloning by FEN would drop the history that repetition and the fifty-move rule read.
@@ -355,6 +388,7 @@ export class GameService {
         fenBefore: played.before,
         fenAfter: played.after,
         isPlayer: false,
+        createdAt: this.clock.now().toISOString(),
       };
     }
     const finish = finishOf(after, this.clock.now().toISOString());
@@ -378,6 +412,7 @@ export class GameService {
       ...(hook ? { notify: hook } : {}),
     });
     const settled = this.reload();
+    this.logTurn(live.game.id, playerPly, evaluation, engineMove, finish, timing);
     this.emitSnapshot();
     if (notify) this.emitNotification();
     if (!playerPly || !evaluation) return null;
@@ -416,6 +451,11 @@ export class GameService {
       pgnOf(replay(live.game, live.moves), finish.result),
       this.withDifficulty(notify, live.game.id, finish),
     );
+    this.log.info("game.finished", {
+      game_id: live.game.id,
+      result: finish.result,
+      termination: finish.termination,
+    });
     this.reload();
     this.emitSnapshot();
     if (notify) this.emitNotification();
@@ -489,8 +529,49 @@ export class GameService {
     for (const listener of this.notificationListeners) this.notify(listener);
   }
 
-  private emitFault(fault: EngineFault): void {
+  private emitFault(fault: EngineFault, gameId: number): void {
+    this.log.error("engine.fault", fault, { game_id: gameId, reason: fault.reason });
     for (const listener of this.faultListeners) this.notify(() => listener(fault));
+  }
+
+  private logTurn(
+    gameId: number,
+    player: MoveRecord | undefined,
+    evaluation: PlayerMoveEvaluation | null,
+    engineMove: NewMove | null,
+    finish: Finish | null,
+    timing: { evaluate: number; reply: number },
+  ): void {
+    if (player && evaluation) {
+      this.log.info("game.player_move", {
+        game_id: gameId,
+        ply: player.ply,
+        san: player.san,
+        uci: player.uci,
+        cp_loss: evaluation.cpLoss,
+        classification: evaluation.classification,
+        best_san: evaluation.bestMoveSan,
+        eval_before_cp: evaluation.evalBeforeCp,
+        eval_after_cp: evaluation.evalAfterCp,
+        duration_ms: timing.evaluate,
+      });
+    }
+    if (engineMove) {
+      this.log.info("game.engine_move", {
+        game_id: gameId,
+        ply: engineMove.ply,
+        san: engineMove.san,
+        uci: engineMove.uci,
+        duration_ms: timing.reply,
+      });
+    }
+    if (finish) {
+      this.log.info("game.finished", {
+        game_id: gameId,
+        result: finish.result,
+        termination: finish.termination,
+      });
+    }
   }
 
   private emitSnapshot(): void {
@@ -503,8 +584,9 @@ export class GameService {
   private notify(call: () => void): void {
     try {
       call();
-    } catch {
-      // Intentionally dropped: the turn is already durable.
+    } catch (error) {
+      // The turn is already durable, so the failure is recorded and the turn goes on.
+      this.log.error("game.listener_failed", error);
     }
   }
 }

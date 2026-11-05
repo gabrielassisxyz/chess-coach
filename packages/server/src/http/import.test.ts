@@ -9,6 +9,7 @@ import { type Database, openDatabase } from "../db/open.js";
 import { ChessComError, ChessComSource } from "../import/chesscom.js";
 import { ImportGrader } from "../import/grader.js";
 import { MAX_PGN_BYTES } from "../import/pgn.js";
+import { silentLog } from "../log.js";
 
 const FIXTURE_PGN = readFileSync(
   new URL("../../test/fixtures/chesscom_2026-10-28.pgn", import.meta.url),
@@ -29,7 +30,7 @@ beforeEach(() => {
   fetcher = new FakeChessCom();
   grader = new ImportGrader({
     db,
-    log: () => {},
+    log: silentLog,
     evaluate: async () => {
       await gate;
       return {
