@@ -31,13 +31,15 @@ function card(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
       exposure_id: "ex-1",
       prompt_fen: START_FEN,
       student_color: "white",
+      rating_preview: { "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 72 },
       position_in_queue: 1,
       queue_length: 3,
     },
     status: "prompt",
+    served_at: "2026-03-01T00:00:00.000Z",
     exposure_id: "ex-1",
     expected: null,
-    exploring: { fen: START_FEN, line_san: [] },
+    exploring: { fen: START_FEN, line_san: [], trail: [] },
     summary: null,
     ...overrides,
   };
@@ -60,8 +62,9 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
       queue_length: 10,
     },
     status: "prompt",
+    served_at: "2026-03-01T00:00:00.000Z",
     expected: null,
-    exploring: { fen: START_FEN, line_san: [] },
+    exploring: { fen: START_FEN, line_san: [], trail: [] },
     summary: null,
     ...overrides,
   };
@@ -273,7 +276,10 @@ describe("exploring before answering", () => {
 
   it("draws the explored position, not the served one", () => {
     boards.length = 0;
-    const explored = card({ exploring: { fen: AFTER_E4, line_san: ["e4"] }, turn: "black" });
+    const explored = card({
+      exploring: { fen: AFTER_E4, line_san: ["e4"], trail: [] },
+      turn: "black",
+    });
     render(<Train server={api(explored)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
     expect(boards.at(-1)?.fen).toBe(AFTER_E4);
   });
@@ -290,7 +296,7 @@ describe("exploring before answering", () => {
     }
     unmount();
 
-    const server = api(card({ exploring: { fen: AFTER_E4, line_san: ["e4", "e5"] } }));
+    const server = api(card({ exploring: { fen: AFTER_E4, line_san: ["e4", "e5"], trail: [] } }));
     render(<Train server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
     expect(answer().disabled).toBe(false);
     fireEvent.click(answer());
@@ -298,7 +304,7 @@ describe("exploring before answering", () => {
   });
 
   it("offers take back and reset while open, and no exploring controls once answered", () => {
-    const server = api(card({ exploring: { fen: AFTER_E4, line_san: ["e4"] } }));
+    const server = api(card({ exploring: { fen: AFTER_E4, line_san: ["e4"], trail: [] } }));
     const { rerender } = render(
       <Train server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
     );

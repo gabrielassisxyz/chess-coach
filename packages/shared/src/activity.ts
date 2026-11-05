@@ -79,12 +79,24 @@ const queuePosition = {
   queue_length: z.number().int().positive(),
 };
 
+// Hours until the card is due again, for each quality the student could give it.
+export const RatingPreviewSchema = z.object({
+  "0": z.number(),
+  "1": z.number(),
+  "2": z.number(),
+  "3": z.number(),
+  "4": z.number(),
+  "5": z.number(),
+});
+export type RatingPreview = z.infer<typeof RatingPreviewSchema>;
+
 export const CardItemSchema = z.object({
   kind: z.literal("card"),
   card_id: z.number().int(),
   exposure_id: z.string(),
   prompt_fen: z.string(),
   student_color: ColorSchema,
+  rating_preview: RatingPreviewSchema,
   ...queuePosition,
 });
 
@@ -121,7 +133,21 @@ export type TrainingSummary = z.infer<typeof TrainingSummarySchema>;
 
 // The student's scratch line on top of the served position. While the item is open, the board
 // fields of a training item (turn, last_move, legal_moves) describe this position.
-export const ExploringSchema = z.object({ fen: z.string(), line_san: z.array(z.string()) });
+// `line_san` is the explored line after the event, empty after a reset; `at_ms` is measured from
+// the moment the item was served.
+export const ExploredEventSchema = z.object({
+  seq: z.number().int().positive(),
+  at_ms: z.number().int().nonnegative(),
+  kind: z.enum(["move", "undo", "reset"]),
+  line_san: z.array(z.string()),
+});
+export type ExploredEvent = z.infer<typeof ExploredEventSchema>;
+
+export const ExploringSchema = z.object({
+  fen: z.string(),
+  line_san: z.array(z.string()),
+  trail: z.array(ExploredEventSchema),
+});
 export type Exploring = z.infer<typeof ExploringSchema>;
 
 // `summary` is set once the queue has ended; the last item then stays on the board, locked.
@@ -132,6 +158,7 @@ export const TrainingActivitySchema = z.object({
   mode: TrainingModeSchema,
   item: TrainingItemSchema,
   status: TrainingStatusSchema,
+  served_at: z.string(),
   exposure_id: z.string().optional(),
   expected: ExpectedMoveSchema.nullable(),
   exploring: ExploringSchema,

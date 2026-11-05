@@ -134,13 +134,15 @@ const card = {
     exposure_id: "ex-1",
     prompt_fen: START_FEN,
     student_color: "white" as const,
+    rating_preview: { "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 72 },
     position_in_queue: 1,
     queue_length: 3,
   },
   status: "solved" as const,
+  served_at: "2026-03-01T00:00:00.000Z",
   exposure_id: "ex-1",
   expected: null,
-  exploring: { fen: START_FEN, line_san: [] },
+  exploring: { fen: START_FEN, line_san: [], trail: [] },
   summary: null,
 };
 

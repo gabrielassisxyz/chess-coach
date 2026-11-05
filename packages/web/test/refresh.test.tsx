@@ -80,13 +80,15 @@ describe("browser refresh", () => {
         exposure_id: "ex-1",
         prompt_fen: START_FEN,
         student_color: "white",
+        rating_preview: { "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 72 },
         position_in_queue: 2,
         queue_length: 3,
       },
       status: "prompt",
+      served_at: "2026-03-01T00:00:00.000Z",
       exposure_id: "ex-1",
       expected: null,
-      exploring: { fen: START_FEN, line_san: [] },
+      exploring: { fen: START_FEN, line_san: [], trail: [] },
       summary: null,
     });
     expect(server.activity).toMatchObject({ kind: "training", exposure_id: "ex-1" });
@@ -109,8 +111,9 @@ describe("browser refresh", () => {
         queue_length: 10,
       },
       status: "in_progress",
+      served_at: "2026-03-01T00:00:00.000Z",
       expected: null,
-      exploring: { fen: START_FEN, line_san: [] },
+      exploring: { fen: START_FEN, line_san: [], trail: [] },
       summary: null,
     });
     expect(server.activity).toMatchObject({ kind: "training", item: { cursor: 2 } });
