@@ -173,8 +173,8 @@ describe("focus ring", () => {
     expect(
       expectFocusRing(container) + (await screen.findAllByRole("button")).length,
     ).toBeGreaterThan(0);
-    fireEvent.click(await screen.findByRole("button", { name: /1200/ }));
-    await screen.findByRole("button", { name: "Create cards" });
+    fireEvent.doubleClick(await screen.findByRole("row", { name: /1200/ }));
+    await screen.findByRole("button", { name: /^Create cards/ });
     expect(expectFocusRing(container)).toBeGreaterThan(8);
   });
 

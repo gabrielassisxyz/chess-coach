@@ -7,7 +7,7 @@ import { useServer } from "./hooks/useServer.js";
 import { Games } from "./screens/Games.js";
 import { Play } from "./screens/Play.js";
 import { Practice } from "./screens/Practice.js";
-import { useCoachPanel } from "./state/coach-panel.js";
+import { DEFAULT_COACH_IDLE, useCoachPanel } from "./state/coach-panel.js";
 import { serviceNotice } from "./state/health.js";
 import { useTheme } from "./state/theme.js";
 
@@ -24,6 +24,7 @@ export function App({ fetchHealth }: AppProps = {}) {
   const { theme, toggle: toggleTheme } = useTheme();
   const coach = useCoachPanel(server.coachMessages);
   const [screen, setScreen] = useState<Screen>("Play");
+  const [coachIdle, setCoachIdle] = useState<string | null>(null);
 
   return (
     <div className="shell">
@@ -54,9 +55,17 @@ export function App({ fetchHealth }: AppProps = {}) {
       <NoticeBanner message={server.lastError} onDismiss={server.dismissError} />
       <main className="frame" data-coach={coach.open ? "open" : "collapsed"}>
         {screen === "Play" ? <Play server={server} notice={notice} /> : null}
-        {screen === "Games" ? <Games server={server} /> : null}
+        {screen === "Games" ? (
+          <Games server={server} onOpenPlay={() => setScreen("Play")} onCoachIdle={setCoachIdle} />
+        ) : null}
         {screen === "Practice" ? <Practice server={server} /> : null}
-        <Chat server={server} open={coach.open} unread={coach.unread} onToggle={coach.toggle} />
+        <Chat
+          server={server}
+          open={coach.open}
+          unread={coach.unread}
+          onToggle={coach.toggle}
+          idleLabel={coachIdle ?? DEFAULT_COACH_IDLE}
+        />
       </main>
     </div>
   );
