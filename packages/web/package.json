@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@chess-coach/shared": "workspace:*",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@lichess-org/chessground": "^10.5.0",
     "chess.js": "^1.4.0",
     "react": "^19.3.1",
