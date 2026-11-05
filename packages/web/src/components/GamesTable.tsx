@@ -1,4 +1,5 @@
 import type { GameSummary } from "@chess-coach/shared";
+import { isPhone } from "../state/coach-panel.js";
 import {
   dateLabel,
   lossLabel,
@@ -76,6 +77,8 @@ export function GamesTable({ games, totals, onOpen }: GamesTableProps) {
                 key={game.id}
                 className="games__row"
                 tabIndex={0}
+                // A double-click is not a gesture a phone has (a double tap zooms), so there one tap opens.
+                onClick={() => isPhone() && onOpen(game.id)}
                 onDoubleClick={() => onOpen(game.id)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && event.target === event.currentTarget) {

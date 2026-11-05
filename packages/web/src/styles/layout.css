@@ -274,28 +274,77 @@
   color: var(--quality-blunder);
 }
 
+/*
+ * Phone: one column that scrolls inside the shell, so the top bar and the coach bar stay put.
+ * The board comes first whatever the screen's own source order is.
+ */
 @media (max-width: 899px) {
-  .shell {
-    height: auto;
-    min-height: 100dvh;
+  .topbar {
+    gap: var(--space-3);
+    padding: 0 var(--space-4);
+  }
+
+  .topbar__wordmark {
+    font-size: 0;
+  }
+
+  .topbar__wordmark::before {
+    content: "cc";
+    font-size: var(--text-base);
+  }
+
+  .topbar__tabs {
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .topbar__tab {
+    min-height: 44px;
+    padding: 0 var(--space-2);
+  }
+
+  .topbar__tab:disabled {
+    display: none;
+  }
+
+  .topbar__theme {
+    min-height: 44px;
   }
 
   .frame,
   .frame[data-coach="collapsed"] {
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .frame > .stage {
+    order: -1;
+    flex: none;
+    padding: 0;
+    container-type: inline-size;
+  }
+
+  .frame > .stage .board {
+    width: 100%;
+  }
+
+  .frame > .screen {
+    flex: none;
+    padding: var(--space-4);
+    overflow: visible;
   }
 
   .screen--wide {
     grid-column: auto;
   }
 
-  .screen {
-    padding: var(--space-4);
-    overflow-y: visible;
+  .frame > .coach {
+    order: 99;
   }
 
-  .chat {
-    height: 70dvh;
+  .screen__title {
+    font-size: var(--text-lg);
   }
 }

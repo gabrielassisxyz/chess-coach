@@ -292,3 +292,72 @@
 .coach-actions .button {
   height: 32px;
 }
+
+@media (max-width: 899px) {
+  .movelist {
+    position: relative;
+    display: flex;
+    flex: none;
+    gap: var(--space-3);
+    min-height: 0;
+    padding: var(--space-1) var(--space-2);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .movelist__row {
+    display: flex;
+    flex: none;
+  }
+
+  .movelist__number {
+    margin-right: var(--space-1);
+  }
+
+  .movelist__ply {
+    flex: none;
+  }
+
+  .controls .button,
+  .coach-actions .button {
+    height: auto;
+    min-height: 44px;
+  }
+
+  .board-gear {
+    width: 44px;
+    height: 44px;
+  }
+
+  .stage .table {
+    --side: 100cqw;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    column-gap: 0;
+    width: 100%;
+  }
+
+  .stage .table .eval {
+    grid-column: 1;
+    grid-row: 4;
+  }
+
+  .table__top,
+  .table__bottom {
+    grid-column: 1;
+    padding: 0 var(--space-4);
+  }
+
+  .table__top {
+    min-height: var(--table-row);
+  }
+
+  .table__bottom {
+    grid-row: 3;
+    min-height: var(--table-row);
+  }
+
+  .stage .table .board {
+    grid-column: 1;
+  }
+}

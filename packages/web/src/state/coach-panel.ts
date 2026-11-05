@@ -21,6 +21,25 @@ function storeOpen(open: boolean): void {
   }
 }
 
+export const PHONE_QUERY = "(max-width: 899px)";
+
+// The layout and this hook must agree on where a phone starts, so both read the one query.
+export function isPhone(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia(PHONE_QUERY).matches === true;
+}
+
+function usePhone(): boolean {
+  const [phone, setPhone] = useState(isPhone);
+  useEffect(() => {
+    const query = typeof window.matchMedia === "function" ? window.matchMedia(PHONE_QUERY) : null;
+    if (!query?.addEventListener) return;
+    const update = (): void => setPhone(query.matches === true);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return phone;
+}
+
 export interface CoachPanel {
   open: boolean;
   unread: boolean;
@@ -29,8 +48,14 @@ export interface CoachPanel {
 
 // The dot marks a coach message that started while the panel was closed; opening it is the
 // acknowledgement. Comparing counts, never items, keeps a reconnect's replayed transcript quiet.
+//
+// On a phone the panel is a sheet over the board, so it starts closed on every visit and its
+// state is kept apart from the desktop choice instead of overwriting it.
 export function useCoachPanel(coachMessages: number): CoachPanel {
-  const [open, setOpen] = useState(readOpen);
+  const phone = usePhone();
+  const [desktopOpen, setDesktopOpen] = useState(readOpen);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const open = phone ? sheetOpen : desktopOpen;
   const [unread, setUnread] = useState(false);
   const seen = useRef(coachMessages);
 
@@ -41,10 +66,13 @@ export function useCoachPanel(coachMessages: number): CoachPanel {
 
   const toggle = useCallback(() => {
     const next = !open;
-    storeOpen(next);
-    setOpen(next);
+    if (phone) setSheetOpen(next);
+    else {
+      storeOpen(next);
+      setDesktopOpen(next);
+    }
     if (next) setUnread(false);
-  }, [open]);
+  }, [open, phone]);
 
   return { open, unread, toggle };
 }

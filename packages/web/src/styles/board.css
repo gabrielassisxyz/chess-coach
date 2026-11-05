@@ -133,3 +133,40 @@ cg-board square.check {
     transition: none;
   }
 }
+
+/* Phone: the evaluation lies flat under the board as a 4 px bar with its number beside it. */
+@media (max-width: 899px) {
+  /* Chessground's file labels start 24 px in and are as wide as the board, so they poke out of its right edge. */
+  .board {
+    overflow: hidden;
+  }
+
+  .eval {
+    flex-direction: row;
+    gap: var(--space-3);
+    padding: 0 var(--space-4);
+  }
+
+  .eval__label {
+    height: 24px;
+  }
+
+  .eval__track {
+    flex: 1;
+    width: auto;
+    height: 4px;
+    border: 0;
+  }
+
+  .eval__track {
+    background: linear-gradient(
+      to right,
+      var(--accent) calc(var(--fill, 0.5) * 100%),
+      var(--surface-2) 0
+    );
+  }
+
+  .eval__fill {
+    display: none;
+  }
+}
