@@ -237,43 +237,6 @@
   gap: var(--space-2);
 }
 
-.badge {
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  line-height: var(--leading-label);
-}
-
-.badge--best {
-  background: var(--quality-best-bg);
-  color: var(--quality-best);
-}
-
-.badge--great {
-  background: var(--quality-great-bg);
-  color: var(--quality-great);
-}
-
-.badge--good {
-  background: var(--quality-good-bg);
-  color: var(--quality-good);
-}
-
-.badge--inaccuracy {
-  background: var(--quality-inaccuracy-bg);
-  color: var(--quality-inaccuracy);
-}
-
-.badge--mistake {
-  background: var(--quality-mistake-bg);
-  color: var(--quality-mistake);
-}
-
-.badge--blunder {
-  background: var(--quality-blunder-bg);
-  color: var(--quality-blunder);
-}
-
 /*
  * Phone: one column that scrolls inside the shell, so the top bar and the coach bar stay put.
  * The board comes first whatever the screen's own source order is.
