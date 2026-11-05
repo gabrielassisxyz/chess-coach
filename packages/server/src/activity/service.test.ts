@@ -38,10 +38,10 @@ describe("activity sequence", () => {
     await activity.newGame({ color: "white", elo: 1200 });
     const first = game.current()?.id as number;
     await activity.playerMove({ from: "e2", to: "e4" });
+    await activity.resign();
     await activity.startDemo(DEMO_FEN);
     await activity.demoMove("e4");
     await activity.leaveDemo();
-    await activity.resign();
     await activity.newGame({ color: "white", elo: 1200 });
     const second = game.current()?.id as number;
     await activity.openGame(first);
@@ -51,9 +51,9 @@ describe("activity sequence", () => {
       ["live_game", 1],
       ["live_game", 1],
       ["live_game", 1],
+      ["live_game", 1],
       ["demo", 2],
       ["demo", 2],
-      ["live_game", 3],
       ["live_game", 3],
       ["live_game", 4],
       ["review", 5],
@@ -120,9 +120,10 @@ describe("stale and wrong-kind commands", () => {
     expect(activity.current()).toEqual(demo);
   });
 
-  it("refuses a move at the live game once the board moved to a demo", async () => {
+  it("refuses a move at the finished game once the board moved to a demo", async () => {
     const { game, activity } = setup(["e7e5"]);
     await activity.newGame({ color: "white", elo: 1200 });
+    await activity.resign();
     const live = activity.current() as ActivityState;
     await activity.startDemo(DEMO_FEN);
     await expect(
@@ -133,6 +134,43 @@ describe("stale and wrong-kind commands", () => {
     });
     await expect(activity.undo()).rejects.toMatchObject({ code: "demo_active" });
     expect(game.snapshot()?.moves).toEqual([]);
+  });
+
+  it("refuses a demo over an unfinished live game and leaves the board on it", async () => {
+    const { activity, seen } = setup(["e7e5"]);
+    await activity.newGame({ color: "white", elo: 1200 });
+    const live = activity.current();
+    const before = seen.length;
+    await expect(activity.startDemo(DEMO_FEN)).rejects.toMatchObject({
+      code: "live_game_active",
+    });
+    expect(seen).toHaveLength(before);
+    expect(activity.current()).toEqual(live);
+  });
+
+  it("refuses the coach's rewind of 2026-11-05 and keeps the student's next move", async () => {
+    // 1. e4 f6 2. Nf3 d5 3. e5 Nc6, then a demo from the position after 2... d5.
+    const { game, activity } = setup(["f7f6", "d7d5", "b8c6", "e7e5"]);
+    await activity.newGame({ color: "white", elo: 1200 });
+    await activity.playerMove({ from: "e2", to: "e4" });
+    await activity.playerMove({ from: "g1", to: "f3" });
+    await activity.playerMove({ from: "e4", to: "e5" });
+    const afterD5 = "rnbqkbnr/ppp1p1pp/5p2/3p4/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3";
+    await expect(activity.startDemo(afterD5)).rejects.toMatchObject({
+      code: "live_game_active",
+    });
+    expect(activity.current()?.kind).toBe("live_game");
+    await activity.playerMove({ from: "e5", to: "f6" });
+    expect(game.snapshot()?.moves.map((m) => m.san)).toEqual([
+      "e4",
+      "f6",
+      "Nf3",
+      "d5",
+      "e5",
+      "Nc6",
+      "exf6",
+      "e5",
+    ]);
   });
 
   it("refuses a move while a review is on the board and leave_demo outside a demo", async () => {
@@ -154,6 +192,7 @@ describe("stale and wrong-kind commands", () => {
     await expect(activity.playerMove({ from: "e2", to: "e5" })).rejects.toMatchObject({
       code: "illegal_move",
     });
+    await activity.abort();
     await expect(activity.startDemo("not a fen")).rejects.toMatchObject({
       code: "invalid_position",
     });
@@ -163,7 +202,7 @@ describe("stale and wrong-kind commands", () => {
 });
 
 describe("a turn in flight", () => {
-  it("lets a demo start while the turn is evaluating and returns to the finished turn", async () => {
+  it("refuses a demo while the turn is evaluating and lets the turn finish on the board", async () => {
     const { engine, activity } = setup(["e7e5"]);
     await activity.newGame({ color: "white", elo: 1200 });
     const release = engine.hold();
@@ -171,13 +210,12 @@ describe("a turn in flight", () => {
     await vi.waitFor(() => expect(activity.current()).toMatchObject({ pending: "evaluating" }));
     expect(activity.current()).toMatchObject({ input_enabled: false, legal_moves: [] });
 
-    const demo = await activity.startDemo(DEMO_FEN);
-    expect(demo.kind).toBe("demo");
+    await expect(activity.startDemo(DEMO_FEN)).rejects.toMatchObject({
+      code: "live_game_active",
+    });
     release();
     await turn;
-    expect(activity.current()?.kind).toBe("demo");
-
-    const back = await activity.leaveDemo();
+    const back = activity.current();
     if (back?.kind !== "live_game") throw new Error("expected live_game");
     expect(back).toMatchObject({ pending: "none", input_enabled: true, phase: "player_turn" });
     expect(back.moves.map((m) => m.san)).toEqual(["e4", "e5"]);
