@@ -56,9 +56,7 @@ function coachTurn(output: unknown): SDKMessage[] {
       parent_tool_use_id: null,
       message: {
         role: "user",
-        content: [
-          { type: "tool_result", tool_use_id: "toolu_demo", content: output, is_error: true },
-        ],
+        content: [{ type: "tool_result", tool_use_id: "toolu_demo", content: output }],
       },
     },
     {
@@ -194,9 +192,23 @@ describe("the 2026-11-05 incident, read back from the log alone", () => {
     const { ws } = await socket(app);
     ws.send(JSON.stringify({ type: "undo", command_id: "u1" }));
     ws.send("not json");
-    await vi.waitFor(() => expect(log.named("ws.command_failed")).toHaveLength(1));
-    await vi.waitFor(() => expect(log.named("ws.invalid_frame")).toHaveLength(1));
-    expect(log.named("ws.command_failed")[0]).toMatchObject({
+    ws.send(JSON.stringify({ type: "teleport", command_id: "t1" }));
+    ws.send(
+      JSON.stringify({ type: "approve_tool", command_id: "a1", request_id: "r9", allow: true }),
+    );
+    await vi.waitFor(() => expect(log.named("ws.command_failed")).toHaveLength(2));
+    await vi.waitFor(() => expect(log.named("ws.invalid_frame")).toHaveLength(2));
+    expect(log.named("ws.invalid_frame")[1]?.fields).toMatchObject({
+      reason: "invalid_command",
+      command_id: "t1",
+    });
+    const byId = (id: string) =>
+      log.named("ws.command_failed").find((entry) => entry.fields.command_id === id)?.fields;
+    expect(byId("a1")).toMatchObject({
+      command_id: "a1",
+      code: "unknown_request",
+    });
+    expect(log.named("ws.command_failed").find((e) => e.fields.command_id === "u1")).toMatchObject({
       level: "warn",
       fields: { command_id: "u1", type: "undo", code: "not_in_live_game" },
     });

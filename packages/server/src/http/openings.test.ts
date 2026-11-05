@@ -4,9 +4,37 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { openDatabase } from "../db/open.js";
+import { RecordingLog } from "../log.js";
 import { ExplorerError } from "../openings/explorer-client.js";
 
 const db = () => openDatabase(mkdtempSync(join(tmpdir(), "opening-route-")));
+
+describe("the openings log", () => {
+  it("logs a run with its counts, and a failure with its stack", async () => {
+    const log = new RecordingLog();
+    let fail = false;
+    const app = buildApp({
+      db: db(),
+      log,
+      generateOpenings: async () => {
+        if (fail) throw new Error("engine fault");
+        return { positions: 12, created: 9, updated: 3 };
+      },
+    });
+    await app.inject({ method: "POST", url: "/api/openings/generate" });
+    fail = true;
+    await app.inject({ method: "POST", url: "/api/openings/generate" });
+    await app.close();
+    expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+      sources: ["own"],
+      result: { positions: 12, created: 9, updated: 3 },
+    });
+    expect(log.named("openings.generate_failed")[0]).toMatchObject({
+      level: "error",
+      fields: { error_message: "engine fault" },
+    });
+  });
+});
 
 describe("POST /api/openings/generate", () => {
   it("runs the generator and returns its counts", async () => {

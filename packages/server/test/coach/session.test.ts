@@ -14,7 +14,7 @@ import {
 import { openDatabase } from "../../src/db/open.js";
 import { RecordingLog, silentLog } from "../../src/log.js";
 import { contentDir } from "../../src/paths.js";
-import { FakeSdk } from "../fakes/fake-sdk.js";
+import { FakeSdk, loadRecordedTurns } from "../fakes/fake-sdk.js";
 import { makeWorld } from "../fakes/fake-world.js";
 
 const FIXTURE_SESSION_ID = "00000000-0000-4000-8000-000000000001";
@@ -93,7 +93,7 @@ describe("CoachSession", () => {
     });
     const starts = logs.named("coach.turn_start");
     expect(starts.map((entry) => entry.fields.turn)).toEqual([1, 2]);
-    expect(starts[0]?.fields).toMatchObject({ source: "user_text", text: "one" });
+    expect(starts[0]?.fields).toMatchObject({ source: "user_text", message: "one" });
     const ends = logs.named("coach.turn_end");
     expect(ends.map((entry) => entry.fields.turn)).toEqual([1, 2]);
     for (const end of ends) {
@@ -315,3 +315,71 @@ async function versionOf() {
   const { buildCoachPrompt } = await import("../../src/coach/prompt.js");
   return buildCoachPrompt(contentDir());
 }
+
+describe("the coach log", () => {
+  it("numbers a turn sent while another is answered by when it is answered", async () => {
+    const turn = loadRecordedTurns()[0] ?? [];
+    const { session, events, logs } = setup({ query: new FakeSdk({ turns: [turn, turn] }).query });
+    await session.start();
+    await session.send("one");
+    await session.send("two");
+    await vi.waitFor(() => expect(turnsEnded(events)).toBe(2));
+    expect(logs.named("coach.turn_start").map((entry) => entry.fields.turn)).toEqual([1, 2]);
+    expect(logs.named("coach.turn_start")[1]?.fields.queued_behind).toBe(1);
+    expect(logs.named("coach.turn_end").map((entry) => entry.fields.turn)).toEqual([1, 2]);
+    for (const end of logs.named("coach.turn_end")) {
+      expect(end.fields.waited_ms).toBeGreaterThanOrEqual(0);
+    }
+    await session.stop();
+  });
+
+  it("logs the SDK's init every time it arrives, not only the first", async () => {
+    const turn = loadRecordedTurns()[0] ?? [];
+    const inits = turn.filter((message) => message.type === "system").length;
+    expect(inits).toBeGreaterThan(0);
+    const { session, events, logs } = setup({ query: new FakeSdk({ turns: [turn, turn] }).query });
+    await session.start();
+    await session.send("one");
+    await vi.waitFor(() => expect(turnsEnded(events)).toBe(1));
+    await session.send("two");
+    await vi.waitFor(() => expect(turnsEnded(events)).toBe(2));
+    expect(logs.named("coach.session")).toHaveLength(inits * 2);
+    await session.stop();
+  });
+
+  it("logs a stream that dies mid-turn with the turn it cut off", async () => {
+    const failing = new FakeSdk({ failMidTurn: { messages: 1, error: new Error("cli exited") } });
+    const { session, logs } = setup({ query: failing.query });
+    await session.start();
+    await session.send("one");
+    await vi.waitFor(() => expect(logs.named("coach.turn_error")).toHaveLength(1));
+    expect(logs.named("coach.turn_error")[0]).toMatchObject({
+      level: "error",
+      fields: { turn: 1, error_message: "cli exited" },
+    });
+    await session.stop();
+  });
+
+  it("logs a permission asked, and how it was answered or timed out", async () => {
+    const sdk = new FakeSdk();
+    const { session, logs } = setup({ query: sdk.query, permissionTimeoutMs: 20 });
+    session.onPermissionRequest((request) => {
+      if (request.toolName === "Bash") session.resolvePermission(request.requestId, true);
+    });
+    await session.start();
+    const canUseTool = sdk.calls[0]?.options.canUseTool;
+    if (!canUseTool) throw new Error("no permission callback");
+    const signal = new AbortController().signal;
+    await canUseTool("Bash", { command: "ls" }, { signal, suggestions: [] } as never);
+    await canUseTool("Write", { path: "x" }, { signal, suggestions: [] } as never);
+    expect(logs.named("coach.permission_request").map((entry) => entry.fields.tool_name)).toEqual([
+      "Bash",
+      "Write",
+    ]);
+    expect(logs.named("coach.permission_resolved").map((entry) => entry.fields.outcome)).toEqual([
+      "allow",
+      "timeout",
+    ]);
+    await session.stop();
+  });
+});

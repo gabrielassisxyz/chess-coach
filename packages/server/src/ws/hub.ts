@@ -255,9 +255,12 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
       case "end_training":
         await activity.endTraining(command.activity_id);
         return;
-      case "create_cards":
-        socket.send(frame(createCards(reviewDeps, command.game_id)));
+      case "create_cards": {
+        const created = createCards(reviewDeps, command.game_id);
+        log.info("review.cards_created", { game_id: command.game_id, result: created });
+        socket.send(frame(created));
         return;
+      }
       case "ask_coach_about_ply":
         askCoachAboutPly(reviewDeps, command.game_id, command.ply);
         return;

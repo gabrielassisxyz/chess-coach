@@ -11,6 +11,7 @@ import { appendChatMessage, createCoachSession, listChatTail } from "../db/chat.
 import { type Database, openDatabase } from "../db/open.js";
 import { getCard, insertCard, updateSchedule } from "../db/srs.js";
 import { GameService } from "../game/service.js";
+import { type Log, RecordingLog, silentLog } from "../log.js";
 import { ReviewDesk } from "../srs/review.js";
 import { ActivityService } from "./service.js";
 
@@ -55,7 +56,7 @@ function addCard(expectedUci = "d2d4"): number {
   return (card as { id: number }).id;
 }
 
-function setup(clock: Clock = fixedClock) {
+function setup(clock: Clock = fixedClock, log: Log = silentLog) {
   const game = new GameService({ db, engine: new ScriptedEngine(["e7e5"]) });
   const session = createCoachSession(db, { promptVersion: "v" });
   const notifications = { sessionId: () => session.id };
@@ -65,6 +66,7 @@ function setup(clock: Clock = fixedClock) {
     db,
     game,
     training: { desk, notifications, clock, onNotification: flushed },
+    log,
   });
   const rows = () =>
     listChatTail(db, session.id, 100).map((row) => JSON.parse(row.contentJson) as { type: string });
@@ -174,6 +176,22 @@ describe("a card item", () => {
     });
     expect(rows().map((r) => r.type)).toEqual(["srs_answer"]);
     expect(flushed).toHaveBeenCalled();
+  });
+
+  it("logs the item served, the answer and the rating", async () => {
+    addCard("d2d4");
+    const log = new RecordingLog();
+    const { activity } = setup(fixedClock, log);
+    const start = training(await activity.startTraining({ mode: "srs" }));
+    await activity.trainingAnswer("d2d4");
+    const exposure = (start.item as { exposure_id: string }).exposure_id;
+    await activity.rateCard(exposure, 4);
+    expect(log.named("training.item_served")[0]?.fields).toMatchObject({ mode: "srs" });
+    expect(log.named("training.answer")[0]?.fields).toMatchObject({
+      uci: "d2d4",
+      expected: { uci: "d2d4" },
+    });
+    expect(log.named("srs.rated")[0]?.fields).toMatchObject({ exposure_id: exposure, quality: 4 });
   });
 
   it("rates the card and moves its schedule", async () => {

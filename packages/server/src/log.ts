@@ -34,7 +34,7 @@ export function boundFields(fields: LogFields): { fields: LogFields; truncated: 
     const text = typeof value === "string" ? value : null;
     const size = text ?? (typeof value === "object" && value !== null ? safeJson(value) : null);
     if (size !== null && Buffer.byteLength(size) > MAX_FIELD_BYTES) {
-      out[key] = Buffer.from(size).subarray(0, MAX_FIELD_BYTES).toString();
+      out[key] = cutUtf8(size, MAX_FIELD_BYTES);
       truncated = true;
     } else {
       out[key] = value;
@@ -43,12 +43,28 @@ export function boundFields(fields: LogFields): { fields: LogFields; truncated: 
   return { fields: out, truncated };
 }
 
+// Backs off to the start of a character, so a cut never leaves half of one behind.
+function cutUtf8(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text);
+  let end = maxBytes;
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+  return bytes.subarray(0, end).toString();
+}
+
+// A BigInt or a cycle would make JSON.stringify throw and the whole line unreadable; both are
+// written as text instead, so the line stays JSON.
 function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value) ?? "";
-  } catch {
-    return String(value);
-  }
+  const seen = new WeakSet<object>();
+  return (
+    JSON.stringify(value, (_key, item: unknown) => {
+      if (typeof item === "bigint") return item.toString();
+      if (typeof item === "object" && item !== null) {
+        if (seen.has(item)) return "[Circular]";
+        seen.add(item);
+      }
+      return item;
+    }) ?? ""
+  );
 }
 
 export function formatLine(

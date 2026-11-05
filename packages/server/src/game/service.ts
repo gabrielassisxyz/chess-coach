@@ -69,6 +69,16 @@ function replay(game: GameRecord, moves: ReplayedMove[]): Chess {
   return chess;
 }
 
+// Times one engine call without changing what it resolves to.
+async function timed<T>(work: Promise<T>, done: (ms: number) => void): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await work;
+  } finally {
+    done(Math.round(performance.now() - startedAt));
+  }
+}
+
 function pgnOf(chess: Chess, result: string | null): string {
   if (result) chess.setHeader("Result", result);
   return chess.pgn();
@@ -348,21 +358,24 @@ export class GameService {
     const colorLetter = live.game.playerColor === "white" ? "w" : "b";
     let evaluation: PlayerMoveEvaluation | null;
     let choice: Awaited<ReturnType<GameEngine["play"]>> | null;
-    const startedAt = performance.now();
+    const timing = { evaluate: 0, reply: 0 };
     try {
       [evaluation, choice] = await Promise.all([
         playerPly
-          ? this.engine.evaluate(playerPly.fenBefore, playerPly.uci, colorLetter)
+          ? timed(this.engine.evaluate(playerPly.fenBefore, playerPly.uci, colorLetter), (ms) => {
+              timing.evaluate = ms;
+            })
           : Promise.resolve(null),
         needsReply
-          ? this.engine.play(live.chess.fen(), live.game.targetElo)
+          ? timed(this.engine.play(live.chess.fen(), live.game.targetElo), (ms) => {
+              timing.reply = ms;
+            })
           : Promise.resolve(null),
       ]);
     } catch (error) {
       if (error instanceof EngineFault) this.emitFault(error, live.game.id);
       throw error;
     }
-    const durationMs = Math.round(performance.now() - startedAt);
     // Cloning by FEN would drop the history that repetition and the fifty-move rule read.
     const after = replay(live.game, live.moves);
     let engineMove: NewMove | null = null;
@@ -399,7 +412,7 @@ export class GameService {
       ...(hook ? { notify: hook } : {}),
     });
     const settled = this.reload();
-    this.logTurn(live.game.id, playerPly, evaluation, engineMove, finish, durationMs);
+    this.logTurn(live.game.id, playerPly, evaluation, engineMove, finish, timing);
     this.emitSnapshot();
     if (notify) this.emitNotification();
     if (!playerPly || !evaluation) return null;
@@ -527,7 +540,7 @@ export class GameService {
     evaluation: PlayerMoveEvaluation | null,
     engineMove: NewMove | null,
     finish: Finish | null,
-    durationMs: number,
+    timing: { evaluate: number; reply: number },
   ): void {
     if (player && evaluation) {
       this.log.info("game.player_move", {
@@ -540,7 +553,7 @@ export class GameService {
         best_san: evaluation.bestMoveSan,
         eval_before_cp: evaluation.evalBeforeCp,
         eval_after_cp: evaluation.evalAfterCp,
-        duration_ms: durationMs,
+        duration_ms: timing.evaluate,
       });
     }
     if (engineMove) {
@@ -549,7 +562,7 @@ export class GameService {
         ply: engineMove.ply,
         san: engineMove.san,
         uci: engineMove.uci,
-        duration_ms: durationMs,
+        duration_ms: timing.reply,
       });
     }
     if (finish) {

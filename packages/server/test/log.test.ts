@@ -74,6 +74,34 @@ describe("createFileLog", () => {
   });
 });
 
+describe("lines that would break", () => {
+  it("cuts multi-byte text on a character boundary, never over 8 KiB", () => {
+    const dir = mkdtempSync(join(tmpdir(), "log-"));
+    const log = createFileLog({ dir, clock: at("2026-11-05T12:00:00Z"), echo: () => {} });
+    log.info("a", { text: `x${"é".repeat(5000)}` });
+    log.info("b", { text: "€".repeat(4000) });
+    for (const line of readLines(dir, "2026-11-05")) {
+      const text = String(line.text);
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX_FIELD_BYTES);
+      expect(text).not.toContain("\uFFFD");
+    }
+  });
+
+  it("keeps the line JSON when a field holds a BigInt or a cycle", () => {
+    const dir = mkdtempSync(join(tmpdir(), "log-"));
+    const log = createFileLog({ dir, clock: at("2026-11-05T12:00:00Z"), echo: () => {} });
+    const cycle: Record<string, unknown> = { name: "loop" };
+    cycle.self = cycle;
+    log.info("odd", { big: 12n, cycle });
+    const [line] = readLines(dir, "2026-11-05");
+    expect(line).toMatchObject({
+      event: "odd",
+      big: "12",
+      cycle: { name: "loop", self: "[Circular]" },
+    });
+  });
+});
+
 describe("pruneLogs", () => {
   it("deletes daily files older than 30 days and keeps the rest and anything else", () => {
     const dir = mkdtempSync(join(tmpdir(), "log-"));

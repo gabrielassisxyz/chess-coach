@@ -67,6 +67,13 @@ interface OpenToolCall {
   startedAt: number;
 }
 
+// A message handed to the SDK. The SDK answers them one at a time in order, so the oldest one
+// still open is the turn every tool call and the next turn end belong to.
+interface QueuedTurn {
+  turn: number;
+  queuedAt: number;
+}
+
 // A refusal from the coach's own tools is JSON carrying `error`; its code is what a reader wants.
 function refusalCode(output: unknown): string | null {
   const text = Array.isArray(output)
@@ -94,7 +101,11 @@ export class CoachSession {
   private loop: Promise<void> = Promise.resolve();
   // Numbers each message handed to the SDK, so every tool call and the turn's end name their turn.
   private turn = 0;
-  private turnStartedAt = 0;
+  private readonly queuedTurns: QueuedTurn[] = [];
+  // When the previous turn ended: a queued turn starts only then, not when it was queued.
+  private lastTurnEndedAt = 0;
+  // Set when notifications arrived while the coach was answering, so the next flush says so.
+  private heldWhileBusy = false;
   private readonly openTools = new Map<string, OpenToolCall>();
   // True from handing the SDK a message until its turn ends: while it is set, notifications wait
   // and are folded into one message instead of queueing behind the answer being written.
@@ -142,7 +153,7 @@ export class CoachSession {
     const row = this.ensureStream();
     const message = recordUserText(this.deps.db, row.id, text, this.clock);
     this.deps.onUserText?.(message.id);
-    this.deliver(text, { source: "user_text", message_id: message.id, text });
+    this.deliver(text, { source: "user_text", message_id: message.id });
   }
 
   /**
@@ -150,7 +161,11 @@ export class CoachSession {
    * delivered at the moment they are handed over, so a restart never sends a move twice.
    */
   flushNotifications(): void {
-    if (!this.started || this.busy) return;
+    if (!this.started) return;
+    if (this.busy) {
+      this.heldWhileBusy = true;
+      return;
+    }
     const row = this.ensureStream();
     const pending = listUndeliveredNotifications(this.deps.db, row.id);
     if (pending.length === 0) return;
@@ -166,9 +181,10 @@ export class CoachSession {
       notification_types: pending.map(
         (message) => (JSON.parse(message.contentJson) as { type?: unknown }).type ?? null,
       ),
-      // More than one row means moves arrived while the coach was answering and were folded.
-      folded: pending.length > 1,
+      // These waited for the coach to finish an answer and were folded into one message.
+      folded: this.heldWhileBusy,
     });
+    this.heldWhileBusy = false;
   }
 
   private ensureStream(): CoachSessionRow {
@@ -185,10 +201,12 @@ export class CoachSession {
   private deliver(text: string, origin: LogFields): void {
     this.busy = true;
     this.turn += 1;
-    this.turnStartedAt = performance.now();
+    this.queuedTurns.push({ turn: this.turn, queuedAt: performance.now() });
+    // Logged when queued; the turn may wait behind an answer still being written.
     this.log.info("coach.turn_start", {
       coach_session_id: this.row?.id,
       turn: this.turn,
+      queued_behind: this.queuedTurns.length - 1,
       ...origin,
       message: text,
     });
@@ -229,6 +247,8 @@ export class CoachSession {
     const queue = new AsyncQueue<SDKUserMessage>();
     const resume = row.claudeSessionId ?? undefined;
     this.busy = false;
+    // Messages queued on a stream that ended will never be answered by the new one.
+    this.queuedTurns.length = 0;
     const stream = this.deps.query({ prompt: queue, options: this.buildOptions(resume) });
     this.queue = queue;
     this.active = stream;
@@ -337,7 +357,8 @@ export class CoachSession {
     } catch (error) {
       this.log.error("coach.turn_error", error, {
         coach_session_id: row.id,
-        turn: this.turn,
+        turn: this.queuedTurns[0]?.turn ?? this.turn,
+        queued_turns: this.queuedTurns.map((queued) => queued.turn),
         resumed,
         init_seen: initSeen,
       });
@@ -375,7 +396,8 @@ export class CoachSession {
   }
 
   private logEvent(event: CoachEvent): void {
-    const turn = { coach_session_id: this.row?.id, turn: this.turn };
+    const current = this.queuedTurns[0];
+    const turn = { coach_session_id: this.row?.id, turn: current?.turn ?? this.turn };
     if (event.kind === "tool_use") {
       this.openTools.set(event.toolUseId, { name: event.name, startedAt: performance.now() });
       this.log.info("coach.tool_call", {
@@ -398,16 +420,34 @@ export class CoachSession {
         error_code: code,
         output: event.output,
       });
-    } else if (event.kind === "turn_end") {
-      this.log.info("coach.turn_end", {
-        ...turn,
-        duration_ms: Math.round(performance.now() - this.turnStartedAt),
-        input_tokens: event.usage.inputTokens,
-        output_tokens: event.usage.outputTokens,
-      });
-    } else if (event.kind === "turn_error") {
-      this.log.warn("coach.turn_failed", { ...turn, message: event.message });
+    } else if (event.kind === "turn_end" || event.kind === "turn_error") {
+      this.closeTurn(turn, event);
     }
+  }
+
+  // A turn runs from when it was queued or when the one before it ended, whichever is later.
+  private closeTurn(
+    turn: LogFields,
+    event: Extract<CoachEvent, { kind: "turn_end" | "turn_error" }>,
+  ): void {
+    const now = performance.now();
+    const current = this.queuedTurns.shift();
+    const startedAt = current ? Math.max(current.queuedAt, this.lastTurnEndedAt) : now;
+    const timing = {
+      duration_ms: Math.round(now - startedAt),
+      waited_ms: current ? Math.round(startedAt - current.queuedAt) : 0,
+    };
+    this.lastTurnEndedAt = now;
+    if (event.kind === "turn_error") {
+      this.log.warn("coach.turn_failed", { ...turn, ...timing, message: event.message });
+      return;
+    }
+    this.log.info("coach.turn_end", {
+      ...turn,
+      ...timing,
+      input_tokens: event.usage.inputTokens,
+      output_tokens: event.usage.outputTokens,
+    });
   }
 
   private emit(event: CoachEvent): void {

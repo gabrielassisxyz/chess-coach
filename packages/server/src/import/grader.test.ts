@@ -104,6 +104,7 @@ describe("ImportGrader", () => {
     grader.kick();
     await grader.idle();
     expect(getGame(db, id)?.grading).toBe("done");
+    expect(logs.named("import.after_grade")).toEqual([]);
     expect(logs.named("import.after_grade_failed")[0]?.fields).toMatchObject({
       game_id: id,
       error_message: "engine gone",
@@ -152,6 +153,23 @@ describe("ImportGrader", () => {
     expect(String(failures[0]?.fields.error_message)).toMatch(/engine fault/);
     expect(logs.named("import.graded")[0]?.fields).toMatchObject({ game_id: good });
     expect(grader.progress()).toEqual({ pending: 0, failed: 1, running: null });
+  });
+
+  it("logs the opening drills built after a graded game, with their counts", async () => {
+    const id = importOne();
+    const logs = new RecordingLog();
+    const grader = new ImportGrader({
+      db,
+      evaluate: new FakeEvaluator().evaluate,
+      log: logs,
+      onGraded: async () => ({ positions: 4, created: 3, updated: 1 }),
+    });
+    grader.kick();
+    await grader.idle();
+    expect(logs.named("import.after_grade")[0]?.fields).toMatchObject({
+      game_id: id,
+      result: { positions: 4, created: 3, updated: 1 },
+    });
   });
 
   it("reports progress while a game is being graded", async () => {

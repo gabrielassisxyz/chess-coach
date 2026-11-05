@@ -93,8 +93,15 @@ export class ImportGrader {
   }
 
   private async afterGraded(gameId: number): Promise<void> {
+    if (!this.onGraded) return;
+    const startedAt = performance.now();
     try {
-      await this.onGraded?.();
+      const result = await this.onGraded();
+      this.log.info("import.after_grade", {
+        game_id: gameId,
+        result,
+        duration_ms: Math.round(performance.now() - startedAt),
+      });
     } catch (error) {
       this.log.error("import.after_grade_failed", error, { game_id: gameId });
     }

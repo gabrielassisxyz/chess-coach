@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useServer } from "../src/hooks/useServer.js";
 import {
   type ClientReport,
+  fitReport,
   installClientLog,
   postReport,
   setClientReporter,
@@ -34,7 +35,21 @@ describe("postReport", () => {
     expect(init).toMatchObject({ method: "POST", keepalive: true });
     const body = JSON.parse(String(init.body)) as ClientReport;
     expect(body).toMatchObject({ level: "error", event: "window_error", stack: "s" });
-    expect(body.message).toHaveLength(8 * 1024);
+    expect("m".repeat(20_000).startsWith(body.message)).toBe(true);
+    expect(new TextEncoder().encode(String(init.body)).length).toBeLessThanOrEqual(15 * 1024);
+  });
+
+  it("keeps a report with a long message and a long multi-byte stack under the cap", () => {
+    const body = fitReport({
+      level: "error",
+      event: "window_error",
+      message: "é".repeat(9000),
+      stack: "€\n".repeat(9000),
+    });
+    expect(new TextEncoder().encode(body).length).toBeLessThanOrEqual(15 * 1024);
+    const parsed = JSON.parse(body) as ClientReport;
+    expect(parsed.message.length).toBeGreaterThan(0);
+    expect(parsed.event).toBe("window_error");
   });
 });
 

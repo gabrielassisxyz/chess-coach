@@ -66,6 +66,16 @@ describe("POST /api/client-log", () => {
     ]);
     expect(rejected.map((reply) => reply.statusCode)).toEqual([413, 400, 400, 400]);
     expect(log.names().filter((name) => name.startsWith("client."))).toEqual([]);
+    expect(
+      log
+        .named("http.client_error")
+        .map((entry) => entry.fields.status)
+        .sort(),
+    ).toEqual([400, 413]);
+    expect(log.named("http.error")).toEqual([]);
+    expect(log.named("http.request").map((entry) => entry.fields.status)).toEqual(
+      expect.arrayContaining([413, 400]),
+    );
     expect((await post(app, fits)).statusCode).toBe(204);
   });
 });

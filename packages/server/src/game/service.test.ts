@@ -5,6 +5,7 @@ import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { listMoves } from "../db/games.js";
 import { type Database, openDatabase } from "../db/open.js";
+import { EngineFault } from "../engine/errors.js";
 import type { PlayerMoveEvaluation } from "../engine/evaluate.js";
 import type { PlayChoice } from "../engine/play.js";
 import { importFinishedGame } from "../import/pgn.js";
@@ -295,6 +296,40 @@ describe("the log", () => {
     expect(service.snapshot()?.moves).toHaveLength(2);
     expect(log.named("game.listener_failed")[0]?.fields).toMatchObject({
       error_message: "listener broke",
+    });
+  });
+});
+
+describe("the log's timings", () => {
+  it("times the grade and the engine's reply apart", async () => {
+    const log = new RecordingLog();
+    const engine = new ScriptedEngine(["e7e5"]);
+    const evaluate = engine.evaluate.bind(engine);
+    engine.evaluate = async (fen, uci) => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return evaluate(fen, uci);
+    };
+    const service = new GameService({ db, engine, log });
+    await service.newGame({ color: "white", elo: 1200 });
+    await service.playerMove(move("e2", "e4"));
+    const graded = Number(log.named("game.player_move")[0]?.fields.duration_ms);
+    const replied = Number(log.named("game.engine_move")[0]?.fields.duration_ms);
+    expect(graded).toBeGreaterThanOrEqual(55);
+    expect(replied).toBeLessThan(graded);
+  });
+
+  it("logs an engine fault with the game it hit", async () => {
+    const log = new RecordingLog();
+    const engine = new ScriptedEngine(["e7e5"]);
+    engine.evaluate = async () => {
+      throw new EngineFault("exited", "stockfish exited");
+    };
+    const service = new GameService({ db, engine, log });
+    const { gameId } = await service.newGame({ color: "white", elo: 1200 });
+    await expect(service.playerMove(move("e2", "e4"))).rejects.toBeInstanceOf(EngineFault);
+    expect(log.named("engine.fault")[0]).toMatchObject({
+      level: "error",
+      fields: { game_id: gameId, reason: "exited", error_message: "stockfish exited" },
     });
   });
 });

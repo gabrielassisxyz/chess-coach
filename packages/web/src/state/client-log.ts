@@ -10,21 +10,29 @@ export interface ClientReport {
 
 export type ReportSender = (report: ClientReport) => void;
 
-// The server refuses a report over 16 KiB; text is cut well below that so the rest still fits.
-const MAX_TEXT = 8 * 1024;
+// The server refuses a report over 16 KiB, so the whole body is kept under this, in bytes.
+const MAX_BODY_BYTES = 15 * 1024;
 // A page stuck in an error loop must not flood the server's log.
 const MAX_REPORTS_PER_PAGE = 200;
 
-function cut(text: string): string {
-  return text.length > MAX_TEXT ? text.slice(0, MAX_TEXT) : text;
+const bytes = (text: string): number => new TextEncoder().encode(text).length;
+
+// Halves the stack, then the message, until the body fits: a cut report beats a refused one.
+export function fitReport(report: ClientReport): string {
+  let message = report.message;
+  let stack = report.stack;
+  let body = JSON.stringify({ ...report, message, ...(stack ? { stack } : {}) });
+  while (bytes(body) > MAX_BODY_BYTES) {
+    if (stack && stack.length > 64) stack = stack.slice(0, Math.floor(stack.length / 2));
+    else message = message.slice(0, Math.floor(message.length / 2));
+    body = JSON.stringify({ ...report, message, ...(stack ? { stack } : {}) });
+    if (message.length === 0 && (!stack || stack.length <= 64)) break;
+  }
+  return body;
 }
 
 export function postReport(report: ClientReport, post: typeof fetch = fetch): void {
-  const body = JSON.stringify({
-    ...report,
-    message: cut(report.message),
-    ...(report.stack ? { stack: cut(report.stack) } : {}),
-  });
+  const body = fitReport(report);
   void post("/api/client-log", {
     method: "POST",
     headers: { "content-type": "application/json" },

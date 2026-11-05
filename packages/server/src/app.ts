@@ -47,7 +47,11 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     });
   });
   app.addHook("onError", async (request, _reply, error) => {
-    log.error("http.error", error, { method: request.method, url: request.url });
+    const status = (error as { statusCode?: number }).statusCode ?? 500;
+    const where = { method: request.method, url: request.url, status };
+    // A 4xx is the request's fault (a malformed or oversized body); only a 5xx is the server's.
+    if (status < 500) log.warn("http.client_error", { ...where, message: error.message });
+    else log.error("http.error", error, where);
   });
   registerClientLogRoute(app, log);
 

@@ -42,7 +42,12 @@ process.on("uncaughtException", (error) => {
   log.error("process.uncaught_exception", error);
   process.exit(1);
 });
-process.on("unhandledRejection", (reason) => log.error("process.unhandled_rejection", reason));
+// Adding this listener turns off Node's own exit on an unhandled rejection, so it exits here: a
+// server whose listen failed must stop rather than stay up without listening.
+process.on("unhandledRejection", (reason) => {
+  log.error("process.unhandled_rejection", reason);
+  process.exit(1);
+});
 let readiness: Readiness = { ready: false, reason: "coach is starting" };
 // Once a turn has failed for good the server stays not-ready until a restart finishes it.
 let engineFault = false;
