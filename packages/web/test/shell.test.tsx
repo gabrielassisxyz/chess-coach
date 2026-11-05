@@ -185,6 +185,7 @@ describe("coach panel", () => {
         transcript: [
           {
             id: 1,
+            seq: 1,
             role: "assistant",
             kind: "text",
             content: { text: "One." },
