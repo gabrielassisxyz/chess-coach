@@ -163,6 +163,36 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* A tool use is a quiet line, not a card: it is what the coach did, not what it said. */
+.tool-line {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+
+.tool-line__summary {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-line__summary:hover {
+  color: var(--text-1);
+}
+
+.tool-line__details {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
 .card__actions {
   display: flex;
   gap: var(--space-2);
@@ -266,7 +296,8 @@ body {
 @media (max-width: 899px) {
   .button,
   .input,
-  .icon-button {
+  .icon-button,
+  .tool-line__summary {
     min-height: 44px;
   }
 

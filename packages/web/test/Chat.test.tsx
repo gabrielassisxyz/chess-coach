@@ -28,7 +28,8 @@ function api(overrides: Partial<ServerApi> = {}): ServerApi {
 }
 
 describe("Chat", () => {
-  it("renders a tool card with its result folded under it", () => {
+  it("renders a tool use as one folded line that unfolds to its raw result", () => {
+    const result = [{ type: "text", text: '{"kind":"demo","fen":"x","turn":"black"}' }];
     render(
       <Chat
         server={api({
@@ -38,18 +39,28 @@ describe("Chat", () => {
               type: "tool",
               key: "b",
               toolUseId: "t1",
-              name: "evaluate",
-              input: { fen: "x" },
-              result: { output: "+0.3" },
+              name: "mcp__chess__make_move",
+              input: { san: "Qxd5" },
+              result: { output: result },
             },
           ],
         })}
       />,
     );
     const card = screen.getByTestId("tool-card");
-    expect(card.textContent).toContain("evaluate");
-    expect(screen.getByTestId("tool-result").textContent).toBe("+0.3");
+    const line = screen.getByRole("button", { name: "Played Qxd5 on the demo board" });
+    expect(line.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByTestId("tool-result")).toBeNull();
+    expect(document.body.textContent).not.toContain("mcp__chess__");
+
+    fireEvent.click(line);
+    expect(line.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("tool-result").textContent).toContain('"kind": "demo"');
     expect(card.contains(screen.getByTestId("tool-result"))).toBe(true);
+    expect(document.body.textContent).not.toContain("mcp__chess__");
+
+    fireEvent.click(line);
+    expect(screen.queryByTestId("tool-result")).toBeNull();
   });
 
   it("shows a turn_error notice and the reconnecting state", () => {
