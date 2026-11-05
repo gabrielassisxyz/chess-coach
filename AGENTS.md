@@ -60,6 +60,36 @@
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
 
+## Logs
+
+- **Where:** one JSON object per line in `<data dir>/logs/<YYYY-MM-DD>.jsonl` (UTC day), also
+  echoed to stdout, so `journalctl --user -u chess-coach.service` has the same lines. Files older
+  than 30 days are deleted at boot. Every line has `ts`, `level` (`info`, `warn`, `error`),
+  `event` and flat fields; a field over 8 KiB is cut and the line carries `truncated: true`.
+  Errors add `error_name`, `error_message` and `stack`. Chat text and tool inputs are logged;
+  environment variables, headers and tokens never are.
+- **Writing:** every service takes a `Log` (`packages/server/src/log.ts`); tests pass a
+  `RecordingLog` and assert on events. No `console.*` in `packages/server/src`.
+- **Correlation:** `conn` (one per websocket), `command_id`, `activity_id`, `game_id`,
+  `coach_session_id`, `turn` (one per message handed to the coach), `tool_use_id`.
+- **Events:** `server.*`, `logs.pruned`, `process.*`, `puzzles.seeded`, `engine.start`,
+  `engine.start_failed`, `engine.fault`, `http.request`, `http.error`, `ws.connect`,
+  `ws.disconnect`, `ws.ping_timeout`, `ws.invalid_frame`, `ws.command`, `ws.command_done`,
+  `ws.command_failed` (with the refusal `code`), `activity.change` (`from_kind`, `to_kind`,
+  `cause`, and the position for a demo), `game.new`, `game.player_move`, `game.engine_move`,
+  `game.undo`, `game.finished`, `game.recovering`, `game.recovered`, `coach.session`,
+  `coach.started`, `coach.turn_start`, `coach.tool_call`, `coach.tool_result`, `coach.turn_end`,
+  `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
+  `coach.permission_resolved`, `training.item_served`, `training.answer`, `srs.rated`,
+  `import.*`, `openings.generate`, `explorer.failed`, `*.listener_failed`, and `client.*` for what
+  the browser reports through `POST /api/client-log` (uncaught errors, socket drops and
+  reconnects, every error frame it received).
+- **Reading:** with `L=data/logs/$(date -u +%F).jsonl`:
+  - everything about one game: `jq -c 'select(.game_id == 16)' $L`
+  - every refused or failed command: `jq -c 'select(.event == "ws.command_failed") | {ts, type, code, message}' $L`
+  - every coach turn and how long it took: `jq -c 'select(.event == "coach.turn_end") | {ts, turn, duration_ms, output_tokens}' $L`
+  - what the board did and why: `jq -c 'select(.event == "activity.change") | {ts, cause, from_kind, to_kind}' $L`
+
 ## Scope (current)
 
 - **Current scope:** a single-user tutor running on the owner's machine with the owner's
