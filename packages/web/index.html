@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>chess-coach</title>
+    <script>
+      // Runs before the first paint so a stored dark theme never flashes light;
+      // state/theme.ts owns the value once the app has mounted.
+      (() => {
+        var theme = null;
+        try {
+          theme = localStorage.getItem("chess-coach.theme");
+        } catch {
+          // Storage can be refused; the system preference decides.
+        }
+        if (theme !== "light" && theme !== "dark") {
+          theme = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

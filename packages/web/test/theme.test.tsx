@@ -58,6 +58,31 @@ describe("theme", () => {
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
+  describe("pre-paint script in index.html", () => {
+    const html = readFileSync(join(import.meta.dirname, "../index.html"), "utf8");
+    const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "";
+
+    function paint(): string | undefined {
+      new Function(script)();
+      return document.documentElement.dataset.theme;
+    }
+
+    it("applies a stored dark theme against a light system preference", () => {
+      prefersDark(false);
+      window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
+      expect(paint()).toBe("dark");
+    });
+
+    it("falls back to the system preference, and ignores a stored value that is not a theme", () => {
+      prefersDark(true);
+      expect(paint()).toBe("dark");
+      delete document.documentElement.dataset.theme;
+      window.localStorage.setItem(THEME_STORAGE_KEY, "sepia");
+      prefersDark(false);
+      expect(paint()).toBe("light");
+    });
+  });
+
   it("flips the attribute from the top bar button and stores the choice", () => {
     prefersDark(false);
     render(<App />);
