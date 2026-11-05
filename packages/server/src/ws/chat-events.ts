@@ -29,7 +29,12 @@ function toPayload(event: CoachEvent): ChatEvent["event"] {
         input: event.input,
       };
     case "tool_result":
-      return { kind: "tool_result", tool_use_id: event.toolUseId, output: event.output };
+      return {
+        kind: "tool_result",
+        tool_use_id: event.toolUseId,
+        output: event.output,
+        ...(event.isError ? { is_error: true } : {}),
+      };
     case "turn_end":
       return {
         kind: "turn_end",

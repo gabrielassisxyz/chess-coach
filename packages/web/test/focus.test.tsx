@@ -196,12 +196,14 @@ describe("focus ring", () => {
     expect(expectFocusRing(training.container)).toBeGreaterThan(8);
   });
 
-  it("covers the chat composer and an approval card", () => {
+  it("covers the chat composer, an approval card and a tool line", () => {
     const server = serverApi(null, {
       permissions: [{ requestId: "r1", toolName: "Bash", input: {} }],
+      items: [{ type: "tool", key: "t", toolUseId: "t1", name: "mcp__chess__get_game", input: {} }],
     });
     const { container } = render(<Chat server={server} />);
-    expect(expectFocusRing(container)).toBeGreaterThanOrEqual(3);
+    expect(screen.getByRole("button", { name: /Read the game/ })).toBeTruthy();
+    expect(expectFocusRing(container)).toBeGreaterThanOrEqual(4);
   });
 
   it("covers the promotion chooser", () => {
