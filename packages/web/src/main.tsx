@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.js";
 import { applyBoardTheme, readBoardTheme } from "./state/board-theme.js";
+import { installClientLog, postReport } from "./state/client-log.js";
 import { applyTheme, readTheme } from "./state/theme.js";
 import "@fontsource/ibm-plex-sans/400.css";
 import "@fontsource/ibm-plex-sans/500.css";
@@ -18,6 +19,9 @@ import "./styles/layout.css";
 import "./styles/practice.css";
 import "./styles/games.css";
 import "./styles/play.css";
+
+// First, so an error thrown while the page starts is reported too.
+installClientLog(window, (report) => postReport(report));
 
 // Before the first render, so the page never paints in the wrong theme.
 applyTheme(readTheme());

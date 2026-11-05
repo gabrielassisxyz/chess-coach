@@ -1,5 +1,6 @@
 import { type ActivityCommand, ClientCommandSchema, ServerEventSchema } from "@chess-coach/shared";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { reportClient } from "../state/client-log.js";
 import { type ChatState, chatReducer, initialChatState } from "../state/transcript.js";
 
 export type ConnectionState = "connected" | "reconnecting";
@@ -35,6 +36,20 @@ const BACKOFF_START_MS = 500;
 const BACKOFF_MAX_MS = 10_000;
 const SOCKET_OPEN = 1;
 
+// The browser saw a refusal; the server logged it too, and the pair proves it reached the page.
+function reportErrorFrame(event: {
+  code: string;
+  message: string;
+  command_id?: string | undefined;
+}): void {
+  reportClient({
+    level: "warn",
+    event: "error_frame",
+    message: event.message,
+    context: { code: event.code, command_id: event.command_id ?? null },
+  });
+}
+
 function defaultUrl(): string {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${location.host}/api/ws`;
@@ -53,22 +68,49 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
     let disposed = false;
     let delay = BACKOFF_START_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
 
     const open = (): void => {
       const socket = createSocket ? createSocket(url) : (new WebSocket(url) as SocketLike);
       socketRef.current = socket;
       socket.onopen = () => {
+        if (failures > 0) {
+          reportClient({
+            level: "info",
+            event: "ws_reconnected",
+            message: `socket open again after ${failures} attempts`,
+            context: { attempts: failures },
+          });
+        }
+        failures = 0;
         delay = BACKOFF_START_MS;
         setConnection("connected");
         setReconnectAttempt(0);
       };
       socket.onmessage = (message) => {
         const parsed = ServerEventSchema.safeParse(parseJson(message.data));
-        if (parsed.success) dispatch({ type: "server", event: parsed.data });
-        else dispatch({ type: "protocol_error", message: "received a malformed server frame" });
+        if (parsed.success) {
+          if (parsed.data.type === "error") reportErrorFrame(parsed.data);
+          dispatch({ type: "server", event: parsed.data });
+        } else {
+          reportClient({
+            level: "warn",
+            event: "malformed_frame",
+            message: parsed.error.message,
+            context: { frame: String(message.data).slice(0, 2048) },
+          });
+          dispatch({ type: "protocol_error", message: "received a malformed server frame" });
+        }
       };
       socket.onclose = () => {
         if (disposed) return;
+        failures += 1;
+        reportClient({
+          level: "warn",
+          event: "ws_closed",
+          message: "socket closed; reconnecting",
+          context: { attempt: failures, retry_in_ms: delay },
+        });
         socketRef.current = null;
         setConnection("reconnecting");
         setReconnectAttempt((count) => count + 1);
