@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertGradedGame, START_FEN } from "../../test/fixture-game.js";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
+import { insertCard } from "../db/srs.js";
+import { classifyCpLoss } from "../engine/evaluate.js";
 
 let tmp: string;
 let db: Database;
@@ -44,6 +46,9 @@ describe("GET /api/games", () => {
       termination: "resign",
       move_count: 12,
       accuracy: 1 / 6,
+      worst_moment: { ply: 11, san: "e4", cp_loss: 420, classification: "blunder" },
+      cards_count: 0,
+      mistakes_count: 1,
       source: "coach",
       source_url: null,
       opponent: null,
@@ -77,6 +82,94 @@ describe("GET /api/games", () => {
       expect((await get(`/api/games?limit=${bad}`)).statusCode).toBe(400);
     }
     expect((await get("/api/games?limit=500")).statusCode).toBe(200);
+  });
+});
+
+function insertMovesWithLosses(losses: [number, number][]): number {
+  const game = db
+    .prepare(
+      `INSERT INTO games (started_at, finished_at, player_color, target_elo, initial_fen, phase, result, termination)
+       VALUES ('t', 't2', 'white', 800, ?, 'finished', '0-1', 'resign') RETURNING id`,
+    )
+    .get(START_FEN) as { id: number };
+  const insert = db.prepare(
+    `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player, cp_loss, classification)
+     VALUES (?, ?, 'e4', 'e2e4', 'a', 'b', 1, ?, ?)`,
+  );
+  for (const [ply, loss] of losses) {
+    insert.run(game.id, ply, loss, classifyCpLoss(loss));
+  }
+  return game.id;
+}
+
+function cardFor(gameId: number): void {
+  insertCard(db, {
+    sourceKind: "teaching",
+    sourceGameId: gameId,
+    sourceMoveId: null,
+    promptFen: START_FEN,
+    studentColor: "white",
+    playedUci: null,
+    expectedUci: "e2e4",
+    cpLoss: null,
+    classification: null,
+    explanation: null,
+    createdAt: "t",
+    puzzleId: `p${Math.random()}`,
+  });
+}
+
+const TIED_LOSSES: [number, number][] = [
+  [2, 10],
+  [6, 250],
+  [10, 90],
+  [12, 250],
+];
+
+describe("worst moment, cards and mistakes", () => {
+  it("picks the earliest of two equal worst plies and counts cards and mistakes", async () => {
+    const id = insertMovesWithLosses(TIED_LOSSES);
+    cardFor(id);
+    cardFor(id);
+    cardFor(insertMovesWithLosses([]));
+    const { games } = (await get("/api/games")).json() as { games: Record<string, unknown>[] };
+    expect(games.find((game) => game.id === id)).toMatchObject({
+      worst_moment: { ply: 6, san: "e4", cp_loss: 250, classification: "mistake" },
+      cards_count: 2,
+      mistakes_count: 2,
+    });
+  });
+
+  it("has a null worst moment and zero counts while nothing is graded", async () => {
+    const id = insertMovesWithLosses([]);
+    db.prepare(
+      `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player)
+       VALUES (?, 1, 'e4', 'e2e4', 'a', 'b', 1)`,
+    ).run(id);
+    const { games } = (await get("/api/games")).json() as { games: Record<string, unknown>[] };
+    expect(games[0]).toMatchObject({ worst_moment: null, cards_count: 0, mistakes_count: 0 });
+  });
+
+  it("ignores the engine's plies", async () => {
+    const id = insertMovesWithLosses([[1, 30]]);
+    db.prepare(
+      `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player, cp_loss, classification)
+       VALUES (?, 2, 'e5', 'e7e5', 'a', 'b', 0, 900, 'blunder')`,
+    ).run(id);
+    const { games } = (await get("/api/games")).json() as { games: Record<string, unknown>[] };
+    expect(games[0]).toMatchObject({ worst_moment: { ply: 1 }, mistakes_count: 0 });
+  });
+
+  it("carries the same three fields on the detail route", async () => {
+    const id = insertMovesWithLosses(TIED_LOSSES);
+    cardFor(id);
+    cardFor(id);
+    const { game } = (await get(`/api/games/${id}`)).json() as { game: Record<string, unknown> };
+    expect(game).toMatchObject({
+      worst_moment: { ply: 6, cp_loss: 250 },
+      cards_count: 2,
+      mistakes_count: 2,
+    });
   });
 });
 
