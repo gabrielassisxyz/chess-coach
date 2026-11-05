@@ -62,6 +62,26 @@ describe("Chat", () => {
     expect(screen.queryByTestId("tool-result")).toBeNull();
   });
 
+  it("says a tool call failed when its result is marked as an error", () => {
+    render(
+      <Chat
+        server={api({
+          items: [
+            {
+              type: "tool",
+              key: "f",
+              toolUseId: "t9",
+              name: "mcp__chess__show_position",
+              input: { fen: "x" },
+              result: { output: "MCP error -32602: Invalid arguments", isError: true },
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "show_position failed" })).toBeTruthy();
+  });
+
   it("shows a turn_error notice and the reconnecting state", () => {
     render(
       <Chat

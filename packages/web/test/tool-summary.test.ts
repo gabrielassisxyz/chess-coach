@@ -62,8 +62,11 @@ describe("toolSummary", () => {
     expect(toolSummary(`${P}${tool}`, input, out({ ok: true }))).toBe(line);
   });
 
-  it("names a refusal with its code, for any tool", () => {
+  it("names a refusal with its code, for any tool, flagged as an error the way it arrives", () => {
     const refused = out({ error: "live_game_active", message: "the student is playing" });
+    expect(toolSummary(`${P}show_position`, { fen: "x" }, refused, true)).toBe(
+      "show_position refused: live_game_active",
+    );
     expect(toolSummary(`${P}show_position`, { fen: "x" }, refused)).toBe(
       "show_position refused: live_game_active",
     );

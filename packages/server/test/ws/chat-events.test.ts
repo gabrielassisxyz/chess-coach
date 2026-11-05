@@ -24,6 +24,8 @@ describe("ChatEventNumbering", () => {
       is_error: true,
     });
     expect(fine.event).toEqual({ kind: "tool_result", tool_use_id: "t2", output: "y" });
-    expect(ChatEventSchema.safeParse(failed).success).toBe(true);
+    // The browser parses frames with this schema, and zod drops keys it does not declare.
+    const parsed = ChatEventSchema.parse(failed);
+    expect(parsed.event).toMatchObject({ kind: "tool_result", is_error: true });
   });
 });
