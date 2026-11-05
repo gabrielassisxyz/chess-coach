@@ -86,6 +86,7 @@ export class ActivityService {
 
   startDemo(fen: string): Promise<ActivityState> {
     return this.enqueue("demo", async () => {
+      this.refuseOverLiveGame();
       let chess: Chess;
       try {
         chess = new Chess(fen);
@@ -184,9 +185,10 @@ export class ActivityService {
     });
   }
 
-  // Stacks over a game, a review or a demo like startTraining; a second session never replaces an open one.
+  // Stacks over a finished game, a review or a demo; a second session never replaces an open one.
   startTrainingItem(item: TrainingItemRef): Promise<ActivityState> {
     return this.enqueue("training", async () => {
+      this.refuseOverLiveGame();
       if (!this.trainingDeps) {
         throw new ActivityError("not_in_training", "training is not available");
       }
@@ -315,6 +317,18 @@ export class ActivityService {
     throw new ActivityError(
       "stale_activity",
       `the board is on activity ${this.state?.activity_id ?? "none"}, not ${expected}`,
+    );
+  }
+
+  // The coach's board tools are the only callers of startDemo and startTrainingItem. While the
+  // student is playing, the board is theirs: alternatives are walked through after the game, and a
+  // finished game still shows as live_game, so the post-game walk-through stays allowed.
+  private refuseOverLiveGame(): void {
+    if (this.state?.kind !== "live_game") return;
+    if (this.game.current()?.finishedAt !== null) return;
+    throw new ActivityError(
+      "live_game_active",
+      "the student is playing; the board stays on the live game until it ends",
     );
   }
 

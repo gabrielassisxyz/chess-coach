@@ -652,17 +652,35 @@ describe("an item served by the coach", () => {
     expect(state.item).toMatchObject({ kind: "puzzle", puzzle_id: "fk:0", queue_length: 1 });
   });
 
-  it("refuses a second session while one is open and stacks over a live game", async () => {
+  it("refuses a second session while one is open", async () => {
     addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
-    const { activity, game } = setup();
-    await game.newGame({ color: "white", elo: 1200 });
-    await activity.enterLiveGame();
+    const { activity } = setup();
     await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" });
     expect(await code(activity.startTrainingItem({ kind: "puzzle", id: "fk:0" }))).toBe(
       "training_active",
     );
-    const back = await activity.endTraining();
-    expect(back?.kind).toBe("live_game");
+  });
+
+  it("refuses to stack over an unfinished live game and leaves the board on it", async () => {
+    addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
+    const { activity, game } = setup();
+    await game.newGame({ color: "white", elo: 1200 });
+    const live = await activity.enterLiveGame();
+    expect(await code(activity.startTrainingItem({ kind: "puzzle", id: "fk:0" }))).toBe(
+      "live_game_active",
+    );
+    expect(activity.current()).toEqual(live);
+  });
+
+  it("stacks over a finished live game and returns to nothing", async () => {
+    addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
+    const { activity, game } = setup();
+    await game.newGame({ color: "white", elo: 1200 });
+    await activity.enterLiveGame();
+    await game.resign();
+    await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" });
+    expect(activity.current()?.kind).toBe("training");
+    expect(await activity.endTraining()).toBeNull();
   });
 
   it("turns a failed puzzle into one teaching card, once", async () => {
