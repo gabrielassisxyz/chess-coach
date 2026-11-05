@@ -128,9 +128,9 @@ describe("tokens.css", () => {
     }
   });
 
-  it("gives every quality badge a rule in layout.css", () => {
-    const layout = readFileSync(join(STYLES, "layout.css"), "utf8");
-    for (const q of QUALITIES) expect(layout).toMatch(new RegExp(`\\.badge--${q}\\s*\\{`));
+  it("gives every quality a move-list dot rule in play.css", () => {
+    const play = readFileSync(join(STYLES, "play.css"), "utf8");
+    for (const q of QUALITIES) expect(play).toMatch(new RegExp(`\\.movelist__dot--${q}\\s*\\{`));
   });
 
   it("holds the four board themes as [data-board] variable sets", () => {
