@@ -38,6 +38,8 @@ export interface NewMove {
   fenBefore: string;
   fenAfter: string;
   isPlayer: boolean;
+  /** When the ply was played; imported games carry none. */
+  createdAt?: string;
 }
 
 export interface MoveRecord extends NewMove {
@@ -206,10 +208,19 @@ function requireUnfinished(db: Database, gameId: number, phase: GamePhase): void
 
 function insertMove(db: Database, gameId: number, move: NewMove): void {
   db.prepare(
-    `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (game_id, ply) DO NOTHING`,
-  ).run(gameId, move.ply, move.san, move.uci, move.fenBefore, move.fenAfter, move.isPlayer ? 1 : 0);
+  ).run(
+    gameId,
+    move.ply,
+    move.san,
+    move.uci,
+    move.fenBefore,
+    move.fenAfter,
+    move.isPlayer ? 1 : 0,
+    move.createdAt ?? null,
+  );
 }
 
 export function setPhase(db: Database, gameId: number, phase: GamePhase): void {
@@ -221,9 +232,17 @@ export function recordPlayerMove(db: Database, gameId: number, move: NewMove, pg
   db.transaction(() => {
     requireUnfinished(db, gameId, "evaluating");
     db.prepare(
-      `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player)
-       VALUES (?, ?, ?, ?, ?, ?, 1)`,
-    ).run(gameId, move.ply, move.san, move.uci, move.fenBefore, move.fenAfter);
+      `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+    ).run(
+      gameId,
+      move.ply,
+      move.san,
+      move.uci,
+      move.fenBefore,
+      move.fenAfter,
+      move.createdAt ?? null,
+    );
     db.prepare("UPDATE games SET pgn = ? WHERE id = ?").run(pgn, gameId);
   })();
 }

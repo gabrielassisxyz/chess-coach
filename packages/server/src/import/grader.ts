@@ -8,6 +8,7 @@ import {
 } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import type { PlayerMoveEvaluation, StudentColor } from "../engine/evaluate.js";
+import { type Log, silentLog } from "../log.js";
 
 export type EvaluateMove = (
   fenBefore: string,
@@ -18,7 +19,7 @@ export type EvaluateMove = (
 export interface GraderOptions {
   db: Database;
   evaluate: EvaluateMove;
-  log?: (message: string) => void;
+  log?: Log;
   /** Runs once after each game finishes grading; a failure is logged and never fails the game. */
   onGraded?: () => Promise<unknown>;
 }
@@ -30,14 +31,14 @@ export interface GraderOptions {
 export class ImportGrader {
   private readonly db: Database;
   private readonly evaluate: EvaluateMove;
-  private readonly log: (message: string) => void;
+  private readonly log: Log;
   private readonly onGraded: (() => Promise<unknown>) | undefined;
   private working: Promise<void> | null = null;
 
   constructor(options: GraderOptions) {
     this.db = options.db;
     this.evaluate = options.evaluate;
-    this.log = options.log ?? ((message) => console.error(message));
+    this.log = options.log ?? silentLog;
     this.onGraded = options.onGraded;
   }
 
@@ -66,17 +67,26 @@ export class ImportGrader {
 
   private async grade(game: GameRecord): Promise<void> {
     setGrading(this.db, game.id, "running");
+    const startedAt = performance.now();
+    let graded = 0;
+    this.log.info("import.grade_start", { game_id: game.id, source: game.source });
     const color: StudentColor = game.playerColor === "white" ? "w" : "b";
     try {
       for (const move of listMoves(this.db, game.id)) {
         if (!move.isPlayer || move.cpLoss !== null) continue;
         const value = await this.evaluate(move.fenBefore, move.uci, color);
         recordMoveEvaluation(this.db, move.id, value);
+        graded += 1;
       }
       setGrading(this.db, game.id, "done");
+      this.log.info("import.graded", {
+        game_id: game.id,
+        graded_plies: graded,
+        duration_ms: Math.round(performance.now() - startedAt),
+      });
     } catch (error) {
       setGrading(this.db, game.id, "failed");
-      this.log(`grading game ${game.id} failed: ${error instanceof Error ? error.message : error}`);
+      this.log.error("import.grade_failed", error, { game_id: game.id, graded_plies: graded });
       return;
     }
     await this.afterGraded(game.id);
@@ -86,7 +96,7 @@ export class ImportGrader {
     try {
       await this.onGraded?.();
     } catch (error) {
-      this.log(`after grading game ${gameId}: ${error instanceof Error ? error.message : error}`);
+      this.log.error("import.after_grade_failed", error, { game_id: gameId });
     }
   }
 }

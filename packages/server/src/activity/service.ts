@@ -17,6 +17,7 @@ import type { ExplorationKind } from "../db/training.js";
 import { GameError } from "../game/errors.js";
 import type { GameService, TurnReport } from "../game/service.js";
 import type { GameSnapshot } from "../game/snapshot.js";
+import { type Log, type LogFields, silentLog } from "../log.js";
 import { ActivityError } from "./errors.js";
 import { demoState, liveGameState, reviewState } from "./state.js";
 import {
@@ -36,6 +37,7 @@ export interface ActivityServiceOptions {
   game: LiveGamePort;
   /** What a training queue needs besides the database; without it training is unavailable. */
   training?: Omit<TrainingDeps, "db">;
+  log?: Log;
 }
 
 type StateListener = (state: ActivityState | null) => void;
@@ -59,6 +61,7 @@ export class ActivityService {
   private readonly db: Database;
   private readonly game: LiveGamePort;
   private readonly trainingDeps: Omit<TrainingDeps, "db"> | null;
+  private readonly log: Log;
   private state: ActivityState | null = null;
   private nextId = 1;
   private demo: DemoBoard | null = null;
@@ -72,6 +75,7 @@ export class ActivityService {
     this.db = options.db;
     this.game = options.game;
     this.trainingDeps = options.training ?? null;
+    this.log = options.log ?? silentLog;
     this.game.onSnapshot((snapshot) => this.followLiveGame(snapshot));
   }
 
@@ -99,7 +103,7 @@ export class ActivityService {
       // A demo started over a demo still returns to what was under the first one.
       if (this.state?.kind !== "demo") this.underneath = this.underneathOf(this.state);
       this.demo = { chess, played: [] };
-      return this.publishDemo(this.nextId++);
+      return this.publishDemo(this.nextId++, "startDemo");
     });
   }
 
@@ -112,7 +116,7 @@ export class ActivityService {
         throw new ActivityError("illegal_move", `${san} is not legal in the demo position`);
       }
       demo.played.push(san);
-      return this.publishDemo((this.state as ActivityState).activity_id);
+      return this.publishDemo((this.state as ActivityState).activity_id, "demoMove");
     });
   }
 
@@ -122,9 +126,9 @@ export class ActivityService {
       const back = this.underneath;
       this.demo = null;
       this.underneath = null;
-      if (back?.kind === "live_game") return this.setLiveGame();
-      if (back?.kind === "review") return this.setReview(back.gameId, back.ply);
-      return this.publish(null);
+      if (back?.kind === "live_game") return this.setLiveGame("leaveDemo");
+      if (back?.kind === "review") return this.setReview(back.gameId, back.ply, "leaveDemo");
+      return this.publish(null, "leaveDemo");
     });
   }
 
@@ -132,8 +136,8 @@ export class ActivityService {
     const live = this.game.current();
     const isLive = live?.id === gameId && live.finishedAt === null;
     return this.enqueue(isLive ? "live_game" : "review", async () => {
-      if (isLive) return this.setLiveGame();
-      return this.setReview(gameId, null);
+      if (isLive) return this.setLiveGame("openGame");
+      return this.setReview(gameId, null, "openGame");
     });
   }
 
@@ -152,19 +156,19 @@ export class ActivityService {
         throw new ActivityError("invalid_ply", `ply must be within 0..${this.review.moves.length}`);
       }
       const { game, moves } = this.review;
-      return this.publish(reviewState(state.activity_id, game, moves, ply));
+      return this.publish(reviewState(state.activity_id, game, moves, ply), "selectReviewPly");
     });
   }
 
   enterLiveGame(): Promise<ActivityState> {
-    return this.enqueue("live_game", async () => this.setLiveGame());
+    return this.enqueue("live_game", async () => this.setLiveGame("enterLiveGame"));
   }
 
   // The new game is entered only after it has settled, so no one sees its half-built first turn.
   newGame(input: { color: PlayerColor; elo?: number; fen?: string }): Promise<ActivityState> {
     return this.enqueue("live_game", async () => {
       await this.game.newGame(input);
-      return this.setLiveGame();
+      return this.setLiveGame("newGame");
     });
   }
 
@@ -181,7 +185,7 @@ export class ActivityService {
       const run = TrainingRun.begin({ ...this.trainingDeps, db: this.db }, input);
       this.leaveSideBoards();
       this.run = run;
-      return this.publish(run.state(this.nextId++));
+      return this.logServed(this.publish(run.state(this.nextId++), "startTraining"));
     });
   }
 
@@ -198,12 +202,25 @@ export class ActivityService {
       const run = TrainingRun.beginWith({ ...this.trainingDeps, db: this.db }, item);
       this.leaveSideBoards();
       this.run = run;
-      return this.publish(run.state(this.nextId++));
+      return this.logServed(this.publish(run.state(this.nextId++), "startTrainingItem"));
     });
   }
 
   trainingAnswer(uci: string, expectedActivityId?: number): Promise<ActivityState> {
-    return this.stepTraining(expectedActivityId, (run) => run.answer(uci));
+    return this.stepTraining(expectedActivityId, "trainingAnswer", (run) => run.answer(uci)).then(
+      (state) => {
+        if (state.kind === "training") {
+          this.log.info("training.answer", {
+            activity_id: state.activity_id,
+            uci,
+            item: state.item,
+            status: state.status,
+            expected: state.expected,
+          });
+        }
+        return state;
+      },
+    );
   }
 
   trainingExplore(
@@ -216,7 +233,7 @@ export class ActivityService {
         throw new ActivityError("not_exploring", "no training item is on the board");
       }
       this.run.explore(input.kind, input.uci);
-      return this.publish(this.run.state(this.state.activity_id));
+      return this.publish(this.run.state(this.state.activity_id), "trainingExplore");
     });
   }
 
@@ -230,11 +247,22 @@ export class ActivityService {
     quality: number,
     expectedActivityId?: number,
   ): Promise<ActivityState> {
-    return this.stepTraining(expectedActivityId, (run) => run.rate(exposureId, quality));
+    return this.stepTraining(expectedActivityId, "rateCard", (run) =>
+      run.rate(exposureId, quality),
+    ).then((state) => {
+      this.log.info("srs.rated", {
+        activity_id: state.activity_id,
+        exposure_id: exposureId,
+        quality,
+      });
+      return state;
+    });
   }
 
   nextTrainingItem(expectedActivityId?: number): Promise<ActivityState> {
-    return this.stepTraining(expectedActivityId, (run) => run.next());
+    return this.stepTraining(expectedActivityId, "nextTrainingItem", (run) => run.next()).then(
+      (state) => this.logServed(state),
+    );
   }
 
   // Back to what was under the queue: the live game if it is still unfinished, else an empty board.
@@ -242,20 +270,32 @@ export class ActivityService {
     return this.enqueue("training", async () => {
       this.requireTraining(expectedActivityId);
       this.run = null;
-      if (this.game.current()?.finishedAt === null) return this.setLiveGame();
-      return this.publish(null);
+      if (this.game.current()?.finishedAt === null) return this.setLiveGame("endTraining");
+      return this.publish(null, "endTraining");
     });
   }
 
   private stepTraining(
     expectedActivityId: number | undefined,
+    cause: string,
     step: (run: TrainingRun) => void,
   ): Promise<ActivityState> {
     return this.enqueue("training", async () => {
       const run = this.requireTraining(expectedActivityId);
       step(run);
-      return this.publish(run.state((this.state as ActivityState).activity_id));
+      return this.publish(run.state((this.state as ActivityState).activity_id), cause);
     });
+  }
+
+  private logServed(state: ActivityState): ActivityState {
+    if (state.kind === "training") {
+      this.log.info("training.item_served", {
+        activity_id: state.activity_id,
+        mode: state.mode,
+        item: state.item,
+      });
+    }
+    return state;
   }
 
   private requireTraining(expected: number | undefined): TrainingRun {
@@ -353,30 +393,31 @@ export class ActivityService {
     return null;
   }
 
-  private publishDemo(activityId: number): ActivityState {
+  private publishDemo(activityId: number, cause: string): ActivityState {
     const demo = this.demo as DemoBoard;
     const returnsTo = this.underneath?.kind ?? null;
     const orientation = this.underneath?.orientation ?? "white";
     return this.publish(
       demoState(activityId, demo.chess, [...demo.played], returnsTo, orientation),
+      cause,
     );
   }
 
-  private setLiveGame(): ActivityState {
+  private setLiveGame(cause: string): ActivityState {
     const snapshot = this.game.snapshot();
     if (!snapshot) throw new GameError("no_game", "there is no game");
     this.leaveSideBoards();
-    return this.publish(liveGameState(this.nextId++, snapshot));
+    return this.publish(liveGameState(this.nextId++, snapshot), cause);
   }
 
   // `ply` null opens at the final position.
-  private setReview(gameId: number, ply: number | null): ActivityState {
+  private setReview(gameId: number, ply: number | null, cause: string): ActivityState {
     const game = getGame(this.db, gameId);
     if (!game) throw new ActivityError("game_not_found", `no game ${gameId}`);
     const moves = listMoves(this.db, gameId);
     this.leaveSideBoards();
     this.review = { game, moves };
-    return this.publish(reviewState(this.nextId++, game, moves, ply ?? moves.length));
+    return this.publish(reviewState(this.nextId++, game, moves, ply ?? moves.length), cause);
   }
 
   private leaveSideBoards(): void {
@@ -388,18 +429,43 @@ export class ActivityService {
   private followLiveGame(snapshot: GameSnapshot): void {
     const state = this.state;
     if (state?.kind !== "live_game" || state.game_id !== snapshot.gameId) return;
-    this.publish(liveGameState(state.activity_id, snapshot));
+    this.publish(liveGameState(state.activity_id, snapshot), "followLiveGame");
   }
 
-  private publish<T extends ActivityState | null>(state: T): T {
+  private publish<T extends ActivityState | null>(state: T, cause: string): T {
+    const from = this.state;
     this.state = state;
+    this.log.info("activity.change", { cause, ...transition(from, state) });
     for (const listener of this.listeners) {
       try {
         listener(state);
-      } catch {
-        // A broken listener must not stop the board from changing.
+      } catch (error) {
+        // A broken listener must not stop the board from changing; it is recorded instead.
+        this.log.error("activity.listener_failed", error, { cause });
       }
     }
     return state;
   }
+}
+
+// What an investigator needs to follow the board: which kind replaced which, and for the kinds
+// that carry a position of their own, the position and how it got there.
+function transition(from: ActivityState | null, to: ActivityState | null): LogFields {
+  const fields: LogFields = {
+    from_kind: from?.kind ?? null,
+    from_activity_id: from?.activity_id ?? null,
+    to_kind: to?.kind ?? null,
+    to_activity_id: to?.activity_id ?? null,
+  };
+  if (to?.kind === "demo") {
+    return { ...fields, fen: to.fen, played: to.moves_played, returns_to: to.returns_to };
+  }
+  if (to?.kind === "live_game") {
+    return { ...fields, game_id: to.game_id, phase: to.phase, plies: to.moves.length };
+  }
+  if (to?.kind === "review") return { ...fields, game_id: to.game.id, ply: to.selected_ply };
+  if (to?.kind === "training") {
+    return { ...fields, mode: to.mode, item: to.item, status: to.status };
+  }
+  return fields;
 }

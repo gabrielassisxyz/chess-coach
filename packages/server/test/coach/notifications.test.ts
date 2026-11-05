@@ -8,6 +8,7 @@ import { CoachSession, type QueryFn } from "../../src/coach/session.js";
 import { listChatTail, listUndeliveredNotifications } from "../../src/db/chat.js";
 import { openDatabase } from "../../src/db/open.js";
 import { type TurnNotification, writeNotification } from "../../src/game/notifications.js";
+import { silentLog } from "../../src/log.js";
 import { contentDir } from "../../src/paths.js";
 import { FakeSdk, loadRecordedTurns } from "../fakes/fake-sdk.js";
 import { makeWorld } from "../fakes/fake-world.js";
@@ -41,7 +42,7 @@ function setup(query?: (sdk: FakeSdk) => QueryFn) {
     dataDir,
     world: makeWorld(db).world,
     env: {},
-    log: () => {},
+    log: silentLog,
   });
   const events: CoachEvent[] = [];
   session.onEvent((event) => events.push(event));
@@ -90,7 +91,7 @@ describe("notification delivery", () => {
       dataDir: first.dataDir,
       world: makeWorld(first.db).world,
       env: {},
-      log: () => {},
+      log: silentLog,
     });
     await again.start();
     await again.stop();

@@ -12,6 +12,7 @@ import {
   listChatTail,
 } from "../../src/db/chat.js";
 import { openDatabase } from "../../src/db/open.js";
+import { RecordingLog, silentLog } from "../../src/log.js";
 import { contentDir } from "../../src/paths.js";
 import { FakeSdk } from "../fakes/fake-sdk.js";
 import { makeWorld } from "../fakes/fake-world.js";
@@ -22,7 +23,7 @@ function setup(overrides: Partial<CoachSessionDeps> = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), "coach-session-"));
   const db = openDatabase(dataDir);
   const sdk = new FakeSdk();
-  const logs: string[] = [];
+  const logs = new RecordingLog();
   const session = new CoachSession({
     db,
     query: sdk.query,
@@ -30,7 +31,7 @@ function setup(overrides: Partial<CoachSessionDeps> = {}) {
     dataDir,
     world: makeWorld(db).world,
     env: {},
-    log: (line) => logs.push(line),
+    log: logs,
     ...overrides,
   });
   const events: CoachEvent[] = [];
@@ -76,7 +77,7 @@ describe("CoachSession", () => {
     await session.stop();
   });
 
-  it("records the SDK session id and the prompt version, and logs init once", async () => {
+  it("records the SDK session id and the prompt version, and logs every init and turn", async () => {
     const { db, session, events, logs } = setup();
     await session.start();
     await session.send("one");
@@ -86,8 +87,19 @@ describe("CoachSession", () => {
     const row = findLatestOpenSession(db);
     expect(row?.claudeSessionId).toBe(FIXTURE_SESSION_ID);
     expect(row?.promptVersion).toMatch(/^[0-9a-f]{64}$/);
-    expect(logs.filter((l) => l.startsWith("coach session"))).toHaveLength(1);
-    expect(logs.filter((l) => l.startsWith("coach usage"))).toHaveLength(1);
+    expect(logs.named("coach.session").length).toBeGreaterThanOrEqual(1);
+    expect(logs.named("coach.session")[0]?.fields).toMatchObject({
+      claude_session_id: FIXTURE_SESSION_ID,
+    });
+    const starts = logs.named("coach.turn_start");
+    expect(starts.map((entry) => entry.fields.turn)).toEqual([1, 2]);
+    expect(starts[0]?.fields).toMatchObject({ source: "user_text", text: "one" });
+    const ends = logs.named("coach.turn_end");
+    expect(ends.map((entry) => entry.fields.turn)).toEqual([1, 2]);
+    for (const end of ends) {
+      expect(end.fields).toMatchObject({ output_tokens: expect.any(Number) });
+      expect(end.fields.duration_ms).toBeGreaterThanOrEqual(0);
+    }
     await session.stop();
   });
 
@@ -121,7 +133,7 @@ describe("CoachSession", () => {
       dataDir: first.dataDir,
       world: makeWorld(first.db).world,
       env: {},
-      log: () => {},
+      log: silentLog,
     });
     await again.start();
     expect(second.calls[0]?.options.resume).toBe(FIXTURE_SESSION_ID);
@@ -142,7 +154,7 @@ describe("CoachSession", () => {
       dataDir,
       world: makeWorld(db).world,
       env: {},
-      log: () => {},
+      log: silentLog,
     });
     await session.start();
     expect(sdk.calls[0]?.options.resume).toBeUndefined();
@@ -165,7 +177,7 @@ describe("CoachSession", () => {
       dataDir,
       world: makeWorld(db).world,
       env: {},
-      log: () => {},
+      log: silentLog,
     });
     await session.start();
     const tail = listChatTail(db, row.id, 5);
@@ -185,7 +197,7 @@ describe("CoachSession", () => {
       dataDir,
       world: makeWorld(db).world,
       env: {},
-      log: () => {},
+      log: silentLog,
     });
     await session.start();
     expect(listChatTail(db, row.id, 5)).toHaveLength(2);
@@ -205,7 +217,7 @@ describe("CoachSession", () => {
       dataDir,
       world: makeWorld(db).world,
       env: {},
-      log: () => {},
+      log: silentLog,
     });
     session.onEvent((e) => events.push(e));
     await session.start();

@@ -11,6 +11,7 @@ import {
 import { CoachSession } from "../../src/coach/session.js";
 import { appendChatMessage } from "../../src/db/chat.js";
 import { openDatabase } from "../../src/db/open.js";
+import { silentLog } from "../../src/log.js";
 import { contentDir } from "../../src/paths.js";
 import { FakeSdk } from "../fakes/fake-sdk.js";
 import { makeWorld } from "../fakes/fake-world.js";
@@ -71,7 +72,7 @@ describe("training notifications", () => {
       dataDir,
       world: makeWorld(db).world,
       env: {},
-      log: () => {},
+      log: silentLog,
     });
     await session.start();
     appendChatMessage(db, session.ensureSessionId(), {

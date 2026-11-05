@@ -11,6 +11,7 @@ import {
   markDelivered,
 } from "../db/chat.js";
 import type { Database } from "../db/open.js";
+import { type Log, type LogFields, silentLog } from "../log.js";
 import { assertSubscriptionAuth } from "./auth.js";
 import { type CoachEvent, mapSdkMessage, type SessionInit } from "./events.js";
 import type { CoachWorld } from "./game-tools.js";
@@ -51,7 +52,7 @@ export interface CoachSessionDeps {
   permissionTimeoutMs?: number;
   /** Called with the id of each chat line the student sends, so it can be tied to an open item. */
   onUserText?: (messageId: number) => void;
-  log?: (line: string) => void;
+  log?: Log;
 }
 
 const PERMISSION_TIMEOUT_MS = 60_000;
@@ -61,19 +62,40 @@ interface PendingPermission {
   timer: NodeJS.Timeout;
 }
 
+interface OpenToolCall {
+  name: string;
+  startedAt: number;
+}
+
+// A refusal from the coach's own tools is JSON carrying `error`; its code is what a reader wants.
+function refusalCode(output: unknown): string | null {
+  const text = Array.isArray(output)
+    ? output.map((block) => (block as { text?: unknown } | null)?.text ?? "").join("")
+    : output;
+  if (typeof text !== "string") return null;
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown } | null;
+    return typeof parsed?.error === "string" ? parsed.error : null;
+  } catch {
+    return null;
+  }
+}
+
 export class CoachSession {
   private readonly eventListeners = new Set<(event: CoachEvent) => void>();
   private readonly permissionListeners = new Set<(request: PermissionRequest) => void>();
   private readonly pending = new Map<string, PendingPermission>();
   private readonly clock: Clock;
-  private readonly log: (line: string) => void;
+  private readonly log: Log;
   private prompt: CoachPrompt | undefined;
   private row: CoachSessionRow | undefined;
   private queue: AsyncQueue<SDKUserMessage> | undefined;
   private active: CoachQuery | undefined;
   private loop: Promise<void> = Promise.resolve();
-  private usageLogged = false;
-  private initLogged = false;
+  // Numbers each message handed to the SDK, so every tool call and the turn's end name their turn.
+  private turn = 0;
+  private turnStartedAt = 0;
+  private readonly openTools = new Map<string, OpenToolCall>();
   // True from handing the SDK a message until its turn ends: while it is set, notifications wait
   // and are folded into one message instead of queueing behind the answer being written.
   private busy = false;
@@ -82,7 +104,7 @@ export class CoachSession {
 
   constructor(private readonly deps: CoachSessionDeps) {
     this.clock = deps.clock ?? systemClock;
-    this.log = deps.log ?? ((line) => console.log(line));
+    this.log = deps.log ?? silentLog;
   }
 
   get sessionRow(): CoachSessionRow | undefined {
@@ -120,7 +142,7 @@ export class CoachSession {
     const row = this.ensureStream();
     const message = recordUserText(this.deps.db, row.id, text, this.clock);
     this.deps.onUserText?.(message.id);
-    this.deliver(text);
+    this.deliver(text, { source: "user_text", message_id: message.id, text });
   }
 
   /**
@@ -138,7 +160,15 @@ export class CoachSession {
     this.deps.db.transaction(() => {
       for (const message of pending) markDelivered(this.deps.db, message.id);
     })();
-    this.deliver(text);
+    this.deliver(text, {
+      source: "notifications",
+      notification_ids: pending.map((message) => message.id),
+      notification_types: pending.map(
+        (message) => (JSON.parse(message.contentJson) as { type?: unknown }).type ?? null,
+      ),
+      // More than one row means moves arrived while the coach was answering and were folded.
+      folded: pending.length > 1,
+    });
   }
 
   private ensureStream(): CoachSessionRow {
@@ -152,8 +182,16 @@ export class CoachSession {
     return this.row as CoachSessionRow;
   }
 
-  private deliver(text: string): void {
+  private deliver(text: string, origin: LogFields): void {
     this.busy = true;
+    this.turn += 1;
+    this.turnStartedAt = performance.now();
+    this.log.info("coach.turn_start", {
+      coach_session_id: this.row?.id,
+      turn: this.turn,
+      ...origin,
+      message: text,
+    });
     this.queue?.push({
       type: "user",
       message: { role: "user", content: text },
@@ -248,8 +286,30 @@ export class CoachSession {
             : { behavior: "deny", message: "The student did not approve this tool." },
         );
       };
-      const timer = setTimeout(() => settle(false), timeoutMs);
-      this.pending.set(requestId, { resolve: settle, timer });
+      const timer = setTimeout(() => {
+        this.log.warn("coach.permission_resolved", {
+          request_id: requestId,
+          tool_name: toolName,
+          outcome: "timeout",
+        });
+        settle(false);
+      }, timeoutMs);
+      this.pending.set(requestId, {
+        resolve: (allow) => {
+          this.log.info("coach.permission_resolved", {
+            request_id: requestId,
+            tool_name: toolName,
+            outcome: allow ? "allow" : "deny",
+          });
+          settle(allow);
+        },
+        timer,
+      });
+      this.log.info("coach.permission_request", {
+        request_id: requestId,
+        tool_name: toolName,
+        input,
+      });
       for (const listener of this.permissionListeners) listener({ requestId, toolName, input });
     });
   }
@@ -265,13 +325,22 @@ export class CoachSession {
         }
         for (const item of mapped.finalized)
           recordFinalized(this.deps.db, row.id, item, this.clock);
-        for (const event of mapped.events) this.emit(event);
+        for (const event of mapped.events) {
+          this.logEvent(event);
+          this.emit(event);
+        }
         if (mapped.events.some((event) => event.kind === "turn_end")) {
           this.busy = false;
           this.flushNotifications();
         }
       }
     } catch (error) {
+      this.log.error("coach.turn_error", error, {
+        coach_session_id: row.id,
+        turn: this.turn,
+        resumed,
+        init_seen: initSeen,
+      });
       // A stored session the CLI cannot find is closed so the next send starts a fresh one.
       if (resumed && !initSeen) {
         closeCoachSession(this.deps.db, row.id, this.clock);
@@ -296,21 +365,57 @@ export class CoachSession {
       storeClaudeSessionId(this.deps.db, row.id, init.sessionId);
       row.claudeSessionId = init.sessionId;
     }
-    if (this.initLogged) return;
-    this.initLogged = true;
-    this.log(`coach session ${init.sessionId} model=${init.model} auth=${init.apiKeySource}`);
+    this.log.info("coach.session", {
+      coach_session_id: row.id,
+      claude_session_id: init.sessionId,
+      model: init.model,
+      auth: init.apiKeySource,
+      tools: init.tools.length,
+    });
+  }
+
+  private logEvent(event: CoachEvent): void {
+    const turn = { coach_session_id: this.row?.id, turn: this.turn };
+    if (event.kind === "tool_use") {
+      this.openTools.set(event.toolUseId, { name: event.name, startedAt: performance.now() });
+      this.log.info("coach.tool_call", {
+        ...turn,
+        tool_use_id: event.toolUseId,
+        name: event.name,
+        input: event.input,
+      });
+    } else if (event.kind === "tool_result") {
+      const call = this.openTools.get(event.toolUseId);
+      this.openTools.delete(event.toolUseId);
+      const code = refusalCode(event.output);
+      const flagged = event.isError;
+      this.log.info("coach.tool_result", {
+        ...turn,
+        tool_use_id: event.toolUseId,
+        name: call?.name ?? null,
+        duration_ms: call ? Math.round(performance.now() - call.startedAt) : null,
+        is_error: flagged || code !== null,
+        error_code: code,
+        output: event.output,
+      });
+    } else if (event.kind === "turn_end") {
+      this.log.info("coach.turn_end", {
+        ...turn,
+        duration_ms: Math.round(performance.now() - this.turnStartedAt),
+        input_tokens: event.usage.inputTokens,
+        output_tokens: event.usage.outputTokens,
+      });
+    } else if (event.kind === "turn_error") {
+      this.log.warn("coach.turn_failed", { ...turn, message: event.message });
+    }
   }
 
   private emit(event: CoachEvent): void {
-    if (event.kind === "turn_end" && !this.usageLogged) {
-      this.usageLogged = true;
-      this.log(`coach usage in=${event.usage.inputTokens} out=${event.usage.outputTokens}`);
-    }
     for (const listener of this.eventListeners) {
       try {
         listener(event);
       } catch (error) {
-        this.log(`coach listener failed: ${String(error)}`);
+        this.log.error("coach.listener_failed", error, { kind: event.kind });
       }
     }
   }
