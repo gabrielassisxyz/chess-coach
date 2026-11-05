@@ -317,9 +317,14 @@
   overflow-y: auto;
 }
 
-.games__steps .button {
-  flex: 1;
-  padding-inline: var(--space-2);
+/* The left column is 220 px, too narrow for four labelled buttons in a row. */
+.games__steps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.import > .button {
+  align-self: flex-start;
 }
 
 .games__actions {
