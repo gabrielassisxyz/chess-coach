@@ -24,15 +24,7 @@ export function Controls({ activity, send, newGameBlocked = false, currentElo }:
 
   return (
     <div className="controls">
-      <div className="controls__row">
-        <button
-          type="button"
-          className="button"
-          disabled={!canStart}
-          onClick={() => setChoosing(true)}
-        >
-          New game
-        </button>
+      <div className="controls__row controls__row--play">
         <button
           type="button"
           className="button"
@@ -51,7 +43,7 @@ export function Controls({ activity, send, newGameBlocked = false, currentElo }:
         </button>
         <button
           type="button"
-          className="button"
+          className="button controls__wide"
           disabled={!enabled.abort}
           onClick={() => send({ type: "abort", activity_id: activityId })}
         >
@@ -60,13 +52,21 @@ export function Controls({ activity, send, newGameBlocked = false, currentElo }:
         {enabled.backToGame ? (
           <button
             type="button"
-            className="button button--primary"
+            className="button button--primary controls__wide"
             onClick={() => send({ type: "leave_demo", activity_id: activityId })}
           >
             Back to game
           </button>
         ) : null}
       </div>
+      <button
+        type="button"
+        className="button controls__new"
+        disabled={!canStart}
+        onClick={() => setChoosing(true)}
+      >
+        New game
+      </button>
       {choosing && canStart ? (
         <NewGameForm onStart={start} onCancel={() => setChoosing(false)} defaultElo={currentElo} />
       ) : null}

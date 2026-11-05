@@ -1,5 +1,5 @@
 import { MAX_SAY_LENGTH } from "@chess-coach/shared";
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import type { ServerApi } from "../hooks/useServer.js";
 import { coachErrorHint } from "../state/coach-hint.js";
 import { coachStateWords, DEFAULT_COACH_IDLE } from "../state/coach-panel.js";
@@ -56,6 +56,8 @@ export interface ChatProps {
   onToggle?(): void;
   // What the coach is doing while it is not working on an answer; each screen words its own.
   idleLabel?: string;
+  // Buttons the screen offers under the latest coach message.
+  actions?: ReactNode;
 }
 
 export function Chat({
@@ -64,6 +66,7 @@ export function Chat({
   unread = false,
   onToggle = () => {},
   idleLabel = DEFAULT_COACH_IDLE,
+  actions = null,
 }: ChatProps) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -84,6 +87,10 @@ export function Chat({
     event.preventDefault();
     submit();
   };
+
+  const lastCoachIndex = items.findLastIndex(
+    (item) => item.type === "text" && item.role === "assistant",
+  );
 
   if (!open) {
     return (
@@ -121,9 +128,13 @@ export function Chat({
       </header>
       <div className="chat__log">
         <div className="chat__column">
-          {server.items.map((item) => (
-            <ItemView key={item.key} item={item} />
+          {server.items.map((item, index) => (
+            <Fragment key={item.key}>
+              <ItemView item={item} />
+              {index === lastCoachIndex ? actions : null}
+            </Fragment>
           ))}
+          {lastCoachIndex === -1 ? actions : null}
           {server.permissions.map((request) => (
             <ApprovalCard key={request.requestId} request={request} onAnswer={server.approve} />
           ))}
