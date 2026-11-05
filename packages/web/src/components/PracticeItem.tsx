@@ -5,13 +5,14 @@ import {
   breadcrumbOf,
   formatElapsed,
   lookedAtMs,
+  NONE,
   promptOf,
   type TrainingView,
 } from "../state/practice.js";
 import { ExplorationTrail } from "./ExplorationTrail.js";
 import { RatingButtons } from "./RatingButtons.js";
 
-const ANSWER_LOCKED = "Answer — make your move first";
+const ANSWER_LOCKED = `Answer ${NONE} make your move first`;
 
 export interface PracticeItemActions {
   answer(): void;
