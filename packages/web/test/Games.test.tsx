@@ -4,7 +4,7 @@ import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import { useServer } from "../src/hooks/useServer.js";
-import { Review } from "../src/screens/Review.js";
+import { Games } from "../src/screens/Games.js";
 import type { GamesApi } from "../src/state/games-api.js";
 import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { COACH_GAME_SOURCE, idleImportApi, START_FEN } from "./fixtures.js";
@@ -75,7 +75,7 @@ const factory: BoardFactory = (_element, config) => {
 
 function Harness() {
   const server = useServer({ createSocket: createFakeSocket });
-  return <Review server={server} api={api} importApi={idleImportApi} createBoard={factory} />;
+  return <Games server={server} api={api} importApi={idleImportApi} createBoard={factory} />;
 }
 
 const commands = (): { type: string; ply?: number }[] =>
@@ -110,7 +110,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("review list and stepping", () => {
+describe("games list and stepping", () => {
   it("lists the game and opens it on the starting position, telling the server once", async () => {
     await openGame();
     expect(boardSets.at(-1)).toBe(START_FEN);
@@ -257,7 +257,7 @@ describe("failures", () => {
   it("says so when the list cannot be loaded", async () => {
     const broken: GamesApi = { ...api, listGames: async () => Promise.reject(new Error("down")) };
     render(
-      <Review server={{} as never} api={broken} importApi={idleImportApi} createBoard={factory} />,
+      <Games server={{} as never} api={broken} importApi={idleImportApi} createBoard={factory} />,
     );
     await waitFor(() => expect(screen.getByText(/The games could not be loaded/)).toBeTruthy());
   });

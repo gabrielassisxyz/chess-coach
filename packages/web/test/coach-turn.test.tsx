@@ -62,21 +62,19 @@ describe("coach turn state", () => {
 });
 
 describe("chat header", () => {
-  it("shows the connection and the turn state", () => {
+  it("words the turn state in the panel header", () => {
     const { rerender } = render(<Chat server={serverApi(null, { turn: "idle" })} />);
-    expect(screen.getByRole("status").textContent).toBe("connected");
-    const turn = () => document.querySelector(".chat__turn")?.textContent;
-    expect(turn()).toBe("idle");
+    const state = () => screen.getByRole("status").textContent;
+    expect(state()).toBe("watching the board");
     rerender(<Chat server={serverApi(null, { turn: "thinking" })} />);
-    expect(turn()).toBe("thinking");
+    expect(state()).toBe("thinking");
     rerender(<Chat server={serverApi(null, { turn: "streaming" })} />);
-    expect(turn()).toBe("streaming");
+    expect(state()).toBe("writing");
   });
 
-  it("hides the turn state while reconnecting, when it cannot be known", () => {
+  it("says offline while reconnecting, when the turn cannot be known", () => {
     render(<Chat server={serverApi(null, { connection: "reconnecting", turn: "thinking" })} />);
-    expect(screen.getByRole("status").textContent).toBe("reconnecting");
-    expect(document.querySelector(".chat__turn")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("offline · reconnecting");
   });
 });
 

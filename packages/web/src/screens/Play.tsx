@@ -23,27 +23,32 @@ export function Play({ server, createBoard, notice = null }: PlayProps) {
   };
 
   return (
-    <section className="screen play" aria-label="Play">
-      <h2 className="screen__title">Play</h2>
-      <ServiceBanner notice={notice} />
-      <EvalBar view={evalView(moves)} />
-      {activity ? (
-        <Board
+    <>
+      <section className="screen play" aria-label="Play">
+        <h2 className="screen__title">Play</h2>
+        <ServiceBanner notice={notice} />
+        <EvalBar view={evalView(moves)} />
+        {activity ? null : (
+          <p className="screen__note">No game on the board. Start one with New game.</p>
+        )}
+        <Controls
           activity={activity}
-          onMove={move}
-          syncToken={server.errorCount}
-          createBoard={createBoard}
+          send={server.send}
+          newGameBlocked={notice !== null}
+          currentElo={currentElo}
         />
-      ) : (
-        <p className="screen__note">No game on the board. Start one with New game.</p>
-      )}
-      <Controls
-        activity={activity}
-        send={server.send}
-        newGameBlocked={notice !== null}
-        currentElo={currentElo}
-      />
-      <MoveList moves={moves} />
-    </section>
+        <MoveList moves={moves} />
+      </section>
+      <div className="stage">
+        {activity ? (
+          <Board
+            activity={activity}
+            onMove={move}
+            syncToken={server.errorCount}
+            createBoard={createBoard}
+          />
+        ) : null}
+      </div>
+    </>
   );
 }

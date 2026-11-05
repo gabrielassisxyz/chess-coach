@@ -5,9 +5,9 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Chat } from "../src/components/Chat.js";
 import { PromotionChooser } from "../src/components/PromotionChooser.js";
+import { Games } from "../src/screens/Games.js";
 import { Play } from "../src/screens/Play.js";
-import { Review } from "../src/screens/Review.js";
-import { Train } from "../src/screens/Train.js";
+import { Practice } from "../src/screens/Practice.js";
 import type { GamesApi } from "../src/state/games-api.js";
 import {
   COACH_GAME_SOURCE,
@@ -161,9 +161,9 @@ describe("focus ring", () => {
     expect(expectFocusRing(container)).toBeGreaterThan(5);
   });
 
-  it("covers the Review list and an opened game with its controls", async () => {
+  it("covers the Games list and an opened game with its controls", async () => {
     const { container } = render(
-      <Review
+      <Games
         server={serverApi()}
         api={gamesApi}
         importApi={idleImportApi}
@@ -178,15 +178,15 @@ describe("focus ring", () => {
     expect(expectFocusRing(container)).toBeGreaterThan(8);
   });
 
-  it("covers the Train chooser and a card with its rating buttons", async () => {
+  it("covers the Practice chooser and a card with its rating buttons", async () => {
     const chooser = render(
-      <Train server={serverApi()} fetchMotifs={async () => [{ motif: "fork", count: 2 }]} />,
+      <Practice server={serverApi()} fetchMotifs={async () => [{ motif: "fork", count: 2 }]} />,
     );
     await screen.findByText("fork (2)");
     expect(expectFocusRing(chooser.container)).toBeGreaterThanOrEqual(3);
     chooser.unmount();
 
-    const training = render(<Train server={serverApi(card)} createBoard={inertBoard} />);
+    const training = render(<Practice server={serverApi(card)} createBoard={inertBoard} />);
     expect(screen.getAllByRole("button", { name: /^Rate/ })).toHaveLength(6);
     expect(expectFocusRing(training.container)).toBeGreaterThan(8);
   });

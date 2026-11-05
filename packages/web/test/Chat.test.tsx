@@ -16,6 +16,8 @@ function api(overrides: Partial<ServerApi> = {}): ServerApi {
     localCount: 0,
     activity: null,
     cardsCreated: {},
+    coachMessages: 0,
+    reconnectAttempt: 0,
     connection: "connected",
     say: vi.fn(() => true),
     approve: vi.fn(),
@@ -60,7 +62,7 @@ describe("Chat", () => {
       />,
     );
     expect(screen.getByRole("alert").textContent).toBe("quota hit");
-    expect(screen.getByRole("status").textContent).toBe("reconnecting");
+    expect(screen.getByRole("status").textContent).toBe("offline · reconnecting");
   });
 
   it("sends approve_tool with the request_id of the card that was clicked", () => {

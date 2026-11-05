@@ -23,6 +23,8 @@ function api(activity: ActivityState | null, overrides: Partial<ServerApi> = {})
     activity,
     currentElo: null,
     cardsCreated: {},
+    coachMessages: 0,
+    reconnectAttempt: 0,
     connection: "connected",
     say: vi.fn(() => true),
     approve: vi.fn(),

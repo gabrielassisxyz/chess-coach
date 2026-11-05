@@ -2,8 +2,8 @@ import type { ChessComListedGame, ImportStatus } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImportPanel } from "../src/components/ImportPanel.js";
+import { summaryLabel } from "../src/state/games.js";
 import type { ImportApi } from "../src/state/import-api.js";
-import { summaryLabel } from "../src/state/review.js";
 import { COACH_GAME_SOURCE, idleImportApi } from "./fixtures.js";
 
 afterEach(cleanup);

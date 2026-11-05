@@ -42,6 +42,8 @@ export interface ChatState {
   currentElo?: number | null;
   // Cards made from each game since the page loaded, summed so a repeat click cannot show 0 over 3.
   cardsCreated: Record<number, number>;
+  // Assistant messages that started live since the page loaded; a view that was away compares it to what it last saw.
+  coachMessages: number;
 }
 
 export const initialChatState: ChatState = {
@@ -55,6 +57,7 @@ export const initialChatState: ChatState = {
   activity: null,
   currentElo: null,
   cardsCreated: {},
+  coachMessages: 0,
 };
 
 function textOf(content: unknown): string {
@@ -96,6 +99,7 @@ function applyChat(state: ChatState, event: ChatEvent): ChatState {
   const payload = event.event;
   const key = `live-${event.seq}`;
   const turn = turnAfter(payload.kind);
+  let coachMessages = state.coachMessages;
   if (payload.kind === "text_delta") {
     const last = items.at(-1);
     if (last?.type === "text" && last.role === "assistant" && last.liveId === event.message_id) {
@@ -108,6 +112,7 @@ function applyChat(state: ChatState, event: ChatEvent): ChatState {
         text: payload.text,
         liveId: event.message_id,
       });
+      coachMessages += 1;
     }
   } else if (payload.kind === "tool_use") {
     items.push({
@@ -122,7 +127,7 @@ function applyChat(state: ChatState, event: ChatEvent): ChatState {
   } else if (payload.kind === "turn_error") {
     items.push({ type: "turn_error", key, message: payload.message });
   }
-  return { ...state, items, turn };
+  return { ...state, items, turn, coachMessages };
 }
 
 // A tool call or its result means the coach is still working on the answer; only the end of

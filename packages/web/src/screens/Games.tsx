@@ -1,12 +1,9 @@
 import type { GameDetail, GameSummary } from "@chess-coach/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
+import { GameMoves } from "../components/GameMoves.js";
 import { ImportPanel } from "../components/ImportPanel.js";
-import { ReviewMoves } from "../components/ReviewMoves.js";
 import type { ServerApi } from "../hooks/useServer.js";
-import { type GamesApi, serverGamesApi } from "../state/games-api.js";
-import { type ImportApi, serverImportApi } from "../state/import-api.js";
-import { CLASSIFICATION_LABEL } from "../state/play.js";
 import {
   localReviewState,
   moveAt,
@@ -15,9 +12,12 @@ import {
   stepTarget,
   summaryLabel,
   takesTyping,
-} from "../state/review.js";
+} from "../state/games.js";
+import { type GamesApi, serverGamesApi } from "../state/games-api.js";
+import { type ImportApi, serverImportApi } from "../state/import-api.js";
+import { CLASSIFICATION_LABEL } from "../state/play.js";
 
-export interface ReviewProps {
+export interface GamesProps {
   server: ServerApi;
   api?: GamesApi;
   importApi?: ImportApi;
@@ -66,7 +66,7 @@ function GameList({ listing, onOpen, onRetry }: GameListProps) {
   }
   if (listing.status === "failed") {
     return (
-      <div className="review__empty" role="alert">
+      <div className="games__empty" role="alert">
         <p className="screen__note">
           The games could not be loaded. Check that the server is running, then try again.
         </p>
@@ -84,10 +84,10 @@ function GameList({ listing, onOpen, onRetry }: GameListProps) {
     );
   }
   return (
-    <ul className="review__games" aria-label="Finished games">
+    <ul className="games__games" aria-label="Finished games">
       {listing.games.map((game) => (
         <li key={game.id}>
-          <button type="button" className="review__game" onClick={() => onOpen(game.id)}>
+          <button type="button" className="games__game" onClick={() => onOpen(game.id)}>
             {summaryLabel(game)}
           </button>
         </li>
@@ -98,10 +98,10 @@ function GameList({ listing, onOpen, onRetry }: GameListProps) {
 
 function PlyDetail({ game, ply }: { game: GameDetail; ply: number }) {
   const move = moveAt(game, ply);
-  if (!move) return <p className="review__detail">Starting position.</p>;
+  if (!move) return <p className="games__detail">Starting position.</p>;
   const grade = move.classification ? CLASSIFICATION_LABEL[move.classification] : null;
   return (
-    <p className="review__detail" data-testid="ply-detail">
+    <p className="games__detail" data-testid="ply-detail">
       <strong>{`${Math.ceil(ply / 2)}${ply % 2 === 1 ? "." : "..."} ${move.san}`}</strong>
       {grade && move.cp_loss !== null ? `, ${grade}, cp loss ${move.cp_loss}` : ""}
       {move.best_move_san && move.cp_loss ? `, best was ${move.best_move_san}` : ""}
@@ -159,80 +159,85 @@ function OpenGame({ server, game, createBoard, onClose }: OpenGameProps) {
 
   return (
     <>
-      <div className="review__bar">
-        <button type="button" className="button" onClick={onClose}>
-          All games
-        </button>
-        {demo ? (
+      <section className="screen games" aria-label="Games">
+        <h2 className="screen__title">Games</h2>
+        <div className="games__bar">
+          <button type="button" className="button" onClick={onClose}>
+            All games
+          </button>
+          {demo ? (
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={() => server.send({ type: "leave_demo", activity_id: demo.activity_id })}
+            >
+              Back to review
+            </button>
+          ) : null}
+        </div>
+        <div className="games__bar">
+          <button type="button" className="button" disabled={ply === 0} onClick={() => setPly(0)}>
+            Start
+          </button>
           <button
             type="button"
-            className="button button--primary"
-            onClick={() => server.send({ type: "leave_demo", activity_id: demo.activity_id })}
+            className="button"
+            disabled={ply === 0}
+            onClick={() => setPly(ply - 1)}
           >
-            Back to review
+            Back
           </button>
-        ) : null}
+          <button
+            type="button"
+            className="button"
+            disabled={ply === count}
+            onClick={() => setPly(ply + 1)}
+          >
+            Forward
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={ply === count}
+            onClick={() => setPly(count)}
+          >
+            End
+          </button>
+        </div>
+        <PlyDetail game={game} ply={ply} />
+        <div className="games__bar">
+          <button
+            type="button"
+            className="button"
+            disabled={ply === 0 || !connected}
+            onClick={() => server.send({ type: "ask_coach_about_ply", game_id: game.id, ply })}
+          >
+            Ask the coach about this move
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={created !== undefined || !connected}
+            onClick={() => server.send({ type: "create_cards", game_id: game.id })}
+          >
+            {created === undefined ? "Create cards" : `${created} cards created`}
+          </button>
+        </div>
+        <GameMoves moves={game.moves} selectedPly={ply} onSelect={setPly} />
+      </section>
+      <div className="stage">
+        <Board activity={demo ?? local} onMove={() => {}} createBoard={createBoard} />
       </div>
-      <Board activity={demo ?? local} onMove={() => {}} createBoard={createBoard} />
-      <div className="review__bar">
-        <button type="button" className="button" disabled={ply === 0} onClick={() => setPly(0)}>
-          Start
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={ply === 0}
-          onClick={() => setPly(ply - 1)}
-        >
-          Back
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={ply === count}
-          onClick={() => setPly(ply + 1)}
-        >
-          Forward
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={ply === count}
-          onClick={() => setPly(count)}
-        >
-          End
-        </button>
-      </div>
-      <PlyDetail game={game} ply={ply} />
-      <div className="review__bar">
-        <button
-          type="button"
-          className="button"
-          disabled={ply === 0 || !connected}
-          onClick={() => server.send({ type: "ask_coach_about_ply", game_id: game.id, ply })}
-        >
-          Ask the coach about this move
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={created !== undefined || !connected}
-          onClick={() => server.send({ type: "create_cards", game_id: game.id })}
-        >
-          {created === undefined ? "Create cards" : `${created} cards created`}
-        </button>
-      </div>
-      <ReviewMoves moves={game.moves} selectedPly={ply} onSelect={setPly} />
     </>
   );
 }
 
-export function Review({
+export function Games({
   server,
   api = serverGamesApi,
   importApi = serverImportApi,
   createBoard,
-}: ReviewProps) {
+}: GamesProps) {
   const { listing, reload } = useGameList(api);
   const [game, setGame] = useState<GameDetail | null>(null);
   const [failed, setFailed] = useState(false);
@@ -252,28 +257,28 @@ export function Review({
     [api, send],
   );
 
+  if (game) {
+    return (
+      <OpenGame
+        key={game.id}
+        server={server}
+        game={game}
+        createBoard={createBoard}
+        onClose={() => setGame(null)}
+      />
+    );
+  }
+
   return (
-    <section className="screen review" aria-label="Review">
-      <h2 className="screen__title">Review</h2>
+    <section className="screen screen--wide games" aria-label="Games">
+      <h2 className="screen__title">Games</h2>
       {failed ? (
         <p className="screen__note" role="alert">
           That game could not be loaded. Try it again, or pick another game.
         </p>
       ) : null}
-      {game ? (
-        <OpenGame
-          key={game.id}
-          server={server}
-          game={game}
-          createBoard={createBoard}
-          onClose={() => setGame(null)}
-        />
-      ) : (
-        <>
-          <ImportPanel api={importApi} onChanged={reload} />
-          <GameList listing={listing} onOpen={open} onRetry={reload} />
-        </>
-      )}
+      <ImportPanel api={importApi} onChanged={reload} />
+      <GameList listing={listing} onOpen={open} onRetry={reload} />
     </section>
   );
 }

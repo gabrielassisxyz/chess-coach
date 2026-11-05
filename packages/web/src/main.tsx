@@ -14,8 +14,8 @@ import "./styles/chat.css";
 import "./styles/focus.css";
 import "./styles/board.css";
 import "./styles/layout.css";
-import "./styles/train.css";
-import "./styles/review.css";
+import "./styles/practice.css";
+import "./styles/games.css";
 
 // Before the first render, so the page never paints in the wrong theme.
 applyTheme(readTheme());

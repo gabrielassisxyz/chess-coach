@@ -16,6 +16,8 @@ export function serverApi(
     localCount: 0,
     activity,
     cardsCreated: {},
+    coachMessages: 0,
+    reconnectAttempt: 0,
     connection: "connected",
     say: vi.fn(() => true),
     approve: vi.fn(),
