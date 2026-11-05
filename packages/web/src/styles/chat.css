@@ -181,6 +181,15 @@ body {
   cursor: pointer;
 }
 
+/* The caret says the line opens; without it a plain text button does not look interactive. */
+.tool-line__summary::before {
+  content: "\25B8\00A0" / "";
+}
+
+.tool-line__summary[aria-expanded="true"]::before {
+  content: "\25BE\00A0" / "";
+}
+
 .tool-line__summary:hover {
   color: var(--text-1);
 }

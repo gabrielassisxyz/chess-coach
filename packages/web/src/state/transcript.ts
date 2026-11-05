@@ -15,7 +15,7 @@ export type ChatItem =
       toolUseId: string;
       name: string;
       input: unknown;
-      result?: { output: unknown };
+      result?: { output: unknown; isError?: boolean };
     }
   | { type: "turn_error"; key: string; message: string }
   | { type: "notice"; key: string; text: string };
@@ -79,7 +79,7 @@ function applyEntry(items: ChatItem[], entry: TranscriptEntry): void {
       input: content?.input,
     });
   } else if (entry.kind === "tool_result") {
-    attachResult(items, String(content?.toolUseId), content?.output);
+    attachResult(items, String(content?.toolUseId), content?.output, content?.isError === true);
   } else if (entry.kind === "incomplete") {
     items.push({ type: "notice", key, text: "The previous answer was interrupted." });
   } else if (entry.kind === "notification") {
@@ -89,9 +89,14 @@ function applyEntry(items: ChatItem[], entry: TranscriptEntry): void {
   }
 }
 
-function attachResult(items: ChatItem[], toolUseId: string, output: unknown): void {
+function attachResult(
+  items: ChatItem[],
+  toolUseId: string,
+  output: unknown,
+  isError: boolean,
+): void {
   const card = items.find((item) => item.type === "tool" && item.toolUseId === toolUseId);
-  if (card?.type === "tool") card.result = { output };
+  if (card?.type === "tool") card.result = isError ? { output, isError } : { output };
 }
 
 function applyChat(state: ChatState, event: ChatEvent): ChatState {
@@ -123,7 +128,7 @@ function applyChat(state: ChatState, event: ChatEvent): ChatState {
       input: payload.input,
     });
   } else if (payload.kind === "tool_result") {
-    attachResult(items, payload.tool_use_id, payload.output);
+    attachResult(items, payload.tool_use_id, payload.output, payload.is_error === true);
   } else if (payload.kind === "turn_error") {
     items.push({ type: "turn_error", key, message: payload.message });
   }

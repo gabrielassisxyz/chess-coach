@@ -10,7 +10,7 @@ export interface TurnUsage {
 export type CoachEvent =
   | { kind: "text_delta"; text: string }
   | { kind: "tool_use"; toolUseId: string; name: string; input: unknown }
-  | { kind: "tool_result"; toolUseId: string; output: unknown }
+  | { kind: "tool_result"; toolUseId: string; output: unknown; isError: boolean }
   | { kind: "turn_end"; usage: TurnUsage }
   | { kind: "turn_error"; message: string };
 
@@ -64,8 +64,11 @@ function mapToolResults(blocks: ContentBlock[]): MappedMessage {
   const out: MappedMessage = { events: [], finalized: [] };
   for (const block of blocks) {
     if (block.type !== "tool_result") continue;
-    const content = { toolUseId: String(block.tool_use_id), output: block.content };
-    out.events.push({ kind: "tool_result", ...content });
+    // A failed call is only marked by the SDK's flag: a successful result can be plain text too.
+    const isError = block.is_error === true;
+    const base = { toolUseId: String(block.tool_use_id), output: block.content };
+    out.events.push({ kind: "tool_result", ...base, isError });
+    const content = isError ? { ...base, isError: true } : base;
     out.finalized.push({ role: "user", kind: "tool_result", content });
   }
   return out;

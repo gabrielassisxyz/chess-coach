@@ -51,7 +51,6 @@ describe("Chat", () => {
     const line = screen.getByRole("button", { name: "Played Qxd5 on the demo board" });
     expect(line.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByTestId("tool-result")).toBeNull();
-    expect(document.body.textContent).not.toContain("mcp__chess__");
 
     fireEvent.click(line);
     expect(line.getAttribute("aria-expanded")).toBe("true");

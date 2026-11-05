@@ -95,12 +95,21 @@ function sentenceFor(base: string, input: unknown, result: Fields | null): strin
   }
 }
 
-/** One line of plain English for a tool use; without an output yet it reads as in progress. */
-export function toolSummary(name: string, input: unknown, output?: unknown): string {
+/**
+ * One line of plain English for a tool use; without an output yet it reads as in progress. A
+ * failed call says so: its output is an error text, not the result the sentence describes.
+ */
+export function toolSummary(
+  name: string,
+  input: unknown,
+  output?: unknown,
+  isError = false,
+): string {
   const base = toolBaseName(name);
   if (output === undefined) return `${sentenceFor(base, input, null)}…`;
   const result = parseToolOutput(output);
   const refusal = field(result, "error");
   if (refusal !== null) return `${base} refused: ${refusal}`;
+  if (isError) return `${base} failed`;
   return sentenceFor(base, input, result);
 }

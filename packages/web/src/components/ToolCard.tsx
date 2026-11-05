@@ -17,7 +17,7 @@ export function ToolCard({ item }: { item: Extract<ChatItem, { type: "tool" }> }
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        {toolSummary(item.name, item.input, item.result?.output)}
+        {toolSummary(item.name, item.input, item.result?.output, item.result?.isError)}
       </button>
       {open ? (
         <div className="tool-line__details">

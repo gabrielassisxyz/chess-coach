@@ -24,7 +24,12 @@ export const ChatPayloadSchema = z.discriminatedUnion("kind", [
     name: z.string(),
     input: z.unknown(),
   }),
-  z.object({ kind: z.literal("tool_result"), tool_use_id: z.string(), output: z.unknown() }),
+  z.object({
+    kind: z.literal("tool_result"),
+    tool_use_id: z.string(),
+    output: z.unknown(),
+    is_error: z.boolean().optional(),
+  }),
   z.object({
     kind: z.literal("turn_end"),
     usage: z.object({ input_tokens: z.number(), output_tokens: z.number() }),

@@ -32,7 +32,10 @@ describe("toolSummary", () => {
     expect(toolSummary(`${P}analyze`, {}, analysis(-120))).toBe(
       "Analysed the position: best d4, -1.20",
     );
-    expect(toolSummary(`${P}analyze`, {}, analysis(-100000, true))).toBe(
+    expect(toolSummary(`${P}analyze`, {}, analysis(10000, true))).toBe(
+      "Analysed the position: best d4, +mate",
+    );
+    expect(toolSummary(`${P}analyze`, {}, analysis(-10000, true))).toBe(
       "Analysed the position: best d4, -mate",
     );
   });
@@ -66,6 +69,17 @@ describe("toolSummary", () => {
     );
     expect(toolSummary(`${P}serve_card`, { card_id: 3 }, refused)).toBe(
       "serve_card refused: live_game_active",
+    );
+  });
+
+  it("says a call failed when the SDK marked it, even if the text is not JSON", () => {
+    const failed = [{ type: "text", text: "MCP error -32602: Invalid arguments" }];
+    expect(toolSummary(`${P}show_position`, { fen: "x" }, failed, true)).toBe(
+      "show_position failed",
+    );
+    // Plain text is a success when the flag is absent: read_reference answers in markdown.
+    expect(toolSummary(`${P}read_reference`, { name: "curriculum" }, "# Curriculum")).toBe(
+      "Read the curriculum reference",
     );
   });
 

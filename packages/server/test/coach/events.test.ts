@@ -47,6 +47,39 @@ describe("mapSdkMessage over the recorded stream", () => {
     ]);
   });
 
+  it("carries the SDK's is_error flag on a tool result, and stores it only when set", () => {
+    const result = (isError?: true) =>
+      mapSdkMessage({
+        type: "user",
+        parent_tool_use_id: null,
+        session_id: "s",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "t9",
+              content: [{ type: "text", text: "MCP error -32602: Invalid arguments" }],
+              ...(isError ? { is_error: true } : {}),
+            },
+          ],
+        },
+      } as never);
+    const failed = result(true);
+    expect(failed.events).toEqual([
+      {
+        kind: "tool_result",
+        toolUseId: "t9",
+        output: [{ type: "text", text: "MCP error -32602: Invalid arguments" }],
+        isError: true,
+      },
+    ]);
+    expect(failed.finalized[0]?.content).toMatchObject({ toolUseId: "t9", isError: true });
+    const fine = result();
+    expect(fine.events[0]).toMatchObject({ kind: "tool_result", isError: false });
+    expect(fine.finalized[0]?.content).not.toHaveProperty("isError");
+  });
+
   it("turns an error result into turn_error", () => {
     const [result] = loadRecordedTurns()[0]?.slice(-1) ?? [];
     if (result?.type !== "result" || result.subtype !== "success") throw new Error("fixture shape");

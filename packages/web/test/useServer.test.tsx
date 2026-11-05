@@ -133,6 +133,53 @@ describe("useServer", () => {
     expect(result.current.items[1]).toMatchObject({ type: "tool", result: { output: "done" } });
   });
 
+  it("keeps a failed tool result marked, from the bootstrap and from the live stream", () => {
+    const { result } = mount();
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        transcript: [
+          {
+            id: 1,
+            seq: 1,
+            role: "assistant",
+            kind: "tool_use",
+            content: { toolUseId: "t1", name: "look", input: {} },
+            created_at: "t",
+          },
+          {
+            id: 2,
+            seq: 2,
+            role: "user",
+            kind: "tool_result",
+            content: { toolUseId: "t1", output: "boom", isError: true },
+            created_at: "t",
+          },
+        ],
+        activity: null,
+      }),
+    );
+    expect(result.current.items[0]).toMatchObject({ result: { output: "boom", isError: true } });
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "chat",
+        message_id: 9,
+        seq: 9,
+        event: { kind: "tool_use", tool_use_id: "t2", name: "look", input: {} },
+      }),
+    );
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "chat",
+        message_id: 10,
+        seq: 10,
+        event: { kind: "tool_result", tool_use_id: "t2", output: "boom", is_error: true },
+      }),
+    );
+    expect(result.current.items[1]).toMatchObject({ result: { output: "boom", isError: true } });
+  });
+
   it("resets transcript and approvals on reconnect and resends nothing", () => {
     const { result } = mount();
     act(() => FakeSocket.latest.open());
