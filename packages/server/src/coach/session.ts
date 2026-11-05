@@ -67,10 +67,11 @@ interface OpenToolCall {
   startedAt: number;
 }
 
-// A message handed to the SDK. The SDK answers them one at a time in order, so the oldest one
-// still open is the turn every tool call and the next turn end belong to.
+// A message handed to the SDK, open until a result names its uuid. The SDK may answer several
+// queued messages with one result; without uuids in the result, the oldest open one is assumed.
 interface QueuedTurn {
   turn: number;
+  uuid: string;
   queuedAt: number;
 }
 
@@ -201,11 +202,13 @@ export class CoachSession {
   private deliver(text: string, origin: LogFields): void {
     this.busy = true;
     this.turn += 1;
-    this.queuedTurns.push({ turn: this.turn, queuedAt: performance.now() });
+    const uuid = randomUUID();
+    this.queuedTurns.push({ turn: this.turn, uuid, queuedAt: performance.now() });
     // Logged when queued; the turn may wait behind an answer still being written.
     this.log.info("coach.turn_start", {
       coach_session_id: this.row?.id,
       turn: this.turn,
+      message_uuid: uuid,
       queued_behind: this.queuedTurns.length - 1,
       ...origin,
       message: text,
@@ -214,6 +217,7 @@ export class CoachSession {
       type: "user",
       message: { role: "user", content: text },
       parent_tool_use_id: null,
+      uuid: uuid as `${string}-${string}-${string}-${string}-${string}`,
     });
   }
 
@@ -425,17 +429,20 @@ export class CoachSession {
     }
   }
 
-  // A turn runs from when it was queued or when the one before it ended, whichever is later.
+  // A turn runs from when its first message was queued or when the turn before it ended, whichever
+  // is later. A result that names no message this session sent (an SDK-internal turn) closes none.
   private closeTurn(
-    turn: LogFields,
+    base: LogFields,
     event: Extract<CoachEvent, { kind: "turn_end" | "turn_error" }>,
   ): void {
     const now = performance.now();
-    const current = this.queuedTurns.shift();
-    const startedAt = current ? Math.max(current.queuedAt, this.lastTurnEndedAt) : now;
+    const closed = this.takeAnswered(event.answered);
+    const first = closed[0];
+    const startedAt = first ? Math.max(first.queuedAt, this.lastTurnEndedAt) : null;
+    const turn = { ...base, turn: first?.turn ?? null, turns: closed.map((open) => open.turn) };
     const timing = {
-      duration_ms: Math.round(now - startedAt),
-      waited_ms: current ? Math.round(startedAt - current.queuedAt) : 0,
+      duration_ms: startedAt === null ? null : Math.round(now - startedAt),
+      waited_ms: first && startedAt !== null ? Math.round(startedAt - first.queuedAt) : null,
     };
     this.lastTurnEndedAt = now;
     if (event.kind === "turn_error") {
@@ -448,6 +455,17 @@ export class CoachSession {
       input_tokens: event.usage.inputTokens,
       output_tokens: event.usage.outputTokens,
     });
+  }
+
+  private takeAnswered(answered: string[] | undefined): QueuedTurn[] {
+    if (!answered || answered.length === 0) {
+      const oldest = this.queuedTurns.shift();
+      return oldest ? [oldest] : [];
+    }
+    const closed = this.queuedTurns.filter((open) => answered.includes(open.uuid));
+    const left = this.queuedTurns.filter((open) => !answered.includes(open.uuid));
+    this.queuedTurns.splice(0, this.queuedTurns.length, ...left);
+    return closed;
   }
 
   private emit(event: CoachEvent): void {

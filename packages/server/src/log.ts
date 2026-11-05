@@ -52,16 +52,17 @@ function cutUtf8(text: string, maxBytes: number): string {
 }
 
 // A BigInt or a cycle would make JSON.stringify throw and the whole line unreadable; both are
-// written as text instead, so the line stays JSON.
+// written as text instead, so the line stays JSON. Only an object inside itself is a cycle: one
+// shared by two fields is written twice, as it is.
 function safeJson(value: unknown): string {
-  const seen = new WeakSet<object>();
+  const ancestors: object[] = [];
   return (
-    JSON.stringify(value, (_key, item: unknown) => {
+    JSON.stringify(value, function (this: unknown, _key: string, item: unknown) {
       if (typeof item === "bigint") return item.toString();
-      if (typeof item === "object" && item !== null) {
-        if (seen.has(item)) return "[Circular]";
-        seen.add(item);
-      }
+      if (typeof item !== "object" || item === null) return item;
+      while (ancestors.length > 0 && ancestors.at(-1) !== this) ancestors.pop();
+      if (ancestors.includes(item)) return "[Circular]";
+      ancestors.push(item);
       return item;
     }) ?? ""
   );

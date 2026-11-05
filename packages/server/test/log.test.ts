@@ -92,12 +92,15 @@ describe("lines that would break", () => {
     const log = createFileLog({ dir, clock: at("2026-11-05T12:00:00Z"), echo: () => {} });
     const cycle: Record<string, unknown> = { name: "loop" };
     cycle.self = cycle;
-    log.info("odd", { big: 12n, cycle });
+    const shared = { san: "e4" };
+    log.info("odd", { big: 12n, cycle, first: shared, again: [shared] });
     const [line] = readLines(dir, "2026-11-05");
     expect(line).toMatchObject({
       event: "odd",
       big: "12",
       cycle: { name: "loop", self: "[Circular]" },
+      first: { san: "e4" },
+      again: [{ san: "e4" }],
     });
   });
 });

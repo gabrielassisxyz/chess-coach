@@ -53,6 +53,30 @@ describe("postReport", () => {
   });
 });
 
+describe("fitReport", () => {
+  it("cuts the longer field first, so a long stack does not eat a short message", () => {
+    const body = JSON.parse(
+      fitReport({ level: "error", event: "e", message: "what broke", stack: "s".repeat(40_000) }),
+    ) as ClientReport;
+    expect(body.message).toBe("what broke");
+    expect((body.stack ?? "").length).toBeGreaterThan(1000);
+  });
+
+  it("replaces a context too large to send, and keeps the message", () => {
+    const body = fitReport({
+      level: "warn",
+      event: "malformed_frame",
+      message: "bad frame",
+      context: { frame: "x".repeat(20_000) },
+    });
+    expect(new TextEncoder().encode(body).length).toBeLessThanOrEqual(15 * 1024);
+    expect(JSON.parse(body)).toMatchObject({
+      message: "bad frame",
+      context: { dropped: "context too large" },
+    });
+  });
+});
+
 describe("installClientLog", () => {
   it("reports uncaught errors and rejections, and stops after uninstall", () => {
     const target = new EventTarget() as unknown as Window;

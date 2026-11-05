@@ -12,21 +12,39 @@ export type ReportSender = (report: ClientReport) => void;
 
 // The server refuses a report over 16 KiB, so the whole body is kept under this, in bytes.
 const MAX_BODY_BYTES = 15 * 1024;
+const MAX_CONTEXT_BYTES = 4 * 1024;
 // A page stuck in an error loop must not flood the server's log.
 const MAX_REPORTS_PER_PAGE = 200;
 
 const bytes = (text: string): number => new TextEncoder().encode(text).length;
 
-// Halves the stack, then the message, until the body fits: a cut report beats a refused one.
+// Halves the longer of the message and the stack until the body fits, with an oversized context
+// replaced by a note first: a cut report beats a refused one.
 export function fitReport(report: ClientReport): string {
   let message = report.message;
-  let stack = report.stack;
-  let body = JSON.stringify({ ...report, message, ...(stack ? { stack } : {}) });
+  let stack = report.stack ?? "";
+  // A context is a few fields; one this big would crowd out the message it explains.
+  const context =
+    report.context && bytes(JSON.stringify(report.context)) > MAX_CONTEXT_BYTES
+      ? { dropped: "context too large" }
+      : report.context;
+  const render = (): string =>
+    JSON.stringify({
+      level: report.level,
+      event: report.event,
+      message,
+      ...(stack ? { stack } : {}),
+      ...(context ? { context } : {}),
+    });
+  let body = render();
   while (bytes(body) > MAX_BODY_BYTES) {
-    if (stack && stack.length > 64) stack = stack.slice(0, Math.floor(stack.length / 2));
-    else message = message.slice(0, Math.floor(message.length / 2));
-    body = JSON.stringify({ ...report, message, ...(stack ? { stack } : {}) });
-    if (message.length === 0 && (!stack || stack.length <= 64)) break;
+    if (message.length === 0 && stack.length === 0) break;
+    if (stack.length > message.length) {
+      stack = stack.slice(0, Math.floor(stack.length / 2));
+    } else {
+      message = message.slice(0, Math.floor(message.length / 2));
+    }
+    body = render();
   }
   return body;
 }

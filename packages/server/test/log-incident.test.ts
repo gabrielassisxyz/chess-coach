@@ -135,6 +135,16 @@ describe("the 2026-11-05 incident, read back from the log alone", () => {
     turns.push(coachTurn(refused?.content));
     await coach.send("why was e5 bad?");
     await vi.waitFor(() => expect(log.named("coach.turn_end")).toHaveLength(1));
+    ws.send(JSON.stringify({ type: "resign", command_id: "r1" }));
+    await vi.waitFor(() => expect(log.named("game.finished")).toHaveLength(1));
+    ws.send(
+      JSON.stringify({ type: "create_cards", command_id: "c1", game_id: game.current()?.id }),
+    );
+    await vi.waitFor(() => expect(log.named("review.cards_created")).toHaveLength(1));
+    expect(log.named("review.cards_created")[0]?.fields).toMatchObject({
+      game_id: game.current()?.id,
+      result: { type: "cards_created", count: expect.any(Number) },
+    });
     ws.terminate();
 
     const moves = log.named("game.player_move").map((entry) => entry.fields);
@@ -150,6 +160,8 @@ describe("the 2026-11-05 incident, read back from the log alone", () => {
       "move",
       "move",
       "move",
+      "resign",
+      "create_cards",
     ]);
 
     const call = log.named("coach.tool_call")[0]?.fields;

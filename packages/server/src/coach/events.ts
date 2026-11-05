@@ -11,8 +11,8 @@ export type CoachEvent =
   | { kind: "text_delta"; text: string }
   | { kind: "tool_use"; toolUseId: string; name: string; input: unknown }
   | { kind: "tool_result"; toolUseId: string; output: unknown; isError: boolean }
-  | { kind: "turn_end"; usage: TurnUsage }
-  | { kind: "turn_error"; message: string };
+  | { kind: "turn_end"; usage: TurnUsage; answered?: string[] }
+  | { kind: "turn_error"; message: string; answered?: string[] };
 
 // A finalized item is what the transcript stores: one per completed block, never per delta.
 export interface FinalizedItem {
@@ -79,17 +79,26 @@ function mapStreamEvent(event: BetaRawMessageStreamEvent): MappedMessage {
   return { events: [{ kind: "text_delta", text: event.delta.text }], finalized: [] };
 }
 
+// The uuids of the messages a result answered; several when the SDK ran them as one turn.
+function answeredBy(message: { user_message_uuid?: string; user_message_uuids?: string[] }) {
+  if (message.user_message_uuids && message.user_message_uuids.length > 0) {
+    return { answered: message.user_message_uuids };
+  }
+  return message.user_message_uuid ? { answered: [message.user_message_uuid] } : {};
+}
+
 function mapResult(message: Extract<SDKMessage, { type: "result" }>): MappedMessage {
+  const answered = answeredBy(message);
   if (message.subtype === "success" && !message.is_error) {
     const usage = {
       inputTokens: message.usage.input_tokens,
       outputTokens: message.usage.output_tokens,
     };
-    return { events: [{ kind: "turn_end", usage }], finalized: [] };
+    return { events: [{ kind: "turn_end", usage, ...answered }], finalized: [] };
   }
   const detail =
     message.subtype === "success" ? message.result : message.errors.join("; ") || message.subtype;
-  return { events: [{ kind: "turn_error", message: detail }], finalized: [] };
+  return { events: [{ kind: "turn_error", message: detail, ...answered }], finalized: [] };
 }
 
 // Sub-agent traffic (parent_tool_use_id set) never reaches the student; the coach has no sub-agents.
