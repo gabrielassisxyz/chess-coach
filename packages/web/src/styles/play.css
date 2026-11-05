@@ -1,0 +1,294 @@
+/* The Play screen: game header, move list and controls in the left column; eval bar, labels and board in the centre. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.play__header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.play__game {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.play__versus {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.movelist {
+  flex: 1 1 0;
+  min-height: 8rem;
+  margin: 0;
+  padding: var(--space-2);
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.movelist__row {
+  display: grid;
+  grid-template-columns: 2rem 1fr 1fr;
+  align-items: center;
+}
+
+.movelist__number {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.movelist__ply {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.movelist__ply[aria-current="true"] {
+  background: var(--surface-2);
+}
+
+.movelist__ply[data-flagged="true"] {
+  background: var(--quality-blunder-bg);
+}
+
+.movelist__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.movelist__dot--best {
+  background: var(--quality-best);
+}
+
+.movelist__dot--great {
+  background: var(--quality-great);
+}
+
+.movelist__dot--good {
+  background: var(--quality-good);
+}
+
+.movelist__dot--inaccuracy {
+  background: var(--quality-inaccuracy);
+}
+
+.movelist__dot--mistake {
+  background: var(--quality-mistake);
+}
+
+.movelist__dot--blunder {
+  background: var(--quality-blunder);
+}
+
+.movelist__mark {
+  font-size: var(--text-xs);
+}
+
+.movelist__mark--inaccuracy {
+  color: var(--quality-inaccuracy);
+}
+
+.movelist__mark--mistake {
+  color: var(--quality-mistake);
+}
+
+.movelist__mark--blunder {
+  color: var(--quality-blunder);
+}
+
+.blunder-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--quality-blunder-bg);
+}
+
+.blunder-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.blunder-card__kind {
+  color: var(--quality-blunder);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.blunder-card__move {
+  color: var(--quality-blunder);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.blunder-card__detail {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-label);
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.controls__row--play {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.controls__wide {
+  grid-column: 1 / -1;
+}
+
+.controls .button {
+  height: 32px;
+  padding: 0 var(--space-3);
+}
+
+.play .new-game {
+  flex-direction: column;
+  align-items: stretch;
+  margin-top: 0;
+}
+
+.board-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  font-size: var(--text-sm);
+}
+
+.board-settings__themes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.board-settings__themes legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.board-settings__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/*
+ * The centre column: a number over the eval track beside a board that takes whatever the stage
+ * leaves after the two label rows. The board is square, so its side is the smaller of what the
+ * width and the height allow.
+ */
+.stage .table {
+  --table-row: 32px;
+  --eval-width: 10px;
+  --eval-column: 2.5rem;
+  --table-gap: var(--space-2);
+  --side: max(
+    12rem,
+    min(100cqw - var(--eval-column) - var(--table-gap), 100cqh - 2 * var(--table-row))
+  );
+  display: grid;
+  grid-template-columns: var(--eval-column) var(--side);
+  grid-template-rows: var(--table-row) var(--side) var(--table-row);
+  column-gap: var(--table-gap);
+}
+
+.stage .table .eval {
+  grid-column: 1;
+  grid-row: 1 / 3;
+}
+
+.table__top,
+.table__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.table__top {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.stage .table .board {
+  grid-column: 2;
+  grid-row: 2;
+  width: 100%;
+}
+
+.table__bottom {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.table__player {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.table__player strong {
+  font-weight: 500;
+}
+
+.table__rating {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+
+.board-gear {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  color: var(--text-2);
+}
+
+.coach-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.coach-actions .button {
+  height: 32px;
+}

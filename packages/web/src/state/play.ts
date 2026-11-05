@@ -61,9 +61,21 @@ export function evalView(moves: ActivityMove[]): EvalView | null {
     const side = raw > 0 ? "you" : "the engine";
     return { fillPercent, label: "M", description: `Mate for ${side}` };
   }
-  const pawns = (clamped / 100).toFixed(1);
-  const label = clamped > 0 ? `+${pawns}` : pawns;
+  const label = signedPawns(clamped);
   return { fillPercent, label, description: `Evaluation ${label} for you` };
+}
+
+// A true minus sign, so the number lines up with the plus in a mono column.
+export function signedPawns(cp: number): string {
+  const text = (Math.abs(cp) / 100).toFixed(1);
+  if (cp > 0) return `+${text}`;
+  return cp < 0 ? `\u2212${text}` : text;
+}
+
+export function plyLabel(ply: number, san: string, spaced = false): string {
+  const number = Math.ceil(ply / 2);
+  const dots = ply % 2 === 1 ? "." : "...";
+  return `${number}${dots}${spaced ? " " : ""}${san}`;
 }
 
 export interface MoveRow {
@@ -112,3 +124,44 @@ export const CLASSIFICATION_LABEL: Record<NonNullable<ActivityMove["classificati
   mistake: "Mistake",
   blunder: "Blunder",
 };
+
+export type Classification = NonNullable<ActivityMove["classification"]>;
+
+// Only the three grades that cost something get text beside the dot; the rest stay a dot.
+export const MARK_TEXT: Partial<Record<Classification, string>> = {
+  inaccuracy: "?!",
+  mistake: "?",
+  blunder: "??",
+};
+
+export function lastBlunder(moves: ActivityMove[]): ActivityMove | null {
+  return moves.findLast((move) => move.is_player && move.classification === "blunder") ?? null;
+}
+
+export interface BlunderFacts {
+  move: string;
+  played: string | null;
+  best: string | null;
+  lost: string | null;
+}
+
+// The server reports evaluations from the student's side, so the best line was worth what the
+// move left plus what it threw away.
+export function blunderFacts(move: ActivityMove): BlunderFacts {
+  const { eval_after_cp: after, cp_loss: loss, best_move_san: best } = move;
+  const bestEval = after !== null && loss !== null ? after + loss : null;
+  return {
+    move: plyLabel(move.ply, move.san, true),
+    played: after === null ? null : signedPawns(after),
+    best: best === null ? null : bestEval === null ? best : `${best} (${signedPawns(bestEval)})`,
+    lost: loss === null ? null : (loss / 100).toFixed(1),
+  };
+}
+
+// The offer to take a blunder back exists only while undo does and the move it would undo is the
+// graded blunder, so it lapses by itself once the game moves on.
+export function takeBackOffer(activity: ActivityState | null): ActivityMove | null {
+  if (activity?.kind !== "live_game" || !controlState(activity).undo) return null;
+  const last = activity.moves.findLast((move) => move.is_player);
+  return last?.classification === "blunder" ? last : null;
+}
