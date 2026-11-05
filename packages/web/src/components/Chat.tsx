@@ -91,6 +91,8 @@ export function Chat({
   const lastCoachIndex = items.findLastIndex(
     (item) => item.type === "text" && item.role === "assistant",
   );
+  const lastCoach = lastCoachIndex === -1 ? null : items[lastCoachIndex];
+  const barLine = lastCoach?.type === "text" ? lastCoach.text : idleLabel;
 
   if (!open) {
     return (
@@ -103,6 +105,9 @@ export function Chat({
         >
           {unread ? <span className="coach__dot" data-testid="coach-unread" /> : null}
           <span className="coach__strip-label">Coach</span>
+          <span className="coach__bar-line" data-testid="coach-bar-line">
+            {barLine}
+          </span>
         </button>
       </aside>
     );
