@@ -62,6 +62,15 @@ describe("fitReport", () => {
     expect((body.stack ?? "").length).toBeGreaterThan(1000);
   });
 
+  it("keeps a useful stack whole when the message is what is too long", () => {
+    const stack = "at frame\n".repeat(200);
+    const body = JSON.parse(
+      fitReport({ level: "error", event: "e", message: "m".repeat(40_000), stack }),
+    ) as ClientReport;
+    expect(body.stack).toBe(stack);
+    expect(body.message.length).toBeGreaterThan(1000);
+  });
+
   it("replaces a context too large to send, and keeps the message", () => {
     const body = fitReport({
       level: "warn",

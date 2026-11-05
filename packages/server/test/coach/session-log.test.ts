@@ -108,6 +108,45 @@ describe("coach turns in the log", () => {
     await session.stop();
   });
 
+  it("closes nothing for a result with no uuids once results have named their messages", async () => {
+    const { session, ends } = setup([
+      async function* (sent, wait) {
+        await wait(1);
+        yield result([String(sent[0]?.uuid)]);
+        await wait(2);
+        // A turn the SDK ran on its own carries no uuid at all.
+        yield result(null);
+        yield result([String(sent[1]?.uuid)]);
+      },
+    ]);
+    await session.start();
+    await session.send("one");
+    await vi.waitFor(() => expect(ends()).toHaveLength(1));
+    await session.send("two");
+    await vi.waitFor(() => expect(ends()).toHaveLength(3));
+    expect(ends().map((end) => end.turns)).toEqual([[1], [], [2]]);
+    await session.stop();
+  });
+
+  it("names the oldest open turn when a stream dies with two queued", async () => {
+    const { session, log } = setup([
+      // biome-ignore lint/correctness/useYield: this stream dies before it answers anything
+      async function* (_sent, wait) {
+        await wait(2);
+        throw new Error("cli exited");
+      },
+    ]);
+    await session.start();
+    await session.send("one");
+    await session.send("two");
+    await vi.waitFor(() => expect(log.named("coach.turn_error")).toHaveLength(1));
+    expect(log.named("coach.turn_error")[0]?.fields).toMatchObject({
+      turn: 1,
+      queued_turns: [1, 2],
+    });
+    await session.stop();
+  });
+
   it("splits a queued turn's time into the wait behind the previous answer and its own", async () => {
     const { session, log, ends } = setup([
       async function* (sent, wait) {

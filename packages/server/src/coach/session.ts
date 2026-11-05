@@ -107,6 +107,8 @@ export class CoachSession {
   private lastTurnEndedAt = 0;
   // Set when notifications arrived while the coach was answering, so the next flush says so.
   private heldWhileBusy = false;
+  // Once a result has named the messages it answered, one that names none is the SDK's own turn.
+  private resultsNameMessages = false;
   private readonly openTools = new Map<string, OpenToolCall>();
   // True from handing the SDK a message until its turn ends: while it is set, notifications wait
   // and are folded into one message instead of queueing behind the answer being written.
@@ -459,9 +461,11 @@ export class CoachSession {
 
   private takeAnswered(answered: string[] | undefined): QueuedTurn[] {
     if (!answered || answered.length === 0) {
+      if (this.resultsNameMessages) return [];
       const oldest = this.queuedTurns.shift();
       return oldest ? [oldest] : [];
     }
+    this.resultsNameMessages = true;
     const closed = this.queuedTurns.filter((open) => answered.includes(open.uuid));
     const left = this.queuedTurns.filter((open) => !answered.includes(open.uuid));
     this.queuedTurns.splice(0, this.queuedTurns.length, ...left);
