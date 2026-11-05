@@ -1,11 +1,12 @@
 import type { TrainingActivity } from "@chess-coach/shared";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import type { ServerApi } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
-import { trainingView } from "../src/state/practice.js";
+import { NONE, trainingView } from "../src/state/practice.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
+import { motifCounts, progressOf } from "./practice-fixtures.js";
 
 afterEach(cleanup);
 
@@ -114,41 +115,167 @@ const spyBoard: BoardFactory = (_element, config) => {
 
 const noMotifs = async () => [];
 
-describe("mode chooser", () => {
-  it("lists the motifs in the database and starts a drill for the chosen one", async () => {
+const hubProps = {
+  fetchProgress: async () => progressOf(),
+  fetchMotifs: async () => motifCounts,
+};
+
+describe("the hub", () => {
+  it("shows the due numbers from the progress summary", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-03-01T12:00:00") });
+    try {
+      render(<Practice server={api(null)} {...hubProps} />);
+      const due = await screen.findByRole("region", { name: "Due cards" });
+      expect(within(due).getByText("4")).toBeTruthy();
+      expect(due.textContent).toContain("due now · from 3 games");
+      expect(within(due).getByText("Blunders").nextSibling?.textContent).toBe("2");
+      expect(within(due).getByText("Mistakes").nextSibling?.textContent).toBe("1");
+      expect(within(due).getByText("Teaching").nextSibling?.textContent).toBe("1");
+      expect(within(due).queryByText("Inaccuracies")).toBeNull();
+      expect(within(due).getByText("Next batch 3").nextSibling?.textContent).toMatch(
+        /^(today|tomorrow|[A-Z][a-z]{2}) \d\d:\d\d$/,
+      );
+      expect(within(due).getByText("Remembered, 30 days").nextSibling?.textContent).toBe("83%");
+      expect(within(due).getByRole("button", { name: "Review 4 cards" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lists a row per motif with its 30-day success and leaves the opening motifs to their own card", async () => {
+    render(<Practice server={api(null)} {...hubProps} />);
+    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
+    await within(card).findByRole("radio", { name: /fork/ });
+    expect(
+      within(card).getByRole("radio", { name: /fork/ }).closest("label")?.textContent,
+    ).toContain("71%");
+    expect(
+      within(card).getByRole("radio", { name: /pin/ }).closest("label")?.textContent,
+    ).toContain(NONE);
+    expect(within(card).queryByRole("radio", { name: /opening/ })).toBeNull();
+    const empty = within(card).getByRole("radio", { name: /smothered/ }) as HTMLInputElement;
+    expect(empty.disabled).toBe(true);
+    expect(empty.closest("label")?.textContent).toContain(NONE);
+  });
+
+  it("starts the chosen motif at the chosen size", async () => {
     const server = api(null);
-    const fetchMotifs = async () => [
-      { motif: "fork", count: 28 },
-      { motif: "pin", count: 9 },
-    ];
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={fetchMotifs} />);
-    await waitFor(() => expect(screen.getByRole("option", { name: "fork (28)" })).toBeTruthy());
-    fireEvent.change(screen.getByLabelText("Motif"), { target: { value: "fork" } });
-    fireEvent.click(screen.getByRole("button", { name: "Drill puzzles" }));
+    render(<Practice server={server} {...hubProps} />);
+    await screen.findByRole("radio", { name: /fork/ });
+    fireEvent.click(screen.getByRole("radio", { name: /fork/ }));
+    fireEvent.click(screen.getByRole("button", { name: "20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start fork" }));
     expect(server.send).toHaveBeenCalledWith({
       type: "start_training",
       mode: "puzzles",
       motif: "fork",
+      size: 20,
     });
   });
 
-  it("starts an opening drill for the chosen colour", () => {
+  it("drills the openings per colour from the motif counts, disabling a colour with none", async () => {
     const server = api(null);
-    render(<Practice server={server} fetchMotifs={noMotifs} />);
-    fireEvent.change(screen.getByLabelText("Colour"), { target: { value: "black" } });
-    fireEvent.click(screen.getByRole("button", { name: "Drill openings" }));
+    render(<Practice server={server} {...hubProps} />);
+    const card = await screen.findByRole("region", { name: "Opening drill" });
+    await within(card).findByText("12 positions");
+    expect(
+      (within(card).getByRole("button", { name: "Drill as Black" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    fireEvent.click(within(card).getByRole("button", { name: "Drill as White" }));
     expect(server.send).toHaveBeenCalledWith({
       type: "start_training",
       mode: "openings",
-      color: "black",
+      color: "white",
+      size: 10,
     });
   });
 
-  it("starts the due-card review without a motif", () => {
+  it("starts the due-card review with the default size", async () => {
     const server = api(null);
-    render(<Practice server={server} fetchMotifs={noMotifs} />);
-    fireEvent.click(screen.getByRole("button", { name: "Review due cards" }));
-    expect(server.send).toHaveBeenCalledWith({ type: "start_training", mode: "srs" });
+    render(<Practice server={server} {...hubProps} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review 4 cards" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "start_training", mode: "srs", size: 10 });
+  });
+
+  it("says the student is caught up, with the next batch, when nothing is due", async () => {
+    const server = api(null);
+    const empty = progressOf({ due_now: 0, due_by_classification: {}, due_from_games: 0 });
+    render(<Practice server={server} {...hubProps} fetchProgress={async () => empty} />);
+    const due = await screen.findByRole("region", { name: "Due cards" });
+    await within(due).findByText(/you're caught up/);
+    expect(within(due).getByText("Next batch 3")).toBeTruthy();
+    expect(within(due).queryByRole("button")).toBeNull();
+  });
+});
+
+describe("a hub with a problem", () => {
+  const missing = async () => ({
+    status: "ok" as const,
+    version: "test",
+    ready: false,
+    reason: "stockfish_missing",
+  });
+
+  it("explains a missing engine, disables the three starts and retries the health check", async () => {
+    const fetchHealth = vi.fn(missing);
+    render(<Practice server={api(null)} {...hubProps} fetchHealth={fetchHealth} />);
+    const card = await screen.findByRole("alert", { name: "Engine missing" });
+    expect(card.textContent).toContain("Stockfish isn't running");
+    for (const name of ["Review 4 cards", "Start any motif", "Drill as White", "Drill as Black"]) {
+      const button = await screen.findByRole("button", { name });
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+    }
+    const before = fetchHealth.mock.calls.length;
+    fireEvent.click(within(card).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(fetchHealth.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it("copies the fix command", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<Practice server={api(null)} {...hubProps} fetchHealth={missing} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy the command" }));
+    expect(writeText).toHaveBeenCalledWith("sudo pacman -S stockfish");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
+  });
+
+  it("offers Check again for a coach that is not logged in, and shows it again on the next failure", async () => {
+    const authFailure = {
+      type: "turn_error" as const,
+      key: "e1",
+      message: "Not logged in. Run /login",
+    };
+    const server = api(null);
+    const view = render(<Practice server={{ ...server, items: [authFailure] }} {...hubProps} />);
+    const card = await screen.findByRole("alert", { name: "Coach not logged in" });
+    expect(card.textContent).toContain("sign in with /login");
+    fireEvent.click(within(card).getByRole("button", { name: "Check again" }));
+    expect(screen.queryByRole("alert", { name: "Coach not logged in" })).toBeNull();
+    view.rerender(
+      <Practice
+        server={{ ...server, items: [authFailure, { ...authFailure, key: "e2" }] }}
+        {...hubProps}
+      />,
+    );
+    expect(await screen.findByRole("alert", { name: "Coach not logged in" })).toBeTruthy();
+  });
+
+  it("shows no problem card when the engine is ready and the coach answered", async () => {
+    render(
+      <Practice
+        server={{
+          ...api(null),
+          items: [
+            { type: "turn_error", key: "e1", message: "Not logged in" },
+            { type: "text", key: "t1", role: "assistant", text: "Hello" },
+          ],
+        }}
+        {...hubProps}
+        fetchHealth={async () => ({ status: "ok", version: "test", ready: true })}
+      />,
+    );
+    await screen.findByRole("button", { name: "Review 4 cards" });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 

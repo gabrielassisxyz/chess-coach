@@ -1,47 +1,38 @@
 import type { PromotionPiece, TrainingMode } from "@chess-coach/shared";
 import { useEffect, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
+import { CoachLoginCard } from "../components/CoachLoginCard.js";
+import { EngineMissingCard } from "../components/EngineMissingCard.js";
+import { PracticeHub } from "../components/PracticeHub.js";
+import { type FetchHealth, useHealth } from "../hooks/useHealth.js";
+import { useLoaded } from "../hooks/useLoaded.js";
 import type { ServerApi } from "../hooks/useServer.js";
+import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
+import { serviceNotice } from "../state/health.js";
 import {
   answerUciOf,
   boardOf,
+  DEFAULT_DRILL_SIZE,
+  type DrillSize,
   type FetchMotifs,
   fetchMotifsFromServer,
-  type MotifCount,
   OFFLINE_START_TEXT,
   startFailureText,
   trainingOf,
   trainingView,
 } from "../state/practice.js";
+import { type FetchProgress, fetchProgressFromServer } from "../state/progress-api.js";
 
 export interface PracticeProps {
   server: ServerApi;
   createBoard?: BoardFactory | undefined;
   fetchMotifs?: FetchMotifs;
+  fetchProgress?: FetchProgress;
+  fetchHealth?: FetchHealth | undefined;
 }
 
 const QUALITIES = [0, 1, 2, 3, 4, 5] as const;
 const ANY_MOTIF = "";
-
-type Motifs =
-  | { status: "loading" }
-  | { status: "failed" }
-  | { status: "ready"; list: MotifCount[] };
-
-function useMotifs(fetchMotifs: FetchMotifs): Motifs {
-  const [motifs, setMotifs] = useState<Motifs>({ status: "loading" });
-  useEffect(() => {
-    let live = true;
-    fetchMotifs().then(
-      (list) => live && setMotifs({ status: "ready", list }),
-      () => live && setMotifs({ status: "failed" }),
-    );
-    return () => {
-      live = false;
-    };
-  }, [fetchMotifs]);
-  return motifs;
-}
 
 interface Starting {
   mode: TrainingMode;
@@ -51,7 +42,7 @@ interface Starting {
 
 // A start has no reply of its own: success is the activity arriving, refusal is an error event,
 // and a dropped socket ends the wait because the answer can no longer come.
-function useStartOutcome(server: ServerApi) {
+function useStartOutcome(server: ServerApi, size: DrillSize) {
   const [starting, setStarting] = useState<Starting | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -76,7 +67,7 @@ function useStartOutcome(server: ServerApi) {
         : mode === "openings"
           ? { mode, color: motif as "white" | "black" }
           : { mode, ...(motif === ANY_MOTIF ? {} : { motif }) };
-    if (server.send({ type: "start_training", ...command })) {
+    if (server.send({ type: "start_training", ...command, size })) {
       setStarting({ mode, motif, errorsBefore: server.errorCount });
     } else {
       setFailure(OFFLINE_START_TEXT);
@@ -85,96 +76,51 @@ function useStartOutcome(server: ServerApi) {
   return { starting, failure, begin };
 }
 
-function motifNote(motifs: Motifs): string | null {
-  if (motifs.status === "loading") return "Loading motifs.";
-  if (motifs.status === "failed") {
-    return "The motif list could not be loaded. You can still drill with Any motif.";
+// The login card clears once the student has checked again, and returns on the next auth failure.
+function useCoachLogin(server: ServerApi): { fix: string; checkAgain(): void } | null {
+  const [seen, setSeen] = useState<string | null>(null);
+  const last = server.items.findLast((item) => item.type === "turn_error" || item.type === "text");
+  if (last?.type !== "turn_error" || !isCoachAuthError(last.message) || last.key === seen) {
+    return null;
   }
-  return motifs.list.length === 0
-    ? "No puzzles are loaded. Restart the server to load the puzzle library."
-    : null;
+  const key = last.key;
+  return { fix: coachErrorHint(last.message) ?? "", checkAgain: () => setSeen(key) };
 }
 
-function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: FetchMotifs }) {
-  const motifs = useMotifs(fetchMotifs);
-  const [motif, setMotif] = useState(ANY_MOTIF);
-  const [openingColor, setOpeningColor] = useState<"white" | "black">("white");
-  const { starting, failure, begin } = useStartOutcome(server);
-  const busy = starting !== null;
-  const list = motifs.status === "ready" ? motifs.list : [];
-  const note = motifNote(motifs);
-  const label = (mode: TrainingMode, idle: string): string =>
-    starting?.mode === mode ? "Starting" : idle;
+function Hub({
+  server,
+  fetchMotifs,
+  fetchProgress,
+  fetchHealth,
+}: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress">> &
+  Pick<PracticeProps, "fetchHealth">) {
+  const motifs = useLoaded(fetchMotifs);
+  const progress = useLoaded(fetchProgress);
+  const [size, setSize] = useState<DrillSize>(DEFAULT_DRILL_SIZE);
+  const [retries, setRetries] = useState(0);
+  const notice = serviceNotice(useHealth(retries, fetchHealth ? { fetchHealth } : {}));
+  const login = useCoachLogin(server);
+  const { starting, failure, begin } = useStartOutcome(server, size);
+  const engineMissing = notice?.reason === "stockfish_missing";
 
   return (
-    <div className="practice__chooser" aria-busy={busy}>
-      <h2 className="screen__title practice__title">Practice</h2>
-      <section className="practice__mode" aria-label="Review due cards">
-        <p>Answer the cards that are due, then rate how well you knew each one.</p>
-        <button
-          type="button"
-          className="button button--primary"
-          disabled={busy}
-          onClick={() => begin("srs", ANY_MOTIF)}
-        >
-          {label("srs", "Review due cards")}
-        </button>
-      </section>
-      <section className="practice__mode" aria-label="Drill puzzles">
-        <label className="practice__field">
-          Motif
-          <select
-            className="input"
-            value={motif}
-            disabled={busy || motifs.status === "loading"}
-            onChange={(event) => setMotif(event.target.value)}
-          >
-            <option value={ANY_MOTIF}>Any motif</option>
-            {list.map((entry) => (
-              <option key={entry.motif} value={entry.motif}>
-                {entry.motif} ({entry.count})
-              </option>
-            ))}
-          </select>
-        </label>
-        {note ? <p role="status">{note}</p> : null}
-        <button
-          type="button"
-          className="button button--primary"
-          disabled={busy}
-          onClick={() => begin("puzzles", motif)}
-        >
-          {label("puzzles", "Drill puzzles")}
-        </button>
-      </section>
-      <section className="practice__mode" aria-label="Drill your openings">
-        <p>Find the best move in the early positions of your own games.</p>
-        <label className="practice__field">
-          Colour
-          <select
-            className="input"
-            value={openingColor}
-            disabled={busy}
-            onChange={(event) => setOpeningColor(event.target.value as "white" | "black")}
-          >
-            <option value="white">White</option>
-            <option value="black">Black</option>
-          </select>
-        </label>
-        <button
-          type="button"
-          className="button button--primary"
-          disabled={busy}
-          onClick={() => begin("openings", openingColor)}
-        >
-          {label("openings", "Drill openings")}
-        </button>
-      </section>
-      {failure ? (
-        <p className="practice__failure" role="alert">
-          {failure}
-        </p>
+    <div className="practice__chooser">
+      <h2 className="screen__title">Practice</h2>
+      <p className="screen__note">Pick a session. The board appears once an item starts.</p>
+      {notice && engineMissing ? (
+        <EngineMissingCard notice={notice} onRetry={() => setRetries((count) => count + 1)} />
       ) : null}
+      {login ? <CoachLoginCard fix={login.fix} onCheckAgain={login.checkAgain} /> : null}
+      <PracticeHub
+        progress={progress}
+        motifs={motifs}
+        engineMissing={engineMissing}
+        starting={starting}
+        failure={failure}
+        size={size}
+        onSize={setSize}
+        onStart={begin}
+      />
     </div>
   );
 }
@@ -183,12 +129,19 @@ export function Practice({
   server,
   createBoard,
   fetchMotifs = fetchMotifsFromServer,
+  fetchProgress = fetchProgressFromServer,
+  fetchHealth,
 }: PracticeProps) {
   const training = trainingOf(server.activity);
   if (!training) {
     return (
       <section className="screen screen--wide practice" aria-label="Practice">
-        <ModeChooser server={server} fetchMotifs={fetchMotifs} />
+        <Hub
+          server={server}
+          fetchMotifs={fetchMotifs}
+          fetchProgress={fetchProgress}
+          fetchHealth={fetchHealth}
+        />
       </section>
     );
   }
