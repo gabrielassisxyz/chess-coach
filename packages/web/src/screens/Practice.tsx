@@ -4,6 +4,7 @@ import { Board, type BoardFactory } from "../components/Board.js";
 import { CoachLoginCard } from "../components/CoachLoginCard.js";
 import { EngineMissingCard } from "../components/EngineMissingCard.js";
 import { PracticeHub } from "../components/PracticeHub.js";
+import { PracticeItem, type PracticeItemActions } from "../components/PracticeItem.js";
 import { type FetchHealth, useHealth } from "../hooks/useHealth.js";
 import { useLoaded } from "../hooks/useLoaded.js";
 import type { ServerApi } from "../hooks/useServer.js";
@@ -31,7 +32,6 @@ export interface PracticeProps {
   fetchHealth?: FetchHealth | undefined;
 }
 
-const QUALITIES = [0, 1, 2, 3, 4, 5] as const;
 const ANY_MOTIF = "";
 
 interface Starting {
@@ -148,6 +148,9 @@ export function Practice({
 
   const view = trainingView(training);
   const activityId = training.activity_id;
+  const explore = (kind: "undo" | "reset"): void => {
+    server.send({ type: "explore", kind, activity_id: activityId });
+  };
   const move = (from: string, to: string, promotion?: PromotionPiece): void => {
     server.send({
       type: "explore",
@@ -158,101 +161,29 @@ export function Practice({
   };
   const answerUci = answerUciOf(training);
   const exposureId = training.exposure_id;
+  const actions: PracticeItemActions = {
+    answer: () => {
+      if (answerUci) server.send({ type: "answer", uci: answerUci, activity_id: activityId });
+    },
+    takeBack: () => explore("undo"),
+    reset: () => explore("reset"),
+    rate: (quality) => {
+      if (exposureId) {
+        server.send({
+          type: "rate_card",
+          exposure_id: exposureId,
+          quality,
+          activity_id: activityId,
+        });
+      }
+    },
+    next: () => server.send({ type: "next_training_item", activity_id: activityId }),
+    end: () => server.send({ type: "end_training", activity_id: activityId }),
+  };
 
   return (
     <>
-      <section className="screen practice" aria-label="Practice">
-        <header className="practice__header">
-          <h2 className="screen__title practice__title">{view.header}</h2>
-          <p className="screen__note" role="status">
-            {view.status}
-            {view.expected ? (
-              <span className="practice__expected"> Expected {view.expected}</span>
-            ) : null}
-          </p>
-        </header>
-        {view.summary ? (
-          <p className="practice__summary" data-testid="summary">
-            Queue finished: {view.summary.solved} solved, {view.summary.failed} failed.
-          </p>
-        ) : null}
-        {view.canRate && exposureId ? (
-          <fieldset className="practice__rating" aria-label="Rate your recall">
-            {QUALITIES.map((quality) => (
-              <button
-                key={quality}
-                type="button"
-                className="button"
-                aria-label={`Rate ${quality}`}
-                onClick={() =>
-                  server.send({
-                    type: "rate_card",
-                    exposure_id: exposureId,
-                    quality,
-                    activity_id: activityId,
-                  })
-                }
-              >
-                {quality}
-              </button>
-            ))}
-          </fieldset>
-        ) : null}
-        {view.canExplore ? (
-          <div className="controls__row">
-            <button
-              type="button"
-              className="button button--primary"
-              disabled={!view.canAnswer || answerUci === null}
-              onClick={() =>
-                answerUci &&
-                server.send({ type: "answer", uci: answerUci, activity_id: activityId })
-              }
-            >
-              Answer
-            </button>
-            <button
-              type="button"
-              className="button"
-              disabled={!view.canAnswer}
-              onClick={() =>
-                server.send({ type: "explore", kind: "undo", activity_id: activityId })
-              }
-            >
-              Take back
-            </button>
-            <button
-              type="button"
-              className="button"
-              disabled={!view.canAnswer}
-              onClick={() =>
-                server.send({ type: "explore", kind: "reset", activity_id: activityId })
-              }
-            >
-              Reset
-            </button>
-          </div>
-        ) : null}
-        <div className="controls__row">
-          {view.summary ? null : (
-            <button
-              type="button"
-              className="button button--primary"
-              disabled={!view.canAdvance}
-              onClick={() => server.send({ type: "next_training_item", activity_id: activityId })}
-            >
-              {view.advanceLabel}
-            </button>
-          )}
-          <button
-            type="button"
-            className="button"
-            onClick={() => server.send({ type: "end_training", activity_id: activityId })}
-          >
-            {view.summary ? "Done" : "End training"}
-          </button>
-        </div>
-      </section>
+      <PracticeItem training={training} view={view} actions={actions} />
       <div className="stage">
         <Board
           activity={boardOf(training)}

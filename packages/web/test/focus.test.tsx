@@ -187,7 +187,7 @@ describe("focus ring", () => {
     chooser.unmount();
 
     const training = render(<Practice server={serverApi(card)} createBoard={inertBoard} />);
-    expect(screen.getAllByRole("button", { name: /^Rate/ })).toHaveLength(6);
+    expect(screen.getAllByRole("button", { name: /^\d (Right|Blank|Wrong|Easy)/ })).toHaveLength(6);
     expect(expectFocusRing(training.container)).toBeGreaterThan(8);
   });
 

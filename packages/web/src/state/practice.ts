@@ -1,6 +1,7 @@
 import type {
   ActivityState,
   ErrorCode,
+  ExploredEvent,
   ProgressResponse,
   TrainingActivity,
   TrainingMode,
@@ -117,9 +118,9 @@ export const STATUS_LABEL: Record<TrainingStatus, string> = {
 };
 
 export interface TrainingView {
-  header: string;
   status: string;
   expected: string | null;
+  answered: boolean;
   canRate: boolean;
   canAdvance: boolean;
   canExplore: boolean;
@@ -132,11 +133,83 @@ export function trainingOf(activity: ActivityState | null): TrainingActivity | n
   return activity?.kind === "training" ? activity : null;
 }
 
-function headerOf(training: TrainingActivity): string {
-  const { item } = training;
-  const place = `${item.position_in_queue} of ${item.queue_length}`;
-  if (item.kind === "card") return `Card ${place}`;
-  return `${item.motif} puzzle ${place}`;
+const MODE_LABEL: Record<TrainingMode, string> = {
+  srs: "Due cards",
+  puzzles: "Puzzles",
+  openings: "Opening drill",
+};
+
+export function breadcrumbOf(training: TrainingActivity): string {
+  const { item, mode } = training;
+  const where = mode === "puzzles" && item.kind === "puzzle" ? ` · ${item.motif}` : "";
+  return `Practice › ${MODE_LABEL[mode]}${where} · ${item.position_in_queue} of ${item.queue_length}`;
+}
+
+export function promptOf(training: TrainingActivity): string {
+  const side = training.item.kind === "card" ? training.item.student_color : training.turn;
+  return `${side === "white" ? "White" : "Black"} to move`;
+}
+
+export function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+export function elapsedSince(servedAt: string, now: number): number {
+  return Math.max(0, now - Date.parse(servedAt));
+}
+
+// The preview is in hours; the buttons say it the way the student thinks about it.
+export function formatInterval(hours: number): string {
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min`;
+  if (hours < 24) return `${Math.round(hours)} h`;
+  return `${Math.round(hours / 24)} d`;
+}
+
+export const RATING_WORDS: Record<number, string> = {
+  0: "Blank \u2014 no idea",
+  1: "Wrong, recognised it",
+  2: "Wrong, nearly there",
+  3: "Right, with effort",
+  4: "Right, hesitated",
+  5: "Easy",
+};
+
+export interface TrailLine {
+  seq: number;
+  text: string;
+  offset: string;
+}
+
+const BACK = "\u2014 back";
+const RESET = "\u2014 reset";
+const ANSWERED = "\u2014 answered";
+
+// Each event carries the line as it stood afterwards, so an undo or a reset is shown against
+// the line it took apart. After an answer the last line is the one that was graded.
+export function trailLines(trail: ExploredEvent[], answered: boolean): TrailLine[] {
+  let previous: string[] = [];
+  return trail.map((event, index) => {
+    const shown = event.kind === "move" ? event.line_san : previous;
+    const mark = event.kind === "undo" ? ` ${BACK}` : event.kind === "reset" ? ` ${RESET}` : "";
+    const graded =
+      answered && event.kind === "move" && index === trail.length - 1 ? ` ${ANSWERED}` : "";
+    previous = event.line_san;
+    return {
+      seq: event.seq,
+      text: `${shown.join(" ")}${mark}${graded}`,
+      offset: `after ${Math.round(event.at_ms / 1000)}s`,
+    };
+  });
+}
+
+// The answer is the first move of the line explored when Answer was pressed, which is where the last event left it.
+export function answeredSanOf(training: TrainingActivity): string | null {
+  return training.exploring.trail.at(-1)?.line_san[0] ?? null;
+}
+
+export function lookedAtMs(training: TrainingActivity): number {
+  return training.exploring.trail.at(-1)?.at_ms ?? 0;
 }
 
 // The board shows the explored position while the item is served in another one.
@@ -163,9 +236,9 @@ export function trainingView(training: TrainingActivity): TrainingView {
   const open = !ended && (status === "prompt" || status === "in_progress");
   const card = item.kind === "card";
   return {
-    header: headerOf(training),
     status: STATUS_LABEL[status],
     expected: training.expected ? (training.expected.san ?? training.expected.uci) : null,
+    answered,
     canRate: card && answered && !ended,
     canAdvance: !ended && (answered || (card && status === "rated")),
     canExplore: open,
