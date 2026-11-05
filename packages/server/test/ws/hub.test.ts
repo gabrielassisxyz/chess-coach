@@ -307,6 +307,9 @@ describe("hub", () => {
     expect(await next()).toMatchObject({ code: "not_in_demo", command_id: "l1" });
     socket.send(JSON.stringify({ type: "new_game", command_id: "n", color: "white", elo: 1200 }));
     await next();
+    // A demo can only cover a finished game, so the game ends before the coach's demo.
+    await activity.resign();
+    await next();
     await activity.startDemo("8/8/8/8/8/8/8/K6k w - - 0 1");
     await next();
     socket.send(JSON.stringify({ type: "move", command_id: "m1", from: "e2", to: "e4" }));

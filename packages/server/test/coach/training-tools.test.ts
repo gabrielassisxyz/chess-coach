@@ -113,13 +113,12 @@ describe("serve_card", () => {
     expect((await call("serve_card", { card_id: id })).body.error).toBe("training_active");
   });
 
-  it("returns to the unfinished live game after the single item", async () => {
+  it("refuses a card over the unfinished live game and leaves the board on it", async () => {
     const { db, fake, call } = setup();
     await fake.game.newGame({ color: "white", elo: 1200 });
-    await fake.activity.enterLiveGame();
-    await call("serve_card", { card_id: addCard(db) });
-    await fake.activity.trainingAnswer("f4e5");
-    await fake.activity.nextTrainingItem();
-    expect((await fake.activity.endTraining())?.kind).toBe("live_game");
+    const live = await fake.activity.enterLiveGame();
+    const out = await call("serve_card", { card_id: addCard(db) });
+    expect(out).toMatchObject({ isError: true, body: { error: "live_game_active" } });
+    expect(fake.activity.current()).toEqual(live);
   });
 });

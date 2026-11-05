@@ -92,11 +92,21 @@ describe("show_position and make_move", () => {
     });
   });
 
-  it("returns to the live game kind underneath", async () => {
+  it("refuses to cover an unfinished live game and leaves the board on it", async () => {
+    const { call, activity } = setup();
+    await call("new_game", { color: "white", elo: 600 });
+    const live = activity.current();
+    const shown = await call("show_position", { fen: AFTER_E4 });
+    expect(shown).toMatchObject({ isError: true, body: { error: "live_game_active" } });
+    expect(activity.current()).toEqual(live);
+  });
+
+  it("returns to the finished live game underneath, for the post-game walk-through", async () => {
     const { call } = setup();
     await call("new_game", { color: "white", elo: 600 });
+    await call("resign_game");
     const shown = await call("show_position", { fen: AFTER_E4 });
-    expect(shown.body).toMatchObject({ returns_to: "live_game" });
+    expect(shown.body).toMatchObject({ kind: "demo", returns_to: "live_game" });
   });
 
   it("rejects a FEN chess.js cannot load, and a SAN that is not short text", () => {
