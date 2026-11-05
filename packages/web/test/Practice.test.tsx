@@ -472,6 +472,23 @@ describe("the exploration trail and the timer", () => {
     ]);
   });
 
+  it("closes the list with the graded line when the answer follows a take back", () => {
+    const afterUndo = card({
+      ...failed,
+      exploring: { fen: START_FEN, line_san: [], trail: looked.slice(0, 3) },
+    });
+    render(<Practice server={api(afterUndo)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    const items = within(screen.getByRole("region", { name: /What you looked at/ })).getAllByRole(
+      "listitem",
+    );
+    expect(items.map((item) => item.textContent)).toEqual([
+      "e4after 2s",
+      "e4 e5after 5s",
+      "e4 e5 \u2014 backafter 6s",
+      "e4 \u2014 answered",
+    ]);
+  });
+
   it("marks a reset against the line it cleared", () => {
     const reset = card({
       exploring: {

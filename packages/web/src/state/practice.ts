@@ -185,7 +185,7 @@ export const RATING_WORDS: Record<number, string> = {
 };
 
 export interface TrailLine {
-  seq: number;
+  key: string;
   text: string;
   offset: string;
 }
@@ -195,21 +195,31 @@ const RESET = "\u2014 reset";
 const ANSWERED = "\u2014 answered";
 
 // Each event carries the line as it stood afterwards, so an undo or a reset is shown against
-// the line it took apart. After an answer the last line is the one that was graded.
+// the line it took apart. After an answer the graded line closes the list: it is the last move
+// when the student answered right after playing it, and a line of its own after a take back.
 export function trailLines(trail: ExploredEvent[], answered: boolean): TrailLine[] {
   let previous: string[] = [];
-  return trail.map((event, index) => {
+  const lines = trail.map((event): TrailLine => {
     const shown = event.kind === "move" ? event.line_san : previous;
     const mark = event.kind === "undo" ? ` ${BACK}` : event.kind === "reset" ? ` ${RESET}` : "";
-    const graded =
-      answered && event.kind === "move" && index === trail.length - 1 ? ` ${ANSWERED}` : "";
     previous = event.line_san;
     return {
-      seq: event.seq,
-      text: `${shown.join(" ")}${mark}${graded}`,
+      key: String(event.seq),
+      text: `${shown.join(" ")}${mark}`,
       offset: `after ${Math.round(event.at_ms / 1000)}s`,
     };
   });
+  const last = trail.at(-1);
+  if (!answered || !last || last.line_san.length === 0) return lines;
+  if (last.kind === "move") {
+    const closing = lines[lines.length - 1] as TrailLine;
+    closing.text = `${closing.text} ${ANSWERED}`;
+    return lines;
+  }
+  return [
+    ...lines,
+    { key: "answered", text: `${last.line_san.join(" ")} ${ANSWERED}`, offset: "" },
+  ];
 }
 
 // The answer is the first move of the line explored when Answer was pressed, which is where the last event left it.

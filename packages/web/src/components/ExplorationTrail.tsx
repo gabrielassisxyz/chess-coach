@@ -20,9 +20,9 @@ export function ExplorationTrail({ trail, answered, heading }: ExplorationTrailP
       ) : (
         <ol className="practice__trail-list">
           {lines.map((line) => (
-            <li key={line.seq}>
+            <li key={line.key}>
               <span className="practice__trail-line">{line.text}</span>
-              <span className="practice__trail-offset">{line.offset}</span>
+              {line.offset ? <span className="practice__trail-offset">{line.offset}</span> : null}
             </li>
           ))}
         </ol>
