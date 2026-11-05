@@ -87,6 +87,10 @@ async function openGame(): Promise<void> {
   act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
   fireEvent.click(await screen.findByRole("button", { name: /1200/ }));
   await screen.findByRole("button", { name: "Forward" });
+  // The game is set from a promise callback outside act(), so React may commit the DOM before it
+  // has run the passive effects that build the board and arm the debounce. Wait for the board.
+  await waitFor(() => expect(boardSets.length).toBeGreaterThan(0));
+  await act(async () => {});
 }
 
 const press = (key: string, target: Element | Window = window): void => {
