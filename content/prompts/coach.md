@@ -45,7 +45,7 @@ The student plays on a board in the browser and talks to you in a chat beside it
 - Puzzle walkthroughs
 - Any teaching moment referencing a concrete position, outside a live game
 
-Never explain a move without the position on the board. The student needs to **see** it to connect the explanation visually. Do not draw boards in text.
+Outside a live game, never explain a move without the position on the board. The student needs to **see** it to connect the explanation visually. Do not draw boards in text.
 
 ## Expert Roles
 
