@@ -11,6 +11,7 @@ import { Practice } from "../src/screens/Practice.js";
 import type { GamesApi } from "../src/state/games-api.js";
 import {
   COACH_GAME_SOURCE,
+  idleFactsApi,
   idleImportApi,
   legalMovesOf,
   liveGame,
@@ -149,12 +150,16 @@ const card = {
 describe("focus ring", () => {
   it("covers the Play screen with a game on the board", () => {
     const server = serverApi(liveGame({ moves: [move(1), move(2)] }));
-    const { container } = render(<Play server={server} createBoard={inertBoard} />);
+    const { container } = render(
+      <Play server={server} createBoard={inertBoard} factsApi={idleFactsApi} />,
+    );
     expect(expectFocusRing(container)).toBeGreaterThan(3);
   });
 
   it("covers the new game dialog", () => {
-    const { container } = render(<Play server={serverApi()} createBoard={inertBoard} />);
+    const { container } = render(
+      <Play server={serverApi()} createBoard={inertBoard} factsApi={idleFactsApi} />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "New game" }));
     expect(screen.getByRole("dialog", { name: "New game" })).toBeTruthy();
     expect(container.querySelectorAll("input")).toHaveLength(3);
@@ -213,7 +218,9 @@ describe("focus ring", () => {
   });
 
   it("finds the board container among the interactive elements", () => {
-    const { container } = render(<Play server={serverApi(liveGame())} createBoard={inertBoard} />);
+    const { container } = render(
+      <Play server={serverApi(liveGame())} createBoard={inertBoard} factsApi={idleFactsApi} />,
+    );
     expect(container.querySelector(".board")?.matches(INTERACTIVE)).toBe(true);
   });
 });

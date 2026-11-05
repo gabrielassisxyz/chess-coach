@@ -1,6 +1,7 @@
 import type { ActivityMove, LegalMoveEntry, LiveGameActivity } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import type { ImportApi } from "../src/state/import-api.js";
+import type { PlayFactsApi } from "../src/state/play-facts.js";
 
 export const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -70,4 +71,10 @@ export const idleImportApi: ImportApi = {
   importChessCom: async () => ({ imported: 0, skipped: 0 }),
   importPgn: async () => ({ imported: 0, skipped: 0 }),
   status: async () => ({ pending: 0, running: null, failed: 0 }),
+};
+
+/** Play facts that never resolve a value, so a Play render never reaches for the network. */
+export const idleFactsApi: PlayFactsApi = {
+  getGame: async () => Promise.reject(new Error("no server in tests")),
+  getProgress: async () => Promise.reject(new Error("no server in tests")),
 };

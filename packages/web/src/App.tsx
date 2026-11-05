@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Chat } from "./components/Chat.js";
+import { CoachActions } from "./components/CoachActions.js";
 import { NoticeBanner } from "./components/NoticeBanner.js";
 import { StatusChip } from "./components/StatusChip.js";
 import { type FetchHealth, useHealth } from "./hooks/useHealth.js";
@@ -65,6 +66,7 @@ export function App({ fetchHealth }: AppProps = {}) {
           unread={coach.unread}
           onToggle={coach.toggle}
           idleLabel={coachIdle ?? DEFAULT_COACH_IDLE}
+          actions={screen === "Play" ? <CoachActions server={server} /> : null}
         />
       </main>
     </div>
