@@ -10,6 +10,7 @@ import { Play } from "./screens/Play.js";
 import { Practice } from "./screens/Practice.js";
 import { DEFAULT_COACH_IDLE, useCoachPanel } from "./state/coach-panel.js";
 import { serviceNotice } from "./state/health.js";
+import { practiceIdleLabel } from "./state/practice.js";
 import { useTheme } from "./state/theme.js";
 
 const SCREENS = ["Play", "Games", "Practice"] as const;
@@ -26,6 +27,9 @@ export function App({ fetchHealth }: AppProps = {}) {
   const coach = useCoachPanel(server.coachMessages);
   const [screen, setScreen] = useState<Screen>("Play");
   const [coachIdle, setCoachIdle] = useState<string | null>(null);
+  // Practice words the coach's idle state from the activity; Games sets it from the open game.
+  const idleLabel =
+    (screen === "Practice" ? practiceIdleLabel(server.activity) : coachIdle) ?? DEFAULT_COACH_IDLE;
 
   return (
     <div className="shell">
@@ -65,7 +69,7 @@ export function App({ fetchHealth }: AppProps = {}) {
           open={coach.open}
           unread={coach.unread}
           onToggle={coach.toggle}
-          idleLabel={coachIdle ?? DEFAULT_COACH_IDLE}
+          idleLabel={idleLabel}
           actions={screen === "Play" ? <CoachActions server={server} /> : null}
         />
       </main>

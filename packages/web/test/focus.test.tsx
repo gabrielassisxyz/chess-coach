@@ -187,12 +187,12 @@ describe("focus ring", () => {
     const chooser = render(
       <Practice server={serverApi()} fetchMotifs={async () => [{ motif: "fork", count: 2 }]} />,
     );
-    await screen.findByText("fork (2)");
+    await screen.findByRole("radio", { name: /fork/ });
     expect(expectFocusRing(chooser.container)).toBeGreaterThanOrEqual(3);
     chooser.unmount();
 
     const training = render(<Practice server={serverApi(card)} createBoard={inertBoard} />);
-    expect(screen.getAllByRole("button", { name: /^Rate/ })).toHaveLength(6);
+    expect(screen.getAllByRole("button", { name: /^\d (Right|Blank|Wrong|Easy)/ })).toHaveLength(6);
     expect(expectFocusRing(training.container)).toBeGreaterThan(8);
   });
 
