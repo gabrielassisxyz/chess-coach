@@ -17,7 +17,7 @@ command grep -rnE 'box-shadow|text-shadow' packages/web/src
 
 Both must print nothing.
 
-| # | Rule | Play | Review | Train |
+| # | Rule | Play | Games | Practice |
 |---|------|------|--------|-------|
 | 1 | No colour literal outside `tokens.css`; every colour is a token | ok | ok | ok |
 | 2 | Neutral grounds (charcoal and soft off-white), never pure white or black, never cream | ok | ok | ok |

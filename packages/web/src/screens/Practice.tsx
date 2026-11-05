@@ -12,9 +12,9 @@ import {
   startFailureText,
   trainingOf,
   trainingView,
-} from "../state/train.js";
+} from "../state/practice.js";
 
-export interface TrainProps {
+export interface PracticeProps {
   server: ServerApi;
   createBoard?: BoardFactory | undefined;
   fetchMotifs?: FetchMotifs;
@@ -107,9 +107,9 @@ function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: 
     starting?.mode === mode ? "Starting" : idle;
 
   return (
-    <div className="train__chooser" aria-busy={busy}>
-      <h2 className="screen__title train__title">Train</h2>
-      <section className="train__mode" aria-label="Review due cards">
+    <div className="practice__chooser" aria-busy={busy}>
+      <h2 className="screen__title practice__title">Practice</h2>
+      <section className="practice__mode" aria-label="Review due cards">
         <p>Answer the cards that are due, then rate how well you knew each one.</p>
         <button
           type="button"
@@ -120,8 +120,8 @@ function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: 
           {label("srs", "Review due cards")}
         </button>
       </section>
-      <section className="train__mode" aria-label="Drill puzzles">
-        <label className="train__field">
+      <section className="practice__mode" aria-label="Drill puzzles">
+        <label className="practice__field">
           Motif
           <select
             className="input"
@@ -147,9 +147,9 @@ function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: 
           {label("puzzles", "Drill puzzles")}
         </button>
       </section>
-      <section className="train__mode" aria-label="Drill your openings">
+      <section className="practice__mode" aria-label="Drill your openings">
         <p>Find the best move in the early positions of your own games.</p>
-        <label className="train__field">
+        <label className="practice__field">
           Colour
           <select
             className="input"
@@ -171,7 +171,7 @@ function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: 
         </button>
       </section>
       {failure ? (
-        <p className="train__failure" role="alert">
+        <p className="practice__failure" role="alert">
           {failure}
         </p>
       ) : null}
@@ -179,11 +179,15 @@ function ModeChooser({ server, fetchMotifs }: { server: ServerApi; fetchMotifs: 
   );
 }
 
-export function Train({ server, createBoard, fetchMotifs = fetchMotifsFromServer }: TrainProps) {
+export function Practice({
+  server,
+  createBoard,
+  fetchMotifs = fetchMotifsFromServer,
+}: PracticeProps) {
   const training = trainingOf(server.activity);
   if (!training) {
     return (
-      <section className="screen train" aria-label="Train">
+      <section className="screen practice" aria-label="Practice">
         <ModeChooser server={server} fetchMotifs={fetchMotifs} />
       </section>
     );
@@ -203,13 +207,13 @@ export function Train({ server, createBoard, fetchMotifs = fetchMotifsFromServer
   const exposureId = training.exposure_id;
 
   return (
-    <section className="screen train" aria-label="Train">
-      <header className="train__header">
-        <h2 className="screen__title train__title">{view.header}</h2>
+    <section className="screen practice" aria-label="Practice">
+      <header className="practice__header">
+        <h2 className="screen__title practice__title">{view.header}</h2>
         <p className="screen__note" role="status">
           {view.status}
           {view.expected ? (
-            <span className="train__expected"> Expected {view.expected}</span>
+            <span className="practice__expected"> Expected {view.expected}</span>
           ) : null}
         </p>
       </header>
@@ -221,12 +225,12 @@ export function Train({ server, createBoard, fetchMotifs = fetchMotifsFromServer
         createBoard={createBoard}
       />
       {view.summary ? (
-        <p className="train__summary" data-testid="summary">
+        <p className="practice__summary" data-testid="summary">
           Queue finished: {view.summary.solved} solved, {view.summary.failed} failed.
         </p>
       ) : null}
       {view.canRate && exposureId ? (
-        <fieldset className="train__rating" aria-label="Rate your recall">
+        <fieldset className="practice__rating" aria-label="Rate your recall">
           {QUALITIES.map((quality) => (
             <button
               key={quality}

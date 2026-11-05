@@ -1,8 +1,8 @@
 import type { GameSummary } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Review } from "../src/screens/Review.js";
-import { Train } from "../src/screens/Train.js";
+import { Games } from "../src/screens/Games.js";
+import { Practice } from "../src/screens/Practice.js";
 import type { GamesApi } from "../src/state/games-api.js";
 import { COACH_GAME_SOURCE, idleImportApi } from "./fixtures.js";
 import { serverApi } from "./server-api.js";
@@ -29,10 +29,10 @@ const gamesApi = (overrides: Partial<GamesApi>): GamesApi => ({
   ...overrides,
 });
 
-describe("Review states", () => {
+describe("Games states", () => {
   it("says what to do when there are no finished games", async () => {
     render(
-      <Review
+      <Games
         server={serverApi()}
         api={gamesApi({ listGames: async () => [] })}
         importApi={idleImportApi}
@@ -43,11 +43,7 @@ describe("Review states", () => {
 
   it("shows a loading note while the list is on its way", () => {
     render(
-      <Review
-        server={serverApi()}
-        api={gamesApi({ listGames: never })}
-        importApi={idleImportApi}
-      />,
+      <Games server={serverApi()} api={gamesApi({ listGames: never })} importApi={idleImportApi} />,
     );
     expect(screen.getByRole("status").textContent).toBe("Loading games.");
   });
@@ -57,7 +53,7 @@ describe("Review states", () => {
       .fn<GamesApi["listGames"]>()
       .mockRejectedValueOnce(new Error("down"))
       .mockResolvedValueOnce([summary]);
-    render(<Review server={serverApi()} api={gamesApi({ listGames })} importApi={idleImportApi} />);
+    render(<Games server={serverApi()} api={gamesApi({ listGames })} importApi={idleImportApi} />);
     expect((await screen.findByRole("alert")).textContent).toContain("Check that the server");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(screen.getByRole("status").textContent).toBe("Loading games.");
@@ -67,7 +63,7 @@ describe("Review states", () => {
 
   it("says a game could not be opened and keeps the list to pick another", async () => {
     const getGame = vi.fn<GamesApi["getGame"]>().mockRejectedValue(new Error("gone"));
-    render(<Review server={serverApi()} api={gamesApi({ getGame })} importApi={idleImportApi} />);
+    render(<Games server={serverApi()} api={gamesApi({ getGame })} importApi={idleImportApi} />);
     fireEvent.click(await screen.findByRole("button", { name: /1200/ }));
     expect((await screen.findByRole("alert")).textContent).toContain("pick another game");
     expect(screen.getByRole("list", { name: "Finished games" })).toBeTruthy();
@@ -76,11 +72,11 @@ describe("Review states", () => {
 
 const motifs = async () => [{ motif: "fork", count: 4 }];
 
-describe("Train states", () => {
+describe("Practice states", () => {
   it("loads the motif list before the puzzle drill can pick one", async () => {
     let resolve: (value: { motif: string; count: number }[]) => void = () => {};
     const fetchMotifs = () => new Promise<{ motif: string; count: number }[]>((r) => (resolve = r));
-    render(<Train server={serverApi()} fetchMotifs={fetchMotifs} />);
+    render(<Practice server={serverApi()} fetchMotifs={fetchMotifs} />);
     expect(screen.getByText("Loading motifs.")).toBeTruthy();
     expect((screen.getByLabelText("Motif") as HTMLSelectElement).disabled).toBe(true);
     await act(async () => resolve([{ motif: "fork", count: 4 }]));
@@ -89,7 +85,9 @@ describe("Train states", () => {
   });
 
   it("says so when the motif list cannot be loaded and still allows any motif", async () => {
-    render(<Train server={serverApi()} fetchMotifs={async () => Promise.reject(new Error("x"))} />);
+    render(
+      <Practice server={serverApi()} fetchMotifs={async () => Promise.reject(new Error("x"))} />,
+    );
     expect(await screen.findByText(/could not be loaded.*Any motif/)).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Drill puzzles" }) as HTMLButtonElement).disabled,
@@ -97,13 +95,13 @@ describe("Train states", () => {
   });
 
   it("says to restart the server when no puzzle is loaded at all", async () => {
-    render(<Train server={serverApi()} fetchMotifs={async () => []} />);
+    render(<Practice server={serverApi()} fetchMotifs={async () => []} />);
     expect(await screen.findByText(/Restart the server/)).toBeTruthy();
   });
 
   it("shows a starting state until the server answers, then the refusal", async () => {
     const server = serverApi();
-    const view = render(<Train server={server} fetchMotifs={motifs} />);
+    const view = render(<Practice server={server} fetchMotifs={motifs} />);
     await screen.findByText("fork (4)");
     fireEvent.click(screen.getByRole("button", { name: "Review due cards" }));
     expect(server.send).toHaveBeenCalledWith({ type: "start_training", mode: "srs" });
@@ -114,7 +112,7 @@ describe("Train states", () => {
     ).toBe(true);
 
     view.rerender(
-      <Train
+      <Practice
         server={{
           ...server,
           errorCount: 1,
@@ -131,7 +129,7 @@ describe("Train states", () => {
 
   it("names the motif when a drill has no puzzles for it", async () => {
     const server = serverApi();
-    const view = render(<Train server={server} fetchMotifs={motifs} />);
+    const view = render(<Practice server={server} fetchMotifs={motifs} />);
     await screen.findByText("fork (4)");
     fireEvent.change(screen.getByLabelText("Motif"), { target: { value: "fork" } });
     fireEvent.click(screen.getByRole("button", { name: "Drill puzzles" }));
@@ -141,7 +139,7 @@ describe("Train states", () => {
       motif: "fork",
     });
     view.rerender(
-      <Train
+      <Practice
         server={{
           ...server,
           errorCount: 1,
@@ -156,11 +154,11 @@ describe("Train states", () => {
 
   it("shows the server's message and a next step when a start fails for another reason", async () => {
     const server = serverApi();
-    const view = render(<Train server={server} fetchMotifs={motifs} />);
+    const view = render(<Practice server={server} fetchMotifs={motifs} />);
     await screen.findByText("fork (4)");
     fireEvent.click(screen.getByRole("button", { name: "Review due cards" }));
     view.rerender(
-      <Train
+      <Practice
         server={{
           ...server,
           errorCount: 1,
@@ -177,11 +175,11 @@ describe("Train states", () => {
 
   it("ends the wait when the connection drops before the server answers", async () => {
     const server = serverApi();
-    const view = render(<Train server={server} fetchMotifs={motifs} />);
+    const view = render(<Practice server={server} fetchMotifs={motifs} />);
     await screen.findByText("fork (4)");
     fireEvent.click(screen.getByRole("button", { name: "Review due cards" }));
     view.rerender(
-      <Train server={{ ...server, connection: "reconnecting" }} fetchMotifs={motifs} />,
+      <Practice server={{ ...server, connection: "reconnecting" }} fetchMotifs={motifs} />,
     );
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("not connected"));
     expect(
@@ -191,7 +189,7 @@ describe("Train states", () => {
 
   it("does not enter the starting state when the command could not be sent", async () => {
     const server = serverApi(null, { send: vi.fn(() => false) });
-    render(<Train server={server} fetchMotifs={motifs} />);
+    render(<Practice server={server} fetchMotifs={motifs} />);
     await screen.findByText("fork (4)");
     fireEvent.click(screen.getByRole("button", { name: "Review due cards" }));
     expect(screen.getByRole("alert").textContent).toContain("not connected");

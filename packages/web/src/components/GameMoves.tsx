@@ -1,7 +1,7 @@
 import type { GameMove } from "@chess-coach/shared";
 import { CLASSIFICATION_LABEL, moveRows } from "../state/play.js";
 
-interface ReviewMovesProps {
+interface GameMovesProps {
   moves: GameMove[];
   selectedPly: number;
   onSelect(ply: number): void;
@@ -11,18 +11,18 @@ function Ply({
   move,
   selectedPly,
   onSelect,
-}: { move: GameMove | null } & Omit<ReviewMovesProps, "moves">) {
+}: { move: GameMove | null } & Omit<GameMovesProps, "moves">) {
   if (!move) return <span className="moves__ply" />;
   return (
     <button
       type="button"
-      className="review-moves__ply"
+      className="game-moves__ply"
       data-testid={`ply-${move.ply}`}
       aria-current={move.ply === selectedPly ? "true" : undefined}
       onClick={() => onSelect(move.ply)}
     >
       <span className="moves__san">{move.san}</span>
-      {move.cp_loss !== null ? <span className="review-moves__loss">{move.cp_loss}</span> : null}
+      {move.cp_loss !== null ? <span className="game-moves__loss">{move.cp_loss}</span> : null}
       {move.classification ? (
         <span className={`badge badge--${move.classification}`}>
           {CLASSIFICATION_LABEL[move.classification]}
@@ -32,7 +32,7 @@ function Ply({
   );
 }
 
-export function ReviewMoves({ moves, selectedPly, onSelect }: ReviewMovesProps) {
+export function GameMoves({ moves, selectedPly, onSelect }: GameMovesProps) {
   const full = (move: { ply: number } | null): GameMove | null =>
     move ? (moves[move.ply - 1] ?? null) : null;
   return (

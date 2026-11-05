@@ -118,7 +118,7 @@ describe("tokens.css", () => {
 
   it("keeps colour literals out of every other stylesheet", () => {
     const literal = /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/;
-    const sources = ["board", "chat", "focus", "layout", "review", "train"];
+    const sources = ["board", "chat", "focus", "layout", "games", "practice"];
     for (const name of sources) {
       const css = readFileSync(join(STYLES, `${name}.css`), "utf8").replace(
         /\/\*[\s\S]*?\*\//g,

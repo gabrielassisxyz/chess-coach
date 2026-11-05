@@ -47,12 +47,12 @@
 - **Typecheck / lint:** `pnpm typecheck`, `pnpm lint` (Biome, lint and format in one)
 - **Gate:** `bin/ci`, the exact thing GitHub Actions runs. Green locally means green in CI.
 - **After clone:** `bin/install-hooks` once (gitleaks pre-commit, attribution commit-msg).
-- **Import:** the Review screen imports Chess.com games by username and month range, or a pasted
+- **Import:** the Games screen imports Chess.com games by username and month range, or a pasted
   PGN, and grades them in the background. `CHESS_COACH_USERNAMES` (comma-separated) names the
   student's accounts so a pasted PGN finds its side; without it the form asks for the colour.
 - **Openings:** `POST /api/openings/generate` turns the first fifteen moves of every graded game into
   "find the best move" puzzles (`own:` ids, source `own-games`, motifs `opening-white` and
-  `opening-black`); the import grader runs it after each game. Train's openings mode drills them. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
+  `opening-black`); the import grader runs it after each game. Practice's openings mode drills them. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
   student's first moves with the replies most played at 400-600 on the Lichess explorer (`explorer:` ids, source
   `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
   is opt-in at the call and never runs after an import. The explorer now answers 401 without a Lichess API

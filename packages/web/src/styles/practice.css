@@ -1,14 +1,14 @@
-.train__title {
+.practice__title {
   text-transform: capitalize;
 }
 
-.train__chooser {
+.practice__chooser {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
 }
 
-.train__mode {
+.practice__mode {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -19,45 +19,45 @@
   font-size: var(--text-sm);
 }
 
-.train__failure {
+.practice__failure {
   margin: 0;
   color: var(--error-text);
   font-size: var(--text-sm);
 }
 
-.train__mode p {
+.practice__mode p {
   margin: 0;
   color: var(--text-2);
 }
 
-.train__field {
+.practice__field {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
 
-.train__field select {
+.practice__field select {
   text-transform: capitalize;
 }
 
-.train__header {
+.practice__header {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
 
-.train__expected {
+.practice__expected {
   color: var(--text-1);
   font-variant-numeric: tabular-nums;
 }
 
-.train__summary {
+.practice__summary {
   margin: 0;
   font-size: var(--text-lg);
   font-variant-numeric: tabular-nums;
 }
 
-.train__rating {
+.practice__rating {
   display: flex;
   gap: var(--space-2);
   margin: 0;
@@ -65,7 +65,7 @@
   border: 0;
 }
 
-.train__rating .button {
+.practice__rating .button {
   min-width: 2.5rem;
   font-variant-numeric: tabular-nums;
 }

@@ -64,7 +64,7 @@ export const COACH_GAME_SOURCE = {
   grading: "done",
 } as const;
 
-/** An import API with nothing queued, so a Review render never reaches for the network. */
+/** An import API with nothing queued, so a Games render never reaches for the network. */
 export const idleImportApi: ImportApi = {
   listChessCom: async () => [],
   importChessCom: async () => ({ imported: 0, skipped: 0 }),

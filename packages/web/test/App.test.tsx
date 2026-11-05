@@ -39,10 +39,10 @@ describe("App", () => {
     connect();
     const tab = (name: string) => screen.getByRole("button", { name });
     expect(tab("Play").getAttribute("aria-current")).toBe("page");
-    fireEvent.click(tab("Review"));
-    expect(screen.getByRole("region", { name: "Review" })).toBeTruthy();
+    fireEvent.click(tab("Games"));
+    expect(screen.getByRole("region", { name: "Games" })).toBeTruthy();
     expect(screen.getByLabelText("Message to the coach")).toBeTruthy();
-    fireEvent.click(tab("Train"));
+    fireEvent.click(tab("Practice"));
     expect(screen.getByRole("button", { name: "Review due cards" })).toBeTruthy();
   });
 
