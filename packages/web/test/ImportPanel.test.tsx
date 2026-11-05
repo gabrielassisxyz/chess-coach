@@ -1,5 +1,5 @@
-import type { ChessComListedGame, ImportStatus } from "@chess-coach/shared";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ChessComListedGame } from "@chess-coach/shared";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImportPanel } from "../src/components/ImportPanel.js";
 import { summaryLabel } from "../src/state/games.js";
@@ -27,7 +27,7 @@ function apiWith(overrides: Partial<ImportApi>): ImportApi {
 
 async function listGames(): Promise<void> {
   fireEvent.change(screen.getByLabelText("Username"), { target: { value: "assiszzz" } });
-  fireEvent.click(screen.getByRole("button", { name: "List games" }));
+  fireEvent.click(screen.getByRole("button", { name: "Fetch games" }));
   await screen.findByRole("list", { name: "Chess.com games" });
 }
 
@@ -45,7 +45,9 @@ describe("ImportPanel", () => {
       />,
     );
     await listGames();
-    const boxes = screen.getAllByRole("checkbox");
+    const boxes = within(screen.getByRole("list", { name: "Chess.com games" })).getAllByRole(
+      "checkbox",
+    );
     expect((boxes[1] as HTMLInputElement).disabled).toBe(true);
     expect(
       (screen.getByRole("button", { name: "Import selected" }) as HTMLButtonElement).disabled,
@@ -55,6 +57,50 @@ describe("ImportPanel", () => {
     await screen.findByText("Imported 1, skipped 0.");
     expect(importChessCom).toHaveBeenCalledWith("assiszzz", ["a"]);
     expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("hides the games of an unticked time class and keeps one with no time control", async () => {
+    const blitz = { ...listed("blitz"), time_control: "180" };
+    const bullet = { ...listed("bullet"), time_control: "60" };
+    const unknown = { ...listed("unknown"), time_control: null };
+    render(
+      <ImportPanel
+        onChanged={() => {}}
+        api={apiWith({ listChessCom: async () => [listed("rapid"), blitz, bullet, unknown] })}
+      />,
+    );
+    await listGames();
+    expect(screen.getByText("3 games found.")).toBeTruthy();
+    const items = within(screen.getByRole("list", { name: "Chess.com games" })).getAllByRole(
+      "listitem",
+    );
+    expect(items).toHaveLength(3);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Bullet" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fetch games" }));
+    await screen.findByText("4 games found.");
+  });
+
+  it("passes the result of an import to the screen so a partial one can be retried", async () => {
+    const failed = [{ id: "b", message: "timed out" }];
+    const onImported = vi.fn();
+    render(
+      <ImportPanel
+        onChanged={() => {}}
+        onImported={onImported}
+        api={apiWith({
+          listChessCom: async () => [listed("a"), listed("b")],
+          importChessCom: async () => ({ imported: 1, skipped: 0, failed }),
+        })}
+      />,
+    );
+    await listGames();
+    const boxes = within(screen.getByRole("list", { name: "Chess.com games" })).getAllByRole(
+      "checkbox",
+    );
+    fireEvent.click(boxes[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Import selected" }));
+    await screen.findByText("Imported 1, skipped 0, 1 unreadable.");
+    expect(onImported).toHaveBeenCalledWith("assiszzz", { imported: 1, skipped: 0, failed });
   });
 
   it("shows the server's message when the listing fails", async () => {
@@ -68,7 +114,7 @@ describe("ImportPanel", () => {
       />,
     );
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "x" } });
-    fireEvent.click(screen.getByRole("button", { name: "List games" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fetch games" }));
     await screen.findByText(/3 to 25 letters/);
   });
 
@@ -85,26 +131,6 @@ describe("ImportPanel", () => {
       ["1. e4 e5 1-0", null],
       ["1. e4 e5 1-0", "black"],
     ]);
-  });
-
-  it("shows grading progress, keeps polling, and refreshes the list when it finishes", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const statuses: ImportStatus[] = [
-      { pending: 1, failed: 0, running: { game_id: 1, graded_plies: 3, total_plies: 30 } },
-      { pending: 0, failed: 0, running: null },
-    ];
-    const status = vi.fn(async () => statuses.shift() ?? { pending: 0, failed: 0, running: null });
-    const onChanged = vi.fn();
-    render(<ImportPanel onChanged={onChanged} pollMs={50} api={apiWith({ status })} />);
-    expect((await screen.findByTestId("import-progress")).textContent).toBe(
-      "Grading a game: 3 of 30 moves, 1 more waiting.",
-    );
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
-    expect(screen.queryByTestId("import-progress")).toBeNull();
-    vi.useRealTimers();
   });
 });
 

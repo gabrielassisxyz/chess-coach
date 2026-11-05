@@ -1,4 +1,5 @@
 import type { GameMove } from "@chess-coach/shared";
+import { markOf } from "../state/games.js";
 import { CLASSIFICATION_LABEL, moveRows } from "../state/play.js";
 
 interface GameMovesProps {
@@ -13,6 +14,7 @@ function Ply({
   onSelect,
 }: { move: GameMove | null } & Omit<GameMovesProps, "moves">) {
   if (!move) return <span className="moves__ply" />;
+  const mark = markOf(move.classification);
   return (
     <button
       type="button"
@@ -22,10 +24,13 @@ function Ply({
       onClick={() => onSelect(move.ply)}
     >
       <span className="moves__san">{move.san}</span>
-      {move.cp_loss !== null ? <span className="game-moves__loss">{move.cp_loss}</span> : null}
-      {move.classification ? (
-        <span className={`badge badge--${move.classification}`}>
-          {CLASSIFICATION_LABEL[move.classification]}
+      {move.classification && mark ? (
+        <span
+          className={`games__mark games__mark--${move.classification}`}
+          role="img"
+          aria-label={CLASSIFICATION_LABEL[move.classification]}
+        >
+          {mark}
         </span>
       ) : null}
     </button>

@@ -90,15 +90,30 @@ cg-board square.check {
   background: var(--surface-1);
 }
 
+/* Number on top, the track below it; the Play table lines the track up with the board. */
 .eval {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--space-3);
+  width: 100%;
+  min-height: 0;
+}
+
+.eval__label {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: var(--table-row);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+  color: var(--text-2);
 }
 
 .eval__track {
   flex: 1;
-  height: var(--space-2);
+  width: var(--eval-width);
+  min-height: 0;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -109,16 +124,8 @@ cg-board square.check {
   width: 100%;
   height: 100%;
   background: var(--accent);
-  transform-origin: left center;
+  transform-origin: center bottom;
   transition: transform var(--duration-base) var(--ease-out);
-}
-
-.eval__label {
-  min-width: 3.5ch;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--text-sm);
-  text-align: right;
 }
 
 @media (prefers-reduced-motion: reduce) {

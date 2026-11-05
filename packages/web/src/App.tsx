@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Chat } from "./components/Chat.js";
+import { CoachActions } from "./components/CoachActions.js";
 import { NoticeBanner } from "./components/NoticeBanner.js";
 import { StatusChip } from "./components/StatusChip.js";
 import { type FetchHealth, useHealth } from "./hooks/useHealth.js";
@@ -7,7 +8,7 @@ import { useServer } from "./hooks/useServer.js";
 import { Games } from "./screens/Games.js";
 import { Play } from "./screens/Play.js";
 import { Practice } from "./screens/Practice.js";
-import { useCoachPanel } from "./state/coach-panel.js";
+import { DEFAULT_COACH_IDLE, useCoachPanel } from "./state/coach-panel.js";
 import { serviceNotice } from "./state/health.js";
 import { practiceIdleLabel } from "./state/practice.js";
 import { useTheme } from "./state/theme.js";
@@ -25,7 +26,10 @@ export function App({ fetchHealth }: AppProps = {}) {
   const { theme, toggle: toggleTheme } = useTheme();
   const coach = useCoachPanel(server.coachMessages);
   const [screen, setScreen] = useState<Screen>("Play");
-  const idleLabel = screen === "Practice" ? practiceIdleLabel(server.activity) : undefined;
+  const [coachIdle, setCoachIdle] = useState<string | null>(null);
+  // Practice words the coach's idle state from the activity; Games sets it from the open game.
+  const idleLabel =
+    (screen === "Practice" ? practiceIdleLabel(server.activity) : coachIdle) ?? DEFAULT_COACH_IDLE;
 
   return (
     <div className="shell">
@@ -56,14 +60,17 @@ export function App({ fetchHealth }: AppProps = {}) {
       <NoticeBanner message={server.lastError} onDismiss={server.dismissError} />
       <main className="frame" data-coach={coach.open ? "open" : "collapsed"}>
         {screen === "Play" ? <Play server={server} notice={notice} /> : null}
-        {screen === "Games" ? <Games server={server} /> : null}
+        {screen === "Games" ? (
+          <Games server={server} onOpenPlay={() => setScreen("Play")} onCoachIdle={setCoachIdle} />
+        ) : null}
         {screen === "Practice" ? <Practice server={server} /> : null}
         <Chat
           server={server}
           open={coach.open}
           unread={coach.unread}
           onToggle={coach.toggle}
-          {...(idleLabel ? { idleLabel } : {})}
+          idleLabel={idleLabel}
+          actions={screen === "Play" ? <CoachActions server={server} /> : null}
         />
       </main>
     </div>

@@ -1,70 +1,34 @@
-import type { ChessComListedGame, ImportStatus } from "@chess-coach/shared";
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import type { ChessComListedGame, ImportResult } from "@chess-coach/shared";
+import { type FormEvent, useCallback, useState } from "react";
+import { type TimeClass, timeClassOf } from "../state/games.js";
 import { type ImportApi, serverImportApi } from "../state/import-api.js";
-
-export const STATUS_POLL_MS = 2000;
 
 export interface ImportPanelProps {
   api?: ImportApi;
-  pollMs?: number;
-  /** Called when games were added or finished grading, so the list can refresh. */
+  /** Called when games were added, so the list and the grading queue can refresh. */
   onChanged(): void;
+  /** Called with the result of a Chess.com import, so a partial one can be shown and retried. */
+  onImported?(username: string, result: ImportResult): void;
 }
+
+const TIME_CLASSES: { id: TimeClass; label: string }[] = [
+  { id: "rapid", label: "Rapid" },
+  { id: "blitz", label: "Blitz" },
+  { id: "bullet", label: "Bullet" },
+  { id: "daily", label: "Daily" },
+];
 
 function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);
 }
 
-function progressText(status: ImportStatus | null): string | null {
-  if (!status) return null;
-  if (status.running) {
-    const { graded_plies: done, total_plies: total } = status.running;
-    return `Grading a game: ${done} of ${total} moves${status.pending > 0 ? `, ${status.pending} more waiting` : ""}.`;
-  }
-  if (status.pending > 0) return `${status.pending} games waiting to be graded.`;
-  return status.failed > 0 ? `${status.failed} games could not be graded.` : null;
+// A game whose time control the listing did not give stays visible rather than vanishing.
+function wanted(game: ChessComListedGame, classes: Set<TimeClass>): boolean {
+  const timeClass = timeClassOf(game.time_control);
+  return timeClass === null || classes.has(timeClass);
 }
 
-function useGradingStatus(api: ImportApi, pollMs: number, onChanged: () => void) {
-  const [status, setStatus] = useState<ImportStatus | null>(null);
-  const [tick, setTick] = useState(0);
-  const wasBusy = useRef(false);
-  const changed = useRef(onChanged);
-  changed.current = onChanged;
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tick is the refresh trigger
-  useEffect(() => {
-    let current = true;
-    api.status().then(
-      (next) => {
-        if (!current) return;
-        const busy = next.pending > 0 || next.running !== null;
-        if (wasBusy.current && !busy) changed.current();
-        wasBusy.current = busy;
-        setStatus(next);
-      },
-      () => undefined,
-    );
-    return () => {
-      current = false;
-    };
-  }, [api, tick]);
-
-  const busy = status !== null && (status.pending > 0 || status.running !== null);
-  useEffect(() => {
-    if (!busy) return;
-    const timer = setInterval(() => setTick((count) => count + 1), pollMs);
-    return () => clearInterval(timer);
-  }, [busy, pollMs]);
-
-  return { status, refresh: () => setTick((count) => count + 1) };
-}
-
-export function ImportPanel({
-  api = serverImportApi,
-  pollMs = STATUS_POLL_MS,
-  onChanged,
-}: ImportPanelProps) {
+export function ImportPanel({ api = serverImportApi, onChanged, onImported }: ImportPanelProps) {
   const [username, setUsername] = useState("");
   const [from, setFrom] = useState(currentMonth());
   const [to, setTo] = useState(currentMonth());
@@ -73,7 +37,7 @@ export function ImportPanel({
   const [pgn, setPgn] = useState("");
   const [pgnColor, setPgnColor] = useState<"" | "white" | "black">("");
   const [message, setMessage] = useState<string | null>(null);
-  const { status, refresh } = useGradingStatus(api, pollMs, onChanged);
+  const [classes, setClasses] = useState<Set<TimeClass>>(new Set(["rapid", "blitz"]));
 
   const run = useCallback(async (work: () => Promise<string>): Promise<void> => {
     setMessage(null);
@@ -90,7 +54,8 @@ export function ImportPanel({
       const found = await api.listChessCom(username, from, to);
       setGames(found);
       setPicked(new Set());
-      return found.length === 0 ? "No games in those months." : `${found.length} games found.`;
+      const visible = found.filter((game) => wanted(game, classes)).length;
+      return visible === 0 ? "No games in those months." : `${visible} games found.`;
     });
   };
 
@@ -100,7 +65,7 @@ export function ImportPanel({
       setGames(await api.listChessCom(username, from, to));
       setPicked(new Set());
       onChanged();
-      refresh();
+      onImported?.(username, result);
       const failed = result.failed?.length ?? 0;
       return `Imported ${result.imported}, skipped ${result.skipped}${failed > 0 ? `, ${failed} unreadable` : ""}.`;
     });
@@ -111,7 +76,6 @@ export function ImportPanel({
     void run(async () => {
       const result = await api.importPgn(pgn, pgnColor === "" ? null : pgnColor);
       onChanged();
-      refresh();
       return result.imported === 1 ? "Imported the game." : "That game was already imported.";
     });
   };
@@ -122,7 +86,13 @@ export function ImportPanel({
     setPicked(next);
   };
 
-  const progress = progressText(status);
+  const toggleClass = (id: TimeClass): void => {
+    const next = new Set(classes);
+    if (!next.delete(id)) next.add(id);
+    setClasses(next);
+  };
+
+  const shown = games.filter((game) => wanted(game, classes));
   return (
     <section className="import" aria-label="Import games">
       <h3 className="import__title">Import from Chess.com</h3>
@@ -149,14 +119,30 @@ export function ImportPanel({
             onChange={(e) => setTo(e.target.value)}
           />
         </label>
+        <fieldset className="import__classes">
+          <legend>Time class</legend>
+          {TIME_CLASSES.map((timeClass) => (
+            <label key={timeClass.id}>
+              <input
+                type="checkbox"
+                checked={classes.has(timeClass.id)}
+                onChange={() => toggleClass(timeClass.id)}
+              />
+              {timeClass.label}
+            </label>
+          ))}
+        </fieldset>
         <button type="submit" className="button" disabled={username.trim() === ""}>
-          List games
+          Fetch games
         </button>
       </form>
-      {games.length > 0 ? (
+      <p className="screen__note">
+        Grading runs in the background, about 20 s per game. You can keep using the app.
+      </p>
+      {shown.length > 0 ? (
         <>
           <ul className="import__games" aria-label="Chess.com games">
-            {games.map((game) => (
+            {shown.map((game) => (
               <li key={game.uuid}>
                 <label>
                   <input
@@ -209,11 +195,6 @@ export function ImportPanel({
       {message ? (
         <p className="screen__note" role="status">
           {message}
-        </p>
-      ) : null}
-      {progress ? (
-        <p className="screen__note" role="status" data-testid="import-progress">
-          {progress}
         </p>
       ) : null}
     </section>
