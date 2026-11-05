@@ -9,6 +9,7 @@ import { Play } from "./screens/Play.js";
 import { Practice } from "./screens/Practice.js";
 import { useCoachPanel } from "./state/coach-panel.js";
 import { serviceNotice } from "./state/health.js";
+import { practiceIdleLabel } from "./state/practice.js";
 import { useTheme } from "./state/theme.js";
 
 const SCREENS = ["Play", "Games", "Practice"] as const;
@@ -24,6 +25,7 @@ export function App({ fetchHealth }: AppProps = {}) {
   const { theme, toggle: toggleTheme } = useTheme();
   const coach = useCoachPanel(server.coachMessages);
   const [screen, setScreen] = useState<Screen>("Play");
+  const idleLabel = screen === "Practice" ? practiceIdleLabel(server.activity) : undefined;
 
   return (
     <div className="shell">
@@ -56,7 +58,13 @@ export function App({ fetchHealth }: AppProps = {}) {
         {screen === "Play" ? <Play server={server} notice={notice} /> : null}
         {screen === "Games" ? <Games server={server} /> : null}
         {screen === "Practice" ? <Practice server={server} /> : null}
-        <Chat server={server} open={coach.open} unread={coach.unread} onToggle={coach.toggle} />
+        <Chat
+          server={server}
+          open={coach.open}
+          unread={coach.unread}
+          onToggle={coach.toggle}
+          {...(idleLabel ? { idleLabel } : {})}
+        />
       </main>
     </div>
   );

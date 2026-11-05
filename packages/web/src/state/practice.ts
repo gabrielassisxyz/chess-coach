@@ -129,6 +129,15 @@ export interface TrainingView {
   summary: TrainingActivity["summary"];
 }
 
+// What the coach panel says while it is idle and the student is mid-item.
+export function practiceIdleLabel(activity: ActivityState | null): string | undefined {
+  const training = trainingOf(activity);
+  if (!training || training.summary !== null) return undefined;
+  return training.status === "prompt" || training.status === "in_progress"
+    ? "waiting for your answer"
+    : undefined;
+}
+
 export function trainingOf(activity: ActivityState | null): TrainingActivity | null {
   return activity?.kind === "training" ? activity : null;
 }
