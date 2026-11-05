@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import type { ServerApi } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
-import { formatInterval, NONE, trainingView } from "../src/state/practice.js";
+import { formatInterval, NONE, nextBatchParts, trainingView } from "../src/state/practice.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
 import { motifCounts, progressOf } from "./practice-fixtures.js";
 
@@ -217,6 +217,19 @@ describe("the hub", () => {
     await within(due).findByText(/you're caught up/);
     expect(within(due).getByText("Next batch 3")).toBeTruthy();
     expect(within(due).queryByRole("button")).toBeNull();
+  });
+});
+
+describe("the next batch time", () => {
+  const now = new Date(2026, 2, 1, 12, 0);
+  const at = (day: number, hour: number, minute = 0) =>
+    nextBatchParts(new Date(2026, 2, day, hour, minute).toISOString(), 3, now);
+
+  it("names today, tomorrow or the weekday, with the local clock time and the count", () => {
+    expect(at(1, 18, 30)).toEqual({ label: "Next batch 3", when: "today 18:30" });
+    expect(at(2, 7)).toEqual({ label: "Next batch 3", when: "tomorrow 07:00" });
+    expect(at(4, 7)?.when).toBe("Wed 07:00");
+    expect(nextBatchParts(null, 0, now)).toBeNull();
   });
 });
 
@@ -549,6 +562,7 @@ describe("rating a card", () => {
     expect(formatInterval(0.001)).toBe("1 min");
     expect(formatInterval(5)).toBe("5 h");
     expect(formatInterval(48)).toBe("2 d");
+    expect(formatInterval(36)).toBe("2 d");
   });
 
   it("rates by clicking a button", () => {
