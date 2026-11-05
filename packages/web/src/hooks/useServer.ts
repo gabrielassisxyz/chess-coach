@@ -21,6 +21,8 @@ export interface UseServerOptions {
 
 export interface ServerApi extends ChatState {
   connection: ConnectionState;
+  // Failed connection attempts since the socket was last open; 0 while connected and before the first try fails.
+  reconnectAttempt: number;
   say(text: string): boolean;
   approve(requestId: string, allow: boolean): void;
   dismissError(): void;
@@ -41,6 +43,7 @@ function defaultUrl(): string {
 export function useServer(options: UseServerOptions = {}): ServerApi {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
   const [connection, setConnection] = useState<ConnectionState>("reconnecting");
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const socketRef = useRef<SocketLike | null>(null);
   const commandCount = useRef(0);
   const url = options.url ?? defaultUrl();
@@ -57,6 +60,7 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
       socket.onopen = () => {
         delay = BACKOFF_START_MS;
         setConnection("connected");
+        setReconnectAttempt(0);
       };
       socket.onmessage = (message) => {
         const parsed = ServerEventSchema.safeParse(parseJson(message.data));
@@ -67,6 +71,7 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
         if (disposed) return;
         socketRef.current = null;
         setConnection("reconnecting");
+        setReconnectAttempt((count) => count + 1);
         timer = setTimeout(open, delay);
         delay = Math.min(delay * 2, BACKOFF_MAX_MS);
       };
@@ -123,7 +128,7 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
     [sendCommand],
   );
 
-  return { ...state, connection, say, approve, dismissError, send };
+  return { ...state, connection, reconnectAttempt, say, approve, dismissError, send };
 }
 
 function parseJson(data: unknown): unknown {

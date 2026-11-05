@@ -88,6 +88,8 @@ function api(activity: TrainingActivity | null): ServerApi {
     turn: "idle",
     localCount: 0,
     cardsCreated: {},
+    coachMessages: 0,
+    reconnectAttempt: 0,
     activity,
     connection: "connected",
     say: vi.fn(() => true),

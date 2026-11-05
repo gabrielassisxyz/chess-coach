@@ -159,70 +159,75 @@ function OpenGame({ server, game, createBoard, onClose }: OpenGameProps) {
 
   return (
     <>
-      <div className="games__bar">
-        <button type="button" className="button" onClick={onClose}>
-          All games
-        </button>
-        {demo ? (
+      <section className="screen games" aria-label="Games">
+        <h2 className="screen__title">Games</h2>
+        <div className="games__bar">
+          <button type="button" className="button" onClick={onClose}>
+            All games
+          </button>
+          {demo ? (
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={() => server.send({ type: "leave_demo", activity_id: demo.activity_id })}
+            >
+              Back to review
+            </button>
+          ) : null}
+        </div>
+        <div className="games__bar">
+          <button type="button" className="button" disabled={ply === 0} onClick={() => setPly(0)}>
+            Start
+          </button>
           <button
             type="button"
-            className="button button--primary"
-            onClick={() => server.send({ type: "leave_demo", activity_id: demo.activity_id })}
+            className="button"
+            disabled={ply === 0}
+            onClick={() => setPly(ply - 1)}
           >
-            Back to review
+            Back
           </button>
-        ) : null}
+          <button
+            type="button"
+            className="button"
+            disabled={ply === count}
+            onClick={() => setPly(ply + 1)}
+          >
+            Forward
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={ply === count}
+            onClick={() => setPly(count)}
+          >
+            End
+          </button>
+        </div>
+        <PlyDetail game={game} ply={ply} />
+        <div className="games__bar">
+          <button
+            type="button"
+            className="button"
+            disabled={ply === 0 || !connected}
+            onClick={() => server.send({ type: "ask_coach_about_ply", game_id: game.id, ply })}
+          >
+            Ask the coach about this move
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={created !== undefined || !connected}
+            onClick={() => server.send({ type: "create_cards", game_id: game.id })}
+          >
+            {created === undefined ? "Create cards" : `${created} cards created`}
+          </button>
+        </div>
+        <GameMoves moves={game.moves} selectedPly={ply} onSelect={setPly} />
+      </section>
+      <div className="stage">
+        <Board activity={demo ?? local} onMove={() => {}} createBoard={createBoard} />
       </div>
-      <Board activity={demo ?? local} onMove={() => {}} createBoard={createBoard} />
-      <div className="games__bar">
-        <button type="button" className="button" disabled={ply === 0} onClick={() => setPly(0)}>
-          Start
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={ply === 0}
-          onClick={() => setPly(ply - 1)}
-        >
-          Back
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={ply === count}
-          onClick={() => setPly(ply + 1)}
-        >
-          Forward
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={ply === count}
-          onClick={() => setPly(count)}
-        >
-          End
-        </button>
-      </div>
-      <PlyDetail game={game} ply={ply} />
-      <div className="games__bar">
-        <button
-          type="button"
-          className="button"
-          disabled={ply === 0 || !connected}
-          onClick={() => server.send({ type: "ask_coach_about_ply", game_id: game.id, ply })}
-        >
-          Ask the coach about this move
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={created !== undefined || !connected}
-          onClick={() => server.send({ type: "create_cards", game_id: game.id })}
-        >
-          {created === undefined ? "Create cards" : `${created} cards created`}
-        </button>
-      </div>
-      <GameMoves moves={game.moves} selectedPly={ply} onSelect={setPly} />
     </>
   );
 }
@@ -252,28 +257,28 @@ export function Games({
     [api, send],
   );
 
+  if (game) {
+    return (
+      <OpenGame
+        key={game.id}
+        server={server}
+        game={game}
+        createBoard={createBoard}
+        onClose={() => setGame(null)}
+      />
+    );
+  }
+
   return (
-    <section className="screen games" aria-label="Games">
+    <section className="screen screen--wide games" aria-label="Games">
       <h2 className="screen__title">Games</h2>
       {failed ? (
         <p className="screen__note" role="alert">
           That game could not be loaded. Try it again, or pick another game.
         </p>
       ) : null}
-      {game ? (
-        <OpenGame
-          key={game.id}
-          server={server}
-          game={game}
-          createBoard={createBoard}
-          onClose={() => setGame(null)}
-        />
-      ) : (
-        <>
-          <ImportPanel api={importApi} onChanged={reload} />
-          <GameList listing={listing} onOpen={open} onRetry={reload} />
-        </>
-      )}
+      <ImportPanel api={importApi} onChanged={reload} />
+      <GameList listing={listing} onOpen={open} onRetry={reload} />
     </section>
   );
 }

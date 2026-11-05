@@ -49,7 +49,7 @@ describe("App", () => {
   it("shows a server error as a dismissible notice and keeps the connection in the chat", () => {
     render(<App />);
     connect();
-    expect(screen.getByRole("status").textContent).toBe("connected");
+    expect(screen.getByRole("status").textContent).toBe("watching the board");
     act(() =>
       FakeSocket.latest.receive({ type: "error", code: "illegal_move", message: "not legal" }),
     );
@@ -74,7 +74,7 @@ describe("layout", () => {
     style.textContent = layoutCss;
     document.head.append(style);
     const grid = document.createElement("main");
-    grid.className = "grid";
+    grid.className = "frame";
     document.body.append(grid);
     const value = getComputedStyle(grid).gridTemplateColumns;
     style.remove();
@@ -82,8 +82,8 @@ describe("layout", () => {
     return value;
   }
 
-  it("puts the board and the chat side by side at 1280px", () => {
-    expect(columns(1280)).toBe("min(70vh, 640px) 1fr");
+  it("puts the left column, the board and the coach side by side at 1280px", () => {
+    expect(columns(1280)).toBe("220px minmax(0, 1fr) 360px");
   });
 
   it("stacks the chat under the board at 800px", () => {
