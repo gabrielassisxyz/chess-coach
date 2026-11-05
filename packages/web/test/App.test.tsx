@@ -68,7 +68,7 @@ describe("App", () => {
 });
 
 describe("layout", () => {
-  function columns(width: number): string {
+  function frameStyle(width: number): CSSStyleDeclaration {
     (window as unknown as HappyWindow).happyDOM.setViewport({ width, height: 900 });
     const style = document.createElement("style");
     style.textContent = layoutCss;
@@ -76,17 +76,25 @@ describe("layout", () => {
     const grid = document.createElement("main");
     grid.className = "frame";
     document.body.append(grid);
-    const value = getComputedStyle(grid).gridTemplateColumns;
+    const computed = getComputedStyle(grid);
+    const snapshot = {
+      gridTemplateColumns: computed.gridTemplateColumns,
+      display: computed.display,
+      flexDirection: computed.flexDirection,
+    } as CSSStyleDeclaration;
     style.remove();
     grid.remove();
-    return value;
+    return snapshot;
   }
+  const columns = (width: number): string => frameStyle(width).gridTemplateColumns;
 
   it("puts the left column, the board and the coach side by side at 1280px", () => {
     expect(columns(1280)).toBe("220px minmax(0, 1fr) 360px");
   });
 
-  it("stacks the chat under the board at 800px", () => {
-    expect(columns(800)).toBe("1fr");
+  it("stacks everything in one column at 800px", () => {
+    const frame = frameStyle(800);
+    expect(frame.display).toBe("flex");
+    expect(frame.flexDirection).toBe("column");
   });
 });

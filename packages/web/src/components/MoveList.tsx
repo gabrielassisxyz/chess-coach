@@ -49,7 +49,9 @@ export function MoveList({ moves, flaggedPly = null }: MoveListProps) {
 
   useEffect(() => {
     const list = listRef.current;
-    if (list && latestPly !== null) list.scrollTop = list.scrollHeight;
+    if (!list || latestPly === null) return;
+    list.scrollTop = list.scrollHeight;
+    list.scrollLeft = list.scrollWidth;
   }, [latestPly]);
 
   return (

@@ -173,6 +173,28 @@ describe("games table", () => {
   });
 });
 
+describe("a phone", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("opens a game on a single tap, since a double tap zooms", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({ matches: query.includes("max-width: 899px"), media: query })),
+    );
+    const getGame = vi.fn<GamesApi["getGame"]>(() => new Promise(() => {}));
+    render(
+      <Games
+        server={serverApi()}
+        api={{ listGames: async () => LIBRARY, getGame }}
+        importApi={idleImportApi}
+      />,
+    );
+    await screen.findByRole("table");
+    fireEvent.click(rows()[1] as HTMLElement);
+    expect(getGame).toHaveBeenCalledWith(2);
+  });
+});
+
 describe("grading line and the import form", () => {
   it("says how many games are grading, polls, and refreshes the list when it drains", async () => {
     const statuses: ImportStatus[] = [
