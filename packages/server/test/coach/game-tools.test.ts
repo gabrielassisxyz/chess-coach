@@ -4,10 +4,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { buildCoachTools, COACH_TOOL_BASE_NAMES } from "../../src/coach/tools.js";
+import { createCoachSession } from "../../src/db/chat.js";
 import { openDatabase } from "../../src/db/open.js";
 import { AnalyzeSuperseded } from "../../src/engine/pool.js";
 import { contentDir } from "../../src/paths.js";
+import { ReviewDesk } from "../../src/srs/review.js";
 import { makeWorld } from "../fakes/fake-world.js";
+import { START_FEN } from "../fixture-game.js";
 
 const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
 
@@ -115,6 +118,39 @@ describe("show_position and make_move", () => {
     expect(accepts("show_position", { fen: AFTER_E4 })).toBe(true);
     expect(accepts("make_move", { san: "" })).toBe(false);
     expect(accepts("make_move", { san: "e4; rm -rf /" })).toBe(false);
+  });
+
+  it("refuses a demo while a practice item is open and names training_item_open", async () => {
+    const db = openDatabase(mkdtempSync(join(tmpdir(), "game-tools-training-")));
+    const cardId = Number(
+      db
+        .prepare(
+          `INSERT INTO srs_cards (source_kind, prompt_fen, student_color, expected_uci, created_at, next_review_at)
+           VALUES ('teaching', ?, 'white', 'd2d4', 'x', '2099-01-01T00:00:00.000Z')`,
+        )
+        .run(START_FEN).lastInsertRowid,
+    );
+    const session = createCoachSession(db, { promptVersion: "v" });
+    const notifications = { sessionId: () => session.id };
+    const fake = makeWorld(db, [], { desk: new ReviewDesk({ db, notifications }), notifications });
+    const tools = buildCoachTools({ db, contentDir: contentDir(), world: fake.world });
+    const call = async (name: string, input: Record<string, unknown> = {}) => {
+      const def = tools.find((entry) => entry.name === name);
+      if (!def) throw new Error(`tool ${name} is not registered`);
+      const parsed = z.object(def.inputSchema).parse(input);
+      const result = await def.handler(parsed as never, {});
+      const text = (result.content[0] as { text: string }).text;
+      return {
+        isError: result.isError === true,
+        body: JSON.parse(text) as Record<string, unknown>,
+      };
+    };
+    const served = await call("serve_card", { card_id: cardId });
+    expect(served.isError).toBe(false);
+    const before = fake.activity.current();
+    const shown = await call("show_position", { fen: AFTER_E4 });
+    expect(shown).toMatchObject({ isError: true, body: { error: "training_item_open" } });
+    expect(fake.activity.current()).toEqual(before);
   });
 });
 

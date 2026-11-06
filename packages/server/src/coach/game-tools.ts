@@ -185,7 +185,7 @@ export function buildGameTools(world: CoachWorld): SdkMcpToolDefinition<any>[] {
     ),
     tool(
       "show_position",
-      "Put a position on the student's board as a demo. The live game is kept underneath and comes back when the demo ends.",
+      "Put a position on the student's board as a demo. The live game is kept underneath and comes back when the demo ends. Never call while a practice item is open; after it ends, a demo may show the refutation of the student's wrong try.",
       { fen: fenSchema },
       async ({ fen }) => guarded(async () => ok(stateSummary(await world.activity.startDemo(fen)))),
     ),

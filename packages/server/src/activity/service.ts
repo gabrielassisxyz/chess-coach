@@ -45,9 +45,11 @@ export interface ActivityServiceOptions {
 type StateListener = (state: ActivityState | null) => void;
 
 // What a demo returns to. A live game is re-read on return because its turn may have completed meanwhile.
+// A training queue is kept in memory while its demo is on the board, then re-published.
 type Underneath =
   | { kind: "live_game"; orientation: PlayerColor }
-  | { kind: "review"; orientation: PlayerColor; gameId: number; ply: number };
+  | { kind: "review"; orientation: PlayerColor; gameId: number; ply: number }
+  | { kind: "training"; orientation: PlayerColor };
 
 interface DemoBoard {
   chess: Chess;
@@ -93,6 +95,7 @@ export class ActivityService {
   startDemo(fen: string): Promise<ActivityState> {
     return this.enqueue("demo", async () => {
       this.refuseOverLiveGame();
+      this.refuseOverOpenTrainingItem();
       let chess: Chess;
       try {
         chess = new Chess(fen);
@@ -130,6 +133,10 @@ export class ActivityService {
       this.underneath = null;
       if (back?.kind === "live_game") return this.setLiveGame("leaveDemo");
       if (back?.kind === "review") return this.setReview(back.gameId, back.ply, "leaveDemo");
+      if (back?.kind === "training") {
+        if (!this.run) return this.publish(null, "leaveDemo");
+        return this.publish(this.run.state(this.nextId++), "leaveDemo");
+      }
       return this.publish(null, "leaveDemo");
     });
   }
@@ -268,8 +275,19 @@ export class ActivityService {
   }
 
   // Back to what was under the queue: the live game if it is still unfinished, else an empty board.
+  // A demo shown over a finished item keeps the run, so ending from that demo ends the same run.
   endTraining(expectedActivityId?: number): Promise<ActivityState | null> {
     return this.enqueue("training", async () => {
+      if (this.state?.kind === "demo" && this.underneath?.kind === "training") {
+        this.checkFresh(expectedActivityId);
+        if (!this.run) throw new ActivityError("not_in_training", "no training is on the board");
+        this.run.end();
+        this.run = null;
+        this.demo = null;
+        this.underneath = null;
+        if (this.game.current()?.finishedAt === null) return this.setLiveGame("endTraining");
+        return this.publish(null, "endTraining");
+      }
       this.requireTraining(expectedActivityId).end();
       this.run = null;
       if (this.game.current()?.finishedAt === null) return this.setLiveGame("endTraining");
@@ -317,11 +335,15 @@ export class ActivityService {
     return row;
   }
 
-  // An open run is paused unless it is the one on the board.
+  // An open run is paused unless it is the one on the board. A demo over training keeps
+  // the run on the board, so it is not paused while its demo shows.
   private pausedRun(): TrainingRunRow | null {
     const row = findOpenTrainingRun(this.db);
     if (!row) return null;
-    const onBoard = this.state?.kind === "training" ? (this.run?.runId ?? null) : null;
+    const trainingOnBoard =
+      this.state?.kind === "training" ||
+      (this.state?.kind === "demo" && this.underneath?.kind === "training");
+    const onBoard = trainingOnBoard ? (this.run?.runId ?? null) : null;
     return row.id === onBoard ? null : row;
   }
 
@@ -422,6 +444,19 @@ export class ActivityService {
     );
   }
 
+  // While the student is still working on a practice item, the board is theirs: a demo may only
+  // show the refutation once the item is answered, rated or the queue has ended.
+  private refuseOverOpenTrainingItem(): void {
+    if (this.state?.kind !== "training") return;
+    if (this.state.summary !== null) return;
+    if (this.state.status === "prompt" || this.state.status === "in_progress") {
+      throw new ActivityError(
+        "training_item_open",
+        "the student is working on a practice item; the board stays on it until it is answered",
+      );
+    }
+  }
+
   private requireDemo(expected: number | undefined): DemoBoard {
     this.checkFresh(expected);
     if (this.state?.kind !== "demo" || !this.demo) {
@@ -440,6 +475,7 @@ export class ActivityService {
         ply: state.selected_ply,
       };
     }
+    if (state?.kind === "training") return { kind: "training", orientation: state.orientation };
     return null;
   }
 
