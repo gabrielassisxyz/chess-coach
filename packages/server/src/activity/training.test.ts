@@ -178,6 +178,20 @@ describe("a card item", () => {
     expect(flushed).toHaveBeenCalled();
   });
 
+  it("hides the expected move and highlights the played move on a right answer", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const state = training(await activity.trainingAnswer("d2d4"));
+    expect(state).toMatchObject({
+      status: "solved",
+      input_enabled: false,
+      legal_moves: [],
+      last_move: { from: "d2", to: "d4" },
+      expected: null,
+    });
+  });
+
   it("logs the item served, the answer and the rating", async () => {
     addCard("d2d4");
     const log = new RecordingLog();
@@ -189,7 +203,7 @@ describe("a card item", () => {
     expect(log.named("training.item_served")[0]?.fields).toMatchObject({ mode: "srs" });
     expect(log.named("training.answer")[0]?.fields).toMatchObject({
       uci: "d2d4",
-      expected: { uci: "d2d4" },
+      expected: null,
     });
     expect(log.named("srs.rated")[0]?.fields).toMatchObject({ exposure_id: exposure, quality: 4 });
   });

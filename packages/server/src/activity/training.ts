@@ -472,8 +472,13 @@ export class TrainingRun {
     this.attachReasoning(s);
     s.explore.restart(s.fen);
     s.status = result.correct ? "solved" : "failed";
-    s.expected = { uci: result.expected_uci, san: result.expected_san };
-    s.lastMove = result.expected_uci;
+    if (result.correct) {
+      s.expected = null;
+      s.lastMove = uci;
+    } else {
+      s.expected = { uci: result.expected_uci, san: result.expected_san };
+      s.lastMove = result.expected_uci;
+    }
     this.tally(result.correct);
     this.wake = true;
   }
