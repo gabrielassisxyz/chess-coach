@@ -116,6 +116,21 @@ describe("a persisted practice session", () => {
     expect(runRows()).toEqual([{ ended_at: T0.toISOString(), ended_reason: "finished" }]);
   });
 
+  it("writes a step's ledger rows and its run row together, or neither", async () => {
+    addPuzzle("p1", BACK_RANK, ["a1a8"]);
+    const activity = boot();
+    const started = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    db.exec(`CREATE TRIGGER refuse_run_update BEFORE UPDATE ON training_runs
+             BEGIN SELECT RAISE(ABORT, 'run row refused'); END`);
+    await expect(activity.trainingAnswer("a1a8", started.activity_id)).rejects.toThrow(
+      "run row refused",
+    );
+    expect(db.prepare("SELECT answered_at FROM training_items").all()).toEqual([
+      { answered_at: null },
+    ]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM puzzle_attempts").get()).toEqual({ n: 0 });
+  });
+
   it("ties every served item in the ledger to its run", async () => {
     addPuzzle("p1", BACK_RANK, ["a1a8"]);
     addPuzzle("p2", BACK_RANK, ["a1a8"]);
