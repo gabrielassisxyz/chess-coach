@@ -224,3 +224,33 @@ describe("015_coach_session_tabs", () => {
     ).toThrow(/CHECK/);
   });
 });
+
+describe("014_training_hints", () => {
+  it("adds a defaulted hinted column to training_items and puzzle_attempts at 013", () => {
+    const db = new BetterSqlite3(":memory:");
+    const all = listMigrations(defaultMigrationsDir);
+    const upTo013 = migrationsDir(
+      Object.fromEntries(
+        all
+          .filter((name) => name < "014")
+          .map((name) => [name, readFileSync(join(defaultMigrationsDir, name), "utf8")]),
+      ),
+    );
+    runMigrations(db, upTo013);
+    db.prepare(
+      `INSERT INTO training_items (kind, puzzle_id, served_at)
+       VALUES ('puzzle', 'p1', '2026-11-06T00:00:00Z')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
+       VALUES ('p1', 'test', 'fork', 'easy', 'x', '[]', '[]', 'why')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO puzzle_attempts (puzzle_id, attempted_at, solved, answered_uci, failed_ply)
+       VALUES ('p1', 'x', 1, '[]', NULL)`,
+    ).run();
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("014_training_hints.sql");
+    expect(db.prepare("SELECT hinted FROM training_items").get()).toEqual({ hinted: 0 });
+    expect(db.prepare("SELECT hinted FROM puzzle_attempts").get()).toEqual({ hinted: 0 });
+  });
+});

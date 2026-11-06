@@ -162,6 +162,7 @@ export type LastTry = z.infer<typeof LastTrySchema>;
 // `fen` is the position the current step is graded against. `tries` counts the wrong tries on the
 // item. `solution_line` is set once the student gave up: the UCI moves from `fen` to the end.
 // `suggested_quality` is the rating a finished card pre-selects, from how its first try went.
+// `hint_square` is the origin square of the expected move after a hint, cleared on the next try.
 export const TrainingActivitySchema = z.object({
   kind: z.literal("training"),
   ...boardFields,
@@ -170,6 +171,9 @@ export const TrainingActivitySchema = z.object({
   status: TrainingStatusSchema,
   served_at: z.string(),
   exposure_id: z.string().optional(),
+  // The motif filter the queue was started with; null for an Any-motif run, so the heading
+  // can hide the pattern the student is meant to find. Absent from rows written before it existed.
+  run_motif: z.string().nullable().optional(),
   expected: ExpectedMoveSchema.nullable(),
   exploring: ExploringSchema,
   tries: z.number().int().nonnegative(),
@@ -177,6 +181,7 @@ export const TrainingActivitySchema = z.object({
   gave_up: z.boolean(),
   solution_line: z.array(z.string()).nullable(),
   suggested_quality: z.number().int().min(0).max(5).nullable(),
+  hint_square: SquareSchema.nullable(),
   summary: TrainingSummarySchema.nullable(),
 });
 

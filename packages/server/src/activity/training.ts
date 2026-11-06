@@ -39,6 +39,7 @@ import {
   type RunEndReason,
   type StoredRunItem,
   saveTrainingRun,
+  setTrainingItemHinted,
   type TrainingRunRow,
 } from "../db/training.js";
 import type { NotificationSink } from "../game/notifications.js";
@@ -72,6 +73,8 @@ export interface TrainingDeps {
   notifications?: NotificationSink;
   /** Called after a result row is written, so the coach comments between items. */
   onNotification?: () => void;
+  /** Shuffle source for puzzle queues; defaults to Math.random, tests inject a seed. */
+  shuffleRandom?: (() => number) | undefined;
 }
 
 export interface TrainingInput {
@@ -108,19 +111,24 @@ interface Served {
   gaveUp: boolean;
   solutionLine: string[] | null;
   suggestedQuality: number | null;
+  hintSquare: string | null;
+  hinted: boolean;
 }
 
 // UCI's null move: a card given up before any try has no move of the student's to record.
 const NO_MOVE_UCI = "0000";
 
-// The rating a finished card pre-selects: the first try decides it, and giving up means blank.
-function suggestedQualityOf(gaveUp: boolean, firstTryRight: boolean): number {
+// The rating a finished card pre-selects: the first try decides it, a hint means the student did
+// not know it, and giving up means blank.
+function suggestedQualityOf(gaveUp: boolean, firstTryRight: boolean, hinted: boolean): number {
   if (gaveUp) return 0;
+  if (hinted) return 2;
   return firstTryRight ? 4 : 2;
 }
 
 // The served item as `training_runs.current_json` keeps it: enough to put the same item back at
 // the same puzzle step. The explored line is not kept; a resumed item starts from its position.
+// `hinted` is absent from a step stored before hints existed.
 interface StoredCurrent {
   item_id: number;
   served_at: string;
@@ -131,6 +139,8 @@ interface StoredCurrent {
   reply_uci: string | null;
   // `wrongTries` is absent from a step stored before retries existed.
   attempt: (Omit<AttemptState, "solution" | "wrongTries"> & { wrongTries?: number }) | null;
+  hinted?: boolean | undefined;
+  hint_square?: string | null | undefined;
 }
 
 interface ResumePoint {
@@ -198,6 +208,7 @@ export class TrainingRun {
     private readonly queue: QueueEntry[],
     readonly runId: number | null,
     resume: ResumePoint | null = null,
+    private readonly runMotif: string | null = null,
   ) {
     this.clock = deps.clock ?? systemClock;
     if (resume === null) {
@@ -233,7 +244,8 @@ export class TrainingRun {
         currentJson: "{}",
         startedAt,
       });
-      const run = new TrainingRun(deps, input.mode, queue, runId);
+      const runMotif = input.mode === "puzzles" ? (input.motif ?? null) : null;
+      const run = new TrainingRun(deps, input.mode, queue, runId, null, runMotif);
       run.save();
       return run;
     })();
@@ -249,7 +261,7 @@ export class TrainingRun {
       current: JSON.parse(row.currentJson) as StoredCurrent,
     };
     return deps.db.transaction(() => {
-      const run = new TrainingRun(deps, row.mode, queue, row.id, resume);
+      const run = new TrainingRun(deps, row.mode, queue, row.id, resume, row.motif);
       run.save();
       return run;
     })();
@@ -288,10 +300,14 @@ export class TrainingRun {
       throw new ActivityError("empty_queue", "choose White or Black for the opening drill");
     }
     const motif = input.mode === "openings" ? `opening-${input.color}` : input.motif;
-    const { puzzles } = listPuzzles(deps.db, {
-      motif,
-      limit: input.size ?? DEFAULT_DRILL_SIZE,
-    });
+    const { puzzles } = listPuzzles(
+      deps.db,
+      {
+        motif,
+        limit: input.size ?? DEFAULT_DRILL_SIZE,
+      },
+      deps.shuffleRandom ?? Math.random,
+    );
     return puzzles.map((p) => ({
       kind: "puzzle",
       id: p.id,
@@ -322,6 +338,7 @@ export class TrainingRun {
       status: s.status,
       served_at: new Date(s.servedAtMs).toISOString(),
       ...(s.item.kind === "card" ? { exposure_id: s.item.exposure_id } : {}),
+      run_motif: this.runMotif,
       expected: s.expected,
       exploring: open
         ? { fen: s.explore.fen, line_san: s.explore.lineSan, trail: [...s.shown] }
@@ -331,6 +348,7 @@ export class TrainingRun {
       gave_up: s.gaveUp,
       solution_line: s.solutionLine,
       suggested_quality: s.suggestedQuality,
+      hint_square: open ? s.hintSquare : null,
       summary: this.summary,
     };
   }
@@ -396,6 +414,7 @@ export class TrainingRun {
     this.transition(() => {
       if (s.item.kind === "card") this.tryCard(s, s.item, uci);
       else this.tryPuzzle(s, s.item, uci);
+      s.hintSquare = null;
     });
   }
 
@@ -408,6 +427,34 @@ export class TrainingRun {
     this.transition(() => {
       if (s.item.kind === "card") this.finishCard(s, s.item.exposure_id, true);
       else this.givePuzzleUp(s, s.item);
+      s.hintSquare = null;
+    });
+  }
+
+  /** Marks the origin square of the expected move; a hinted item never counts as first try. */
+  hint(): void {
+    const s = this.served;
+    if (!this.isOpen()) {
+      throw new ActivityError("item_finished", "this item is already over");
+    }
+    let expectedUci: string;
+    if (s.item.kind === "card") {
+      const card = getCard(this.deps.db, s.item.card_id);
+      if (!card) throw new ActivityError("card_not_found", `card ${s.item.card_id} does not exist`);
+      expectedUci = card.expectedUci;
+    } else {
+      const attempt = s.attempt as AttemptState;
+      const next = attempt.solution[attempt.cursor];
+      if (!next) throw new ActivityError("item_finished", "this item is already over");
+      expectedUci = next;
+    }
+    const square = expectedUci.slice(0, 2);
+    this.transition(() => {
+      s.hintSquare = square;
+      if (!s.hinted) {
+        s.hinted = true;
+        setTrainingItemHinted(this.deps.db, s.itemId);
+      }
     });
   }
 
@@ -500,6 +547,8 @@ export class TrainingRun {
             wrongTries: attempt.wrongTries,
           }
         : null,
+      hinted: s.hinted,
+      hint_square: s.hintSquare,
     };
     saveTrainingRun(this.deps.db, this.runId, {
       position: this.position,
@@ -537,9 +586,10 @@ export class TrainingRun {
 
   // The desk grades one answer per serving, so it is handed the first try: that is what the review
   // row's `correct` means. A card given up before any try is answered with the null move.
+  // A hinted solve keeps the desk's grade but never counts as first try.
   private finishCard(s: Served, exposureId: string, gaveUp: boolean): void {
     const result = this.deps.desk.answer(exposureId, s.tries[0]?.uci ?? NO_MOVE_UCI);
-    this.closeItem(s, s.tries.at(-1)?.uci ?? null, result.correct);
+    this.closeItem(s, s.tries.at(-1)?.uci ?? null, result.correct && !s.hinted);
     s.gaveUp = gaveUp;
     this.attachReasoning(s);
     s.explore.restart(s.fen);
@@ -547,7 +597,7 @@ export class TrainingRun {
     s.expected = gaveUp ? { uci: result.expected_uci, san: result.expected_san } : null;
     s.lastMove = gaveUp ? null : result.expected_uci;
     s.solutionLine = gaveUp ? [result.expected_uci] : null;
-    s.suggestedQuality = suggestedQualityOf(gaveUp, result.correct);
+    s.suggestedQuality = suggestedQualityOf(gaveUp, result.correct, s.hinted);
     this.tally(!gaveUp);
     this.wake = true;
   }
@@ -574,7 +624,7 @@ export class TrainingRun {
     }
     s.item = { ...item, cursor: state.cursor, reply_uci: null };
     s.lastMove = uci;
-    this.closeItem(s, uci, solvedFirstTry(state));
+    this.closeItem(s, uci, solvedFirstTry(state) && !s.hinted);
     this.recordPuzzle(s, item, state);
   }
 
@@ -610,7 +660,7 @@ export class TrainingRun {
     state: AttemptState,
   ): void {
     const solved = state.status === "solved";
-    const firstTry = solvedFirstTry(state);
+    const firstTry = solvedFirstTry(state) && !s.hinted;
     recordPuzzleAttempt(this.deps.db, {
       puzzleId: item.puzzle_id,
       attemptedAt: this.clock.now().toISOString(),
@@ -620,6 +670,7 @@ export class TrainingRun {
       firstTry,
       tries: state.wrongTries,
       gaveUp: s.gaveUp,
+      hinted: s.hinted,
     });
     this.tally(solved);
     if (!firstTry) this.cardFromMiss(item, state, s.tries.find((t) => !t.correct)?.uci ?? null);
@@ -690,6 +741,8 @@ export class TrainingRun {
       gaveUp: false,
       solutionLine: null,
       suggestedQuality: null,
+      hintSquare: null,
+      hinted: false,
     });
     if (entry.kind === "card") {
       const card = this.deps.desk.serveCard(entry.cardId);
@@ -755,8 +808,17 @@ export class TrainingRun {
     if (current.status === "solved") this.solved -= 1;
     if (current.status === "failed") this.failed -= 1;
     const served = this.serve(this.position);
-    if (current.status !== "rated") return served;
-    return { ...served, status: "rated", expected: current.expected, lastMove: current.last_move };
+    const hinted = current.hinted ?? false;
+    const hintSquare = current.hint_square ?? null;
+    if (current.status !== "rated") return { ...served, hinted, hintSquare };
+    return {
+      ...served,
+      status: "rated",
+      expected: current.expected,
+      lastMove: current.last_move,
+      hinted,
+      hintSquare,
+    };
   }
 
   private restorePuzzle(entry: QueueEntry & { kind: "puzzle" }, current: StoredCurrent): Served {
@@ -803,6 +865,8 @@ export class TrainingRun {
       gaveUp,
       solutionLine: gaveUp ? solutionLineOf(attempt) : null,
       suggestedQuality: null,
+      hintSquare: current.hint_square ?? null,
+      hinted: current.hinted ?? false,
     };
   }
 

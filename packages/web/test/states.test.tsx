@@ -80,9 +80,9 @@ describe("Practice states", () => {
     const fetchMotifs = () => new Promise<{ motif: string; count: number }[]>((r) => (resolve = r));
     render(<Practice server={serverApi()} {...hub} fetchMotifs={fetchMotifs} />);
     expect(screen.getByText("Loading motifs.")).toBeTruthy();
-    expect(screen.queryByRole("radio", { name: /fork/ })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /fork/i })).toBeNull();
     await act(async () => resolve([{ motif: "fork", count: 4 }]));
-    expect(screen.getByRole("radio", { name: /fork/ })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /fork/i })).toBeTruthy();
     expect(screen.queryByText("Loading motifs.")).toBeNull();
   });
 
@@ -114,7 +114,7 @@ describe("Practice states", () => {
   it("shows a starting state until the server answers, then the refusal", async () => {
     const server = serverApi();
     const view = render(<Practice server={server} {...hub} />);
-    await screen.findByRole("radio", { name: /fork/ });
+    await screen.findByRole("radio", { name: /fork/i });
     fireEvent.click(screen.getByRole("button", { name: "Review due cards" }));
     expect(server.send).toHaveBeenCalledWith({ type: "start_training", mode: "srs", size: 10 });
     const starting = screen.getByRole("button", { name: "Starting" }) as HTMLButtonElement;
@@ -142,8 +142,8 @@ describe("Practice states", () => {
   it("names the motif when a drill has no puzzles for it", async () => {
     const server = serverApi();
     const view = render(<Practice server={server} {...hub} />);
-    fireEvent.click(await screen.findByRole("radio", { name: /fork/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Start fork" }));
+    fireEvent.click(await screen.findByRole("radio", { name: /fork/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Start Fork" }));
     expect(server.send).toHaveBeenCalledWith({
       type: "start_training",
       mode: "puzzles",
@@ -161,13 +161,13 @@ describe("Practice states", () => {
         {...hub}
       />,
     );
-    expect((await screen.findByRole("alert")).textContent).toContain("There are no fork puzzles");
+    expect((await screen.findByRole("alert")).textContent).toContain("There are no Fork puzzles");
   });
 
   it("shows the server's message and a next step when a start fails for another reason", async () => {
     const server = serverApi();
     const view = render(<Practice server={server} {...hub} />);
-    await screen.findByRole("radio", { name: /fork/ });
+    await screen.findByRole("radio", { name: /fork/i });
     fireEvent.click(screen.getByRole("button", { name: "Review due cards" }));
     view.rerender(
       <Practice
@@ -188,7 +188,7 @@ describe("Practice states", () => {
   it("ends the wait when the connection drops before the server answers", async () => {
     const server = serverApi();
     const view = render(<Practice server={server} {...hub} />);
-    await screen.findByRole("radio", { name: /fork/ });
+    await screen.findByRole("radio", { name: /fork/i });
     fireEvent.click(screen.getByRole("button", { name: "Review due cards" }));
     view.rerender(<Practice server={{ ...server, connection: "reconnecting" }} {...hub} />);
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("not connected"));
@@ -200,7 +200,7 @@ describe("Practice states", () => {
   it("does not enter the starting state when the command could not be sent", async () => {
     const server = serverApi(null, { send: vi.fn(() => false) });
     render(<Practice server={server} {...hub} />);
-    await screen.findByRole("radio", { name: /fork/ });
+    await screen.findByRole("radio", { name: /fork/i });
     fireEvent.click(screen.getByRole("button", { name: "Review due cards" }));
     expect(screen.getByRole("alert").textContent).toContain("not connected");
     expect(screen.queryByRole("button", { name: "Starting" })).toBeNull();

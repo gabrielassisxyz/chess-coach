@@ -532,6 +532,7 @@ function trainingActivity(): TrainingActivity {
     gave_up: false,
     solution_line: null,
     suggested_quality: null,
+    hint_square: null,
     summary: null,
   };
 }

@@ -54,6 +54,7 @@ function card(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
     gave_up: false,
     solution_line: null,
     suggested_quality: null,
+    hint_square: null,
     summary: null,
     ...overrides,
   };
@@ -84,6 +85,7 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
     gave_up: false,
     solution_line: null,
     suggested_quality: null,
+    hint_square: null,
     summary: null,
     ...overrides,
   };
@@ -142,14 +144,28 @@ function api(activity: TrainingActivity | null): ServerApi {
   };
 }
 
-const boards: { movableColor: unknown; fen: unknown }[] = [];
+const boards: { movableColor: unknown; fen: unknown; hint: unknown }[] = [];
 let boardMove: ((from: string, to: string) => void) | undefined;
 const spyBoard: BoardFactory = (_element, config) => {
-  boards.push({ movableColor: config.movable?.color, fen: config.fen });
+  const custom = config.highlight?.custom as Map<string, string> | undefined;
+  boards.push({
+    movableColor: config.movable?.color,
+    fen: config.fen,
+    hint: custom ? Object.fromEntries(custom) : undefined,
+  });
   boardMove = config.events?.move as typeof boardMove;
   return {
-    set: (next: { movable?: { color?: unknown }; fen?: unknown }) => {
-      boards.push({ movableColor: next.movable?.color, fen: next.fen });
+    set: (next: {
+      movable?: { color?: unknown };
+      fen?: unknown;
+      highlight?: { custom?: Map<string, string> };
+    }) => {
+      const nextCustom = next.highlight?.custom as Map<string, string> | undefined;
+      boards.push({
+        movableColor: next.movable?.color,
+        fen: next.fen,
+        hint: nextCustom ? Object.fromEntries(nextCustom) : undefined,
+      });
     },
     destroy: vi.fn(),
   } as never;
@@ -168,7 +184,7 @@ describe("the hub", () => {
     try {
       render(<Practice server={api(null)} {...hubProps} />);
       const due = await screen.findByRole("region", { name: "Due cards" });
-      expect(within(due).getByText("4")).toBeTruthy();
+      expect(await within(due).findByText("4")).toBeTruthy();
       expect(due.textContent).toContain("due now · from 3 games");
       expect(within(due).getByText("Blunders").nextSibling?.textContent).toBe("2");
       expect(within(due).getByText("Mistakes").nextSibling?.textContent).toBe("1");
@@ -187,26 +203,33 @@ describe("the hub", () => {
   it("lists a row per motif with its 30-day success and leaves the opening motifs to their own card", async () => {
     render(<Practice server={api(null)} {...hubProps} />);
     const card = await screen.findByRole("region", { name: "Puzzles by motif" });
-    await within(card).findByRole("radio", { name: /fork/ });
+    await within(card).findByRole("radio", { name: /fork/i });
     expect(
-      within(card).getByRole("radio", { name: /fork/ }).closest("label")?.textContent,
-    ).toContain("71%");
+      within(card).getByRole("radio", { name: /fork/i }).closest("label")?.textContent,
+    ).toContain("71% · 10 of 14");
     expect(
-      within(card).getByRole("radio", { name: /pin/ }).closest("label")?.textContent,
-    ).toContain(NONE);
+      within(card).getByRole("radio", { name: /fork/i }).closest("label")?.textContent,
+    ).toContain("Fork");
+    expect(
+      within(card).getByRole("radio", { name: /pin/i }).closest("label")?.textContent,
+    ).toContain("not tried yet");
+    expect(card.textContent).not.toContain("smothered-mate");
     expect(within(card).queryByRole("radio", { name: /opening/ })).toBeNull();
-    const empty = within(card).getByRole("radio", { name: /smothered/ }) as HTMLInputElement;
+    const empty = within(card).getByRole("radio", { name: /smothered/i }) as HTMLInputElement;
     expect(empty.disabled).toBe(true);
     expect(empty.closest("label")?.textContent).toContain(NONE);
+    expect(within(card).getByRole("radio", { name: /fork/i }).getAttribute("aria-label")).toContain(
+      "puzzles",
+    );
   });
 
   it("starts the chosen motif at the chosen size", async () => {
     const server = api(null);
     render(<Practice server={server} {...hubProps} />);
-    await screen.findByRole("radio", { name: /fork/ });
-    fireEvent.click(screen.getByRole("radio", { name: /fork/ }));
+    await screen.findByRole("radio", { name: /fork/i });
+    fireEvent.click(screen.getByRole("radio", { name: /fork/i }));
     fireEvent.click(screen.getByRole("button", { name: "20" }));
-    fireEvent.click(screen.getByRole("button", { name: "Start fork" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start Fork" }));
     expect(server.send).toHaveBeenCalledWith({
       type: "start_training",
       mode: "puzzles",
@@ -381,12 +404,40 @@ describe("a puzzle on the board", () => {
       const { unmount } = render(
         <Practice server={api(puzzle({ status }))} createBoard={spyBoard} fetchMotifs={noMotifs} />,
       );
-      expect(
-        screen.getByRole("heading", { name: "Practice › Puzzles · fork · 2 of 10" }),
-      ).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Puzzles 2 of 10" })).toBeTruthy();
       expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
       unmount();
     }
+  });
+
+  it("hides the motif for an Any-motif run while open and names it after the item ends", () => {
+    const open = puzzle({ status: "prompt" });
+    const { unmount } = render(
+      <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    const heading = screen.getByRole("heading", { name: "Puzzles 2 of 10" });
+    expect(heading.textContent).not.toContain("fork");
+    expect(heading.textContent).not.toContain("Fork");
+    expect(screen.queryByText(/Motif:/)).toBeNull();
+    unmount();
+    const ended = puzzle({ status: "solved" });
+    render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.getByRole("heading", { name: "Puzzles 2 of 10" })).toBeTruthy();
+    expect(screen.getByText("Motif: Fork")).toBeTruthy();
+  });
+
+  it("keeps the motif in the heading for a single-motif run", () => {
+    const open = puzzle({ status: "prompt", run_motif: "fork" });
+    const { unmount } = render(
+      <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    expect(screen.getByRole("heading", { name: "Puzzles · Fork 2 of 10" })).toBeTruthy();
+    expect(screen.queryByText(/Motif:/)).toBeNull();
+    unmount();
+    const ended = puzzle({ status: "solved", run_motif: "fork" });
+    render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.getByRole("heading", { name: "Puzzles · Fork 2 of 10" })).toBeTruthy();
+    expect(screen.queryByText(/Motif:/)).toBeNull();
   });
 
   it("is never rateable, even answered and carrying an exposure id", () => {
@@ -870,5 +921,76 @@ describe("a right card answer", () => {
     expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
+  });
+});
+
+describe("hint", () => {
+  it("sends hint from the button", () => {
+    const server = api(card());
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(screen.getByRole("button", { name: "Hint" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "hint", activity_id: 4 });
+  });
+
+  it("renders the highlight and clears it after a try", () => {
+    boards.length = 0;
+    const { rerender } = render(
+      <Practice
+        server={api(card({ hint_square: "d2" }))}
+        createBoard={spyBoard}
+        fetchMotifs={noMotifs}
+      />,
+    );
+    expect(boards.at(-1)?.hint).toEqual({ d2: "hint" });
+    rerender(
+      <Practice
+        server={api(card({ hint_square: null }))}
+        createBoard={spyBoard}
+        fetchMotifs={noMotifs}
+      />,
+    );
+    expect(boards.at(-1)?.hint).toBeUndefined();
+  });
+});
+
+describe("explore mode", () => {
+  it("routes drops to explore while exploring and never to try_move", () => {
+    const server = api(card());
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(screen.getByRole("button", { name: "Explore" }));
+    (boardMove as (from: string, to: string) => void)("e2", "e4");
+    expect(server.send).toHaveBeenCalledWith({
+      type: "explore",
+      kind: "move",
+      uci: "e2e4",
+      activity_id: 4,
+    });
+    const calls = vi.mocked(server.send).mock.calls.map((args) => args[0]);
+    expect(calls.filter((call) => (call as { uci?: string }).uci === "e2e4")).toEqual([
+      { type: "explore", kind: "move", uci: "e2e4", activity_id: 4 },
+    ]);
+    expect(boards.at(-1)?.movableColor).toBe("both");
+  });
+
+  it("sends take back and reset through explore", () => {
+    const server = api(card());
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(screen.getByRole("button", { name: "Explore" }));
+    fireEvent.click(screen.getByRole("button", { name: "Take back" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "undo", activity_id: 4 });
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "reset", activity_id: 4 });
+  });
+
+  it("back to puzzle sends reset and restores graded drops", () => {
+    const server = api(card({ exploring: { fen: AFTER_E4, line_san: ["e4"], trail: [] } }));
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(screen.getByRole("button", { name: "Explore" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to puzzle" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "reset", activity_id: 4 });
+    vi.mocked(server.send).mockClear();
+    (boardMove as (from: string, to: string) => void)("d2", "d4");
+    expect(server.send).toHaveBeenCalledWith({ type: "try_move", uci: "d2d4", activity_id: 4 });
+    expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "explore" }));
   });
 });

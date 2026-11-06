@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useElapsed } from "../hooks/useElapsed.js";
 import {
   breadcrumbOf,
+  endedMotifText,
   formatElapsed,
   lookedAtMs,
   playedSanOf,
@@ -17,12 +18,19 @@ export interface PracticeItemActions {
   rate(quality: number): void;
   next(): void;
   end(): void;
+  hint(): void;
+  startExplore(): void;
+  takeBack(): void;
+  resetLine(): void;
+  backToPuzzle(): void;
 }
 
 export interface PracticeItemProps {
   training: TrainingActivity;
   view: TrainingView;
   actions: PracticeItemActions;
+  exploring?: boolean | undefined;
+  runMotif?: string | null | undefined;
 }
 
 function wrongTries(count: number): string {
@@ -54,21 +62,49 @@ function Verdict({ training, view }: Pick<PracticeItemProps, "training" | "view"
   );
 }
 
-function Open({ training, view, actions }: PracticeItemProps) {
+function Open({ training, view, actions, exploring = false }: PracticeItemProps) {
   const elapsed = useElapsed(training.served_at, true);
+  const line = training.exploring.line_san.join(" ");
   return (
     <>
       <p role="status" className="screen__note">
-        {view.status}
+        {exploring ? "Exploring" : view.status}
       </p>
       <div className="practice__timer">
         <span className="practice__elapsed" role="timer" aria-label="Time on this item">
           {formatElapsed(elapsed)}
         </span>
+        <button type="button" className="button" onClick={actions.hint}>
+          Hint
+        </button>
+        {exploring ? (
+          <button type="button" className="button" onClick={actions.backToPuzzle}>
+            Back to puzzle
+          </button>
+        ) : (
+          <button type="button" className="button" onClick={actions.startExplore}>
+            Explore
+          </button>
+        )}
         <button type="button" className="button" onClick={actions.showSolution}>
           Solution
         </button>
       </div>
+      {exploring ? (
+        <div className="practice__explore">
+          <p className="screen__note" data-testid="explore-line">
+            {line === "" ? "Nothing yet. Moves here are not graded." : line}
+          </p>
+          <div className="controls__row">
+            <button type="button" className="button" onClick={actions.takeBack}>
+              Take back
+            </button>
+            <button type="button" className="button" onClick={actions.resetLine}>
+              Reset
+            </button>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -98,11 +134,19 @@ function Finished({ training, view, actions }: PracticeItemProps) {
 }
 
 export function PracticeItem(props: PracticeItemProps) {
-  const { training, view, actions } = props;
+  const { training, view, actions, runMotif } = props;
   const [confirming, setConfirming] = useState(false);
+  const effectiveRunMotif = runMotif !== undefined ? runMotif : (training.run_motif ?? null);
+  const heading = breadcrumbOf(training, effectiveRunMotif);
+  const [title, count] = heading.split("\n");
+  const motifAfter = endedMotifText(training, effectiveRunMotif);
   return (
     <section className="screen practice" aria-label="Practice">
-      <h2 className="screen__title practice__crumb">{breadcrumbOf(training)}</h2>
+      <h2 className="screen__title practice__crumb">
+        <span className="practice__crumb-title">{title}</span>
+        {count ? <span className="practice__crumb-count">{count}</span> : null}
+      </h2>
+      {motifAfter ? <p className="practice__card-note">{motifAfter}</p> : null}
       <p className="practice__prompt">{promptOf(training)}</p>
       {view.summary ? (
         <p className="practice__summary" data-testid="summary">

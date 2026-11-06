@@ -149,6 +149,7 @@ const card = {
   gave_up: false,
   solution_line: null,
   suggested_quality: null,
+  hint_square: null,
   summary: null,
 };
 
@@ -192,7 +193,7 @@ describe("focus ring", () => {
     const chooser = render(
       <Practice server={serverApi()} fetchMotifs={async () => [{ motif: "fork", count: 2 }]} />,
     );
-    await screen.findByRole("radio", { name: /fork/ });
+    await screen.findByRole("radio", { name: /fork/i });
     expect(expectFocusRing(chooser.container)).toBeGreaterThanOrEqual(3);
     chooser.unmount();
 

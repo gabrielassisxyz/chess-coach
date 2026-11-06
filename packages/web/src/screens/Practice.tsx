@@ -186,6 +186,23 @@ export function Practice({
     }
   }, [sessionTraining]);
 
+  // Free analysis is a client mode on top of the graded position. While it is on, drops go
+  // through `explore` and nothing is graded; leaving it restores the graded drops.
+  const [exploring, setExploring] = useState(false);
+  const servedAt = sessionTraining?.served_at ?? "none";
+  const servedPosition = sessionTraining?.item.position_in_queue ?? 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new served item resets explore mode
+  useEffect(() => {
+    setExploring(false);
+  }, [servedAt, servedPosition]);
+  const sessionOpen =
+    sessionTraining != null &&
+    sessionTraining.summary === null &&
+    (sessionTraining.status === "prompt" || sessionTraining.status === "in_progress");
+  useEffect(() => {
+    if (!sessionOpen) setExploring(false);
+  }, [sessionOpen]);
+
   const demo = demoOverTraining(server.activity);
   if (demo) {
     const activityId = demo.activity_id;
@@ -235,15 +252,20 @@ export function Practice({
   const activityId = training.activity_id;
   // Every drop is graded; a wrong one comes back as the same position, which snaps the piece home.
   const move = (from: string, to: string, promotion?: PromotionPiece): void => {
-    server.send({
-      type: "try_move",
-      uci: `${from}${to}${promotion ?? ""}`,
-      activity_id: activityId,
-    });
+    const uci = `${from}${to}${promotion ?? ""}`;
+    if (exploring) {
+      server.send({ type: "explore", kind: "move", uci, activity_id: activityId });
+      return;
+    }
+    server.send({ type: "try_move", uci, activity_id: activityId });
   };
   const exposureId = training.exposure_id;
+  const explored = training.exploring.line_san.length > 0;
   const actions: PracticeItemActions = {
-    showSolution: () => server.send({ type: "show_solution", activity_id: activityId }),
+    showSolution: () => {
+      setExploring(false);
+      server.send({ type: "show_solution", activity_id: activityId });
+    },
     rate: (quality) => {
       if (exposureId) {
         server.send({
@@ -256,16 +278,26 @@ export function Practice({
     },
     next: () => server.send({ type: "next_training_item", activity_id: activityId }),
     end: () => server.send({ type: "end_training", activity_id: activityId }),
+    hint: () => server.send({ type: "hint", activity_id: activityId }),
+    startExplore: () => setExploring(true),
+    takeBack: () => server.send({ type: "explore", kind: "undo", activity_id: activityId }),
+    resetLine: () => server.send({ type: "explore", kind: "reset", activity_id: activityId }),
+    backToPuzzle: () => {
+      if (explored) server.send({ type: "explore", kind: "reset", activity_id: activityId });
+      setExploring(false);
+    },
   };
 
   return (
     <>
-      <PracticeItem training={training} view={view} actions={actions} />
+      <PracticeItem training={training} view={view} actions={actions} exploring={exploring} />
       <div className="stage">
         <Board
           activity={boardOf(training)}
           onMove={move}
           syncToken={server.errorCount}
+          bothSides={exploring}
+          hintSquare={training.hint_square}
           line={training.gave_up ? training.solution_line : null}
           createBoard={createBoard}
         />
