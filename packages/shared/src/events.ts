@@ -110,7 +110,7 @@ export const ErrorCodeSchema = z.enum([
   "exposure_unanswered",
   "invalid_quality",
   "game_not_finished",
-  "use_answer",
+  "use_try_move",
   "not_exploring",
   "illegal_exploration",
   "no_paused_training",
@@ -248,7 +248,7 @@ export const StartTrainingCommandSchema = z.object({
 
 const uci = z.string().regex(/^[a-h][1-8][a-h][1-8][qrbn]?$/);
 
-// Exploration is recorded and never graded; `answer` is the only command that grades in training.
+// Exploration is recorded and never graded; `try_move` is the only command that grades in training.
 export const ExploreCommandSchema = z.object({
   type: z.literal("explore"),
   command_id: commandId,
@@ -257,10 +257,18 @@ export const ExploreCommandSchema = z.object({
   activity_id: activityId,
 });
 
-export const AnswerCommandSchema = z.object({
-  type: z.literal("answer"),
+// Graded the moment the piece is dropped; a wrong try leaves the item open for another.
+export const TryMoveCommandSchema = z.object({
+  type: z.literal("try_move"),
   command_id: commandId,
   uci,
+  activity_id: activityId,
+});
+
+// Gives up on the open item: it ends as given up and the state carries the solution line.
+export const ShowSolutionCommandSchema = z.object({
+  type: z.literal("show_solution"),
+  command_id: commandId,
   activity_id: activityId,
 });
 
@@ -321,7 +329,8 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   UndoCommandSchema,
   StartTrainingCommandSchema,
   ExploreCommandSchema,
-  AnswerCommandSchema,
+  TryMoveCommandSchema,
+  ShowSolutionCommandSchema,
   RateCardCommandSchema,
   NextTrainingItemCommandSchema,
   EndTrainingCommandSchema,

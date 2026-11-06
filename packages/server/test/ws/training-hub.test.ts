@@ -94,7 +94,10 @@ describe("training over the socket", () => {
       { type: "end_training", activity_id: 3 },
       { type: "explore", kind: "move", uci: "e2e4", activity_id: 3 },
       { type: "explore", kind: "undo" },
-      { type: "answer", uci: "e7e8q" },
+      { type: "try_move", uci: "e7e8q" },
+      { type: "try_move", uci: "a1a8", activity_id: 3 },
+      { type: "show_solution" },
+      { type: "show_solution", activity_id: 3 },
       { type: "resume_training" },
       { type: "discard_training" },
     ];
@@ -109,15 +112,16 @@ describe("training over the socket", () => {
       { type: "rate_card", quality: 3 },
       { type: "explore", kind: "jump" },
       { type: "explore", kind: "move", uci: "e2" },
-      { type: "answer" },
-      { type: "answer", uci: "z9z9" },
+      { type: "answer", uci: "a1a8" },
+      { type: "try_move" },
+      { type: "try_move", uci: "z9z9" },
     ];
     for (const command of bad) {
       expect(ClientCommandSchema.safeParse({ ...command, command_id: "c" }).success).toBe(false);
     }
   });
 
-  it("routes answer to the puzzle and sends the training event beside the activity", async () => {
+  it("routes try_move to the puzzle and sends the training event beside the activity", async () => {
     const server = await start();
     const { socket, next } = await connect(server);
     await next("bootstrap");
@@ -127,7 +131,7 @@ describe("training over the socket", () => {
     const first = ServerEventSchema.parse(await next("training"));
     expect(first).toMatchObject({ type: "training", status: "prompt" });
     await next("activity");
-    socket.send(JSON.stringify({ type: "answer", command_id: "c2", uci: "a1a8" }));
+    socket.send(JSON.stringify({ type: "try_move", command_id: "c2", uci: "a1a8" }));
     const solved = await next("training");
     expect(solved).toMatchObject({ status: "solved" });
     socket.send(
@@ -137,6 +141,41 @@ describe("training over the socket", () => {
     socket.send(JSON.stringify({ type: "next_training_item", command_id: "c4" }));
     const ended = await next("training");
     expect(ended).toMatchObject({ summary: { solved: 1, failed: 0 } });
+    socket.close();
+  });
+
+  it("keeps the item open on a wrong try_move, ends it on show_solution, then refuses a try", async () => {
+    const server = await start();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    await next("training");
+    const served = ServerEventSchema.parse(await next("activity"));
+    socket.send(JSON.stringify({ type: "try_move", command_id: "c2", uci: "a1a2" }));
+    const missed = ServerEventSchema.parse(await next("activity"));
+    expect(missed).toMatchObject({
+      state: {
+        kind: "training",
+        status: "prompt",
+        input_enabled: true,
+        fen: BACK_RANK,
+        tries: 1,
+        last_try: { uci: "a1a2", correct: false },
+      },
+    });
+    expect((missed as { state: { legal_moves: unknown } }).state.legal_moves).toEqual(
+      (served as { state: { legal_moves: unknown } }).state.legal_moves,
+    );
+    socket.send(JSON.stringify({ type: "show_solution", command_id: "c3" }));
+    expect(ServerEventSchema.parse(await next("activity"))).toMatchObject({
+      state: { status: "failed", gave_up: true, solution_line: ["a1a8"], tries: 1 },
+    });
+    socket.send(JSON.stringify({ type: "try_move", command_id: "c4", uci: "a1a8" }));
+    expect(await next("error")).toMatchObject({ code: "item_finished", command_id: "c4" });
+    socket.send(JSON.stringify({ type: "show_solution", command_id: "c5" }));
+    expect(await next("error")).toMatchObject({ code: "item_finished", command_id: "c5" });
     socket.close();
   });
 
@@ -189,7 +228,7 @@ describe("training over the socket", () => {
     second.socket.close();
   });
 
-  it("routes explore without grading, and refuses move inside training with use_answer", async () => {
+  it("routes explore without grading, and refuses move inside training with use_try_move", async () => {
     const server = await start();
     const { socket, next } = await connect(server);
     await next("bootstrap");
@@ -204,7 +243,7 @@ describe("training over the socket", () => {
       state: { kind: "training", status: "prompt", exploring: { line_san: ["Kh1"] } },
     });
     socket.send(JSON.stringify({ type: "move", command_id: "c3", from: "a1", to: "a8" }));
-    expect(await next("error")).toMatchObject({ code: "use_answer", command_id: "c3" });
+    expect(await next("error")).toMatchObject({ code: "use_try_move", command_id: "c3" });
     socket.send(JSON.stringify({ type: "explore", command_id: "c4", kind: "move", uci: "a1a8" }));
     expect(await next("error")).toMatchObject({ code: "illegal_exploration", command_id: "c4" });
     socket.close();
@@ -240,7 +279,12 @@ describe("a paused practice session over the socket", () => {
     if (served.type !== "activity" || served.state?.kind !== "training") throw new Error("no item");
     expect(served.paused_training).toBeNull();
     const activityId = served.state.activity_id;
-    send(first.socket, { type: "answer", command_id: "c2", uci: "a1a8", activity_id: activityId });
+    send(first.socket, {
+      type: "try_move",
+      command_id: "c2",
+      uci: "a1a8",
+      activity_id: activityId,
+    });
     await first.next("activity");
     send(first.socket, { type: "next_training_item", command_id: "c3", activity_id: activityId });
     const second = ServerEventSchema.parse(await first.next("activity"));

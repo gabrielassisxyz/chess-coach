@@ -38,6 +38,28 @@ export function checkedColor(fen: string): "white" | "black" | false {
   }
 }
 
+export interface LineStep {
+  fen: string;
+  from: string;
+  to: string;
+}
+
+// The positions a line of UCI moves walks through from `fen`; it stops at a move that does not apply.
+export function positionsAlong(fen: string, line: readonly string[]): LineStep[] {
+  const steps: LineStep[] = [];
+  try {
+    const chess = new Chess(fen);
+    for (const uci of line) {
+      const squares = { from: uci.slice(0, 2), to: uci.slice(2, 4) };
+      const move = chess.move(uci.length > 4 ? { ...squares, promotion: uci.slice(4) } : squares);
+      steps.push({ fen: chess.fen(), from: move.from, to: move.to });
+    }
+  } catch {
+    // A move the position does not allow ends the line where it stands.
+  }
+  return steps;
+}
+
 export function movesOf(activity: ActivityState | null): ActivityMove[] {
   if (activity?.kind === "live_game") return activity.moves;
   if (activity?.kind === "review") return activity.game.moves;

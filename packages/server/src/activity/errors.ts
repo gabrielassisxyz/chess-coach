@@ -14,7 +14,7 @@ export type ActivityErrorCode =
   | "empty_queue"
   | "item_unfinished"
   | "item_finished"
-  | "use_answer"
+  | "use_try_move"
   | "not_exploring"
   | "illegal_exploration"
   | "training_active"

@@ -26,6 +26,7 @@ export const MotifProgressSchema = z.object({
   solved: z.number().int().nonnegative(),
   success_rate: z.number().min(0).max(1),
   attempts_30d: z.number().int().nonnegative(),
+  // Solved on the first try, so `success_rate_30d` is accuracy rather than completion.
   solved_30d: z.number().int().nonnegative(),
   // Null when the motif has no attempt in the last 30 days.
   success_rate_30d: z.number().min(0).max(1).nullable(),

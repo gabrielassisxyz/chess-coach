@@ -313,10 +313,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.practice__answer {
-  white-space: normal;
-}
-
 .practice__rating {
   display: flex;
   flex-direction: column;
@@ -345,6 +341,11 @@
   align-items: baseline;
   gap: var(--space-2);
   text-align: left;
+}
+
+.practice__grade--suggested {
+  border-color: var(--accent);
+  background: var(--surface-2);
 }
 
 .practice__grade-key,

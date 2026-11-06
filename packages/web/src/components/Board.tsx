@@ -14,10 +14,18 @@ import type { Api } from "@lichess-org/chessground/api";
 import type { Config } from "@lichess-org/chessground/config";
 import type { Color, Key } from "@lichess-org/chessground/types";
 import { useEffect, useRef, useState } from "react";
-import { checkedColor, destsFrom, promotionsFor } from "../state/play.js";
+import {
+  checkedColor,
+  destsFrom,
+  type LineStep,
+  positionsAlong,
+  promotionsFor,
+} from "../state/play.js";
 import { PromotionChooser } from "./PromotionChooser.js";
 
 export type BoardFactory = (element: HTMLElement, config: Config) => Api;
+
+export const LINE_STEP_MS = 600;
 
 export interface BoardProps {
   activity: ActivityState;
@@ -26,6 +34,9 @@ export interface BoardProps {
   syncToken?: number;
   // Exploration plays both sides of a line, so the board may move the side to play, whoever it is.
   bothSides?: boolean;
+  // UCI moves played one by one from the activity's position, LINE_STEP_MS apart; the board then
+  // stays on the last one. A new line, or a new position under it, starts again from the first.
+  line?: readonly string[] | null | undefined;
   createBoard?: BoardFactory | undefined;
 }
 
@@ -35,13 +46,19 @@ interface PendingPromotion {
   pieces: PromotionPiece[];
 }
 
-function toConfig(activity: ActivityState, bothSides: boolean): Config {
-  const lastMove = activity.last_move ? [activity.last_move.from, activity.last_move.to] : [];
+function turnOf(fen: string): Color {
+  return fen.split(" ")[1] === "b" ? "black" : "white";
+}
+
+function toConfig(activity: ActivityState, bothSides: boolean, shown: LineStep | null): Config {
+  const last = shown ?? activity.last_move;
+  const lastMove = last ? [last.from, last.to] : [];
+  const fen = shown ? shown.fen : activity.fen;
   return {
-    fen: activity.fen,
+    fen,
     orientation: activity.orientation,
-    turnColor: activity.turn,
-    check: checkedColor(activity.fen),
+    turnColor: shown ? turnOf(shown.fen) : activity.turn,
+    check: checkedColor(fen),
     lastMove: lastMove as Key[],
     movable: {
       free: false,
@@ -57,17 +74,36 @@ function toConfig(activity: ActivityState, bothSides: boolean): Config {
   };
 }
 
+// The step of `line` on the board right now: none at first, then one more every LINE_STEP_MS.
+function useLinePlayback(fen: string, line: readonly string[] | null): LineStep | null {
+  const key = line && line.length > 0 ? `${fen} ${line.join(" ")}` : null;
+  const steps = key && line ? positionsAlong(fen, line) : [];
+  const [played, setPlayed] = useState<{ key: string | null; count: number }>({
+    key: null,
+    count: 0,
+  });
+  const count = played.key === key ? played.count : 0;
+  useEffect(() => {
+    if (key === null || count >= steps.length) return;
+    const timer = setTimeout(() => setPlayed({ key, count: count + 1 }), LINE_STEP_MS);
+    return () => clearTimeout(timer);
+  }, [key, count, steps.length]);
+  return count > 0 ? (steps[count - 1] ?? null) : null;
+}
+
 export function Board({
   activity,
   onMove,
   syncToken = 0,
   bothSides = false,
+  line = null,
   createBoard = Chessground,
 }: BoardProps) {
   const elementRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<Api | null>(null);
   const [pending, setPending] = useState<PendingPromotion | null>(null);
   const [resync, setResync] = useState(0);
+  const shown = useLinePlayback(activity.fen, line);
 
   // Chessground callbacks are registered once at creation, so they read the latest props here.
   const latest = useRef({ activity, onMove, bothSides });
@@ -77,7 +113,7 @@ export function Board({
     const element = elementRef.current;
     if (!element) return;
     const api = createBoard(element, {
-      ...toConfig(latest.current.activity, latest.current.bothSides),
+      ...toConfig(latest.current.activity, latest.current.bothSides, null),
       draggable: { enabled: false },
       premovable: { enabled: false },
       selectable: { enabled: true },
@@ -99,11 +135,12 @@ export function Board({
   }, [createBoard]);
 
   // syncToken and resync are deliberate triggers: set() with an unchanged position still
-  // restores a piece the student moved that the server never accepted.
+  // restores a piece the student moved that the server never accepted. The line step is keyed by
+  // its position, since the step object is rebuilt on every render.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    apiRef.current?.set(toConfig(activity, bothSides));
-  }, [activity, bothSides, syncToken, resync]);
+    apiRef.current?.set(toConfig(activity, bothSides, shown));
+  }, [activity, bothSides, syncToken, resync, shown?.fen]);
 
   const choose = (piece: PromotionPiece): void => {
     if (!pending) return;

@@ -9,8 +9,6 @@ import type {
   TrainingStatus,
 } from "@chess-coach/shared";
 
-import { Chess } from "chess.js";
-
 export interface MotifCount {
   motif: string;
   count: number;
@@ -118,14 +116,16 @@ export const STATUS_LABEL: Record<TrainingStatus, string> = {
   rated: "Rated",
 };
 
+export const MISSED_TRY = "Not it, try again";
+
 export interface TrainingView {
   status: string;
   expected: string | null;
   answered: boolean;
   canRate: boolean;
   canAdvance: boolean;
-  canExplore: boolean;
-  canAnswer: boolean;
+  // The item takes a dropped move and offers the solution.
+  open: boolean;
   advanceLabel: "Next" | "Finish";
   summary: TrainingActivity["summary"];
 }
@@ -227,9 +227,10 @@ export function trailLines(trail: ExploredEvent[], answered: boolean): TrailLine
   ];
 }
 
-// The answer is the first move of the line explored when Answer was pressed, which is where the last event left it.
-export function answeredSanOf(training: TrainingActivity): string | null {
-  return training.exploring.trail.at(-1)?.line_san[0] ?? null;
+// The move that ended the item; a card or puzzle given up before any try has none.
+export function playedSanOf(training: TrainingActivity): string | null {
+  const last = training.last_try;
+  return last ? (last.san ?? last.uci) : null;
 }
 
 export function lookedAtMs(training: TrainingActivity): number {
@@ -241,32 +242,20 @@ export function boardOf(training: TrainingActivity): TrainingActivity {
   return { ...training, fen: training.exploring.fen };
 }
 
-// The answer is the first move of the explored line, played from the position the item was served in.
-export function answerUciOf(training: TrainingActivity): string | null {
-  const first = training.exploring.line_san[0];
-  if (first === undefined) return null;
-  try {
-    const move = new Chess(training.fen).move(first);
-    return `${move.from}${move.to}${move.promotion ?? ""}`;
-  } catch {
-    return null;
-  }
-}
-
 export function trainingView(training: TrainingActivity): TrainingView {
   const { item, status, summary } = training;
   const answered = status === "solved" || status === "failed";
   const ended = summary !== null;
   const open = !ended && (status === "prompt" || status === "in_progress");
   const card = item.kind === "card";
+  const missed = open && training.last_try?.correct === false;
   return {
-    status: STATUS_LABEL[status],
+    status: missed ? MISSED_TRY : STATUS_LABEL[status],
     expected: training.expected ? (training.expected.san ?? training.expected.uci) : null,
     answered,
     canRate: card && answered && !ended,
     canAdvance: !ended && (answered || (card && status === "rated")),
-    canExplore: open,
-    canAnswer: open && training.exploring.line_san.length > 0,
+    open,
     advanceLabel: item.position_in_queue === item.queue_length ? "Finish" : "Next",
     summary,
   };

@@ -16,7 +16,6 @@ import type { ServerApi } from "../hooks/useServer.js";
 import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
 import { serviceNotice } from "../state/health.js";
 import {
-  answerUciOf,
   boardOf,
   clearLastSession,
   DEFAULT_DRILL_SIZE,
@@ -234,25 +233,17 @@ export function Practice({
 
   const view = trainingView(training);
   const activityId = training.activity_id;
-  const explore = (kind: "undo" | "reset"): void => {
-    server.send({ type: "explore", kind, activity_id: activityId });
-  };
+  // Every drop is graded; a wrong one comes back as the same position, which snaps the piece home.
   const move = (from: string, to: string, promotion?: PromotionPiece): void => {
     server.send({
-      type: "explore",
-      kind: "move",
+      type: "try_move",
       uci: `${from}${to}${promotion ?? ""}`,
       activity_id: activityId,
     });
   };
-  const answerUci = answerUciOf(training);
   const exposureId = training.exposure_id;
   const actions: PracticeItemActions = {
-    answer: () => {
-      if (answerUci) server.send({ type: "answer", uci: answerUci, activity_id: activityId });
-    },
-    takeBack: () => explore("undo"),
-    reset: () => explore("reset"),
+    showSolution: () => server.send({ type: "show_solution", activity_id: activityId }),
     rate: (quality) => {
       if (exposureId) {
         server.send({
@@ -273,9 +264,9 @@ export function Practice({
       <div className="stage">
         <Board
           activity={boardOf(training)}
-          bothSides
           onMove={move}
           syncToken={server.errorCount}
+          line={training.gave_up ? training.solution_line : null}
           createBoard={createBoard}
         />
       </div>

@@ -60,19 +60,22 @@ describe("serve_puzzle", () => {
   it("leaves one card behind a wrong answer, however many times it is missed", async () => {
     const { fake, call, cards } = setup();
     await call("serve_puzzle", { puzzle_id: "forks:0" });
-    await fake.activity.trainingAnswer("h1g1");
+    await fake.activity.trainingTry("h1g1");
+    expect(cards()).toHaveLength(0);
+    await fake.activity.trainingShowSolution();
     expect(cards()).toHaveLength(1);
     expect(cards()[0]).toMatchObject({ puzzle_id: "forks:0", source_kind: "teaching" });
     await fake.activity.endTraining();
     await call("serve_puzzle", { puzzle_id: "forks:0" });
-    await fake.activity.trainingAnswer("h1g1");
+    await fake.activity.trainingTry("h1g1");
+    await fake.activity.trainingShowSolution();
     expect(cards()).toHaveLength(1);
   });
 
   it("reports the same puzzle_result row a queued puzzle would", async () => {
     const { fake, call, db } = setup();
     await call("serve_puzzle", { puzzle_id: "forks:0" });
-    await fake.activity.trainingAnswer("f4e5");
+    await fake.activity.trainingTry("f4e5");
     const rows = db
       .prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification'")
       .all();
@@ -97,7 +100,7 @@ describe("serve_card", () => {
     const id = addCard(db);
     const { body } = await call("serve_card", { card_id: id });
     expect(body).toMatchObject({ item_kind: "card", id, fen: FORK, orientation: "white" });
-    await fake.activity.trainingAnswer("f4e5");
+    await fake.activity.trainingTry("f4e5");
     const rows = db
       .prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification'")
       .all();

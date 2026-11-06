@@ -378,7 +378,7 @@ describe("demo over training", () => {
     addPuzzleRow("f1", "fork", FORK_FEN, ["b5c7", "e8f8", "a1c1"]);
     const { activity } = setupTraining();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    const mid = asTraining(await activity.trainingAnswer("b5c7"));
+    const mid = asTraining(await activity.trainingTry("b5c7"));
     expect(mid.status).toBe("in_progress");
     const before = activity.current();
     await expect(activity.startDemo(DEMO_FEN)).rejects.toMatchObject({
@@ -391,7 +391,7 @@ describe("demo over training", () => {
     addTrainingCard();
     const { activity } = setupTraining();
     await activity.startTraining({ mode: "srs" });
-    const solved = asTraining(await activity.trainingAnswer("d2d4"));
+    const solved = asTraining(await activity.trainingTry("d2d4"));
     expect(solved.status).toBe("solved");
     await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
       kind: "demo",
@@ -404,7 +404,8 @@ describe("demo over training", () => {
     addTrainingCard();
     const { activity } = setupTraining();
     await activity.startTraining({ mode: "srs" });
-    const failed = asTraining(await activity.trainingAnswer("e2e4"));
+    await activity.trainingTry("e2e4");
+    const failed = asTraining(await activity.trainingShowSolution());
     expect(failed.status).toBe("failed");
     await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
       kind: "demo",
@@ -417,7 +418,7 @@ describe("demo over training", () => {
     addTrainingCard();
     const { activity } = setupTraining();
     const start = asTraining(await activity.startTraining({ mode: "srs" }));
-    await activity.trainingAnswer("d2d4");
+    await activity.trainingTry("d2d4");
     await activity.rateCard((start.item as { exposure_id: string }).exposure_id, 4);
     expect(asTraining(activity.current()).status).toBe("rated");
     await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
@@ -431,9 +432,9 @@ describe("demo over training", () => {
     addPuzzleRow("f1", "fork", FORK_FEN, ["b5c7", "e8f8", "a1c1"]);
     const { activity } = setupTraining();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    const solved = asTraining(await activity.trainingAnswer("b5c7"));
+    const solved = asTraining(await activity.trainingTry("b5c7"));
     expect(solved.status).toBe("in_progress");
-    const done = asTraining(await activity.trainingAnswer("a1c1"));
+    const done = asTraining(await activity.trainingTry("a1c1"));
     expect(done.status).toBe("solved");
     await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
       kind: "demo",
@@ -444,7 +445,8 @@ describe("demo over training", () => {
     await activity.endTraining();
     addPuzzleRow("f2", "fork", FORK_FEN, ["b5c7"]);
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    const failed = asTraining(await activity.trainingAnswer("f4e5"));
+    await activity.trainingTry("f4e5");
+    const failed = asTraining(await activity.trainingShowSolution());
     expect(failed.status).toBe("failed");
     await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
       kind: "demo",
@@ -458,7 +460,7 @@ describe("demo over training", () => {
     addTrainingCard();
     const { activity } = setupTraining();
     await activity.startTraining({ mode: "srs" });
-    const finished = asTraining(await activity.trainingAnswer("d2d4"));
+    const finished = asTraining(await activity.trainingTry("d2d4"));
     expect(finished.status).toBe("solved");
     const demo = await activity.startDemo(DEMO_FEN);
     if (demo.kind !== "demo") throw new Error("expected demo");
@@ -480,7 +482,7 @@ describe("demo over training", () => {
     await activity.newGame({ color: "white", elo: 1200 });
     const gameId = game.current()?.id as number;
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    await activity.trainingAnswer("b5c7");
+    await activity.trainingTry("b5c7");
     const demo = await activity.startDemo(DEMO_FEN);
     expect(demo).toMatchObject({ kind: "demo", returns_to: "training" });
     if (demo.kind !== "demo") throw new Error("expected demo");

@@ -150,3 +150,36 @@ describe("012_training_runs", () => {
     expect(() => insert("abandoned")).toThrow();
   });
 });
+
+describe("013_training_tries", () => {
+  it("adds training_tries and backfills first_try from solved on a database at 012", () => {
+    const db = new BetterSqlite3(":memory:");
+    const all = listMigrations(defaultMigrationsDir);
+    const upTo012 = migrationsDir(
+      Object.fromEntries(
+        all
+          .filter((name) => name < "013")
+          .map((name) => [name, readFileSync(join(defaultMigrationsDir, name), "utf8")]),
+      ),
+    );
+    runMigrations(db, upTo012);
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
+       VALUES ('p1', 'test', 'fork', 'easy', 'x', '[]', '[]', 'why')`,
+    ).run();
+    const attempt = db.prepare(
+      `INSERT INTO puzzle_attempts (puzzle_id, attempted_at, solved, answered_uci, failed_ply)
+       VALUES ('p1', 'x', ?, '[]', NULL)`,
+    );
+    attempt.run(1);
+    attempt.run(0);
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("013_training_tries.sql");
+    expect(
+      db.prepare("SELECT solved, first_try, tries, gave_up FROM puzzle_attempts ORDER BY id").all(),
+    ).toEqual([
+      { solved: 1, first_try: 1, tries: 0, gave_up: 0 },
+      { solved: 0, first_try: 0, tries: 0, gave_up: 0 },
+    ]);
+    expect(count(db, "training_tries")).toBe(0);
+  });
+});

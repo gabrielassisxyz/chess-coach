@@ -162,17 +162,39 @@ describe("queue materialization", () => {
 });
 
 describe("a card item", () => {
-  it("locks the board on a wrong answer, shows the expected move and tells the coach", async () => {
+  it("keeps the card open on a wrong try, counts it and tells the coach nothing yet", async () => {
+    addCard("d2d4");
+    const { activity, flushed, rows } = setup();
+    const served = training(await activity.startTraining({ mode: "srs" }));
+    const state = training(await activity.trainingTry("e2e4"));
+    expect(state).toMatchObject({
+      status: "prompt",
+      input_enabled: true,
+      fen: served.fen,
+      expected: null,
+      tries: 1,
+      last_try: { uci: "e2e4", san: "e4", correct: false },
+      gave_up: false,
+      solution_line: null,
+    });
+    expect(state.legal_moves).toEqual(served.legal_moves);
+    expect(rows()).toEqual([]);
+    expect(flushed).not.toHaveBeenCalled();
+  });
+
+  it("ends a card given up with the expected move as its solution line and tells the coach", async () => {
     addCard("d2d4");
     const { activity, flushed, rows } = setup();
     await activity.startTraining({ mode: "srs" });
-    const state = training(await activity.trainingAnswer("e2e4"));
+    const state = training(await activity.trainingShowSolution());
     expect(state).toMatchObject({
       status: "failed",
       input_enabled: false,
       legal_moves: [],
-      last_move: { from: "d2", to: "d4" },
       expected: { uci: "d2d4", san: "d4" },
+      gave_up: true,
+      solution_line: ["d2d4"],
+      suggested_quality: 0,
     });
     expect(rows().map((r) => r.type)).toEqual(["srs_answer"]);
     expect(flushed).toHaveBeenCalled();
@@ -182,7 +204,7 @@ describe("a card item", () => {
     addCard("d2d4");
     const { activity } = setup();
     await activity.startTraining({ mode: "srs" });
-    const state = training(await activity.trainingAnswer("d2d4"));
+    const state = training(await activity.trainingTry("d2d4"));
     expect(state).toMatchObject({
       status: "solved",
       input_enabled: false,
@@ -197,12 +219,15 @@ describe("a card item", () => {
     const log = new RecordingLog();
     const { activity } = setup(fixedClock, log);
     const start = training(await activity.startTraining({ mode: "srs" }));
-    await activity.trainingAnswer("d2d4");
+    await activity.trainingTry("d2d4");
     const exposure = (start.item as { exposure_id: string }).exposure_id;
     await activity.rateCard(exposure, 4);
     expect(log.named("training.item_served")[0]?.fields).toMatchObject({ mode: "srs" });
     expect(log.named("training.answer")[0]?.fields).toMatchObject({
+      try: true,
       uci: "d2d4",
+      correct: true,
+      tries: 0,
       expected: null,
     });
     expect(log.named("srs.rated")[0]?.fields).toMatchObject({ exposure_id: exposure, quality: 4 });
@@ -213,7 +238,7 @@ describe("a card item", () => {
     const before = getCard(db, id)?.nextReviewAt;
     const { activity } = setup();
     const start = training(await activity.startTraining({ mode: "srs" }));
-    await activity.trainingAnswer("d2d4");
+    await activity.trainingTry("d2d4");
     const rated = training(
       await activity.rateCard((start.item as { exposure_id: string }).exposure_id, 4),
     );
@@ -225,7 +250,7 @@ describe("a card item", () => {
     addCard();
     const { activity } = setup();
     await activity.startTraining({ mode: "srs" });
-    expect(await code(activity.trainingAnswer("e2e5"))).toBe("illegal_move");
+    expect(await code(activity.trainingTry("e2e5"))).toBe("illegal_move");
   });
 });
 
@@ -234,7 +259,7 @@ describe("a puzzle item", () => {
     addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
     const { activity, rows } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    const mid = training(await activity.trainingAnswer("b5c7"));
+    const mid = training(await activity.trainingTry("b5c7"));
     expect(mid).toMatchObject({
       status: "in_progress",
       input_enabled: true,
@@ -243,28 +268,51 @@ describe("a puzzle item", () => {
     });
     expect(mid.legal_moves.length).toBeGreaterThan(0);
     expect(rows()).toEqual([]);
-    const done = training(await activity.trainingAnswer("a1c1"));
+    const done = training(await activity.trainingTry("a1c1"));
     expect(done).toMatchObject({ status: "solved", input_enabled: false, expected: null });
     expect(rows().map((r) => r.type)).toEqual(["puzzle_result"]);
     const attempts = db.prepare("SELECT solved FROM puzzle_attempts").all();
     expect(attempts).toEqual([{ solved: 1 }]);
   });
 
-  it("fails on a wrong move, shows the expected one and records the attempt", async () => {
+  it("keeps the puzzle open at the same step on a wrong try and records nothing final", async () => {
     addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
     const { activity, rows } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    const state = training(await activity.trainingAnswer("f4e5"));
+    const state = training(await activity.trainingTry("f4e5"));
+    expect(state).toMatchObject({
+      status: "prompt",
+      input_enabled: true,
+      fen: FORK,
+      item: { cursor: 0 },
+      tries: 1,
+      last_try: { uci: "f4e5", correct: false },
+    });
+    expect(rows()).toEqual([]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM puzzle_attempts").get()).toEqual({ n: 0 });
+  });
+
+  it("gives up mid-way and shows the rest of the line from the current step", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const { activity, rows } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const mid = training(await activity.trainingTry("b5c7"));
+    const state = training(await activity.trainingShowSolution());
     expect(state).toMatchObject({
       status: "failed",
       input_enabled: false,
-      last_move: { from: "b5", to: "c7" },
-      expected: { uci: "b5c7", san: "Nxc7+" },
+      fen: mid.fen,
+      expected: { uci: "a1c1" },
+      gave_up: true,
+      solution_line: ["a1c1"],
+      suggested_quality: null,
     });
-    expect(rows()).toMatchObject([{ type: "puzzle_result", solved: false }]);
+    expect(rows()).toMatchObject([{ type: "puzzle_result", solved: false, gave_up: true }]);
     expect(db.prepare("SELECT solved, failed_ply FROM puzzle_attempts").all()).toEqual([
-      { solved: 0, failed_ply: 0 },
+      { solved: 0, failed_ply: 2 },
     ]);
+    expect(await code(activity.trainingTry("a1c1"))).toBe("item_finished");
+    expect(await code(activity.trainingShowSolution())).toBe("item_finished");
   });
 });
 
@@ -273,13 +321,13 @@ describe("command routing and refusals", () => {
     addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
     const { activity } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    await activity.trainingAnswer("a1a8");
+    await activity.trainingTry("a1a8");
     expect(await code(activity.rateCard("anything", 3))).toBe("exposure_unknown");
     await activity.endTraining();
 
     addCard();
     const first = training(await activity.startTraining({ mode: "srs" }));
-    await activity.trainingAnswer("d2d4");
+    await activity.trainingTry("d2d4");
     expect(await code(activity.rateCard("not-the-serving", 3))).toBe("exposure_unknown");
     const exposure = (first.item as { exposure_id: string }).exposure_id;
     expect(await code(activity.rateCard(exposure, 9))).toBe("invalid_quality");
@@ -292,7 +340,7 @@ describe("command routing and refusals", () => {
     addCard();
     const { activity } = setup();
     const first = training(await activity.startTraining({ mode: "srs" }));
-    await activity.trainingAnswer("d2d4");
+    await activity.trainingTry("d2d4");
     await activity.nextTrainingItem();
     const earlier = (first.item as { exposure_id: string }).exposure_id;
     expect(await code(activity.rateCard(earlier, 3))).toBe("exposure_unknown");
@@ -315,7 +363,7 @@ describe("command routing and refusals", () => {
     await activity.endTraining();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
     expect(await code(activity.nextTrainingItem())).toBe("item_unfinished");
-    await activity.trainingAnswer("b5c7");
+    await activity.trainingTry("b5c7");
     expect(await code(activity.nextTrainingItem())).toBe("item_unfinished");
   });
 
@@ -324,7 +372,7 @@ describe("command routing and refusals", () => {
     addCard();
     const { activity } = setup();
     await activity.startTraining({ mode: "srs" });
-    await activity.trainingAnswer("d2d4");
+    await activity.trainingTry("d2d4");
     const next = training(await activity.nextTrainingItem());
     expect(next).toMatchObject({ status: "prompt", item: { position_in_queue: 2 } });
   });
@@ -334,11 +382,9 @@ describe("command routing and refusals", () => {
     const { activity } = setup();
     expect(await code(activity.nextTrainingItem())).toBe("not_in_training");
     const state = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
-    expect(await code(activity.trainingAnswer("a1a8", state.activity_id + 1))).toBe(
-      "stale_activity",
-    );
-    await activity.trainingAnswer("a1a8");
-    expect(await code(activity.trainingAnswer("a1a8"))).toBe("item_finished");
+    expect(await code(activity.trainingTry("a1a8", state.activity_id + 1))).toBe("stale_activity");
+    await activity.trainingTry("a1a8");
+    expect(await code(activity.trainingTry("a1a8"))).toBe("item_finished");
   });
 });
 
@@ -348,9 +394,10 @@ describe("the end of a queue", () => {
     addPuzzle("f2", "fork", BACK_RANK, ["a1a8"]);
     const { activity, rows } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    await activity.trainingAnswer("a1a8");
+    await activity.trainingTry("a1a8");
     await activity.nextTrainingItem();
-    await activity.trainingAnswer("g1h1");
+    await activity.trainingTry("g1h1");
+    await activity.trainingShowSolution();
     expect(rows().filter((r) => r.type === "training_summary")).toEqual([]);
     const ended = training(await activity.nextTrainingItem());
     expect(ended.summary).toEqual({ solved: 1, failed: 1 });
@@ -467,7 +514,7 @@ describe("exploration", () => {
     expect(await code(activity.trainingExplore({ kind: "undo" }, state.activity_id + 1))).toBe(
       "stale_activity",
     );
-    await activity.trainingAnswer("d2d4");
+    await activity.trainingTry("d2d4");
     expect(await code(activity.trainingExplore({ kind: "move", uci: "e2e4" }))).toBe(
       "not_exploring",
     );
@@ -479,7 +526,7 @@ describe("exploration", () => {
     await activity.startTraining({ mode: "srs" });
     await activity.trainingExplore({ kind: "move", uci: "e2e4" });
     await activity.trainingExplore({ kind: "move", uci: "e7e5" });
-    const done = training(await activity.trainingAnswer("d2d4"));
+    const done = training(await activity.trainingTry("d2d4"));
     expect(done).toMatchObject({
       status: "solved",
       exploring: { fen: START_FEN, line_san: [] },
@@ -488,7 +535,7 @@ describe("exploration", () => {
     expect(db.prepare("SELECT answer_uci, correct, answered_at FROM training_items").all()).toEqual(
       [{ answer_uci: "d2d4", correct: 1, answered_at: T0.toISOString() }],
     );
-    expect(await code(activity.trainingAnswer("d2d4"))).toBe("item_finished");
+    expect(await code(activity.trainingTry("d2d4"))).toBe("item_finished");
   });
 
   it("links chat lines to the open item and not to the gap before the next one", async () => {
@@ -497,7 +544,7 @@ describe("exploration", () => {
     const { activity, say } = setup();
     await activity.startTraining({ mode: "srs" });
     const during = say("I think the centre matters");
-    await activity.trainingAnswer("d2d4");
+    await activity.trainingTry("d2d4");
     say("that was easy");
     await activity.nextTrainingItem();
     const second = say("now this one");
@@ -515,7 +562,7 @@ describe("exploration", () => {
     const { activity, rows } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
     await activity.trainingExplore({ kind: "move", uci: "f4e5" });
-    const mid = training(await activity.trainingAnswer("b5c7"));
+    const mid = training(await activity.trainingTry("b5c7"));
     expect(mid.status).toBe("in_progress");
     expect(mid.exploring).toEqual({ fen: mid.fen, line_san: [], trail: [] });
     expect(db.prepare("SELECT answered_at FROM training_items").all()).toEqual([
@@ -523,7 +570,7 @@ describe("exploration", () => {
     ]);
     const next = training(await activity.trainingExplore({ kind: "move", uci: "a1c1" }));
     expect(next.exploring.line_san).toEqual(["Rc1"]);
-    await activity.trainingAnswer("a1c1");
+    await activity.trainingTry("a1c1");
     expect(db.prepare("SELECT answer_uci, correct FROM training_items").all()).toEqual([
       { answer_uci: "a1c1", correct: 1 },
     ]);
@@ -544,14 +591,15 @@ describe("exploration", () => {
     clock.advance(2);
     await activity.trainingExplore({ kind: "undo" });
     say("looking at the bishop first");
-    await activity.trainingAnswer("f4e5");
+    await activity.trainingTry("f4e5");
+    await activity.trainingShowSolution();
     const text = renderNotifications(notes());
     expect(text).toContain("looking at the bishop first");
     expect(text).toContain("+5s  14. Be5");
     expect(text).toContain("+9s  14. Be5 Qd5");
     expect(text).toContain("+12s  14. Be5 Qd5 Bd4");
     expect(text).toContain("+14s  undo");
-    expect(text).toContain("Answer: f4e5 (wrong)");
+    expect(text).toContain("Tries:\n+14s  Be5 (wrong)\nSolution shown: yes");
   });
 
   it("attaches the reasoning to the review card answer the desk wrote", async () => {
@@ -561,11 +609,12 @@ describe("exploration", () => {
     await activity.trainingExplore({ kind: "move", uci: "e2e4" });
     await activity.trainingExplore({ kind: "reset" });
     say("e4 or d4?");
-    await activity.trainingAnswer("e2e4");
+    await activity.trainingTry("e2e4");
+    await activity.trainingTry("d2d4");
     const text = renderNotifications(notes());
     expect(text).toContain("What the student wrote:\n- e4 or d4?");
     expect(text).toContain("+0s  1. e4\n+0s  reset");
-    expect(text).toContain("Answer: e4 (wrong)");
+    expect(text).toContain("Tries:\n+0s  e4 (wrong)\n+0s  d4 (right)\nSolution shown: no");
   });
 });
 
@@ -598,7 +647,7 @@ describe("the training state a client renders", () => {
     const first = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
     expect(first.served_at).toBe(T0.toISOString());
     await activity.trainingExplore({ kind: "move", uci: "g1h1" });
-    await activity.trainingAnswer("a1a8");
+    await activity.trainingTry("a1a8");
     const second = training(await activity.nextTrainingItem());
     expect(second.exploring.trail).toEqual([]);
   });
@@ -608,7 +657,7 @@ describe("the training state a client renders", () => {
     const { activity } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
     await activity.trainingExplore({ kind: "move", uci: "f4e5" });
-    const mid = training(await activity.trainingAnswer("b5c7"));
+    const mid = training(await activity.trainingTry("b5c7"));
     expect(mid.exploring.trail).toEqual([]);
     const next = training(await activity.trainingExplore({ kind: "move", uci: "a1c1" }));
     expect(next.exploring.trail.map((e) => e.line_san)).toEqual([["Rc1"]]);
@@ -626,7 +675,7 @@ describe("the training state a client renders", () => {
     const start = training(await activity.startTraining({ mode: "srs" }));
     const item = start.item as Extract<typeof start.item, { kind: "card" }>;
     expect(item.rating_preview).toEqual({ "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 24 });
-    await activity.trainingAnswer("d2d4");
+    await activity.trainingTry("d2d4");
     await activity.rateCard(item.exposure_id, 3);
     expect(getCard(db, id)?.intervalHours).toBe(item.rating_preview["3"]);
   });
@@ -715,12 +764,13 @@ describe("an item served by the coach", () => {
     expect(await activity.endTraining()).toBeNull();
   });
 
-  it("turns a failed puzzle into one teaching card, once", async () => {
+  it("turns a given-up puzzle into one teaching card, once", async () => {
     addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
     const { activity } = setup();
     for (let round = 0; round < 2; round++) {
       await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" });
-      await activity.trainingAnswer("h1g1");
+      await activity.trainingTry("h1g1");
+      await activity.trainingShowSolution();
       await activity.endTraining();
     }
     expect(cardCount()).toBe(1);
@@ -737,11 +787,161 @@ describe("an item served by the coach", () => {
     });
   });
 
-  it("creates no card for a solved puzzle", async () => {
+  it("creates no card for a puzzle solved on the first try", async () => {
     addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
     const { activity } = setup();
     await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" });
-    await activity.trainingAnswer("f4e5");
+    await activity.trainingTry("f4e5");
     expect(cardCount()).toBe(0);
+  });
+
+  it("turns a puzzle solved after a wrong try into a teaching card", async () => {
+    addPuzzle("fk:0", "fork", FORK, ["f4e5"]);
+    const { activity } = setup();
+    await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" });
+    await activity.trainingTry("h1g1");
+    expect(cardCount()).toBe(0);
+    const solved = training(await activity.trainingTry("f4e5"));
+    expect(solved.status).toBe("solved");
+    expect(cardCount()).toBe(1);
+    expect(db.prepare("SELECT played_uci, expected_uci FROM srs_cards").get()).toEqual({
+      played_uci: "h1g1",
+      expected_uci: "f4e5",
+    });
+  });
+});
+
+describe("graded tries", () => {
+  const triesRows = () =>
+    db
+      .prepare("SELECT item_id, seq, at_ms, ply, uci, correct FROM training_tries ORDER BY id")
+      .all();
+  const attemptRows = () =>
+    db.prepare("SELECT solved, first_try, tries, gave_up FROM puzzle_attempts ORDER BY id").all();
+  const exposureOf = (state: TrainingActivity): string =>
+    (state.item as { exposure_id: string }).exposure_id;
+
+  it("records every try in order, with its step, offset and correctness", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const clock = steppingClock();
+    const { activity } = setup(clock);
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    clock.advance(3);
+    await activity.trainingTry("f4e5");
+    clock.advance(2);
+    await activity.trainingTry("b5c7");
+    clock.advance(4);
+    await activity.trainingTry("a1b1");
+    clock.advance(1);
+    await activity.trainingTry("a1c1");
+    const itemId = (db.prepare("SELECT id FROM training_items").get() as { id: number }).id;
+    expect(triesRows()).toEqual([
+      { item_id: itemId, seq: 1, at_ms: 3000, ply: 0, uci: "f4e5", correct: 0 },
+      { item_id: itemId, seq: 2, at_ms: 5000, ply: 0, uci: "b5c7", correct: 1 },
+      { item_id: itemId, seq: 3, at_ms: 9000, ply: 2, uci: "a1b1", correct: 0 },
+      { item_id: itemId, seq: 4, at_ms: 10000, ply: 2, uci: "a1c1", correct: 1 },
+    ]);
+  });
+
+  it("writes first_try, tries and gave_up for each way a puzzle can end", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    addPuzzle("f2", "fork", BACK_RANK, ["a1a8"]);
+    addPuzzle("f3", "fork", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("a1a8");
+    await activity.nextTrainingItem();
+    await activity.trainingTry("a1a2");
+    await activity.trainingTry("a1a3");
+    const solved = training(await activity.trainingTry("a1a8"));
+    expect(solved).toMatchObject({ status: "solved", tries: 2, gave_up: false });
+    await activity.nextTrainingItem();
+    await activity.trainingTry("a1a2");
+    await activity.trainingShowSolution();
+    expect(attemptRows()).toEqual([
+      { solved: 1, first_try: 1, tries: 0, gave_up: 0 },
+      { solved: 1, first_try: 0, tries: 2, gave_up: 0 },
+      { solved: 0, first_try: 0, tries: 1, gave_up: 1 },
+    ]);
+  });
+
+  it("suggests 4 for a card right first try, and its review counts as correct", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "srs" }));
+    const done = training(await activity.trainingTry("d2d4"));
+    expect(done.suggested_quality).toBe(4);
+    await activity.rateCard(exposureOf(start), 4);
+    expect(db.prepare("SELECT answered_uci, correct FROM srs_reviews").get()).toEqual({
+      answered_uci: "d2d4",
+      correct: 1,
+    });
+  });
+
+  it("suggests 2 for a card solved after a wrong try, and its review counts the first try", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "srs" }));
+    await activity.trainingTry("e2e4");
+    const done = training(await activity.trainingTry("d2d4"));
+    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, tries: 1 });
+    await activity.rateCard(exposureOf(start), 2);
+    expect(db.prepare("SELECT answered_uci, correct FROM srs_reviews").get()).toEqual({
+      answered_uci: "e2e4",
+      correct: 0,
+    });
+  });
+
+  it("suggests 0 for a card whose solution was shown, even before any try", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "srs" }));
+    const done = training(await activity.trainingShowSolution());
+    expect(done).toMatchObject({ status: "failed", suggested_quality: 0, gave_up: true });
+    await activity.rateCard(exposureOf(start), 0);
+    expect(db.prepare("SELECT correct FROM srs_reviews").get()).toEqual({ correct: 0 });
+  });
+
+  it("writes one notification per item, after the last try, carrying every try", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    addCard("d2d4");
+    const { activity, notes, flushed } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("f4e5");
+    await activity.trainingTry("b5c7");
+    await activity.trainingTry("a1b1");
+    expect(notes()).toEqual([]);
+    expect(flushed).not.toHaveBeenCalled();
+    await activity.trainingTry("a1c1");
+    expect(notes()).toHaveLength(1);
+    expect(notes()[0]).toMatchObject({
+      type: "puzzle_result",
+      solved: true,
+      first_try: false,
+      tries: 2,
+      gave_up: false,
+      reasoning: {
+        gave_up: false,
+        tries: [
+          { uci: "f4e5", correct: false },
+          { uci: "b5c7", correct: true },
+          { uci: "a1b1", correct: false },
+          { uci: "a1c1", correct: true },
+        ],
+      },
+    });
+    await activity.endTraining();
+
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingTry("e2e4");
+    await activity.trainingTry("g1f3");
+    await activity.trainingShowSolution();
+    const cardNotes = notes().filter((note) => note.type === "srs_answer");
+    expect(cardNotes).toHaveLength(1);
+    expect(cardNotes[0]).toMatchObject({
+      answered_uci: "e2e4",
+      correct: false,
+      reasoning: { gave_up: true, tries: [{ uci: "e2e4" }, { uci: "g1f3" }] },
+    });
   });
 });
