@@ -131,11 +131,15 @@ function cardVerdict(answer: SrsAnswerNotification, played: string, expected: st
   return `The student missed ${card}: they played ${played} and the expected move was ${expected}.`;
 }
 
+// Points the coach at the end-of-item rules; every training notification carries it.
+const DURING_PRACTICE_NOTE = "Practice notification: follow During Practice.";
+
 export function renderSrsAnswer(answer: SrsAnswerNotification): string {
   const played = answer.answered_san ?? answer.answered_uci;
   const expected = answer.expected_san ?? answer.expected_uci;
   const lines = [cardVerdict(answer, played, expected), `Position (FEN): ${answer.prompt_fen}`];
   if (answer.reasoning) lines.push(renderReasoning(answer.reasoning, played, answer.correct));
+  lines.push(DURING_PRACTICE_NOTE);
   return lines.join("\n");
 }
 
@@ -268,17 +272,26 @@ function puzzleVerdict(result: PuzzleResultNotification, played: string): string
   ];
 }
 
-function renderPuzzleResult(result: PuzzleResultNotification): string {
+export function renderPuzzleResult(result: PuzzleResultNotification): string {
   const played = result.answered_uci.at(-1) ?? "nothing";
   const lines = puzzleVerdict(result, played);
   if (result.reasoning) lines.push(renderReasoning(result.reasoning, played, result.solved));
+  lines.push(DURING_PRACTICE_NOTE);
   return lines.join("\n");
 }
 
-function renderTrainingSummary(summary: TrainingSummaryNotification): string {
-  const what = summary.mode === "srs" ? "review cards" : "puzzles";
+export function renderTrainingSummary(summary: TrainingSummaryNotification): string {
+  const what =
+    summary.mode === "srs"
+      ? "review cards"
+      : summary.mode === "openings"
+        ? "opening positions"
+        : "puzzles";
   const total = summary.solved + summary.failed;
-  return `The training queue is finished: ${summary.solved} of ${total} ${what} solved, ${summary.failed} failed.`;
+  return [
+    `The training queue is finished: ${summary.solved} of ${total} ${what} solved, ${summary.failed} failed.`,
+    DURING_PRACTICE_NOTE,
+  ].join("\n");
 }
 
 function renderOne(item: CoachNotification): string {
