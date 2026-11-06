@@ -224,7 +224,10 @@ describe("a card item", () => {
     await activity.rateCard(exposure, 4);
     expect(log.named("training.item_served")[0]?.fields).toMatchObject({ mode: "srs" });
     expect(log.named("training.answer")[0]?.fields).toMatchObject({
+      try: true,
       uci: "d2d4",
+      correct: true,
+      tries: 0,
       expected: null,
     });
     expect(log.named("srs.rated")[0]?.fields).toMatchObject({ exposure_id: exposure, quality: 4 });
