@@ -730,3 +730,71 @@ describe("a paused session", () => {
     expect(screen.queryByRole("region", { name: "Paused session" })).toBeNull();
   });
 });
+
+describe("finishing a queue", () => {
+  it("sends end_training after the summary and lands on the hub with the last-session line", () => {
+    window.localStorage.clear();
+    const last = puzzle({ status: "solved" });
+    if (last.item.kind === "puzzle") {
+      last.item.position_in_queue = 5;
+      last.item.queue_length = 5;
+    }
+    const server = api(last);
+    const { rerender } = render(<Practice server={server} {...hubProps} createBoard={spyBoard} />);
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
+
+    const finished = api(puzzle({ status: "solved", summary: { solved: 5, failed: 0 } }));
+    rerender(<Practice server={finished} {...hubProps} createBoard={spyBoard} />);
+    expect(finished.send).toHaveBeenCalledWith({ type: "end_training", activity_id: 4 });
+
+    rerender(<Practice server={api(null)} {...hubProps} createBoard={spyBoard} />);
+    expect(screen.queryByTestId("summary")).toBeNull();
+    expect(screen.getByTestId("last-session").textContent).toContain("5 solved, 0 failed");
+    expect(screen.getByRole("region", { name: "Due cards" })).toBeTruthy();
+    window.localStorage.clear();
+  });
+});
+
+describe("ending a session", () => {
+  it("asks first, keeps the item on Cancel and ends on End", () => {
+    const server = api(card());
+    render(<Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />);
+    fireEvent.click(screen.getByRole("button", { name: "End training" }));
+    const dialog = screen.getByRole("dialog", { name: "End training" });
+    expect(dialog.textContent).toContain("End this session? What you answered is kept.");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "end_training" }));
+    expect(screen.getByRole("heading", { name: "Practice › Due cards · 1 of 3" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "End training" }));
+    const confirm = screen.getByRole("dialog", { name: "End training" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "End" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "end_training", activity_id: 4 });
+  });
+});
+
+describe("a right card answer", () => {
+  const solvedCard = card({
+    status: "solved",
+    input_enabled: false,
+    legal_moves: [],
+    last_move: { from: "d2", to: "d4" },
+    expected: { uci: "d2d4", san: "d4" },
+    exploring: { fen: START_FEN, line_san: [], trail: looked },
+  });
+
+  it("reads Right with the played move and no Expected line", () => {
+    render(<Practice server={api(solvedCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.getByText("Right c4")).toBeTruthy();
+    expect(screen.queryByText(/Expected/)).toBeNull();
+  });
+
+  it("keeps the rating group visible and Next enabled", () => {
+    render(<Practice server={api(solvedCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.getByRole("group", { name: "Rate your recall" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+});

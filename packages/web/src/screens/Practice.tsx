@@ -4,7 +4,7 @@ import type {
   PromotionPiece,
   TrainingMode,
 } from "@chess-coach/shared";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
 import { CoachLoginCard } from "../components/CoachLoginCard.js";
 import { EngineMissingCard } from "../components/EngineMissingCard.js";
@@ -18,11 +18,15 @@ import { serviceNotice } from "../state/health.js";
 import {
   answerUciOf,
   boardOf,
+  clearLastSession,
   DEFAULT_DRILL_SIZE,
   type DrillSize,
   type FetchMotifs,
   fetchMotifsFromServer,
+  type LastSession,
+  loadLastSession,
   OFFLINE_START_TEXT,
+  saveLastSession,
   startFailureText,
   trainingOf,
   trainingView,
@@ -97,8 +101,9 @@ function Hub({
   fetchMotifs,
   fetchProgress,
   fetchHealth,
+  lastSession,
 }: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress">> &
-  Pick<PracticeProps, "fetchHealth">) {
+  Pick<PracticeProps, "fetchHealth"> & { lastSession: LastSession | null }) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
   const [size, setSize] = useState<DrillSize>(DEFAULT_DRILL_SIZE);
@@ -133,6 +138,7 @@ function Hub({
         size={size}
         onSize={setSize}
         onStart={begin}
+        lastSession={lastSession}
       />
     </div>
   );
@@ -150,6 +156,37 @@ export function Practice({
   fetchProgress = fetchProgressFromServer,
   fetchHealth,
 }: PracticeProps) {
+  const sessionTraining = trainingOf(server.activity);
+  const [lastSession, setLastSession] = useState<LastSession | null>(() => loadLastSession());
+  const send = server.send;
+  const summary = sessionTraining?.summary ?? null;
+  const summaryActivityId = sessionTraining?.activity_id ?? null;
+  const endedFor = useRef<number | null>(null);
+  // A finished queue lands on the hub: keep the tally, then end the run.
+  useEffect(() => {
+    if (!sessionTraining || !summary || summaryActivityId === null) return;
+    setLastSession((prev) => {
+      if (prev && prev.solved === summary.solved && prev.failed === summary.failed) return prev;
+      saveLastSession(summary);
+      return { solved: summary.solved, failed: summary.failed };
+    });
+    if (endedFor.current !== summaryActivityId) {
+      endedFor.current = summaryActivityId;
+      send({ type: "end_training", activity_id: summaryActivityId });
+    }
+  }, [sessionTraining, summary, summaryActivityId, send]);
+  // A fresh session replaces the line until it finishes.
+  useEffect(() => {
+    if (sessionTraining && sessionTraining.summary === null) {
+      endedFor.current = null;
+      setLastSession((prev) => {
+        if (prev === null) return prev;
+        clearLastSession();
+        return null;
+      });
+    }
+  }, [sessionTraining]);
+
   const demo = demoOverTraining(server.activity);
   if (demo) {
     const activityId = demo.activity_id;
@@ -189,6 +226,7 @@ export function Practice({
           fetchMotifs={fetchMotifs}
           fetchProgress={fetchProgress}
           fetchHealth={fetchHealth}
+          lastSession={lastSession}
         />
       </section>
     );
