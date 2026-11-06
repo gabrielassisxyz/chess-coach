@@ -26,7 +26,13 @@ afterEach(() => {
 
 function connect(): void {
   act(() => FakeSocket.latest.open());
-  act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: liveGame() }));
+  act(() =>
+    FakeSocket.latest.receive({
+      type: "bootstrap",
+      conversations: { play: [], games: [], practice: [] },
+      activity: liveGame(),
+    }),
+  );
 }
 
 let seq = 0;
@@ -35,6 +41,7 @@ function coachSays(text: string): void {
   act(() =>
     FakeSocket.latest.receive({
       type: "chat",
+      tab: "play",
       message_id: seq,
       seq,
       event: { kind: "text_delta", text },
@@ -44,7 +51,7 @@ function coachSays(text: string): void {
 
 function coachEvent(event: unknown): void {
   seq += 1;
-  act(() => FakeSocket.latest.receive({ type: "chat", message_id: 1, seq, event }));
+  act(() => FakeSocket.latest.receive({ type: "chat", tab: "play", message_id: 1, seq, event }));
 }
 
 const state = (): string | null =>
@@ -182,16 +189,20 @@ describe("coach panel", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "bootstrap",
-        transcript: [
-          {
-            id: 1,
-            seq: 1,
-            role: "assistant",
-            kind: "text",
-            content: { text: "One." },
-            created_at: "2026-01-01T00:00:00Z",
-          },
-        ],
+        conversations: {
+          play: [
+            {
+              id: 1,
+              seq: 1,
+              role: "assistant",
+              kind: "text",
+              content: { text: "One." },
+              created_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+          games: [],
+          practice: [],
+        },
         activity: liveGame(),
       }),
     );

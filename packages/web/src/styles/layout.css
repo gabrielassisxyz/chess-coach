@@ -47,6 +47,14 @@
   color: var(--text-1);
 }
 
+/* A coach reply waiting in a tab the student is not looking at. */
+.topbar__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .topbar__tab:disabled {
   color: var(--text-3);
   cursor: not-allowed;

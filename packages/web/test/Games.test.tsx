@@ -100,7 +100,13 @@ const commands = (): { type: string; ply?: number }[] =>
 async function openGame(): Promise<void> {
   render(<Harness />);
   act(() => FakeSocket.latest.open());
-  act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+  act(() =>
+    FakeSocket.latest.receive({
+      type: "bootstrap",
+      conversations: { play: [], games: [], practice: [] },
+      activity: null,
+    }),
+  );
   fireEvent.doubleClick(await screen.findByRole("row", { name: /1200/ }));
   await screen.findByRole("button", { name: "Next" });
   // The game is set from a promise callback outside act(), so React may commit the DOM before it

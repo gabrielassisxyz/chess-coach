@@ -78,7 +78,7 @@ function openHarness(root: string, contentDir: string): Harness {
 
 async function ask(h: Harness, text: string): Promise<string> {
   const from = h.events.length;
-  await h.session.send(text);
+  await h.session.send(text, "play");
   const deadline = Date.now() + TURN_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const turn = h.events.slice(from);
@@ -105,7 +105,7 @@ describe.skipIf(!enabled)("real Agent SDK", () => {
       const reply = await ask(first, `Remember the codeword ${CODEWORD}. Reply with just OK.`);
       expect(reply.length).toBeGreaterThan(0);
       expect(first.events.some((e) => e.kind === "text_delta")).toBe(true);
-      const sessionId = first.session.sessionRow?.claudeSessionId;
+      const sessionId = first.session.conversationRow("play")?.claudeSessionId;
       expect(sessionId).toBeTruthy();
       expect(first.authSources).toEqual(["none"]);
       const tools = first.initTools[0] ?? [];
@@ -116,13 +116,13 @@ describe.skipIf(!enabled)("real Agent SDK", () => {
 
       const second = openHarness(root, contentDir);
       await second.session.start();
-      expect(second.session.sessionRow?.claudeSessionId).toBe(sessionId);
+      expect(second.session.conversationRow("play")?.claudeSessionId).toBe(sessionId);
       const recall = await ask(
         second,
         "What codeword did I ask you to remember? Answer with the codeword only.",
       );
       expect(recall).toContain(CODEWORD);
-      expect(second.session.sessionRow?.claudeSessionId).toBe(sessionId);
+      expect(second.session.conversationRow("play")?.claudeSessionId).toBe(sessionId);
 
       await ask(
         second,

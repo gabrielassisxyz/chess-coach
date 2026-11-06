@@ -1,4 +1,4 @@
-import type { ChatEvent } from "@chess-coach/shared";
+import type { ChatEvent, CoachTab } from "@chess-coach/shared";
 import type { CoachEvent } from "../coach/events.js";
 
 // Deltas are not persisted, so the wire needs its own message identity: consecutive deltas share
@@ -8,12 +8,18 @@ export class ChatEventNumbering {
   private messageId = 0;
   private lastWasDelta = false;
 
-  next(event: CoachEvent): ChatEvent {
+  next(event: CoachEvent, tab: CoachTab): ChatEvent {
     const isDelta = event.kind === "text_delta";
     if (!(isDelta && this.lastWasDelta)) this.messageId += 1;
     this.lastWasDelta = isDelta;
     this.seq += 1;
-    return { type: "chat", message_id: this.messageId, seq: this.seq, event: toPayload(event) };
+    return {
+      type: "chat",
+      tab,
+      message_id: this.messageId,
+      seq: this.seq,
+      event: toPayload(event),
+    };
   }
 }
 

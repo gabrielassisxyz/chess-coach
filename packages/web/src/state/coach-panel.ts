@@ -1,3 +1,4 @@
+import { COACH_TABS, type CoachTab } from "@chess-coach/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServerApi } from "../hooks/useServer.js";
 
@@ -48,21 +49,23 @@ export interface CoachPanel {
 
 // The dot marks a coach message that started while the panel was closed; opening it is the
 // acknowledgement. Comparing counts, never items, keeps a reconnect's replayed transcript quiet.
+// The count is the visible tab's, so switching tabs only records the new tab's count.
 //
 // On a phone the panel is a sheet over the board, so it starts closed on every visit and its
 // state is kept apart from the desktop choice instead of overwriting it.
-export function useCoachPanel(coachMessages: number): CoachPanel {
+export function useCoachPanel(coachMessages: number, tab: CoachTab = "play"): CoachPanel {
   const phone = usePhone();
   const [desktopOpen, setDesktopOpen] = useState(readOpen);
   const [sheetOpen, setSheetOpen] = useState(false);
   const open = phone ? sheetOpen : desktopOpen;
   const [unread, setUnread] = useState(false);
-  const seen = useRef(coachMessages);
+  const seen = useRef({ tab, count: coachMessages });
 
   useEffect(() => {
-    if (coachMessages > seen.current && !open) setUnread(true);
-    seen.current = coachMessages;
-  }, [coachMessages, open]);
+    const before = seen.current;
+    if (before.tab === tab && coachMessages > before.count && !open) setUnread(true);
+    seen.current = { tab, count: coachMessages };
+  }, [coachMessages, open, tab]);
 
   const toggle = useCallback(() => {
     const next = !open;
@@ -75,6 +78,41 @@ export function useCoachPanel(coachMessages: number): CoachPanel {
   }, [open, phone]);
 
   return { open, unread, toggle };
+}
+
+export type TabUnread = Record<CoachTab, boolean>;
+
+const NOTHING_UNREAD: TabUnread = { play: false, games: false, practice: false };
+
+/**
+ * A dot per tab for a coach message that started in a conversation the student is not looking
+ * at, so no reply lands unseen; opening the tab clears it.
+ */
+export function useTabUnread(counts: Record<CoachTab, number>, visible: CoachTab): TabUnread {
+  const [unread, setUnread] = useState<TabUnread>(NOTHING_UNREAD);
+  const seen = useRef(counts);
+  const { play, games, practice } = counts;
+
+  useEffect(() => {
+    const now = { play, games, practice };
+    const arrived = COACH_TABS.filter((tab) => tab !== visible && now[tab] > seen.current[tab]);
+    seen.current = now;
+    setUnread((previous) => {
+      if (!previous[visible] && arrived.every((tab) => previous[tab])) return previous;
+      const next = { ...previous, [visible]: false };
+      for (const tab of arrived) next[tab] = true;
+      return next;
+    });
+  }, [play, games, practice, visible]);
+
+  return unread;
+}
+
+// An hour without a word is long enough that the next question is probably about something else.
+export const STALE_CONVERSATION_MS = 60 * 60_000;
+
+export function isConversationStale(lastMessageAt: number | null, now: number): boolean {
+  return lastMessageAt !== null && now - lastMessageAt > STALE_CONVERSATION_MS;
 }
 
 // One phrase for the panel header. Offline wins because the turn state cannot be known without

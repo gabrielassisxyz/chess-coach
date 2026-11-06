@@ -1,8 +1,10 @@
+import type { CoachTab } from "@chess-coach/shared";
 import type { Database } from "better-sqlite3";
 import { type Clock, systemClock } from "../clock.js";
 
 export interface CoachSession {
   id: number;
+  tab: CoachTab;
   claudeSessionId: string | null;
   startedAt: string;
   endedAt: string | null;
@@ -15,6 +17,7 @@ export type ChatKind = "text" | "tool_use" | "tool_result" | "notification" | "i
 export interface ChatMessage {
   id: number;
   coachSessionId: number;
+  tab: CoachTab;
   seq: number;
   role: ChatRole;
   kind: ChatKind;
@@ -31,6 +34,7 @@ export interface NewChatMessage {
 
 interface SessionRow {
   id: number;
+  tab: CoachTab;
   claude_session_id: string | null;
   started_at: string;
   ended_at: string | null;
@@ -40,6 +44,7 @@ interface SessionRow {
 interface MessageRow {
   id: number;
   coach_session_id: number;
+  tab: CoachTab;
   seq: number;
   role: ChatRole;
   kind: ChatKind;
@@ -51,6 +56,7 @@ interface MessageRow {
 function toSession(row: SessionRow): CoachSession {
   return {
     id: row.id,
+    tab: row.tab,
     claudeSessionId: row.claude_session_id,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -62,6 +68,7 @@ function toMessage(row: MessageRow): ChatMessage {
   return {
     id: row.id,
     coachSessionId: row.coach_session_id,
+    tab: row.tab,
     seq: row.seq,
     role: row.role,
     kind: row.kind,
@@ -73,22 +80,32 @@ function toMessage(row: MessageRow): ChatMessage {
 
 export function createCoachSession(
   db: Database,
-  input: { promptVersion: string; claudeSessionId?: string },
+  input: { promptVersion: string; claudeSessionId?: string; tab?: CoachTab },
   clock: Clock = systemClock,
 ): CoachSession {
   const row = db
     .prepare(
-      `INSERT INTO coach_sessions (claude_session_id, started_at, prompt_version)
-       VALUES (?, ?, ?) RETURNING *`,
+      `INSERT INTO coach_sessions (tab, claude_session_id, started_at, prompt_version)
+       VALUES (?, ?, ?, ?) RETURNING *`,
     )
-    .get(input.claudeSessionId ?? null, clock.now().toISOString(), input.promptVersion);
+    .get(
+      input.tab ?? "play",
+      input.claudeSessionId ?? null,
+      clock.now().toISOString(),
+      input.promptVersion,
+    );
   return toSession(row as SessionRow);
 }
 
-export function findLatestOpenSession(db: Database): CoachSession | undefined {
+export function findLatestOpenSession(
+  db: Database,
+  tab: CoachTab = "play",
+): CoachSession | undefined {
   const row = db
-    .prepare("SELECT * FROM coach_sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")
-    .get();
+    .prepare(
+      "SELECT * FROM coach_sessions WHERE tab = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+    )
+    .get(tab);
   return row ? toSession(row as SessionRow) : undefined;
 }
 
@@ -108,9 +125,11 @@ export function appendChatMessage(
 ): ChatMessage {
   const row = db
     .prepare(
-      `INSERT INTO chat_messages (coach_session_id, seq, role, kind, content_json, created_at)
+      `INSERT INTO chat_messages
+         (coach_session_id, tab, seq, role, kind, content_json, created_at)
        VALUES (
          @session,
+         COALESCE((SELECT tab FROM coach_sessions WHERE id = @session), 'play'),
          (SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_messages WHERE coach_session_id = @session),
          @role, @kind, @content, @createdAt
        ) RETURNING *`,

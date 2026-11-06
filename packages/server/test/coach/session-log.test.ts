@@ -80,12 +80,12 @@ describe("coach turns in the log", () => {
       },
     ]);
     await session.start();
-    await session.send("one");
+    await session.send("one", "play");
     await vi.waitFor(() => expect(ends()).toHaveLength(1));
-    await session.send("two");
-    await session.send("three");
+    await session.send("two", "play");
+    await session.send("three", "play");
     await vi.waitFor(() => expect(ends()).toHaveLength(2));
-    await session.send("four");
+    await session.send("four", "play");
     await vi.waitFor(() => expect(ends()).toHaveLength(3));
     expect(ends().map((end) => end.turns)).toEqual([[1], [2, 3], [4]]);
     expect(ends().map((end) => end.turn)).toEqual([1, 2, 4]);
@@ -101,7 +101,7 @@ describe("coach turns in the log", () => {
       },
     ]);
     await session.start();
-    await session.send("one");
+    await session.send("one", "play");
     await vi.waitFor(() => expect(ends()).toHaveLength(2));
     expect(ends()[0]).toMatchObject({ turn: null, turns: [], duration_ms: null, waited_ms: null });
     expect(ends()[1]).toMatchObject({ turn: 1, turns: [1] });
@@ -120,9 +120,9 @@ describe("coach turns in the log", () => {
       },
     ]);
     await session.start();
-    await session.send("one");
+    await session.send("one", "play");
     await vi.waitFor(() => expect(ends()).toHaveLength(1));
-    await session.send("two");
+    await session.send("two", "play");
     await vi.waitFor(() => expect(ends()).toHaveLength(3));
     expect(ends().map((end) => end.turns)).toEqual([[1], [], [2]]);
     await session.stop();
@@ -137,8 +137,8 @@ describe("coach turns in the log", () => {
       },
     ]);
     await session.start();
-    await session.send("one");
-    await session.send("two");
+    await session.send("one", "play");
+    await session.send("two", "play");
     await vi.waitFor(() => expect(log.named("coach.turn_error")).toHaveLength(1));
     expect(log.named("coach.turn_error")[0]?.fields).toMatchObject({
       turn: 1,
@@ -158,8 +158,8 @@ describe("coach turns in the log", () => {
       },
     ]);
     await session.start();
-    await session.send("one");
-    await session.send("two");
+    await session.send("one", "play");
+    await session.send("two", "play");
     await vi.waitFor(() => expect(ends()).toHaveLength(2));
     expect(log.named("coach.turn_start").map((entry) => entry.fields.queued_behind)).toEqual([
       0, 1,
@@ -192,12 +192,12 @@ describe("coach turns in the log", () => {
       },
     ]);
     await session.start();
-    await session.send("one");
+    await session.send("one", "play");
     await vi.waitFor(() => expect(ends()).toHaveLength(1));
-    await session.send("two");
+    await session.send("two", "play");
     await vi.waitFor(() => expect(log.named("coach.turn_error")).toHaveLength(1));
     expect(log.named("coach.turn_error")[0]?.fields).toMatchObject({ turn: 2, queued_turns: [2] });
-    await session.send("three");
+    await session.send("three", "play");
     await vi.waitFor(() => expect(ends()).toHaveLength(2));
     // The relaunch dropped the turn the dead stream never answered.
     expect(ends()[1]).toMatchObject({ turn: 3, turns: [3] });
@@ -234,13 +234,13 @@ describe("coach turns in the log", () => {
       fen: "8/8/8/8/8/8/8/K6k w - - 0 1",
     });
     await session.start();
-    await session.send("one");
+    await session.send("one", "play");
     // Arrives while the coach is answering, so it waits and is folded.
-    writeNotification(db, session.ensureSessionId(), turn(1));
+    writeNotification(db, session.ensureSessionId("play"), turn(1));
     session.flushNotifications();
     await vi.waitFor(() => expect(ends()).toHaveLength(2));
     // Arrives with the coach idle.
-    writeNotification(db, session.ensureSessionId(), turn(3));
+    writeNotification(db, session.ensureSessionId("play"), turn(3));
     session.flushNotifications();
     await vi.waitFor(() => expect(ends()).toHaveLength(3));
     const starts = log.named("coach.turn_start").map((entry) => entry.fields);

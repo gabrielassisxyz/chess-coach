@@ -25,7 +25,13 @@ afterEach(() => {
 
 function connectWithNoGame(): void {
   act(() => FakeSocket.latest.open());
-  act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+  act(() =>
+    FakeSocket.latest.receive({
+      type: "bootstrap",
+      conversations: { play: [], games: [], practice: [] },
+      activity: null,
+    }),
+  );
 }
 
 describe("service banner", () => {

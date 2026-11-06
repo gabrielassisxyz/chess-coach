@@ -75,7 +75,13 @@ describe("the coach panel while an item is open", () => {
   it("shows it in the panel header on Practice only", () => {
     render(<App />);
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: puzzle() }));
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: puzzle(),
+      }),
+    );
     expect(screen.getByText("watching the board")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Practice" }));
     expect(screen.getByText("waiting for your answer")).toBeTruthy();
@@ -90,7 +96,7 @@ function activityOf(training: TrainingActivity): ServerEvent {
 }
 
 function chatOf(seq: number, event: unknown): ServerEvent {
-  return { type: "chat", message_id: 1, seq, event } as ServerEvent;
+  return { type: "chat", tab: "practice", message_id: 1, seq, event } as ServerEvent;
 }
 
 function reduce(...events: ServerEvent[]): ChatState {
@@ -148,7 +154,11 @@ describe("the coach reply pending on an ended item", () => {
     expect(ended.practiceReplyPending).toBe(true);
     const after = chatReducer(ended, {
       type: "server",
-      event: { type: "bootstrap", transcript: [], activity: puzzle({ status: "solved" }) },
+      event: {
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: puzzle({ status: "solved" }),
+      },
     });
     expect(after.practiceReplyPending).toBe(false);
   });
@@ -172,7 +182,13 @@ describe("the waiting phrase in the panel header", () => {
   it("shows it after an item ends, until the reply streams and after the turn ends", () => {
     render(<App />);
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: puzzle() }));
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: puzzle(),
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Practice" }));
     expect(screen.getByText("waiting for your answer")).toBeTruthy();
     act(() => FakeSocket.latest.receive({ type: "activity", state: puzzle({ status: "solved" }) }));
@@ -180,6 +196,7 @@ describe("the waiting phrase in the panel header", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "chat",
+        tab: "practice",
         message_id: 1,
         seq: 1,
         event: { kind: "text_delta", text: "Boa" },
@@ -189,6 +206,7 @@ describe("the waiting phrase in the panel header", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "chat",
+        tab: "practice",
         message_id: 1,
         seq: 2,
         event: { kind: "turn_end", usage: { input_tokens: 1, output_tokens: 1 } },

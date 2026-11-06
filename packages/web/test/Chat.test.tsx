@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Chat } from "../src/components/Chat.js";
 import type { ServerApi } from "../src/hooks/useServer.js";
+import { initialChatState } from "../src/state/transcript.js";
 
 afterEach(cleanup);
 
@@ -17,6 +18,10 @@ function api(overrides: Partial<ServerApi> = {}): ServerApi {
     activity: null,
     cardsCreated: {},
     coachMessages: 0,
+    lastMessageAt: null,
+    tab: "play",
+    conversations: initialChatState.conversations,
+    newConversation: vi.fn(() => true),
     practiceReplyPending: false,
     practiceEndedItem: null,
     reconnectAttempt: 0,
@@ -241,5 +246,107 @@ describe("coach Markdown", () => {
     expect(container.querySelector("strong")).toBeNull();
     expect(container.querySelector("em")).toBeNull();
     expect(container.querySelector(".message--user")?.textContent).toBe("**not bold**");
+  });
+
+  it("renders a divider as a rule labelled with its name and local time", () => {
+    const at = new Date(2026, 10, 6, 16, 30).toISOString();
+    render(
+      <Chat
+        server={api({
+          items: [
+            { type: "text", key: "a", role: "assistant", text: "earlier" },
+            { type: "divider", key: "d", label: "Puzzles", at },
+          ],
+        })}
+      />,
+    );
+    const rule = screen.getByRole("separator", { name: "Puzzles · 16:30" });
+    expect(rule.className).toBe("chat__divider");
+    expect(rule.textContent).toBe("Puzzles · 16:30");
+  });
+
+  it("asks for a fresh conversation from the header", () => {
+    const server = api();
+    render(<Chat server={server} />);
+    fireEvent.click(screen.getByRole("button", { name: "Nova conversa" }));
+    expect(server.newConversation).toHaveBeenCalledTimes(1);
+  });
+
+  describe("the fresh-start card", () => {
+    const NOW = new Date("2026-11-06T18:00:00Z").getTime();
+    const minutesAgo = (minutes: number) => NOW - minutes * 60_000;
+
+    function withClock(run: () => void): void {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NOW);
+      try {
+        run();
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    it("is offered when the panel opens on a tab whose last message is over an hour old", () => {
+      withClock(() => {
+        const server = api({ lastMessageAt: minutesAgo(61) });
+        const { rerender } = render(<Chat server={server} open={false} />);
+        expect(screen.queryByTestId("fresh-start-card")).toBeNull();
+        rerender(<Chat server={server} open />);
+        expect(screen.getByTestId("fresh-start-card").textContent).toContain(
+          "Começar uma nova conversa?",
+        );
+      });
+    });
+
+    it("is not offered within the hour, nor for an empty conversation", () => {
+      withClock(() => {
+        const { rerender } = render(<Chat server={api({ lastMessageAt: minutesAgo(59) })} />);
+        expect(screen.queryByTestId("fresh-start-card")).toBeNull();
+        rerender(<Chat server={api({ lastMessageAt: null })} />);
+        expect(screen.queryByTestId("fresh-start-card")).toBeNull();
+      });
+    });
+
+    it("is offered when the student types after the hour passed with the panel open", () => {
+      withClock(() => {
+        const server = api({ lastMessageAt: minutesAgo(30) });
+        render(<Chat server={server} />);
+        expect(screen.queryByTestId("fresh-start-card")).toBeNull();
+        vi.setSystemTime(NOW + 31 * 60_000);
+        fireEvent.change(screen.getByLabelText("Message to the coach"), {
+          target: { value: "o" },
+        });
+        expect(screen.getByTestId("fresh-start-card")).toBeTruthy();
+      });
+    });
+
+    it("stays hidden once dismissed until the next message, and clears nothing by itself", () => {
+      withClock(() => {
+        const server = api({ lastMessageAt: minutesAgo(90) });
+        const { rerender } = render(<Chat server={server} />);
+        fireEvent.click(screen.getByRole("button", { name: "Agora não" }));
+        expect(screen.queryByTestId("fresh-start-card")).toBeNull();
+        fireEvent.change(screen.getByLabelText("Message to the coach"), {
+          target: { value: "again" },
+        });
+        expect(screen.queryByTestId("fresh-start-card")).toBeNull();
+        expect(server.newConversation).not.toHaveBeenCalled();
+        // A new message, itself over an hour old by now, is a new chance to offer it.
+        const later = api({ lastMessageAt: minutesAgo(70) });
+        rerender(<Chat server={later} open={false} />);
+        rerender(<Chat server={later} open />);
+        expect(screen.getByTestId("fresh-start-card")).toBeTruthy();
+      });
+    });
+
+    it("starts a fresh conversation when accepted", () => {
+      withClock(() => {
+        const server = api({ lastMessageAt: minutesAgo(61) });
+        render(<Chat server={server} />);
+        fireEvent.click(screen.getByRole("button", { name: "Começar" }));
+        expect(server.newConversation).toHaveBeenCalledTimes(1);
+        expect(screen.queryByTestId("fresh-start-card")).toBeNull();
+      });
+    });
   });
 });

@@ -68,6 +68,12 @@
   each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
   (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The
   boot never puts it back on the board by itself. A single item the coach serves is not persisted.
+- **Coach conversations:** one per tab (`play`, `games`, `practice`), each its own `coach_sessions`
+  row (`tab` column) resumed by its own Claude session id. The live game and the student's chat on
+  Play write to `play`, training to `practice`, a question about a stored game to `games`. A tab's
+  SDK stream starts on its first message and is closed after 10 idle minutes; at most one turn runs
+  at a time across tabs, in arrival order. `new_conversation` closes the tab's row. Starting a game
+  or a practice queue from the UI writes a divider (a `system` text row, `{label, at}`).
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
 
@@ -82,7 +88,7 @@
 - **Writing:** every service takes a `Log` (`packages/server/src/log.ts`); tests pass a
   `RecordingLog` and assert on events. No `console.*` in `packages/server/src`.
 - **Correlation:** `conn` (one per websocket), `command_id`, `activity_id`, `game_id`,
-  `coach_session_id`, `turn` (one per message handed to the coach), `tool_use_id`.
+  `coach_session_id`, `tab` (the coach conversation), `turn` (one per message handed to the coach), `tool_use_id`.
 - **Events:** `server.*`, `logs.pruned`, `process.*`, `puzzles.seeded`, `engine.start`,
   `engine.start_failed`, `engine.fault`, `http.request`, `http.client_error`, `http.error`,
   `ws.connect`,
@@ -91,6 +97,7 @@
   `cause`, and the position for a demo), `game.new`, `game.player_move`, `game.engine_move`,
   `game.undo`, `game.finished`, `game.recovering`, `game.recovered`, `game.recovery_failed`,
   `coach.session`, `coach.started`, `coach.start_failed`, `coach.turn_start`, `coach.tool_call`, `coach.tool_result`, `coach.turn_end`,
+  `coach.conversation_reset`, `coach.stream_closed`,
   `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
   `coach.permission_resolved`, `training.item_served`, `training.answer`, `srs.rated`,
   `review.cards_created`, `import.*`, `openings.generate`, `openings.generate_failed`,

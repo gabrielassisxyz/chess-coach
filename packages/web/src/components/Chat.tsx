@@ -1,9 +1,17 @@
 import { MAX_SAY_LENGTH } from "@chess-coach/shared";
-import { Fragment, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import type { ServerApi } from "../hooks/useServer.js";
 import { coachErrorHint } from "../state/coach-hint.js";
-import { coachStateWords, DEFAULT_COACH_IDLE } from "../state/coach-panel.js";
+import { coachStateWords, DEFAULT_COACH_IDLE, isConversationStale } from "../state/coach-panel.js";
 import type { ChatItem } from "../state/transcript.js";
 import { ApprovalCard } from "./ApprovalCard.js";
 import { ToolCard } from "./ToolCard.js";
@@ -15,6 +23,20 @@ const coachMarkdownComponents: Components = {
   a: ({ children }) => <>{children}</>,
   img: ({ alt }) => <>{alt ?? ""}</>,
 };
+
+const twoDigits = (value: number): string => String(value).padStart(2, "0");
+
+// The local wall-clock time a divider was written, as the student reads a clock.
+function clockTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return `${twoDigits(at.getHours())}:${twoDigits(at.getMinutes())}`;
+}
+
+export function dividerText(label: string, at: string): string {
+  const time = clockTime(at);
+  return time === "" ? label : `${label} · ${time}`;
+}
 
 function ItemView({ item }: { item: ChatItem }) {
   switch (item.type) {
@@ -44,7 +66,59 @@ function ItemView({ item }: { item: ChatItem }) {
     }
     case "notice":
       return <p className="notice">{item.text}</p>;
+    case "divider": {
+      const text = dividerText(item.label, item.at);
+      return (
+        // biome-ignore lint/a11y/useSemanticElements: an <hr> cannot carry the visible label.
+        <div className="chat__divider" role="separator" aria-label={text}>
+          <span className="chat__divider-label">{text}</span>
+        </div>
+      );
+    }
   }
+}
+
+// Offered, never applied: an old conversation is only closed when the student says so.
+function FreshStartCard({ onAccept, onDismiss }: { onAccept(): void; onDismiss(): void }) {
+  return (
+    <div className="chat__suggest" role="note" data-testid="fresh-start-card">
+      <p className="chat__suggest-text">Começar uma nova conversa?</p>
+      <div className="chat__suggest-actions">
+        <button type="button" className="button" onClick={onAccept}>
+          Começar
+        </button>
+        <button type="button" className="button" onClick={onDismiss}>
+          Agora não
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// The card is offered when the panel opens or the student types into a tab whose last message is
+// over an hour old. Dismissing it is remembered against that last message, so it stays hidden
+// until another one arrives.
+function useFreshStartOffer(server: ServerApi, open: boolean) {
+  const key = `${server.tab}:${server.lastMessageAt ?? "none"}`;
+  const [offered, setOffered] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const { lastMessageAt } = server;
+  const check = useCallback((): void => {
+    if (isConversationStale(lastMessageAt, Date.now())) setOffered(key);
+  }, [lastMessageAt, key]);
+  useEffect(() => {
+    if (open) check();
+  }, [open, check]);
+  const visible = offered === key && dismissed !== key;
+  return {
+    visible,
+    check,
+    dismiss: () => setDismissed(key),
+    accept: () => {
+      setDismissed(key);
+      server.newConversation();
+    },
+  };
 }
 
 function Icon({ children }: { children: ReactNode }) {
@@ -87,6 +161,7 @@ export function Chat({
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const { items } = server;
+  const freshStart = useFreshStartOffer(server, open);
 
   useEffect(() => {
     if (open && items.length > 0) endRef.current?.scrollIntoView?.({ block: "end" });
@@ -136,6 +211,9 @@ export function Chat({
         <span className="chat__state" role="status" aria-live="polite">
           {coachStateWords(server, idleLabel)}
         </span>
+        <button type="button" className="button chat__new" onClick={server.newConversation}>
+          Nova conversa
+        </button>
         <button
           type="button"
           className="icon-button"
@@ -159,6 +237,9 @@ export function Chat({
           {server.permissions.map((request) => (
             <ApprovalCard key={request.requestId} request={request} onAnswer={server.approve} />
           ))}
+          {freshStart.visible ? (
+            <FreshStartCard onAccept={freshStart.accept} onDismiss={freshStart.dismiss} />
+          ) : null}
           <div ref={endRef} />
         </div>
       </div>
@@ -169,7 +250,10 @@ export function Chat({
           placeholder="Think out loud…"
           value={draft}
           maxLength={MAX_SAY_LENGTH}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            freshStart.check();
+          }}
           onKeyDown={onKeyDown}
         />
         <div className="composer__row">

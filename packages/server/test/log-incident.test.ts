@@ -133,7 +133,7 @@ describe("the 2026-11-05 incident, read back from the log alone", () => {
     const refused = await showPosition?.handler({ fen: AFTER_D5 } as never, {});
     expect(refused?.isError).toBe(true);
     turns.push(coachTurn(refused?.content));
-    await coach.send("why was e5 bad?");
+    await coach.send("why was e5 bad?", "play");
     await vi.waitFor(() => expect(log.named("coach.turn_end")).toHaveLength(1));
     ws.send(JSON.stringify({ type: "resign", command_id: "r1" }));
     await vi.waitFor(() => expect(log.named("game.finished")).toHaveLength(1));
@@ -191,7 +191,8 @@ describe("the 2026-11-05 incident, read back from the log alone", () => {
     const game = new GameService({ db, engine: new ScriptedEngine(["e7e5"]), log });
     const activity = new ActivityService({ db, game, log });
     const coach = {
-      sessionRow: undefined,
+      conversationRow: () => undefined,
+      newConversation: () => {},
       send: async () => {},
       resolvePermission: () => false,
       onEvent: () => () => {},
