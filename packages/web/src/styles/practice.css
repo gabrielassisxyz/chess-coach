@@ -47,6 +47,12 @@
   font-weight: 600;
 }
 
+.practice__resume-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .practice__card-note,
 .practice__reading {
   color: var(--text-2);

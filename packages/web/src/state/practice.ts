@@ -2,6 +2,7 @@ import type {
   ActivityState,
   ErrorCode,
   ExploredEvent,
+  PausedTraining,
   ProgressResponse,
   TrainingActivity,
   TrainingMode,
@@ -152,6 +153,10 @@ export function breadcrumbOf(training: TrainingActivity): string {
   const { item, mode } = training;
   const where = mode === "puzzles" && item.kind === "puzzle" ? ` · ${item.motif}` : "";
   return `Practice › ${MODE_LABEL[mode]}${where} · ${item.position_in_queue} of ${item.queue_length}`;
+}
+
+export function resumeLabelOf(paused: PausedTraining): string {
+  return `Resume: ${MODE_LABEL[paused.mode]} · ${paused.position + 1} of ${paused.size}`;
 }
 
 export function promptOf(training: TrainingActivity): string {

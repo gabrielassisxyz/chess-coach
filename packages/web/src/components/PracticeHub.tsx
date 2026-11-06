@@ -1,4 +1,4 @@
-import type { ProgressResponse, TrainingMode } from "@chess-coach/shared";
+import type { PausedTraining, ProgressResponse, TrainingMode } from "@chess-coach/shared";
 import { type ReactNode, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
 import {
@@ -11,6 +11,7 @@ import {
   nextBatchParts,
   openingCount,
   percent,
+  resumeLabelOf,
 } from "../state/practice.js";
 
 const ANY_MOTIF = "";
@@ -156,6 +157,37 @@ export function PracticeHub(props: PracticeHubProps) {
         </p>
       ) : null}
     </div>
+  );
+}
+
+export interface ResumeCardProps {
+  paused: PausedTraining;
+  engineMissing: boolean;
+  onResume(): void;
+  onDiscard(): void;
+}
+
+// The session the student left when they opened a game or the server restarted.
+export function ResumeCard({ paused, engineMissing, onResume, onDiscard }: ResumeCardProps) {
+  const tally = `${paused.solved} right, ${paused.failed} missed so far`;
+  return (
+    <section className="practice__card" aria-label="Paused session">
+      <h3 className="practice__card-title">{resumeLabelOf(paused)}</h3>
+      <p className="practice__card-note">{tally}</p>
+      <div className="practice__resume-actions">
+        <button
+          type="button"
+          className="button button--primary"
+          disabled={engineMissing}
+          onClick={onResume}
+        >
+          Resume
+        </button>
+        <button type="button" className="button" onClick={onDiscard}>
+          Discard
+        </button>
+      </div>
+    </section>
   );
 }
 
