@@ -1,4 +1,4 @@
-import type { ActivityState } from "@chess-coach/shared";
+import type { ActivityState, TrainingActivity } from "@chess-coach/shared";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
@@ -9,7 +9,7 @@ import { Play } from "../src/screens/Play.js";
 import { BOARD_STORAGE_KEY } from "../src/state/board-theme.js";
 import { CLASSIFICATION_LABEL, controlState, evalView } from "../src/state/play.js";
 import { dayWords, type PlayFactsApi } from "../src/state/play-facts.js";
-import { idleFactsApi, liveGame, move } from "./fixtures.js";
+import { idleFactsApi, liveGame, move, START_FEN } from "./fixtures.js";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(idleFactsApi.getProgress));
@@ -490,5 +490,79 @@ describe("controls send commands against the current activity", () => {
       promotion: undefined,
       activity_id: 3,
     });
+  });
+});
+
+function trainingActivity(): TrainingActivity {
+  return {
+    kind: "training",
+    activity_id: 11,
+    orientation: "white",
+    fen: START_FEN,
+    turn: "white",
+    last_move: null,
+    legal_moves: [],
+    input_enabled: true,
+    pending: "none",
+    mode: "puzzles",
+    item: {
+      kind: "puzzle",
+      puzzle_id: "p1",
+      motif: "fork",
+      difficulty: "easy",
+      fen: START_FEN,
+      cursor: 0,
+      reply_uci: null,
+      position_in_queue: 1,
+      queue_length: 5,
+    },
+    status: "prompt",
+    served_at: "2026-03-01T00:00:00.000Z",
+    expected: null,
+    exploring: { fen: START_FEN, line_san: [], trail: [] },
+    summary: null,
+  };
+}
+
+describe("play during training", () => {
+  it("shows the unfinished live game read-only with the note and the button, and a drag sends no move", () => {
+    const send = vi.fn(() => true);
+    const game = liveGame({ moves: twoPlies });
+    let drag: ((from: string, to: string) => void) | undefined;
+    const board: BoardFactory = (_element, config) => {
+      drag = config.events?.move as typeof drag;
+      return { set: vi.fn(), destroy: vi.fn() } as never;
+    };
+    const goToPractice = vi.fn();
+    render(
+      <Play
+        server={api(trainingActivity(), { send })}
+        liveGame={game}
+        onGoToPractice={goToPractice}
+        createBoard={board}
+      />,
+    );
+    expect(screen.getByText("A practice session is open")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Go to Practice" }));
+    expect(goToPractice).toHaveBeenCalled();
+    expect(screen.getByRole("list", { name: "Moves" })).toBeTruthy();
+    expect(screen.getByTestId("board")).toBeTruthy();
+    drag?.("e2", "e4");
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "move" }));
+  });
+
+  it("shows only the note and the button with no board when no live game is unfinished", () => {
+    render(
+      <Play
+        server={api(trainingActivity())}
+        liveGame={null}
+        onGoToPractice={() => undefined}
+        createBoard={inertBoard}
+      />,
+    );
+    expect(screen.getByText("A practice session is open")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Go to Practice" })).toBeTruthy();
+    expect(screen.queryByTestId("board")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Moves" })).toBeNull();
   });
 });
