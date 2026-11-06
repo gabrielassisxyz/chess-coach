@@ -42,6 +42,10 @@ cg-board square.last-move {
   background-color: var(--board-last-move);
 }
 
+cg-board square.hint {
+  background-color: var(--board-hint);
+}
+
 cg-board square.selected {
   background-color: color-mix(in srgb, var(--accent) 75%, transparent);
 }

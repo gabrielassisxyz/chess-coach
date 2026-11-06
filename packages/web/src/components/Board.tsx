@@ -37,6 +37,8 @@ export interface BoardProps {
   // UCI moves played one by one from the activity's position, LINE_STEP_MS apart; the board then
   // stays on the last one. A new line, or a new position under it, starts again from the first.
   line?: readonly string[] | null | undefined;
+  // Origin square of the expected move after a hint; rendered with the hint highlight.
+  hintSquare?: string | null | undefined;
   createBoard?: BoardFactory | undefined;
 }
 
@@ -50,7 +52,12 @@ function turnOf(fen: string): Color {
   return fen.split(" ")[1] === "b" ? "black" : "white";
 }
 
-function toConfig(activity: ActivityState, bothSides: boolean, shown: LineStep | null): Config {
+function toConfig(
+  activity: ActivityState,
+  bothSides: boolean,
+  shown: LineStep | null,
+  hintSquare: string | null | undefined,
+): Config {
   const last = shown ?? activity.last_move;
   const lastMove = last ? [last.from, last.to] : [];
   const fen = shown ? shown.fen : activity.fen;
@@ -70,6 +77,11 @@ function toConfig(activity: ActivityState, bothSides: boolean, shown: LineStep |
           : activity.orientation
         : undefined) as Color,
       dests: destsFrom(activity.legal_moves),
+    },
+    highlight: {
+      lastMove: true,
+      check: true,
+      ...(hintSquare ? { custom: new Map([[hintSquare as Key, "hint"]]) } : {}),
     },
   };
 }
@@ -97,6 +109,7 @@ export function Board({
   syncToken = 0,
   bothSides = false,
   line = null,
+  hintSquare = null,
   createBoard = Chessground,
 }: BoardProps) {
   const elementRef = useRef<HTMLDivElement>(null);
@@ -106,18 +119,22 @@ export function Board({
   const shown = useLinePlayback(activity.fen, line);
 
   // Chessground callbacks are registered once at creation, so they read the latest props here.
-  const latest = useRef({ activity, onMove, bothSides });
-  latest.current = { activity, onMove, bothSides };
+  const latest = useRef({ activity, onMove, bothSides, hintSquare });
+  latest.current = { activity, onMove, bothSides, hintSquare };
 
   useEffect(() => {
     const element = elementRef.current;
     if (!element) return;
     const api = createBoard(element, {
-      ...toConfig(latest.current.activity, latest.current.bothSides, null),
+      ...toConfig(
+        latest.current.activity,
+        latest.current.bothSides,
+        null,
+        latest.current.hintSquare,
+      ),
       draggable: { enabled: false },
       premovable: { enabled: false },
       selectable: { enabled: true },
-      highlight: { lastMove: true, check: true },
       events: {
         move: (from, to) => {
           const { activity: current, onMove: send } = latest.current;
@@ -139,8 +156,8 @@ export function Board({
   // its position, since the step object is rebuilt on every render.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    apiRef.current?.set(toConfig(activity, bothSides, shown));
-  }, [activity, bothSides, syncToken, resync, shown?.fen]);
+    apiRef.current?.set(toConfig(activity, bothSides, shown, hintSquare));
+  }, [activity, bothSides, hintSquare, syncToken, resync, shown?.fen]);
 
   const choose = (piece: PromotionPiece): void => {
     if (!pending) return;

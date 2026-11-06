@@ -57,6 +57,7 @@
   --board-last-move: rgba(155, 199, 0, 0.41);
   --board-dest: rgba(0, 0, 0, 0.2);
   --board-check: #d53a3a;
+  --board-hint: rgba(46, 110, 219, 0.45);
   --overlay-arrow-1: #5ba69a;
   --overlay-arrow-2: #8abc93;
   --overlay-arrow-3: #a05ba6;

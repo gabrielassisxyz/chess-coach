@@ -272,6 +272,14 @@ export const ShowSolutionCommandSchema = z.object({
   activity_id: activityId,
 });
 
+// Marks the origin square of the expected move at the current step; a hinted item never counts
+// as solved first try.
+export const HintCommandSchema = z.object({
+  type: z.literal("hint"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
 export const RateCardCommandSchema = z.object({
   type: z.literal("rate_card"),
   command_id: commandId,
@@ -331,6 +339,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   ExploreCommandSchema,
   TryMoveCommandSchema,
   ShowSolutionCommandSchema,
+  HintCommandSchema,
   RateCardCommandSchema,
   NextTrainingItemCommandSchema,
   EndTrainingCommandSchema,

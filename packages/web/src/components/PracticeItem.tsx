@@ -17,12 +17,18 @@ export interface PracticeItemActions {
   rate(quality: number): void;
   next(): void;
   end(): void;
+  hint(): void;
+  startExplore(): void;
+  takeBack(): void;
+  resetLine(): void;
+  backToPuzzle(): void;
 }
 
 export interface PracticeItemProps {
   training: TrainingActivity;
   view: TrainingView;
   actions: PracticeItemActions;
+  exploring?: boolean | undefined;
 }
 
 function wrongTries(count: number): string {
@@ -54,21 +60,49 @@ function Verdict({ training, view }: Pick<PracticeItemProps, "training" | "view"
   );
 }
 
-function Open({ training, view, actions }: PracticeItemProps) {
+function Open({ training, view, actions, exploring = false }: PracticeItemProps) {
   const elapsed = useElapsed(training.served_at, true);
+  const line = training.exploring.line_san.join(" ");
   return (
     <>
       <p role="status" className="screen__note">
-        {view.status}
+        {exploring ? "Exploring" : view.status}
       </p>
       <div className="practice__timer">
         <span className="practice__elapsed" role="timer" aria-label="Time on this item">
           {formatElapsed(elapsed)}
         </span>
+        <button type="button" className="button" onClick={actions.hint}>
+          Hint
+        </button>
+        {exploring ? (
+          <button type="button" className="button" onClick={actions.backToPuzzle}>
+            Back to puzzle
+          </button>
+        ) : (
+          <button type="button" className="button" onClick={actions.startExplore}>
+            Explore
+          </button>
+        )}
         <button type="button" className="button" onClick={actions.showSolution}>
           Solution
         </button>
       </div>
+      {exploring ? (
+        <div className="practice__explore">
+          <p className="screen__note" data-testid="explore-line">
+            {line === "" ? "Nothing yet. Moves here are not graded." : line}
+          </p>
+          <div className="controls__row">
+            <button type="button" className="button" onClick={actions.takeBack}>
+              Take back
+            </button>
+            <button type="button" className="button" onClick={actions.resetLine}>
+              Reset
+            </button>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

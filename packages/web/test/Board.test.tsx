@@ -133,6 +133,28 @@ describe("Board configuration", () => {
     expect(config.lastMove).toEqual(["d8", "h4"]);
     expect(config.check).toBe("white");
   });
+
+  it("maps the hint square to the custom highlight and clears it when absent", () => {
+    const recorder = new RecordingBoard();
+    const { rerender } = render(
+      <Board
+        activity={liveGame()}
+        onMove={vi.fn()}
+        hintSquare="e2"
+        createBoard={recorder.factory}
+      />,
+    );
+    expect(recorder.created[0]?.highlight?.custom?.get("e2")).toBe("hint");
+    rerender(
+      <Board
+        activity={liveGame()}
+        onMove={vi.fn()}
+        hintSquare={null}
+        createBoard={recorder.factory}
+      />,
+    );
+    expect(recorder.sets.at(-1)?.highlight?.custom).toBeUndefined();
+  });
 });
 
 // Chessground measures the board with getBoundingClientRect, which a DOM without layout reports

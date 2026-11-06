@@ -52,6 +52,7 @@ function card(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
     gave_up: false,
     solution_line: null,
     suggested_quality: null,
+    hint_square: null,
     summary: null,
     ...overrides,
   };
@@ -82,6 +83,7 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
     gave_up: false,
     solution_line: null,
     suggested_quality: null,
+    hint_square: null,
     summary: null,
     ...overrides,
   };
@@ -136,14 +138,28 @@ function api(activity: TrainingActivity | null): ServerApi {
   };
 }
 
-const boards: { movableColor: unknown; fen: unknown }[] = [];
+const boards: { movableColor: unknown; fen: unknown; hint: unknown }[] = [];
 let boardMove: ((from: string, to: string) => void) | undefined;
 const spyBoard: BoardFactory = (_element, config) => {
-  boards.push({ movableColor: config.movable?.color, fen: config.fen });
+  const custom = config.highlight?.custom as Map<string, string> | undefined;
+  boards.push({
+    movableColor: config.movable?.color,
+    fen: config.fen,
+    hint: custom ? Object.fromEntries(custom) : undefined,
+  });
   boardMove = config.events?.move as typeof boardMove;
   return {
-    set: (next: { movable?: { color?: unknown }; fen?: unknown }) => {
-      boards.push({ movableColor: next.movable?.color, fen: next.fen });
+    set: (next: {
+      movable?: { color?: unknown };
+      fen?: unknown;
+      highlight?: { custom?: Map<string, string> };
+    }) => {
+      const nextCustom = next.highlight?.custom as Map<string, string> | undefined;
+      boards.push({
+        movableColor: next.movable?.color,
+        fen: next.fen,
+        hint: nextCustom ? Object.fromEntries(nextCustom) : undefined,
+      });
     },
     destroy: vi.fn(),
   } as never;
@@ -864,5 +880,76 @@ describe("a right card answer", () => {
     expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
+  });
+});
+
+describe("hint", () => {
+  it("sends hint from the button", () => {
+    const server = api(card());
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(screen.getByRole("button", { name: "Hint" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "hint", activity_id: 4 });
+  });
+
+  it("renders the highlight and clears it after a try", () => {
+    boards.length = 0;
+    const { rerender } = render(
+      <Practice
+        server={api(card({ hint_square: "d2" }))}
+        createBoard={spyBoard}
+        fetchMotifs={noMotifs}
+      />,
+    );
+    expect(boards.at(-1)?.hint).toEqual({ d2: "hint" });
+    rerender(
+      <Practice
+        server={api(card({ hint_square: null }))}
+        createBoard={spyBoard}
+        fetchMotifs={noMotifs}
+      />,
+    );
+    expect(boards.at(-1)?.hint).toBeUndefined();
+  });
+});
+
+describe("explore mode", () => {
+  it("routes drops to explore while exploring and never to try_move", () => {
+    const server = api(card());
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(screen.getByRole("button", { name: "Explore" }));
+    (boardMove as (from: string, to: string) => void)("e2", "e4");
+    expect(server.send).toHaveBeenCalledWith({
+      type: "explore",
+      kind: "move",
+      uci: "e2e4",
+      activity_id: 4,
+    });
+    const calls = vi.mocked(server.send).mock.calls.map((args) => args[0]);
+    expect(calls.filter((call) => (call as { uci?: string }).uci === "e2e4")).toEqual([
+      { type: "explore", kind: "move", uci: "e2e4", activity_id: 4 },
+    ]);
+    expect(boards.at(-1)?.movableColor).toBe("both");
+  });
+
+  it("sends take back and reset through explore", () => {
+    const server = api(card());
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(screen.getByRole("button", { name: "Explore" }));
+    fireEvent.click(screen.getByRole("button", { name: "Take back" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "undo", activity_id: 4 });
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "reset", activity_id: 4 });
+  });
+
+  it("back to puzzle sends reset and restores graded drops", () => {
+    const server = api(card({ exploring: { fen: AFTER_E4, line_san: ["e4"], trail: [] } }));
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(screen.getByRole("button", { name: "Explore" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to puzzle" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "reset", activity_id: 4 });
+    vi.mocked(server.send).mockClear();
+    (boardMove as (from: string, to: string) => void)("d2", "d4");
+    expect(server.send).toHaveBeenCalledWith({ type: "try_move", uci: "d2d4", activity_id: 4 });
+    expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "explore" }));
   });
 });

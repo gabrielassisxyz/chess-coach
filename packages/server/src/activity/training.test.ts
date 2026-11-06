@@ -945,3 +945,66 @@ describe("graded tries", () => {
     });
   });
 });
+
+describe("hint", () => {
+  it("marks the origin square and the ledger row, and clears on the next try", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const hinted = training(await activity.trainingHint());
+    expect(hinted.hint_square).toBe("b5");
+    expect(db.prepare("SELECT hinted FROM training_items").get()).toEqual({ hinted: 1 });
+    const afterTry = training(await activity.trainingTry("f4e5"));
+    expect(afterTry.hint_square).toBeNull();
+  });
+
+  it("marks a card with its expected origin and clears on the next try", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const hinted = training(await activity.trainingHint());
+    expect(hinted.hint_square).toBe("d2");
+    expect(db.prepare("SELECT hinted FROM training_items").get()).toEqual({ hinted: 1 });
+    const afterTry = training(await activity.trainingTry("e2e4"));
+    expect(afterTry.hint_square).toBeNull();
+  });
+
+  it("counts a hinted puzzle solve as not first try and keeps the hint flag", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingHint();
+    const done = training(await activity.trainingTry("a1a8"));
+    expect(done).toMatchObject({ status: "solved", hint_square: null });
+    expect(
+      db.prepare("SELECT solved, first_try, tries, gave_up, hinted FROM puzzle_attempts").all(),
+    ).toEqual([{ solved: 1, first_try: 0, tries: 0, gave_up: 0, hinted: 1 }]);
+    expect(db.prepare("SELECT hinted, correct FROM training_items").get()).toEqual({
+      hinted: 1,
+      correct: 0,
+    });
+  });
+
+  it("suggests quality 2 for a card solved after a hint", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingHint();
+    const done = training(await activity.trainingTry("d2d4"));
+    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, hint_square: null });
+    expect(db.prepare("SELECT hinted FROM training_items").get()).toEqual({ hinted: 1 });
+  });
+
+  it("refuses a hint once the item is finished", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("a1a8");
+    expect(await code(activity.trainingHint())).toBe("item_finished");
+    await activity.endTraining();
+    addCard("d2d4");
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingShowSolution();
+    expect(await code(activity.trainingHint())).toBe("item_finished");
+  });
+});

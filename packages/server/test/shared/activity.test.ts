@@ -90,6 +90,7 @@ const variants: ActivityState[] = [
     gave_up: false,
     solution_line: null,
     suggested_quality: null,
+    hint_square: null,
     summary: null,
   },
   {
@@ -116,6 +117,7 @@ const variants: ActivityState[] = [
     gave_up: true,
     solution_line: ["a1a2"],
     suggested_quality: 0,
+    hint_square: null,
     summary: { solved: 0, failed: 1 },
   },
   { kind: "demo", ...board, returns_to: "live_game", moves_played: ["e4", "e5"] },
