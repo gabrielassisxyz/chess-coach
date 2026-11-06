@@ -139,6 +139,22 @@ export function practiceIdleLabel(activity: ActivityState | null): string | unde
     : undefined;
 }
 
+export const PRACTICE_WAITING_LABEL = "o coach está analisando sua resposta";
+
+// What the coach panel says once an item ended and its notification went out, until the coach's
+// reply starts streaming or the turn ends. The flag lives in the chat state because only the
+// chat events know the reply arrived; the activity alone cannot tell.
+export function practiceWaitingLabel(
+  activity: ActivityState | null,
+  replyPending: boolean,
+): string | undefined {
+  const training = trainingOf(activity);
+  if (!replyPending || !training || training.summary !== null) return undefined;
+  return training.status === "solved" || training.status === "failed"
+    ? PRACTICE_WAITING_LABEL
+    : undefined;
+}
+
 export function trainingOf(activity: ActivityState | null): TrainingActivity | null {
   return activity?.kind === "training" ? activity : null;
 }

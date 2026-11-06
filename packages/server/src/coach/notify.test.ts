@@ -9,8 +9,11 @@ import type {
 import {
   type PuzzleResultNotification,
   renderNotifications,
+  renderPuzzleResult,
   renderSrsAnswer,
+  renderTrainingSummary,
   type SrsAnswerNotification,
+  type TrainingSummaryNotification,
 } from "./notify.js";
 
 const FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
@@ -195,13 +198,13 @@ describe("renderSrsAnswer", () => {
 
   it("tells the coach about a miss with both moves", () => {
     expect(renderSrsAnswer(base)).toBe(
-      `The student missed review card 7: they played Nf3 and the expected move was d4.\nPosition (FEN): ${FEN}`,
+      `The student missed review card 7: they played Nf3 and the expected move was d4.\nPosition (FEN): ${FEN}\nPractice notification: follow During Practice.`,
     );
   });
 
   it("reports a correct answer without naming an expected move", () => {
     expect(renderSrsAnswer({ ...base, correct: true, answered_san: "d4" })).toBe(
-      `The student answered review card 7 correctly with d4.\nPosition (FEN): ${FEN}`,
+      `The student answered review card 7 correctly with d4.\nPosition (FEN): ${FEN}\nPractice notification: follow During Practice.`,
     );
   });
 
@@ -249,6 +252,7 @@ describe("the student's reasoning in a training result", () => {
         "+22s  1... Nc6",
         "+25s  reset",
         "Answer: Nf3 (wrong)",
+        "Practice notification: follow During Practice.",
       ].join("\n"),
     );
   });
@@ -318,6 +322,7 @@ describe("the tries in a training result", () => {
         "+10s  c2c4 (wrong)",
         "+15s  d4 (right)",
         "Solution shown: no",
+        "Practice notification: follow During Practice.",
       ].join("\n"),
     );
   });
@@ -367,6 +372,53 @@ describe("the tries in a training result", () => {
       "The student gave up on the fork puzzle f1 (easy); the expected move was d4.",
     );
     expect(gaveUp).toContain("+4s  Nf3 (wrong)\nSolution shown: yes");
+  });
+});
+
+describe("practice notification pointer", () => {
+  const card: SrsAnswerNotification = {
+    type: "srs_answer",
+    card_id: 7,
+    prompt_fen: FEN,
+    answered_uci: "g1f3",
+    answered_san: "Nf3",
+    expected_uci: "d2d4",
+    expected_san: "d4",
+    correct: false,
+  };
+  const puzzle: PuzzleResultNotification = {
+    type: "puzzle_result",
+    puzzle_id: "f1",
+    motif: "fork",
+    difficulty: "easy",
+    fen: FEN,
+    solved: true,
+    answered_uci: ["d2d4"],
+    expected_uci: null,
+    expected_san: null,
+    first_try: true,
+    tries: 0,
+    gave_up: false,
+  };
+
+  it.each([
+    ["a review-card answer", renderSrsAnswer(card)],
+    ["a puzzle result", renderPuzzleResult(puzzle)],
+    [
+      "a training summary",
+      renderTrainingSummary({ type: "training_summary", mode: "puzzles", solved: 4, failed: 1 }),
+    ],
+  ])("ends %s with the During Practice pointer", (_name, text) => {
+    expect(text.endsWith("\nPractice notification: follow During Practice.")).toBe(true);
+  });
+
+  it("words each queue kind in the summary, openings as opening positions", () => {
+    const summary = (mode: TrainingSummaryNotification["mode"]): string =>
+      renderTrainingSummary({ type: "training_summary", mode, solved: 4, failed: 1 });
+    expect(summary("puzzles")).toContain("4 of 5 puzzles solved, 1 failed.");
+    expect(summary("srs")).toContain("4 of 5 review cards solved, 1 failed.");
+    expect(summary("openings")).toContain("4 of 5 opening positions solved, 1 failed.");
+    expect(summary("openings")).not.toContain("puzzles solved");
   });
 });
 

@@ -17,6 +17,8 @@ export function serverApi(
     activity,
     cardsCreated: {},
     coachMessages: 0,
+    practiceReplyPending: false,
+    practiceEndedItem: null,
     reconnectAttempt: 0,
     connection: "connected",
     say: vi.fn(() => true),
