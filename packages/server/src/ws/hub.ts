@@ -53,6 +53,7 @@ export type ActivityPort = Pick<
   | "trainingExplore"
   | "trainingTry"
   | "trainingShowSolution"
+  | "trainingHint"
   | "rateCard"
   | "nextTrainingItem"
   | "endTraining"
@@ -253,6 +254,9 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         return;
       case "show_solution":
         await activity.trainingShowSolution(command.activity_id);
+        return;
+      case "hint":
+        await activity.trainingHint(command.activity_id);
         return;
       case "rate_card":
         await activity.rateCard(command.exposure_id, command.quality, command.activity_id);
