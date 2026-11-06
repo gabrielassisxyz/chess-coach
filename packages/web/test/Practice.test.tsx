@@ -178,7 +178,7 @@ describe("the hub", () => {
     try {
       render(<Practice server={api(null)} {...hubProps} />);
       const due = await screen.findByRole("region", { name: "Due cards" });
-      expect(within(due).getByText("4")).toBeTruthy();
+      expect(await within(due).findByText("4")).toBeTruthy();
       expect(due.textContent).toContain("due now · from 3 games");
       expect(within(due).getByText("Blunders").nextSibling?.textContent).toBe("2");
       expect(within(due).getByText("Mistakes").nextSibling?.textContent).toBe("1");
@@ -197,26 +197,33 @@ describe("the hub", () => {
   it("lists a row per motif with its 30-day success and leaves the opening motifs to their own card", async () => {
     render(<Practice server={api(null)} {...hubProps} />);
     const card = await screen.findByRole("region", { name: "Puzzles by motif" });
-    await within(card).findByRole("radio", { name: /fork/ });
+    await within(card).findByRole("radio", { name: /fork/i });
     expect(
-      within(card).getByRole("radio", { name: /fork/ }).closest("label")?.textContent,
-    ).toContain("71%");
+      within(card).getByRole("radio", { name: /fork/i }).closest("label")?.textContent,
+    ).toContain("71% · 10 of 14");
     expect(
-      within(card).getByRole("radio", { name: /pin/ }).closest("label")?.textContent,
-    ).toContain(NONE);
+      within(card).getByRole("radio", { name: /fork/i }).closest("label")?.textContent,
+    ).toContain("Fork");
+    expect(
+      within(card).getByRole("radio", { name: /pin/i }).closest("label")?.textContent,
+    ).toContain("not tried yet");
+    expect(card.textContent).not.toContain("smothered-mate");
     expect(within(card).queryByRole("radio", { name: /opening/ })).toBeNull();
-    const empty = within(card).getByRole("radio", { name: /smothered/ }) as HTMLInputElement;
+    const empty = within(card).getByRole("radio", { name: /smothered/i }) as HTMLInputElement;
     expect(empty.disabled).toBe(true);
     expect(empty.closest("label")?.textContent).toContain(NONE);
+    expect(within(card).getByRole("radio", { name: /fork/i }).getAttribute("aria-label")).toContain(
+      "puzzles",
+    );
   });
 
   it("starts the chosen motif at the chosen size", async () => {
     const server = api(null);
     render(<Practice server={server} {...hubProps} />);
-    await screen.findByRole("radio", { name: /fork/ });
-    fireEvent.click(screen.getByRole("radio", { name: /fork/ }));
+    await screen.findByRole("radio", { name: /fork/i });
+    fireEvent.click(screen.getByRole("radio", { name: /fork/i }));
     fireEvent.click(screen.getByRole("button", { name: "20" }));
-    fireEvent.click(screen.getByRole("button", { name: "Start fork" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start Fork" }));
     expect(server.send).toHaveBeenCalledWith({
       type: "start_training",
       mode: "puzzles",
@@ -391,12 +398,40 @@ describe("a puzzle on the board", () => {
       const { unmount } = render(
         <Practice server={api(puzzle({ status }))} createBoard={spyBoard} fetchMotifs={noMotifs} />,
       );
-      expect(
-        screen.getByRole("heading", { name: "Practice › Puzzles · fork · 2 of 10" }),
-      ).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Puzzles 2 of 10" })).toBeTruthy();
       expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
       unmount();
     }
+  });
+
+  it("hides the motif for an Any-motif run while open and names it after the item ends", () => {
+    const open = puzzle({ status: "prompt" });
+    const { unmount } = render(
+      <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    const heading = screen.getByRole("heading", { name: "Puzzles 2 of 10" });
+    expect(heading.textContent).not.toContain("fork");
+    expect(heading.textContent).not.toContain("Fork");
+    expect(screen.queryByText(/Motif:/)).toBeNull();
+    unmount();
+    const ended = puzzle({ status: "solved" });
+    render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.getByRole("heading", { name: "Puzzles 2 of 10" })).toBeTruthy();
+    expect(screen.getByText("Motif: Fork")).toBeTruthy();
+  });
+
+  it("keeps the motif in the heading for a single-motif run", () => {
+    const open = puzzle({ status: "prompt", run_motif: "fork" });
+    const { unmount } = render(
+      <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    expect(screen.getByRole("heading", { name: "Puzzles · Fork 2 of 10" })).toBeTruthy();
+    expect(screen.queryByText(/Motif:/)).toBeNull();
+    unmount();
+    const ended = puzzle({ status: "solved", run_motif: "fork" });
+    render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.getByRole("heading", { name: "Puzzles · Fork 2 of 10" })).toBeTruthy();
+    expect(screen.queryByText(/Motif:/)).toBeNull();
   });
 
   it("is never rateable, even answered and carrying an exposure id", () => {

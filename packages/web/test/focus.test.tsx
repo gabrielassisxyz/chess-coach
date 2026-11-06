@@ -193,7 +193,7 @@ describe("focus ring", () => {
     const chooser = render(
       <Practice server={serverApi()} fetchMotifs={async () => [{ motif: "fork", count: 2 }]} />,
     );
-    await screen.findByRole("radio", { name: /fork/ });
+    await screen.findByRole("radio", { name: /fork/i });
     expect(expectFocusRing(chooser.container)).toBeGreaterThanOrEqual(3);
     chooser.unmount();
 

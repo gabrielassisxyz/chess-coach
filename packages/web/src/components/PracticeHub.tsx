@@ -7,6 +7,7 @@ import {
   dueBreakdown,
   type LastSession,
   type MotifCount,
+  motifLabel,
   motifRows,
   NONE,
   nextBatchParts,
@@ -91,7 +92,7 @@ export function PracticeHub(props: PracticeHubProps) {
 
       <section className="practice__card" aria-label="Puzzles by motif">
         <h3 className="practice__card-title">Puzzles by motif</h3>
-        <p className="practice__card-note">One pattern at a time. Accuracy is your last 30 days.</p>
+        <p className="practice__card-note">Solved first try, last 30 days.</p>
         <div className="practice__motifs" role="radiogroup" aria-label="Motif">
           <MotifChoice
             name="Any motif"
@@ -103,10 +104,12 @@ export function PracticeHub(props: PracticeHubProps) {
           {rows.map((row) => (
             <MotifChoice
               key={row.motif}
-              name={row.motif}
+              name={motifLabel(row.motif)}
               value={row.motif}
               count={row.count}
               rate={row.rate30d}
+              attempts={row.attempts30d}
+              solved={row.solved30d}
               selected={motif === row.motif}
               onPick={setMotif}
             />
@@ -129,7 +132,7 @@ export function PracticeHub(props: PracticeHubProps) {
         {startButton({
           mode: "puzzles",
           motif,
-          idle: `Start ${motif === ANY_MOTIF ? "any motif" : motif}`,
+          idle: `Start ${motif === ANY_MOTIF ? "any motif" : motifLabel(motif)}`,
         })}
       </section>
 
@@ -267,29 +270,54 @@ interface MotifChoiceProps {
   value: string;
   count: number;
   rate?: number | null;
+  attempts?: number | undefined;
+  solved?: number | undefined;
   selected: boolean;
   onPick(value: string): void;
 }
 
-function MotifChoice({ name, value, count, rate, selected, onPick }: MotifChoiceProps) {
+function motifRateText(rate: number | null, attempts: number, solved: number): string {
+  if (rate === null) return "not tried yet";
+  return `${percent(rate)} · ${solved} of ${attempts}`;
+}
+
+function MotifChoice({
+  name,
+  value,
+  count,
+  rate,
+  attempts = 0,
+  solved = 0,
+  selected,
+  onPick,
+}: MotifChoiceProps) {
   const empty = count === 0;
+  const accessibleName =
+    rate === undefined || empty
+      ? `${name}, ${count} puzzles`
+      : `${name}, ${count} puzzles, ${motifRateText(rate, attempts, solved)}`;
   return (
     <label className="practice__motif" data-selected={selected} data-empty={empty}>
       <input
         type="radio"
         name="motif"
+        aria-label={accessibleName}
         checked={selected}
         disabled={empty}
         onChange={() => onPick(value)}
       />
-      <span className="practice__motif-name">{name}</span>
-      <span className="practice__motif-count">{empty ? NONE : count}</span>
+      <span className="practice__motif-name" aria-hidden="true">
+        {name}
+      </span>
+      <span className="practice__motif-count" aria-hidden="true">
+        {empty ? NONE : count}
+      </span>
       {rate === undefined || empty ? null : (
-        <span className="practice__motif-rate">
+        <span className="practice__motif-rate" aria-hidden="true">
           <span className="practice__bar" aria-hidden="true">
             <span style={{ width: `${Math.round((rate ?? 0) * 100)}%` }} />
           </span>
-          {percent(rate)}
+          {motifRateText(rate, attempts, solved)}
         </span>
       )}
     </label>
