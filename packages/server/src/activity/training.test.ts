@@ -119,6 +119,17 @@ describe("queue materialization", () => {
     expect(state.item.queue_length).toBe(2);
   });
 
+  it("carries the motif filter for a single motif and null for Any", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    addPuzzle("p1", "pin", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    const single = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    expect(single.run_motif).toBe("fork");
+    await activity.endTraining();
+    const any = training(await activity.startTraining({ mode: "puzzles" }));
+    expect(any.run_motif).toBeNull();
+  });
+
   it("refuses a queue with nothing in it", async () => {
     const { activity } = setup();
     expect(await code(activity.startTraining({ mode: "puzzles", motif: "nope" }))).toBe(

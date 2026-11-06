@@ -30,25 +30,37 @@ export const DEFAULT_DRILL_SIZE: DrillSize = 10;
 // Opening drills are their own card, so their puzzles stay out of the motif rows.
 const OPENING_MOTIFS = { white: "opening-white", black: "opening-black" } as const;
 
+// Stored motifs read like `back_rank_mate`; the hub and the heading show words.
+export function motifLabel(motif: string): string {
+  const words = motif.replace(/[_-]+/g, " ").trim();
+  if (words.length === 0) return "";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export interface MotifRow {
   motif: string;
   count: number;
   // Share solved over the last 30 days; null when the motif has had no attempt in that window.
   rate30d: number | null;
+  attempts30d: number;
+  solved30d: number;
 }
 
 export function motifRows(list: MotifCount[], progress: ProgressResponse | null): MotifRow[] {
   const openings = new Set<string>(Object.values(OPENING_MOTIFS));
-  const rates = new Map(
-    (progress?.puzzles_by_motif ?? []).map((entry) => [entry.motif, entry.success_rate_30d]),
-  );
+  const byMotif = new Map((progress?.puzzles_by_motif ?? []).map((entry) => [entry.motif, entry]));
   return list
     .filter((entry) => !openings.has(entry.motif))
-    .map((entry) => ({
-      motif: entry.motif,
-      count: entry.count,
-      rate30d: rates.get(entry.motif) ?? null,
-    }));
+    .map((entry) => {
+      const found = byMotif.get(entry.motif);
+      return {
+        motif: entry.motif,
+        count: entry.count,
+        rate30d: found?.success_rate_30d ?? null,
+        attempts30d: found?.attempts_30d ?? 0,
+        solved30d: found?.solved_30d ?? 0,
+      };
+    });
 }
 
 export function openingCount(list: MotifCount[], color: "white" | "black"): number {
@@ -165,10 +177,28 @@ const MODE_LABEL: Record<TrainingMode, string> = {
   openings: "Opening drill",
 };
 
-export function breadcrumbOf(training: TrainingActivity): string {
+export function breadcrumbOf(training: TrainingActivity, runMotif?: string | null): string {
   const { item, mode } = training;
-  const where = mode === "puzzles" && item.kind === "puzzle" ? ` · ${item.motif}` : "";
-  return `Practice › ${MODE_LABEL[mode]}${where} · ${item.position_in_queue} of ${item.queue_length}`;
+  if (mode === "puzzles" && item.kind === "puzzle") {
+    const count = `${item.position_in_queue} of ${item.queue_length}`;
+    const chosen = runMotif !== undefined && runMotif !== null && runMotif !== "";
+    if (chosen) return `Puzzles · ${motifLabel(runMotif)}\n${count}`;
+    return `Puzzles\n${count}`;
+  }
+  return `Practice › ${MODE_LABEL[mode]} · ${item.position_in_queue} of ${item.queue_length}`;
+}
+
+// After an Any-motif item ends, its pattern is named below the heading; while it is open,
+// or for a run the student chose, the heading already says what it may.
+export function endedMotifText(
+  training: TrainingActivity,
+  runMotif?: string | null,
+): string | null {
+  if (training.mode !== "puzzles" || training.item.kind !== "puzzle") return null;
+  if (training.status !== "solved" && training.status !== "failed") return null;
+  const chosen = runMotif !== undefined && runMotif !== null && runMotif !== "";
+  if (chosen) return null;
+  return `Motif: ${motifLabel(training.item.motif)}`;
 }
 
 export function resumeLabelOf(paused: PausedTraining): string {
@@ -288,12 +318,12 @@ export function startFailureText(
     return "Nothing is due right now. Cards come from the mistakes in a finished game: open one in Games and choose Create cards, or drill puzzles instead.";
   }
   if (code === "empty_queue" && mode === "openings") {
-    return `There are no ${motif} opening drills yet. Import and grade some of your games in Games, then try again.`;
+    return `There are no ${motifLabel(motif)} opening drills yet. Import and grade some of your games in Games, then try again.`;
   }
   if (code === "empty_queue") {
     return motif === ""
       ? "There are no puzzles to drill. Restart the server to load the puzzle library."
-      : `There are no ${motif} puzzles. Choose Any motif or another motif.`;
+      : `There are no ${motifLabel(motif)} puzzles. Choose Any motif or another motif.`;
   }
   const reason = message ? `${message.replace(/\.$/, "")}. ` : "";
   return `Training could not start. ${reason}Try again; if it keeps failing, restart the server.`;

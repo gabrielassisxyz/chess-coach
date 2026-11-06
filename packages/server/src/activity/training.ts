@@ -73,6 +73,8 @@ export interface TrainingDeps {
   notifications?: NotificationSink;
   /** Called after a result row is written, so the coach comments between items. */
   onNotification?: () => void;
+  /** Shuffle source for puzzle queues; defaults to Math.random, tests inject a seed. */
+  shuffleRandom?: (() => number) | undefined;
 }
 
 export interface TrainingInput {
@@ -206,6 +208,7 @@ export class TrainingRun {
     private readonly queue: QueueEntry[],
     readonly runId: number | null,
     resume: ResumePoint | null = null,
+    private readonly runMotif: string | null = null,
   ) {
     this.clock = deps.clock ?? systemClock;
     if (resume === null) {
@@ -241,7 +244,8 @@ export class TrainingRun {
         currentJson: "{}",
         startedAt,
       });
-      const run = new TrainingRun(deps, input.mode, queue, runId);
+      const runMotif = input.mode === "puzzles" ? (input.motif ?? null) : null;
+      const run = new TrainingRun(deps, input.mode, queue, runId, null, runMotif);
       run.save();
       return run;
     })();
@@ -257,7 +261,7 @@ export class TrainingRun {
       current: JSON.parse(row.currentJson) as StoredCurrent,
     };
     return deps.db.transaction(() => {
-      const run = new TrainingRun(deps, row.mode, queue, row.id, resume);
+      const run = new TrainingRun(deps, row.mode, queue, row.id, resume, row.motif);
       run.save();
       return run;
     })();
@@ -296,10 +300,14 @@ export class TrainingRun {
       throw new ActivityError("empty_queue", "choose White or Black for the opening drill");
     }
     const motif = input.mode === "openings" ? `opening-${input.color}` : input.motif;
-    const { puzzles } = listPuzzles(deps.db, {
-      motif,
-      limit: input.size ?? DEFAULT_DRILL_SIZE,
-    });
+    const { puzzles } = listPuzzles(
+      deps.db,
+      {
+        motif,
+        limit: input.size ?? DEFAULT_DRILL_SIZE,
+      },
+      deps.shuffleRandom ?? Math.random,
+    );
     return puzzles.map((p) => ({
       kind: "puzzle",
       id: p.id,
@@ -330,6 +338,7 @@ export class TrainingRun {
       status: s.status,
       served_at: new Date(s.servedAtMs).toISOString(),
       ...(s.item.kind === "card" ? { exposure_id: s.item.exposure_id } : {}),
+      run_motif: this.runMotif,
       expected: s.expected,
       exploring: open
         ? { fen: s.explore.fen, line_san: s.explore.lineSan, trail: [...s.shown] }

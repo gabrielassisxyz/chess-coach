@@ -171,6 +171,9 @@ export const TrainingActivitySchema = z.object({
   status: TrainingStatusSchema,
   served_at: z.string(),
   exposure_id: z.string().optional(),
+  // The motif filter the queue was started with; null for an Any-motif run, so the heading
+  // can hide the pattern the student is meant to find. Absent from rows written before it existed.
+  run_motif: z.string().nullable().optional(),
   expected: ExpectedMoveSchema.nullable(),
   exploring: ExploringSchema,
   tries: z.number().int().nonnegative(),

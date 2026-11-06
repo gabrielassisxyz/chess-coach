@@ -105,7 +105,6 @@
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  text-transform: capitalize;
 }
 
 .practice__motif[data-selected="true"] {
@@ -216,6 +215,12 @@
 .practice__crumb {
   font-size: var(--text-lg);
   overflow-wrap: anywhere;
+}
+
+.practice__crumb-count {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--text-2);
 }
 
 .practice__prompt {

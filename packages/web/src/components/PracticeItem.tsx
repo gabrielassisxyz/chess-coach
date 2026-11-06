@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useElapsed } from "../hooks/useElapsed.js";
 import {
   breadcrumbOf,
+  endedMotifText,
   formatElapsed,
   lookedAtMs,
   playedSanOf,
@@ -29,6 +30,7 @@ export interface PracticeItemProps {
   view: TrainingView;
   actions: PracticeItemActions;
   exploring?: boolean | undefined;
+  runMotif?: string | null | undefined;
 }
 
 function wrongTries(count: number): string {
@@ -132,11 +134,19 @@ function Finished({ training, view, actions }: PracticeItemProps) {
 }
 
 export function PracticeItem(props: PracticeItemProps) {
-  const { training, view, actions } = props;
+  const { training, view, actions, runMotif } = props;
   const [confirming, setConfirming] = useState(false);
+  const effectiveRunMotif = runMotif !== undefined ? runMotif : (training.run_motif ?? null);
+  const heading = breadcrumbOf(training, effectiveRunMotif);
+  const [title, count] = heading.split("\n");
+  const motifAfter = endedMotifText(training, effectiveRunMotif);
   return (
     <section className="screen practice" aria-label="Practice">
-      <h2 className="screen__title practice__crumb">{breadcrumbOf(training)}</h2>
+      <h2 className="screen__title practice__crumb">
+        <span className="practice__crumb-title">{title}</span>
+        {count ? <span className="practice__crumb-count">{count}</span> : null}
+      </h2>
+      {motifAfter ? <p className="practice__card-note">{motifAfter}</p> : null}
       <p className="practice__prompt">{promptOf(training)}</p>
       {view.summary ? (
         <p className="practice__summary" data-testid="summary">
