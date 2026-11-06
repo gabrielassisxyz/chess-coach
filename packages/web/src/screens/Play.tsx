@@ -1,4 +1,4 @@
-import type { PromotionPiece } from "@chess-coach/shared";
+import type { LiveGameActivity, PromotionPiece } from "@chess-coach/shared";
 import { useState } from "react";
 import { BlunderCard } from "../components/BlunderCard.js";
 import { Board, type BoardFactory } from "../components/Board.js";
@@ -23,6 +23,10 @@ export interface PlayProps {
   createBoard?: BoardFactory | undefined;
   notice?: ServiceNotice | null;
   factsApi?: PlayFactsApi;
+  // The unfinished live game underneath a training run, if any. Kept by the
+  // shell while training is on the board, so Play can show it read-only.
+  liveGame?: LiveGameActivity | null;
+  onGoToPractice?: (() => void) | undefined;
 }
 
 function capitalised(word: string): string {
@@ -34,6 +38,8 @@ export function Play({
   createBoard,
   notice = null,
   factsApi = serverPlayFactsApi,
+  liveGame = null,
+  onGoToPractice,
 }: PlayProps) {
   const { activity, currentElo } = server;
   const live = activity?.kind === "live_game" ? activity : null;
@@ -43,6 +49,52 @@ export function Play({
   const board = useBoardTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  if (activity?.kind === "training") {
+    const unfinished = liveGame && liveGame.phase !== "finished" ? liveGame : null;
+    const goToPractice = onGoToPractice ?? (() => undefined);
+    if (!unfinished) {
+      return (
+        <section className="screen play" aria-label="Play">
+          <ServiceBanner notice={notice} />
+          <p className="screen__note">A practice session is open</p>
+          <div className="controls__row">
+            <button type="button" className="button button--primary" onClick={goToPractice}>
+              Go to Practice
+            </button>
+          </div>
+        </section>
+      );
+    }
+    const readOnly: LiveGameActivity = { ...unfinished, input_enabled: false, legal_moves: [] };
+    const gameMoves = unfinished.moves;
+    const gameBlunder = lastBlunder(gameMoves);
+    return (
+      <>
+        <section className="screen play" aria-label="Play">
+          <p className="screen__note">A practice session is open</p>
+          <div className="controls__row">
+            <button type="button" className="button button--primary" onClick={goToPractice}>
+              Go to Practice
+            </button>
+          </div>
+          <ServiceBanner notice={notice} />
+          <MoveList moves={gameMoves} flaggedPly={gameBlunder?.ply ?? null} />
+          {gameBlunder ? <BlunderCard move={gameBlunder} /> : null}
+        </section>
+        <div className="stage">
+          <div className="table">
+            <EvalBar view={evalView(gameMoves)} />
+            <Board
+              activity={readOnly}
+              onMove={() => undefined}
+              syncToken={server.errorCount}
+              createBoard={createBoard}
+            />
+          </div>
+        </div>
+      </>
+    );
+  }
   const move = (from: string, to: string, promotion?: PromotionPiece): void => {
     server.send({ type: "move", from, to, promotion, activity_id: activity?.activity_id });
   };

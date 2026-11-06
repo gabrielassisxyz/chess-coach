@@ -5,6 +5,7 @@ import {
   DRILL_SIZES,
   type DrillSize,
   dueBreakdown,
+  type LastSession,
   type MotifCount,
   motifRows,
   NONE,
@@ -27,6 +28,7 @@ export interface PracticeHubProps {
   onSize(size: DrillSize): void;
   onStart(mode: TrainingMode, motif: string): void;
   now?: Date;
+  lastSession?: LastSession | null;
 }
 
 interface StartProps {
@@ -50,6 +52,7 @@ function motifNote(motifs: Loaded<MotifCount[]>): string | null {
 
 export function PracticeHub(props: PracticeHubProps) {
   const { progress, motifs, engineMissing, starting, failure, size, onSize, onStart } = props;
+  const lastSession = props.lastSession ?? null;
   const [motif, setMotif] = useState(ANY_MOTIF);
   const busy = starting !== null;
   const counts = motifs.status === "ready" ? motifs.value : [];
@@ -73,6 +76,11 @@ export function PracticeHub(props: PracticeHubProps) {
 
   return (
     <div className="practice__hub" aria-busy={busy}>
+      {lastSession ? (
+        <p className="practice__last-session" data-testid="last-session">
+          Last session: {lastSession.solved} solved, {lastSession.failed} failed
+        </p>
+      ) : null}
       <section className="practice__card" aria-label="Due cards">
         <h3 className="practice__card-title">Due cards</h3>
         <p className="practice__card-note">Spaced repetition on positions from your own games</p>

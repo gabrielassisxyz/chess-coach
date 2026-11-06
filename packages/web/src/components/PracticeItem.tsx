@@ -1,4 +1,5 @@
 import type { TrainingActivity } from "@chess-coach/shared";
+import { useState } from "react";
 import { useElapsed } from "../hooks/useElapsed.js";
 import {
   answeredSanOf,
@@ -32,7 +33,8 @@ export interface PracticeItemProps {
 function Verdict({ training, view }: Pick<PracticeItemProps, "training" | "view">) {
   const played = answeredSanOf(training);
   const word = training.status === "solved" ? "Right" : "Wrong";
-  const expected = view.expected;
+  // A right answer never reads as wrong, even if the server sent an expected move.
+  const expected = training.status === "solved" ? null : view.expected;
   return (
     <div className="practice__verdict">
       <p role="status" className="practice__verdict-line">
@@ -102,6 +104,7 @@ function Answered({ training, view, actions }: PracticeItemProps) {
 
 export function PracticeItem(props: PracticeItemProps) {
   const { training, view, actions } = props;
+  const [confirming, setConfirming] = useState(false);
   return (
     <section className="screen practice" aria-label="Practice">
       <h2 className="screen__title practice__crumb">{breadcrumbOf(training)}</h2>
@@ -123,10 +126,36 @@ export function PracticeItem(props: PracticeItemProps) {
             {view.advanceLabel}
           </button>
         )}
-        <button type="button" className="button" onClick={actions.end}>
-          {view.summary ? "Done" : "End training"}
-        </button>
+        {view.summary ? (
+          <button type="button" className="button" onClick={actions.end}>
+            Done
+          </button>
+        ) : (
+          <button type="button" className="button" onClick={() => setConfirming(true)}>
+            End training
+          </button>
+        )}
       </div>
+      {confirming && !view.summary ? (
+        <dialog open className="practice__confirm" aria-label="End training">
+          <p>End this session? What you answered is kept.</p>
+          <div className="controls__row">
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={() => {
+                setConfirming(false);
+                actions.end();
+              }}
+            >
+              End
+            </button>
+            <button type="button" className="button" onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+          </div>
+        </dialog>
+      ) : null}
     </section>
   );
 }

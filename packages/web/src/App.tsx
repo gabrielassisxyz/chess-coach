@@ -1,4 +1,5 @@
-import { useState } from "react";
+import type { LiveGameActivity } from "@chess-coach/shared";
+import { useEffect, useState } from "react";
 import { Chat } from "./components/Chat.js";
 import { CoachActions } from "./components/CoachActions.js";
 import { NoticeBanner } from "./components/NoticeBanner.js";
@@ -27,6 +28,13 @@ export function App({ fetchHealth }: AppProps = {}) {
   const coach = useCoachPanel(server.coachMessages);
   const [screen, setScreen] = useState<Screen>("Play");
   const [coachIdle, setCoachIdle] = useState<string | null>(null);
+  // The live game underneath a training run, so Play can show it read-only.
+  const [liveGame, setLiveGame] = useState<LiveGameActivity | null>(null);
+  // An empty board means the game is gone (aborted), so Play must not show it afterwards.
+  useEffect(() => {
+    if (server.activity?.kind === "live_game") setLiveGame(server.activity);
+    if (server.activity === null) setLiveGame(null);
+  }, [server.activity]);
   // Practice words the coach's idle state from the activity; Games sets it from the open game.
   const idleLabel =
     (screen === "Practice" ? practiceIdleLabel(server.activity) : coachIdle) ?? DEFAULT_COACH_IDLE;
@@ -59,7 +67,14 @@ export function App({ fetchHealth }: AppProps = {}) {
       </header>
       <NoticeBanner message={server.lastError} onDismiss={server.dismissError} />
       <main className="frame" data-coach={coach.open ? "open" : "collapsed"}>
-        {screen === "Play" ? <Play server={server} notice={notice} /> : null}
+        {screen === "Play" ? (
+          <Play
+            server={server}
+            notice={notice}
+            liveGame={liveGame}
+            onGoToPractice={() => setScreen("Practice")}
+          />
+        ) : null}
         {screen === "Games" ? (
           <Games server={server} onOpenPlay={() => setScreen("Play")} onCoachIdle={setCoachIdle} />
         ) : null}

@@ -296,3 +296,49 @@ export function startFailureText(
 
 export const OFFLINE_START_TEXT =
   "The server is not connected. Wait until the chat header says connected, then try again.";
+
+export interface LastSession {
+  solved: number;
+  failed: number;
+}
+
+const LAST_SESSION_KEY = "chess-coach:last-session";
+
+function storage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+// The finished queue's tally, kept so the hub can show it after the run ends.
+export function loadLastSession(): LastSession | null {
+  const store = storage();
+  if (!store) return null;
+  try {
+    const raw = store.getItem(LAST_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LastSession>;
+    if (typeof parsed.solved !== "number" || typeof parsed.failed !== "number") return null;
+    return { solved: parsed.solved, failed: parsed.failed };
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastSession(summary: LastSession): void {
+  try {
+    storage()?.setItem(LAST_SESSION_KEY, JSON.stringify(summary));
+  } catch {
+    // A full or blocked store must not break the end of a queue.
+  }
+}
+
+export function clearLastSession(): void {
+  try {
+    storage()?.removeItem(LAST_SESSION_KEY);
+  } catch {
+    // Clearing is best effort; a stale line is harmless.
+  }
+}

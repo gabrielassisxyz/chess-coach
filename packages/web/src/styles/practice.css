@@ -197,6 +197,22 @@
   font-size: var(--text-sm);
 }
 
+.practice__last-session {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.practice__confirm {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text-1);
+  padding: var(--space-4);
+}
+
 .practice__crumb {
   font-size: var(--text-lg);
   overflow-wrap: anywhere;
