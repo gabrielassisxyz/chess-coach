@@ -9,6 +9,7 @@ import { Play } from "../src/screens/Play.js";
 import { BOARD_STORAGE_KEY } from "../src/state/board-theme.js";
 import { CLASSIFICATION_LABEL, controlState, evalView } from "../src/state/play.js";
 import { dayWords, type PlayFactsApi } from "../src/state/play-facts.js";
+import { initialChatState } from "../src/state/transcript.js";
 import { idleFactsApi, liveGame, move, START_FEN } from "./fixtures.js";
 
 beforeEach(() => {
@@ -65,6 +66,10 @@ function api(activity: ActivityState | null, overrides: Partial<ServerApi> = {})
     currentElo: null,
     cardsCreated: {},
     coachMessages: 0,
+    lastMessageAt: null,
+    tab: "play",
+    conversations: initialChatState.conversations,
+    newConversation: vi.fn(() => true),
     practiceReplyPending: false,
     practiceEndedItem: null,
     reconnectAttempt: 0,

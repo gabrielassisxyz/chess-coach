@@ -183,3 +183,44 @@ describe("013_training_tries", () => {
     expect(count(db, "training_tries")).toBe(0);
   });
 });
+
+describe("015_coach_session_tabs", () => {
+  it("tags every existing session and message as play and accepts only the three tabs", () => {
+    const db = new BetterSqlite3(":memory:");
+    const all = listMigrations(defaultMigrationsDir);
+    const before015 = migrationsDir(
+      Object.fromEntries(
+        all
+          .filter((name) => name < "015")
+          .map((name) => [name, readFileSync(join(defaultMigrationsDir, name), "utf8")]),
+      ),
+    );
+    runMigrations(db, before015);
+    db.prepare(
+      "INSERT INTO coach_sessions (id, started_at, prompt_version) VALUES (1, 'x', 'v')",
+    ).run();
+    db.prepare(
+      `INSERT INTO chat_messages (coach_session_id, seq, role, kind, content_json, created_at)
+       VALUES (1, 1, 'user', 'text', '{}', 'x')`,
+    ).run();
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("015_coach_session_tabs.sql");
+    expect(db.prepare("SELECT tab FROM coach_sessions").all()).toEqual([{ tab: "play" }]);
+    expect(db.prepare("SELECT tab FROM chat_messages").all()).toEqual([{ tab: "play" }]);
+    const insert = (tab: string) =>
+      db
+        .prepare(
+          "INSERT INTO coach_sessions (started_at, prompt_version, tab) VALUES ('x', 'v', ?)",
+        )
+        .run(tab);
+    for (const tab of ["play", "games", "practice"]) expect(() => insert(tab)).not.toThrow();
+    expect(() => insert("routine")).toThrow(/CHECK/);
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO chat_messages (coach_session_id, seq, role, kind, content_json, created_at, tab)
+           VALUES (1, 2, 'user', 'text', '{}', 'x', 'nope')`,
+        )
+        .run(),
+    ).toThrow(/CHECK/);
+  });
+});

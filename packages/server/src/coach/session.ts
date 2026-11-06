@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { COACH_TABS, type CoachTab } from "@chess-coach/shared";
 import { type Clock, systemClock } from "../clock.js";
 import type { CoachSession as CoachSessionRow } from "../db/chat.js";
 import {
@@ -11,6 +12,7 @@ import {
   markDelivered,
 } from "../db/chat.js";
 import type { Database } from "../db/open.js";
+import type { NotificationSink } from "../game/notifications.js";
 import { type Log, type LogFields, silentLog } from "../log.js";
 import { assertSubscriptionAuth } from "./auth.js";
 import { type CoachEvent, mapSdkMessage, type SessionInit } from "./events.js";
@@ -25,6 +27,7 @@ import {
   recordUserText,
   storeClaudeSessionId,
 } from "./transcript.js";
+import { CoachTurnLedger, type TurnTiming } from "./turn-ledger.js";
 
 // The slice of the SDK this module uses, so tests can inject a named fake instead of a process.
 export interface CoachQuery extends AsyncIterable<SDKMessage> {
@@ -50,82 +53,90 @@ export interface CoachSessionDeps {
   clock?: Clock;
   env?: NodeJS.ProcessEnv;
   permissionTimeoutMs?: number;
+  /** How long a tab's stream may sit without a turn before its process is closed. */
+  idleStreamMs?: number;
   /** Called with the id of each chat line the student sends, so it can be tied to an open item. */
   onUserText?: (messageId: number) => void;
   log?: Log;
 }
 
 const PERMISSION_TIMEOUT_MS = 60_000;
+// A Claude Code process holds a few hundred MB; a tab nobody talks to should not keep one.
+export const IDLE_STREAM_MS = 10 * 60_000;
 
 interface PendingPermission {
   resolve: (allow: boolean) => void;
   timer: NodeJS.Timeout;
 }
 
-interface OpenToolCall {
-  name: string;
-  startedAt: number;
+// Something waiting for its turn with the coach. Notifications are read when the turn comes, so
+// everything that arrived while waiting is folded into one message.
+type PendingDelivery =
+  | { tab: CoachTab; kind: "text"; text: string; origin: LogFields; queuedAt: number }
+  | { tab: CoachTab; kind: "notifications"; queuedAt: number };
+
+// One tab's conversation: its open row and, while it is talking, its SDK stream.
+interface TabConversation {
+  readonly tab: CoachTab;
+  resolved: boolean;
+  row: CoachSessionRow | undefined;
+  queue: AsyncQueue<SDKUserMessage> | undefined;
+  active: CoachQuery | undefined;
+  loop: Promise<void>;
+  ledger: CoachTurnLedger;
+  idleTimer: NodeJS.Timeout | undefined;
+  // Set when notifications arrived while the coach was answering, so the next flush says so.
+  heldWhileBusy: boolean;
 }
 
-// A message handed to the SDK, open until a result names its uuid. The SDK may answer several
-// queued messages with one result; without uuids in the result, the oldest open one is assumed.
-interface QueuedTurn {
-  turn: number;
-  uuid: string;
-  queuedAt: number;
+export type CoachEventListener = (event: CoachEvent, tab: CoachTab) => void;
+
+/**
+ * Where each producer's notifications land: the live game is Play's conversation and training is
+ * Practice's. A question about a stored game is asked from Games (see ws/review-commands.ts).
+ */
+export function coachNotificationSinks(coach: Pick<CoachSession, "ensureSessionId">): {
+  game: NotificationSink;
+  training: NotificationSink;
+} {
+  return {
+    game: { sessionId: () => coach.ensureSessionId("play") },
+    training: { sessionId: () => coach.ensureSessionId("practice") },
+  };
 }
 
-// A refusal from the coach's own tools is JSON carrying `error`; its code is what a reader wants.
-function refusalCode(output: unknown): string | null {
-  const text = Array.isArray(output)
-    ? output.map((block) => (block as { text?: unknown } | null)?.text ?? "").join("")
-    : output;
-  if (typeof text !== "string") return null;
-  try {
-    const parsed = JSON.parse(text) as { error?: unknown } | null;
-    return typeof parsed?.error === "string" ? parsed.error : null;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * The coach's conversations, one per tab. Each tab resumes its own Claude session, started on
+ * its first message and closed when idle; at most one turn runs at a time across all of them, in
+ * the order the messages arrived, so three tabs never cost three concurrent processes.
+ */
 export class CoachSession {
-  private readonly eventListeners = new Set<(event: CoachEvent) => void>();
+  private readonly eventListeners = new Set<CoachEventListener>();
   private readonly permissionListeners = new Set<(request: PermissionRequest) => void>();
-  private readonly pending = new Map<string, PendingPermission>();
+  private readonly permissions = new Map<string, PendingPermission>();
   private readonly clock: Clock;
   private readonly log: Log;
+  private readonly tabs: Map<CoachTab, TabConversation>;
+  private readonly pending: PendingDelivery[] = [];
+  private readonly timing: TurnTiming = { lastTurnEndedAt: 0 };
   private prompt: CoachPrompt | undefined;
-  private row: CoachSessionRow | undefined;
-  private queue: AsyncQueue<SDKUserMessage> | undefined;
-  private active: CoachQuery | undefined;
-  private loop: Promise<void> = Promise.resolve();
   // Numbers each message handed to the SDK, so every tool call and the turn's end name their turn.
   private turn = 0;
-  private readonly queuedTurns: QueuedTurn[] = [];
-  // When the previous turn ended: a queued turn starts only then, not when it was queued.
-  private lastTurnEndedAt = 0;
-  // Set when notifications arrived while the coach was answering, so the next flush says so.
-  private heldWhileBusy = false;
-  // Once a result has named the messages it answered, one that names none is the SDK's own turn.
-  private resultsNameMessages = false;
-  private readonly openTools = new Map<string, OpenToolCall>();
-  // True from handing the SDK a message until its turn ends: while it is set, notifications wait
-  // and are folded into one message instead of queueing behind the answer being written.
-  private busy = false;
   // Rows written during boot recovery wait for start(); launching the SDK earlier would start it twice.
   private started = false;
 
   constructor(private readonly deps: CoachSessionDeps) {
     this.clock = deps.clock ?? systemClock;
     this.log = deps.log ?? silentLog;
+    this.tabs = new Map(COACH_TABS.map((tab) => [tab, this.emptyConversation(tab)]));
   }
 
-  get sessionRow(): CoachSessionRow | undefined {
-    return this.row;
+  /** The tab's open row, if it has one; resolving it never creates one. */
+  conversationRow(tab: CoachTab): CoachSessionRow | undefined {
+    return this.resolve(tab).row;
   }
 
-  onEvent(listener: (event: CoachEvent) => void): () => void {
+  onEvent(listener: CoachEventListener): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
   }
@@ -138,84 +149,203 @@ export class CoachSession {
   async start(): Promise<void> {
     assertSubscriptionAuth(this.deps.env ?? process.env);
     mkdirSync(this.deps.dataDir, { recursive: true });
-    this.ensureSessionId();
-    this.launch();
+    for (const tab of COACH_TABS) this.resolve(tab);
     this.started = true;
     this.flushNotifications();
   }
 
   // The game service writes notification rows before the SDK is up (recovery runs at boot), so
-  // the session row has to exist without the query being started.
-  ensureSessionId(): number {
-    this.prompt ??= buildCoachPrompt(this.deps.contentDir);
-    this.row ??= this.pickSessionRow(this.prompt.version);
-    return this.row.id;
+  // the tab's row has to exist without its stream being started.
+  ensureSessionId(tab: CoachTab): number {
+    const conversation = this.resolve(tab);
+    conversation.row ??= createCoachSession(
+      this.deps.db,
+      { promptVersion: this.requirePrompt().version, tab },
+      this.clock,
+    );
+    return conversation.row.id;
   }
 
-  async send(text: string): Promise<void> {
-    const row = this.ensureStream();
-    const message = recordUserText(this.deps.db, row.id, text, this.clock);
+  async send(text: string, tab: CoachTab): Promise<void> {
+    this.requirePrompt();
+    const message = recordUserText(this.deps.db, this.ensureSessionId(tab), text, this.clock);
     this.deps.onUserText?.(message.id);
-    this.deliver(text, { source: "user_text", message_id: message.id });
+    this.pending.push({
+      tab,
+      kind: "text",
+      text,
+      origin: { source: "user_text", message_id: message.id },
+      queuedAt: performance.now(),
+    });
+    this.pump();
   }
 
   /**
-   * Hands the SDK everything the game service left undelivered, as one message. Rows are marked
-   * delivered at the moment they are handed over, so a restart never sends a move twice.
+   * Queues a delivery for every tab with notifications nobody has handed the coach yet. Rows are
+   * marked delivered when the turn comes and they are handed over, so a restart never sends a
+   * move twice.
    */
   flushNotifications(): void {
     if (!this.started) return;
-    if (this.busy) {
-      this.heldWhileBusy = true;
+    for (const conversation of this.tabs.values()) {
+      const row = conversation.row;
+      if (!row || this.isWaiting(conversation.tab, "notifications")) continue;
+      if (listUndeliveredNotifications(this.deps.db, row.id).length === 0) continue;
+      if (this.runningTab() !== undefined) conversation.heldWhileBusy = true;
+      this.pending.push({
+        tab: conversation.tab,
+        kind: "notifications",
+        queuedAt: performance.now(),
+      });
+    }
+    this.pump();
+  }
+
+  /** Closes the tab's conversation; its next message starts an empty one. Other tabs go on. */
+  newConversation(tab: CoachTab): void {
+    const conversation = this.resolve(tab);
+    this.closeStream(conversation);
+    this.pending.splice(
+      0,
+      this.pending.length,
+      ...this.pending.filter((waiting) => waiting.tab !== tab),
+    );
+    const closed = conversation.row;
+    if (closed) closeCoachSession(this.deps.db, closed.id, this.clock);
+    conversation.row = undefined;
+    conversation.heldWhileBusy = false;
+    this.log.info("coach.conversation_reset", { tab, coach_session_id: closed?.id ?? null });
+    this.pump();
+  }
+
+  resolvePermission(requestId: string, allow: boolean): boolean {
+    const entry = this.permissions.get(requestId);
+    if (!entry) return false;
+    entry.resolve(allow);
+    return true;
+  }
+
+  async stop(): Promise<void> {
+    const loops: Promise<void>[] = [];
+    for (const conversation of this.tabs.values()) {
+      loops.push(conversation.loop);
+      this.closeStream(conversation);
+    }
+    for (const id of [...this.permissions.keys()]) this.resolvePermission(id, false);
+    await Promise.all(loops);
+  }
+
+  private emptyConversation(tab: CoachTab): TabConversation {
+    return {
+      tab,
+      resolved: false,
+      row: undefined,
+      queue: undefined,
+      active: undefined,
+      loop: Promise.resolve(),
+      ledger: new CoachTurnLedger(this.log, this.timing),
+      idleTimer: undefined,
+      heldWhileBusy: false,
+    };
+  }
+
+  private requirePrompt(): CoachPrompt {
+    if (!this.prompt) throw new Error("coach session not started");
+    return this.prompt;
+  }
+
+  // A stored session is only resumable under the exact prompt it was started with; a stale one is
+  // closed and the tab starts empty.
+  private resolve(tab: CoachTab): TabConversation {
+    const conversation = this.tabs.get(tab) as TabConversation;
+    if (conversation.resolved) return conversation;
+    this.prompt ??= buildCoachPrompt(this.deps.contentDir);
+    const open = findLatestOpenSession(this.deps.db, tab);
+    if (open && open.promptVersion === this.prompt.version) {
+      markIncompleteIfDangling(this.deps.db, open.id, this.clock);
+      conversation.row = open;
+    } else if (open) {
+      closeCoachSession(this.deps.db, open.id, this.clock);
+    }
+    conversation.resolved = true;
+    return conversation;
+  }
+
+  private isWaiting(tab: CoachTab, kind?: PendingDelivery["kind"]): boolean {
+    return this.pending.some((waiting) => waiting.tab === tab && (!kind || waiting.kind === kind));
+  }
+
+  // The tab whose stream holds a message it has not answered. At most one, by construction.
+  private runningTab(): CoachTab | undefined {
+    for (const conversation of this.tabs.values()) {
+      if (conversation.ledger.openTurns > 0) return conversation.tab;
+    }
+    return undefined;
+  }
+
+  // Hands over what waits, oldest first. While a turn runs, only more text for the same tab may
+  // follow it into that stream (the SDK answers it next); anything else waits for the turn to end.
+  private pump(): void {
+    if (!this.started) return;
+    while (this.pending.length > 0) {
+      const next = this.pending[0] as PendingDelivery;
+      const running = this.runningTab();
+      if (running !== undefined && !(next.kind === "text" && next.tab === running)) return;
+      this.pending.shift();
+      this.dispatch(next);
+    }
+  }
+
+  private dispatch(next: PendingDelivery): void {
+    const conversation = this.resolve(next.tab);
+    if (next.kind === "text") {
+      this.deliver(conversation, next.text, next.origin, next.queuedAt);
       return;
     }
-    const row = this.ensureStream();
-    const pending = listUndeliveredNotifications(this.deps.db, row.id);
-    if (pending.length === 0) return;
-    const text = renderNotifications(
-      pending.map((message) => JSON.parse(message.contentJson) as CoachNotification),
-    );
+    const row = conversation.row;
+    const waiting = row ? listUndeliveredNotifications(this.deps.db, row.id) : [];
+    if (waiting.length === 0) return;
+    const contents = waiting.map((message) => JSON.parse(message.contentJson) as CoachNotification);
     this.deps.db.transaction(() => {
-      for (const message of pending) markDelivered(this.deps.db, message.id);
+      for (const message of waiting) markDelivered(this.deps.db, message.id);
     })();
-    this.deliver(text, {
-      source: "notifications",
-      notification_ids: pending.map((message) => message.id),
-      notification_types: pending.map(
-        (message) => (JSON.parse(message.contentJson) as { type?: unknown }).type ?? null,
-      ),
-      // These waited for the coach to finish an answer and were folded into one message.
-      folded: this.heldWhileBusy,
-    });
-    this.heldWhileBusy = false;
+    this.deliver(
+      conversation,
+      renderNotifications(contents),
+      {
+        source: "notifications",
+        notification_ids: waiting.map((message) => message.id),
+        notification_types: contents.map((content) => (content as { type?: unknown }).type ?? null),
+        // These waited for the coach to finish an answer and were folded into one message.
+        folded: conversation.heldWhileBusy,
+      },
+      next.queuedAt,
+    );
+    conversation.heldWhileBusy = false;
   }
 
-  private ensureStream(): CoachSessionRow {
-    if (!this.prompt) throw new Error("coach session not started");
-    if (!this.queue) {
-      this.row =
-        this.row ??
-        createCoachSession(this.deps.db, { promptVersion: this.prompt.version }, this.clock);
-      this.launch();
-    }
-    return this.row as CoachSessionRow;
-  }
-
-  private deliver(text: string, origin: LogFields): void {
-    this.busy = true;
+  private deliver(
+    conversation: TabConversation,
+    text: string,
+    origin: LogFields,
+    queuedAt: number,
+  ): void {
+    const queue = this.ensureStream(conversation);
+    clearTimeout(conversation.idleTimer);
     this.turn += 1;
     const uuid = randomUUID();
-    this.queuedTurns.push({ turn: this.turn, uuid, queuedAt: performance.now() });
-    // Logged when queued; the turn may wait behind an answer still being written.
+    conversation.ledger.open({ turn: this.turn, uuid, queuedAt });
+    // Logged when handed over; the turn may still wait behind an answer this stream is writing.
     this.log.info("coach.turn_start", {
-      coach_session_id: this.row?.id,
+      coach_session_id: conversation.row?.id,
+      tab: conversation.tab,
       turn: this.turn,
       message_uuid: uuid,
-      queued_behind: this.queuedTurns.length - 1,
+      queued_behind: conversation.ledger.openTurns - 1,
       ...origin,
       message: text,
     });
-    this.queue?.push({
+    queue.push({
       type: "user",
       message: { role: "user", content: text },
       parent_tool_use_id: null,
@@ -223,42 +353,49 @@ export class CoachSession {
     });
   }
 
-  resolvePermission(requestId: string, allow: boolean): boolean {
-    const entry = this.pending.get(requestId);
-    if (!entry) return false;
-    entry.resolve(allow);
-    return true;
+  private ensureStream(conversation: TabConversation): AsyncQueue<SDKUserMessage> {
+    this.ensureSessionId(conversation.tab);
+    if (!conversation.queue) this.launch(conversation);
+    return conversation.queue as AsyncQueue<SDKUserMessage>;
   }
 
-  async stop(): Promise<void> {
-    this.queue?.close();
-    this.active?.close?.();
-    for (const id of [...this.pending.keys()]) this.resolvePermission(id, false);
-    await this.loop;
-  }
-
-  // A stored session is only resumable under the exact prompt it was started with.
-  private pickSessionRow(version: string): CoachSessionRow {
-    const open = findLatestOpenSession(this.deps.db);
-    if (open && open.promptVersion === version) {
-      markIncompleteIfDangling(this.deps.db, open.id, this.clock);
-      return open;
-    }
-    if (open) closeCoachSession(this.deps.db, open.id, this.clock);
-    return createCoachSession(this.deps.db, { promptVersion: version }, this.clock);
-  }
-
-  private launch(): void {
-    const row = this.row as CoachSessionRow;
+  private launch(conversation: TabConversation): void {
+    const row = conversation.row as CoachSessionRow;
     const queue = new AsyncQueue<SDKUserMessage>();
     const resume = row.claudeSessionId ?? undefined;
-    this.busy = false;
-    // Messages queued on a stream that ended will never be answered by the new one.
-    this.queuedTurns.length = 0;
+    conversation.ledger.reset();
     const stream = this.deps.query({ prompt: queue, options: this.buildOptions(resume) });
-    this.queue = queue;
-    this.active = stream;
-    this.loop = this.consume(stream, row, resume !== undefined);
+    conversation.queue = queue;
+    conversation.active = stream;
+    conversation.loop = this.consume(conversation, stream, row, resume !== undefined);
+  }
+
+  // The row stays open: the next message relaunches the stream resuming its stored id.
+  private closeStream(conversation: TabConversation): void {
+    clearTimeout(conversation.idleTimer);
+    conversation.idleTimer = undefined;
+    conversation.queue?.close();
+    conversation.active?.close?.();
+    conversation.queue = undefined;
+    conversation.active = undefined;
+    conversation.ledger.reset();
+  }
+
+  private scheduleIdleClose(conversation: TabConversation): void {
+    clearTimeout(conversation.idleTimer);
+    if (!conversation.queue || conversation.ledger.openTurns > 0) return;
+    if (this.isWaiting(conversation.tab)) return;
+    conversation.idleTimer = setTimeout(() => {
+      if (conversation.ledger.openTurns > 0 || this.isWaiting(conversation.tab)) return;
+      this.log.info("coach.stream_closed", {
+        tab: conversation.tab,
+        coach_session_id: conversation.row?.id ?? null,
+        reason: "idle",
+      });
+      this.closeStream(conversation);
+    }, this.deps.idleStreamMs ?? IDLE_STREAM_MS);
+    // An idle stream is no reason to keep the process alive at shutdown.
+    conversation.idleTimer.unref?.();
   }
 
   private buildOptions(resume: string | undefined): Options {
@@ -303,9 +440,9 @@ export class CoachSession {
     const timeoutMs = this.deps.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS;
     return new Promise((resolve) => {
       const settle = (allow: boolean): void => {
-        const entry = this.pending.get(requestId);
+        const entry = this.permissions.get(requestId);
         if (entry) clearTimeout(entry.timer);
-        this.pending.delete(requestId);
+        this.permissions.delete(requestId);
         resolve(
           allow
             ? { behavior: "allow", updatedInput: input }
@@ -320,7 +457,7 @@ export class CoachSession {
         });
         settle(false);
       }, timeoutMs);
-      this.pending.set(requestId, {
+      this.permissions.set(requestId, {
         resolve: (allow) => {
           this.log.info("coach.permission_resolved", {
             request_id: requestId,
@@ -340,60 +477,78 @@ export class CoachSession {
     });
   }
 
-  private async consume(stream: CoachQuery, row: CoachSessionRow, resumed: boolean): Promise<void> {
+  private async consume(
+    conversation: TabConversation,
+    stream: CoachQuery,
+    row: CoachSessionRow,
+    resumed: boolean,
+  ): Promise<void> {
     let initSeen = false;
+    // A stream closed by a new conversation or by idleness may still drain; nothing it says
+    // after that belongs on the page.
+    const current = () => conversation.active === stream;
     try {
       for await (const message of stream) {
         const mapped = mapSdkMessage(message);
         if (mapped.init) {
           initSeen = true;
-          this.adoptInit(row, mapped.init);
+          this.adoptInit(conversation.tab, row, mapped.init);
         }
         for (const item of mapped.finalized)
           recordFinalized(this.deps.db, row.id, item, this.clock);
+        if (!current()) continue;
         for (const event of mapped.events) {
-          this.logEvent(event);
-          this.emit(event);
+          conversation.ledger.record(
+            event,
+            { coach_session_id: row.id, tab: conversation.tab },
+            this.turn,
+          );
+          this.emit(event, conversation.tab);
         }
-        if (mapped.events.some((event) => event.kind === "turn_end")) {
-          this.busy = false;
-          this.flushNotifications();
-        }
+        if (mapped.events.some((event) => event.kind === "turn_end")) this.afterTurn(conversation);
       }
     } catch (error) {
       this.log.error("coach.turn_error", error, {
         coach_session_id: row.id,
-        turn: this.queuedTurns[0]?.turn ?? this.turn,
-        queued_turns: this.queuedTurns.map((queued) => queued.turn),
+        tab: conversation.tab,
+        turn: conversation.ledger.oldestTurn ?? this.turn,
+        queued_turns: conversation.ledger.turnNumbers,
         resumed,
         init_seen: initSeen,
       });
       // A stored session the CLI cannot find is closed so the next send starts a fresh one.
-      if (resumed && !initSeen) {
+      if (resumed && !initSeen && conversation.row?.id === row.id) {
         closeCoachSession(this.deps.db, row.id, this.clock);
-        this.row = undefined;
+        conversation.row = undefined;
       }
-      this.emit({
-        kind: "turn_error",
-        message: error instanceof Error ? error.message : String(error),
-      });
+      if (current()) {
+        this.emit(
+          { kind: "turn_error", message: error instanceof Error ? error.message : String(error) },
+          conversation.tab,
+        );
+      }
     } finally {
-      if (this.active === stream) {
-        this.busy = false;
-        this.queue?.close();
-        this.queue = undefined;
-        this.active = undefined;
+      if (current()) {
+        this.closeStream(conversation);
+        this.pump();
       }
     }
   }
 
-  private adoptInit(row: CoachSessionRow, init: SessionInit): void {
+  private afterTurn(conversation: TabConversation): void {
+    if (conversation.ledger.openTurns > 0) return;
+    this.pump();
+    this.scheduleIdleClose(conversation);
+  }
+
+  private adoptInit(tab: CoachTab, row: CoachSessionRow, init: SessionInit): void {
     if (row.claudeSessionId !== init.sessionId) {
       storeClaudeSessionId(this.deps.db, row.id, init.sessionId);
       row.claudeSessionId = init.sessionId;
     }
     this.log.info("coach.session", {
       coach_session_id: row.id,
+      tab,
       claude_session_id: init.sessionId,
       model: init.model,
       auth: init.apiKeySource,
@@ -401,81 +556,10 @@ export class CoachSession {
     });
   }
 
-  private logEvent(event: CoachEvent): void {
-    const current = this.queuedTurns[0];
-    const turn = { coach_session_id: this.row?.id, turn: current?.turn ?? this.turn };
-    if (event.kind === "tool_use") {
-      this.openTools.set(event.toolUseId, { name: event.name, startedAt: performance.now() });
-      this.log.info("coach.tool_call", {
-        ...turn,
-        tool_use_id: event.toolUseId,
-        name: event.name,
-        input: event.input,
-      });
-    } else if (event.kind === "tool_result") {
-      const call = this.openTools.get(event.toolUseId);
-      this.openTools.delete(event.toolUseId);
-      const code = refusalCode(event.output);
-      const flagged = event.isError;
-      this.log.info("coach.tool_result", {
-        ...turn,
-        tool_use_id: event.toolUseId,
-        name: call?.name ?? null,
-        duration_ms: call ? Math.round(performance.now() - call.startedAt) : null,
-        is_error: flagged || code !== null,
-        error_code: code,
-        output: event.output,
-      });
-    } else if (event.kind === "turn_end" || event.kind === "turn_error") {
-      this.closeTurn(turn, event);
-    }
-  }
-
-  // A turn runs from when its first message was queued or when the turn before it ended, whichever
-  // is later. A result that names no message this session sent (an SDK-internal turn) closes none.
-  private closeTurn(
-    base: LogFields,
-    event: Extract<CoachEvent, { kind: "turn_end" | "turn_error" }>,
-  ): void {
-    const now = performance.now();
-    const closed = this.takeAnswered(event.answered);
-    const first = closed[0];
-    const startedAt = first ? Math.max(first.queuedAt, this.lastTurnEndedAt) : null;
-    const turn = { ...base, turn: first?.turn ?? null, turns: closed.map((open) => open.turn) };
-    const timing = {
-      duration_ms: startedAt === null ? null : Math.round(now - startedAt),
-      waited_ms: first && startedAt !== null ? Math.round(startedAt - first.queuedAt) : null,
-    };
-    this.lastTurnEndedAt = now;
-    if (event.kind === "turn_error") {
-      this.log.warn("coach.turn_failed", { ...turn, ...timing, message: event.message });
-      return;
-    }
-    this.log.info("coach.turn_end", {
-      ...turn,
-      ...timing,
-      input_tokens: event.usage.inputTokens,
-      output_tokens: event.usage.outputTokens,
-    });
-  }
-
-  private takeAnswered(answered: string[] | undefined): QueuedTurn[] {
-    if (!answered || answered.length === 0) {
-      if (this.resultsNameMessages) return [];
-      const oldest = this.queuedTurns.shift();
-      return oldest ? [oldest] : [];
-    }
-    this.resultsNameMessages = true;
-    const closed = this.queuedTurns.filter((open) => answered.includes(open.uuid));
-    const left = this.queuedTurns.filter((open) => !answered.includes(open.uuid));
-    this.queuedTurns.splice(0, this.queuedTurns.length, ...left);
-    return closed;
-  }
-
-  private emit(event: CoachEvent): void {
+  private emit(event: CoachEvent, tab: CoachTab): void {
     for (const listener of this.eventListeners) {
       try {
-        listener(event);
+        listener(event, tab);
       } catch (error) {
         this.log.error("coach.listener_failed", error, { kind: event.kind });
       }

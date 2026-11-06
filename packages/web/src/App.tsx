@@ -1,4 +1,4 @@
-import type { LiveGameActivity } from "@chess-coach/shared";
+import type { CoachTab, LiveGameActivity } from "@chess-coach/shared";
 import { useEffect, useState } from "react";
 import { Chat } from "./components/Chat.js";
 import { CoachActions } from "./components/CoachActions.js";
@@ -9,7 +9,7 @@ import { useServer } from "./hooks/useServer.js";
 import { Games } from "./screens/Games.js";
 import { Play } from "./screens/Play.js";
 import { Practice } from "./screens/Practice.js";
-import { DEFAULT_COACH_IDLE, useCoachPanel } from "./state/coach-panel.js";
+import { DEFAULT_COACH_IDLE, useCoachPanel, useTabUnread } from "./state/coach-panel.js";
 import { serviceNotice } from "./state/health.js";
 import { practiceIdleLabel, practiceWaitingLabel } from "./state/practice.js";
 import { useTheme } from "./state/theme.js";
@@ -17,16 +17,24 @@ import { useTheme } from "./state/theme.js";
 const SCREENS = ["Play", "Games", "Practice"] as const;
 type Screen = (typeof SCREENS)[number];
 
+// Each screen talks to the coach in its own conversation.
+const SCREEN_TAB: Record<Screen, CoachTab> = { Play: "play", Games: "games", Practice: "practice" };
+
 export interface AppProps {
   fetchHealth?: FetchHealth;
 }
 
 export function App({ fetchHealth }: AppProps = {}) {
-  const server = useServer();
+  const [screen, setScreen] = useState<Screen>("Play");
+  const server = useServer({ tab: SCREEN_TAB[screen] });
   const notice = serviceNotice(useHealth(server.errorCount, fetchHealth ? { fetchHealth } : {}));
   const { theme, toggle: toggleTheme } = useTheme();
-  const coach = useCoachPanel(server.coachMessages);
-  const [screen, setScreen] = useState<Screen>("Play");
+  const coach = useCoachPanel(server.coachMessages, server.tab);
+  const { play, games, practice } = server.conversations;
+  const unreadTabs = useTabUnread(
+    { play: play.coachMessages, games: games.coachMessages, practice: practice.coachMessages },
+    server.tab,
+  );
   const [coachIdle, setCoachIdle] = useState<string | null>(null);
   // The live game underneath a training run, so Play can show it read-only.
   const [liveGame, setLiveGame] = useState<LiveGameActivity | null>(null);
@@ -54,9 +62,17 @@ export function App({ fetchHealth }: AppProps = {}) {
               type="button"
               className="topbar__tab"
               aria-current={name === screen ? "page" : undefined}
+              data-unread={unreadTabs[SCREEN_TAB[name]] ? "true" : undefined}
               onClick={() => setScreen(name)}
             >
               {name}
+              {unreadTabs[SCREEN_TAB[name]] ? (
+                <span
+                  className="topbar__dot"
+                  data-testid={`tab-unread-${SCREEN_TAB[name]}`}
+                  aria-hidden="true"
+                />
+              ) : null}
             </button>
           ))}
           <button type="button" className="topbar__tab" disabled>

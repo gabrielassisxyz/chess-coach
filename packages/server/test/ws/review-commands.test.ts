@@ -22,8 +22,8 @@ afterEach(async () => {
 
 async function start() {
   const db = openDatabase(mkdtempSync(join(tmpdir(), "review-cmd-")));
-  const coach = new FakeCoach();
-  coach.sessionRow = createCoachSession(db, { promptVersion: "v" });
+  const coach = new FakeCoach(db);
+  coach.rows.games = createCoachSession(db, { promptVersion: "v", tab: "games" });
   const game = new GameService({ db, engine: new ScriptedEngine([]) });
   app = buildApp({
     hub: {
@@ -93,9 +93,14 @@ describe("ask_coach_about_ply", () => {
       }),
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const rows = listChatTail(db, coach.sessionRow?.id as number, 50);
+    const rows = listChatTail(db, coach.rows.games?.id as number, 50);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ role: "user", kind: "notification", delivered: false });
+    expect(rows[0]).toMatchObject({
+      role: "user",
+      kind: "notification",
+      delivered: false,
+      tab: "games",
+    });
     expect(rows.filter((row) => row.kind === "text")).toEqual([]);
     const content = JSON.parse(rows[0]?.contentJson as string) as PlyQuestionNotification;
     expect(content).toEqual({
@@ -120,7 +125,7 @@ describe("ask_coach_about_ply", () => {
       JSON.stringify({ type: "ask_coach_about_ply", command_id: "q", game_id: gameId, ply: 13 }),
     );
     expect(await next()).toMatchObject({ code: "invalid_ply", command_id: "q" });
-    expect(listChatTail(db, coach.sessionRow?.id as number, 50)).toEqual([]);
+    expect(listChatTail(db, coach.rows.games?.id as number, 50)).toEqual([]);
     expect(coach.flushes).toBe(0);
   });
 });

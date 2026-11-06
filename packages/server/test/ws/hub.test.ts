@@ -29,7 +29,7 @@ afterEach(async () => {
 async function start(options: { pingIntervalMs?: number; origins?: string[] } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), "hub-"));
   const db = openDatabase(dataDir);
-  const coach = new FakeCoach();
+  const coach = new FakeCoach(db);
   const game = new GameService({ db, engine: new ScriptedEngine(["e7e5", "g8f6"]) });
   const activity = new ActivityService({ db, game });
   app = buildApp({
@@ -132,23 +132,32 @@ describe("upgrade origin check", () => {
 });
 
 describe("hub", () => {
-  it("bootstraps with the last 200 rows of the open session", async () => {
+  it("bootstraps with the last 200 rows of each tab's open conversation, keyed by tab", async () => {
     const { app, db, coach } = await start();
-    const session = createCoachSession(db, { promptVersion: "v" });
-    coach.sessionRow = session;
+    const play = createCoachSession(db, { promptVersion: "v", tab: "play" });
+    const practice = createCoachSession(db, { promptVersion: "v", tab: "practice" });
+    coach.rows.play = play;
+    coach.rows.practice = practice;
     for (let i = 1; i <= BOOTSTRAP_TAIL + 50; i++) {
-      appendChatMessage(db, session.id, {
+      appendChatMessage(db, play.id, {
         role: "user",
         kind: "text",
         contentJson: JSON.stringify({ text: `m${i}` }),
       });
     }
+    appendChatMessage(db, practice.id, {
+      role: "user",
+      kind: "text",
+      contentJson: JSON.stringify({ text: "p1" }),
+    });
     const { next } = await connect(app);
     const event = ServerEventSchema.parse(await next());
     if (event.type !== "bootstrap") throw new Error("expected bootstrap");
-    expect(event.transcript).toHaveLength(BOOTSTRAP_TAIL);
-    expect(event.transcript[0]?.content).toEqual({ text: "m51" });
-    expect(event.transcript.at(-1)?.content).toEqual({ text: "m250" });
+    expect(event.conversations.play).toHaveLength(BOOTSTRAP_TAIL);
+    expect(event.conversations.play[0]?.content).toEqual({ text: "m51" });
+    expect(event.conversations.play.at(-1)?.content).toEqual({ text: "m250" });
+    expect(event.conversations.practice.map((entry) => entry.content)).toEqual([{ text: "p1" }]);
+    expect(event.conversations.games).toEqual([]);
   });
 
   it("bootstraps empty before a session exists", async () => {
@@ -156,11 +165,41 @@ describe("hub", () => {
     const { next } = await connect(app);
     expect(await next()).toEqual({
       type: "bootstrap",
-      transcript: [],
+      conversations: { play: [], games: [], practice: [] },
       activity: null,
       current_elo: 600,
       paused_training: null,
     });
+  });
+
+  it("closes a tab's conversation on new_conversation and tells every socket", async () => {
+    const { app, db, coach } = await start();
+    coach.rows.games = createCoachSession(db, { promptVersion: "v", tab: "games" });
+    coach.rows.play = createCoachSession(db, { promptVersion: "v", tab: "play" });
+    const a = await connect(app);
+    const b = await connect(app);
+    await a.next();
+    await b.next();
+    a.socket.send(JSON.stringify({ type: "new_conversation", command_id: "n1", tab: "games" }));
+    expect(await b.next()).toEqual({ type: "conversation_started", tab: "games" });
+    expect(coach.newConversations).toEqual(["games"]);
+    expect(coach.rows.play).toBeDefined();
+    const fresh = await connect(app);
+    const event = ServerEventSchema.parse(await fresh.next());
+    if (event.type !== "bootstrap") throw new Error("expected bootstrap");
+    expect(event.conversations.games).toEqual([]);
+  });
+
+  it("refuses a new_conversation or a say that names no tab", async () => {
+    const { app, coach } = await start();
+    const { socket, next } = await connect(app);
+    await next();
+    socket.send(JSON.stringify({ type: "new_conversation", command_id: "n1" }));
+    expect(await next()).toMatchObject({ code: "invalid_command", command_id: "n1" });
+    socket.send(JSON.stringify({ type: "say", command_id: "s1", text: "hi", tab: "nope" }));
+    expect(await next()).toMatchObject({ code: "invalid_command", command_id: "s1" });
+    expect(coach.newConversations).toEqual([]);
+    expect(coach.sent).toEqual([]);
   });
 
   it("answers a malformed frame with a typed error carrying the command_id", async () => {
@@ -198,7 +237,7 @@ describe("hub", () => {
     const { socket, next } = await connect(app);
     await next();
     coach.knownRequests.add("r1");
-    socket.send(JSON.stringify({ type: "say", command_id: "c1", text: "hello" }));
+    socket.send(JSON.stringify({ type: "say", command_id: "c1", text: "hello", tab: "practice" }));
     socket.send(
       JSON.stringify({ type: "approve_tool", command_id: "c2", request_id: "r1", allow: true }),
     );
@@ -206,7 +245,7 @@ describe("hub", () => {
       JSON.stringify({ type: "approve_tool", command_id: "c3", request_id: "zz", allow: true }),
     );
     expect(await next()).toMatchObject({ code: "unknown_request", command_id: "c3" });
-    expect(coach.sent).toEqual(["hello"]);
+    expect(coach.sent).toEqual([{ text: "hello", tab: "practice" }]);
     expect(coach.resolved).toEqual([{ requestId: "r1", allow: true }]);
   });
 
@@ -215,7 +254,7 @@ describe("hub", () => {
     const { socket, next } = await connect(app);
     await next();
     coach.failSendWith = new Error("coach session not started");
-    socket.send(JSON.stringify({ type: "say", command_id: "c9", text: "hi" }));
+    socket.send(JSON.stringify({ type: "say", command_id: "c9", text: "hi", tab: "play" }));
     expect(await next()).toMatchObject({
       code: "coach_error",
       command_id: "c9",
@@ -232,7 +271,7 @@ describe("hub", () => {
     coach.emit({ kind: "text_delta", text: "He" });
     coach.emit({ kind: "text_delta", text: "llo" });
     coach.emit({ kind: "tool_use", toolUseId: "t1", name: "x", input: { a: 1 } });
-    coach.emit({ kind: "text_delta", text: "again" });
+    coach.emit({ kind: "text_delta", text: "again" }, "practice");
     const seen = [];
     for (let i = 0; i < 4; i++) seen.push(ServerEventSchema.parse(await a.next()));
     const ids = seen.map((e) => (e.type === "chat" ? [e.message_id, e.seq] : null));
@@ -241,6 +280,12 @@ describe("hub", () => {
       [1, 2],
       [2, 3],
       [3, 4],
+    ]);
+    expect(seen.map((e) => (e.type === "chat" ? e.tab : null))).toEqual([
+      "play",
+      "play",
+      "play",
+      "practice",
     ]);
     expect(await b.next()).toMatchObject({ type: "chat", seq: 1, event: { text: "He" } });
   });
@@ -289,6 +334,11 @@ describe("hub", () => {
       type: "activity",
       state: { kind: "live_game", activity_id: 1 },
     });
+    expect(await b.next()).toMatchObject({
+      type: "chat_row",
+      tab: "play",
+      entry: { role: "system", kind: "text", content: { label: "Partida" } },
+    });
     a.socket.send(
       JSON.stringify({ type: "move", command_id: "m", from: "e2", to: "e4", activity_id: 1 }),
     );
@@ -308,6 +358,7 @@ describe("hub", () => {
     expect(await next()).toMatchObject({ code: "not_in_demo", command_id: "l1" });
     socket.send(JSON.stringify({ type: "new_game", command_id: "n", color: "white", elo: 1200 }));
     await next();
+    expect(await next()).toMatchObject({ type: "chat_row", tab: "play" });
     // A demo can only cover a finished game, so the game ends before the coach's demo.
     await activity.resign();
     await next();
@@ -321,12 +372,13 @@ describe("hub", () => {
     expect(await next()).toMatchObject({ code: "game_not_found", command_id: "o1" });
   });
 
-  it("passes the game's own error code through", async () => {
-    const { app } = await start();
+  it("passes the game's own error code through, and a refused start draws no divider", async () => {
+    const { app, coach } = await start();
     const { socket, next } = await connect(app);
     await next();
     socket.send(JSON.stringify({ type: "new_game", command_id: "n", color: "white", elo: 50 }));
     expect(await next()).toMatchObject({ code: "invalid_elo", command_id: "n" });
+    expect(coach.rows.play).toBeUndefined();
   });
 
   it("rejects a move with a malformed square before it reaches the game", async () => {

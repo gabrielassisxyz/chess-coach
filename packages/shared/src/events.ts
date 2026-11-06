@@ -17,6 +17,12 @@ export const MAX_SAY_LENGTH = 4000;
 
 const commandId = z.string().min(1).max(64);
 
+// Each screen keeps its own conversation with the coach, so a puzzle reply never carries a whole
+// day of unrelated games in its context.
+export const COACH_TABS = ["play", "games", "practice"] as const;
+export const CoachTabSchema = z.enum(COACH_TABS);
+export type CoachTab = z.infer<typeof CoachTabSchema>;
+
 export const ChatPayloadSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("text_delta"), text: z.string() }),
   z.object({
@@ -39,7 +45,8 @@ export const ChatPayloadSchema = z.discriminatedUnion("kind", [
 ]);
 export type ChatPayload = z.infer<typeof ChatPayloadSchema>;
 
-// One persisted row of the open session. `content` is the row's JSON, parsed by the server.
+// One persisted row of a tab's open conversation. `content` is the row's JSON, parsed by the
+// server. A divider is a system text row whose content is `{ label, at }`.
 export const TranscriptEntrySchema = z.object({
   id: z.number(),
   seq: z.number(),
@@ -50,9 +57,15 @@ export const TranscriptEntrySchema = z.object({
 });
 export type TranscriptEntry = z.infer<typeof TranscriptEntrySchema>;
 
+const TabTranscriptSchema = z.array(TranscriptEntrySchema);
+
 export const BootstrapEventSchema = z.object({
   type: z.literal("bootstrap"),
-  transcript: z.array(TranscriptEntrySchema),
+  conversations: z.object({
+    play: TabTranscriptSchema,
+    games: TabTranscriptSchema,
+    practice: TabTranscriptSchema,
+  }),
   activity: ActivityStateSchema.nullable(),
   current_elo: z.number().int().optional(),
   paused_training: PausedTrainingSchema.nullable().optional(),
@@ -62,11 +75,27 @@ export type BootstrapEvent = z.infer<typeof BootstrapEventSchema>;
 // message_id groups the deltas of one assistant message; seq orders every chat event of a server run.
 export const ChatEventSchema = z.object({
   type: z.literal("chat"),
+  tab: CoachTabSchema,
   message_id: z.number().int(),
   seq: z.number().int(),
   event: ChatPayloadSchema,
 });
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
+
+// A row written outside a coach turn (a divider) that every open page appends to that tab.
+export const ChatRowEventSchema = z.object({
+  type: z.literal("chat_row"),
+  tab: CoachTabSchema,
+  entry: TranscriptEntrySchema,
+});
+export type ChatRowEvent = z.infer<typeof ChatRowEventSchema>;
+
+// The tab's conversation was closed and an empty one begins; every open page clears that tab.
+export const ConversationStartedEventSchema = z.object({
+  type: z.literal("conversation_started"),
+  tab: CoachTabSchema,
+});
+export type ConversationStartedEvent = z.infer<typeof ConversationStartedEventSchema>;
 
 export const PermissionRequestEventSchema = z.object({
   type: z.literal("permission_request"),
@@ -155,6 +184,8 @@ export type CardsCreatedEvent = z.infer<typeof CardsCreatedEventSchema>;
 export const ServerEventSchema = z.discriminatedUnion("type", [
   BootstrapEventSchema,
   ChatEventSchema,
+  ChatRowEventSchema,
+  ConversationStartedEventSchema,
   PermissionRequestEventSchema,
   ErrorEventSchema,
   ActivityEventSchema,
@@ -166,9 +197,17 @@ export type ServerEvent = z.infer<typeof ServerEventSchema>;
 export const SayCommandSchema = z.object({
   type: z.literal("say"),
   command_id: commandId,
+  tab: CoachTabSchema,
   text: z.string().min(1).max(MAX_SAY_LENGTH),
 });
 export type SayCommand = z.infer<typeof SayCommandSchema>;
+
+export const NewConversationCommandSchema = z.object({
+  type: z.literal("new_conversation"),
+  command_id: commandId,
+  tab: CoachTabSchema,
+});
+export type NewConversationCommand = z.infer<typeof NewConversationCommandSchema>;
 
 export const ApproveToolCommandSchema = z.object({
   type: z.literal("approve_tool"),
@@ -318,6 +357,7 @@ export const AskCoachAboutPlyCommandSchema = z.object({
 
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   SayCommandSchema,
+  NewConversationCommandSchema,
   ApproveToolCommandSchema,
   OpenGameCommandSchema,
   SelectReviewPlyCommandSchema,
@@ -341,4 +381,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
 ]);
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
 
-export type ActivityCommand = Exclude<ClientCommand, SayCommand | ApproveToolCommand>;
+export type ActivityCommand = Exclude<
+  ClientCommand,
+  SayCommand | ApproveToolCommand | NewConversationCommand
+>;

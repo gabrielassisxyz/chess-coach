@@ -41,7 +41,13 @@ function refreshInto(activity: ActivityState | null) {
     useServer({ url: "ws://test/api/ws", createSocket: createFakeSocket }),
   );
   act(() => FakeSocket.latest.open());
-  act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript, activity }));
+  act(() =>
+    FakeSocket.latest.receive({
+      type: "bootstrap",
+      conversations: { play: transcript, games: [], practice: [] },
+      activity,
+    }),
+  );
   return view.result.current;
 }
 

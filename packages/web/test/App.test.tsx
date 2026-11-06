@@ -28,9 +28,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function textRow(id: number, text: string) {
+  return {
+    id,
+    seq: id,
+    role: "assistant",
+    kind: "text",
+    content: { text },
+    created_at: "2026-01-01T00:00:00Z",
+  };
+}
+
 function connect(): void {
   act(() => FakeSocket.latest.open());
-  act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: liveGame() }));
+  act(() =>
+    FakeSocket.latest.receive({
+      type: "bootstrap",
+      conversations: { play: [], games: [], practice: [] },
+      activity: liveGame(),
+    }),
+  );
 }
 
 describe("App", () => {
@@ -102,6 +119,62 @@ describe("App", () => {
     );
     expect(screen.getByText("A practice session is open")).toBeTruthy();
     expect(screen.queryByRole("list", { name: "Moves" })).toBeNull();
+  });
+
+  it("shows each tab's own conversation in the chat panel", () => {
+    render(<App />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: {
+          play: [textRow(1, "about my game")],
+          games: [textRow(2, "about the import")],
+          practice: [textRow(3, "about the puzzle")],
+        },
+        activity: liveGame(),
+      }),
+    );
+    const log = () => document.querySelector(".chat__log")?.textContent ?? "";
+    expect(log()).toContain("about my game");
+    expect(log()).not.toContain("about the puzzle");
+    fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+    expect(log()).toContain("about the puzzle");
+    expect(log()).not.toContain("about my game");
+    fireEvent.click(screen.getByRole("button", { name: "Games" }));
+    expect(log()).toContain("about the import");
+  });
+
+  it("marks a tab with an unread dot when the coach answers there, until it is opened", () => {
+    render(<App />);
+    connect();
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "chat",
+        tab: "practice",
+        message_id: 1,
+        seq: 1,
+        event: { kind: "text_delta", text: "Boa!" },
+      }),
+    );
+    const practice = screen.getByRole("button", { name: "Practice" });
+    expect(screen.getByTestId("tab-unread-practice")).toBeTruthy();
+    expect(practice.getAttribute("data-unread")).toBe("true");
+    expect(screen.queryByTestId("tab-unread-play")).toBeNull();
+    expect(screen.queryByTestId("tab-unread-games")).toBeNull();
+
+    fireEvent.click(practice);
+    expect(screen.queryByTestId("tab-unread-practice")).toBeNull();
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "chat",
+        tab: "practice",
+        message_id: 2,
+        seq: 2,
+        event: { kind: "text_delta", text: "Again, on screen" },
+      }),
+    );
+    expect(screen.queryByTestId("tab-unread-practice")).toBeNull();
   });
 
   it("reduces a repeated error to a new errorCount so the board can resync", () => {

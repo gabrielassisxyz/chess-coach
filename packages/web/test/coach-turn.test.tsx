@@ -11,7 +11,7 @@ afterEach(cleanup);
 let seq = 0;
 function chat(event: unknown): ServerEvent {
   seq += 1;
-  return { type: "chat", message_id: 1, seq, event } as ServerEvent;
+  return { type: "chat", tab: "play", message_id: 1, seq, event } as ServerEvent;
 }
 
 const delta = chat({ kind: "text_delta", text: "Hi" });
@@ -29,35 +29,39 @@ function fold(...events: ServerEvent[]): ChatState {
 
 describe("coach turn state", () => {
   it("starts idle", () => {
-    expect(initialChatState.turn).toBe("idle");
+    expect(initialChatState.conversations.play.turn).toBe("idle");
   });
 
   it("is thinking from a tool call until its result, and still thinking after it", () => {
-    expect(fold(toolUse).turn).toBe("thinking");
-    expect(fold(toolUse, toolResult).turn).toBe("thinking");
+    expect(fold(toolUse).conversations.play.turn).toBe("thinking");
+    expect(fold(toolUse, toolResult).conversations.play.turn).toBe("thinking");
   });
 
   it("is streaming while text deltas arrive", () => {
-    expect(fold(toolUse, toolResult, delta).turn).toBe("streaming");
+    expect(fold(toolUse, toolResult, delta).conversations.play.turn).toBe("streaming");
   });
 
   it("returns to idle on turn_end and on turn_error", () => {
-    expect(fold(toolUse, delta, turnEnd).turn).toBe("idle");
-    expect(fold(toolUse, turnError).turn).toBe("idle");
+    expect(fold(toolUse, delta, turnEnd).conversations.play.turn).toBe("idle");
+    expect(fold(toolUse, turnError).conversations.play.turn).toBe("idle");
   });
 
   it("is thinking as soon as the student sends a message", () => {
-    const sent = chatReducer(initialChatState, { type: "local_say", text: "hello" });
-    expect(sent.turn).toBe("thinking");
+    const sent = chatReducer(initialChatState, { type: "local_say", text: "hello", tab: "play" });
+    expect(sent.conversations.play.turn).toBe("thinking");
   });
 
   it("goes back to idle on a bootstrap, which is the truth after a reconnect", () => {
     const streaming = fold(delta);
     const after = chatReducer(streaming, {
       type: "server",
-      event: { type: "bootstrap", transcript: [], activity: null },
+      event: {
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      },
     });
-    expect(after.turn).toBe("idle");
+    expect(after.conversations.play.turn).toBe("idle");
   });
 });
 
