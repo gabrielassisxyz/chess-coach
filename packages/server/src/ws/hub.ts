@@ -2,19 +2,22 @@ import {
   type ActivityState,
   type ClientCommand,
   ClientCommandSchema,
+  COACH_TABS,
+  type CoachTab,
   type ErrorCode,
   ErrorCodeSchema,
   type ServerEvent,
   type TrainingActivity,
+  type TrainingMode,
   type TranscriptEntry,
 } from "@chess-coach/shared";
 import type { WebSocket } from "@fastify/websocket";
 import type { FastifyInstance } from "fastify";
 import { ActivityError } from "../activity/errors.js";
 import type { ActivityService } from "../activity/service.js";
-import type { Clock } from "../clock.js";
-import type { CoachEvent } from "../coach/events.js";
-import type { PermissionRequest } from "../coach/session.js";
+import { type Clock, systemClock } from "../clock.js";
+import type { CoachEventListener, PermissionRequest } from "../coach/session.js";
+import { recordDivider } from "../coach/transcript.js";
 import { type ChatMessage, listChatTail } from "../db/chat.js";
 import type { Database } from "../db/open.js";
 import { getCurrentElo } from "../db/settings.js";
@@ -27,12 +30,13 @@ import { askCoachAboutPly, createCards } from "./review-commands.js";
 
 // The slice of CoachSession the hub drives, so tests can inject a named fake.
 export interface CoachPort {
-  readonly sessionRow: { id: number } | undefined;
-  send(text: string): Promise<void>;
+  conversationRow(tab: CoachTab): { id: number } | undefined;
+  send(text: string, tab: CoachTab): Promise<void>;
+  newConversation(tab: CoachTab): void;
   resolvePermission(requestId: string, allow: boolean): boolean;
-  onEvent(listener: (event: CoachEvent) => void): () => void;
+  onEvent(listener: CoachEventListener): () => void;
   onPermissionRequest(listener: (request: PermissionRequest) => void): () => void;
-  ensureSessionId(): number;
+  ensureSessionId(tab: CoachTab): number;
   flushNotifications(): void;
 }
 
@@ -87,6 +91,14 @@ function toEntry(row: ChatMessage): TranscriptEntry {
     created_at: row.createdAt,
   };
 }
+
+// The words a divider shows before its time, in the language the student reads the chat in.
+const TRAINING_LABEL: Record<TrainingMode, string> = {
+  srs: "Revisão",
+  puzzles: "Puzzles",
+  openings: "Aberturas",
+};
+const GAME_LABEL = "Partida";
 
 function frame(event: ServerEvent): string {
   return JSON.stringify(event);
@@ -155,7 +167,9 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
       if (client.readyState === OPEN) client.send(payload);
     }
   };
-  const unsubscribeEvents = coach.onEvent((event) => broadcast(frame(numbering.next(event))));
+  const unsubscribeEvents = coach.onEvent((event, tab) =>
+    broadcast(frame(numbering.next(event, tab))),
+  );
   const unsubscribePermissions = coach.onPermissionRequest((request) =>
     broadcast(
       frame({
@@ -176,12 +190,26 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
     unsubscribePermissions();
   });
 
+  const tailOf = (tab: CoachTab): TranscriptEntry[] => {
+    const row = coach.conversationRow(tab);
+    return row ? listChatTail(db, row.id, BOOTSTRAP_TAIL).map(toEntry) : [];
+  };
+
+  // Written after the command succeeded, so a refused start leaves no rule behind.
+  const divide = (tab: CoachTab, label: string): void => {
+    const row = recordDivider(db, coach.ensureSessionId(tab), label, options.clock ?? systemClock);
+    broadcast(frame({ type: "chat_row", tab, entry: toEntry(row) }));
+  };
+
   const bootstrap = (): string => {
-    const row = coach.sessionRow;
-    const rows = row ? listChatTail(db, row.id, BOOTSTRAP_TAIL) : [];
+    const [play, games, practice] = COACH_TABS.map(tailOf) as [
+      TranscriptEntry[],
+      TranscriptEntry[],
+      TranscriptEntry[],
+    ];
     return frame({
       type: "bootstrap",
-      transcript: rows.map(toEntry),
+      conversations: { play, games, practice },
       activity: activity.current(),
       current_elo: getCurrentElo(db),
       paused_training: activity.pausedTraining(),
@@ -191,7 +219,11 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
   const run = async (command: ClientCommand, socket: WebSocket): Promise<void> => {
     switch (command.type) {
       case "say":
-        await coach.send(command.text);
+        await coach.send(command.text, command.tab);
+        return;
+      case "new_conversation":
+        coach.newConversation(command.tab);
+        broadcast(frame({ type: "conversation_started", tab: command.tab }));
         return;
       case "approve_tool":
         if (!coach.resolvePermission(command.request_id, command.allow)) {
@@ -212,6 +244,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
           color: command.color,
           ...(command.elo === undefined ? {} : { elo: command.elo }),
         });
+        divide("play", GAME_LABEL);
         return;
       case "resign":
         await activity.resign(command.activity_id);
@@ -242,6 +275,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
           ...(command.color === undefined ? {} : { color: command.color }),
           ...(command.size === undefined ? {} : { size: command.size }),
         });
+        divide("practice", TRAINING_LABEL[command.mode]);
         return;
       case "explore":
         await activity.trainingExplore(

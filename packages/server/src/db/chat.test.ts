@@ -59,6 +59,28 @@ describe("coach sessions", () => {
   });
 });
 
+describe("coach sessions per tab", () => {
+  it("finds each tab's own open session and defaults an untagged one to play", () => {
+    const play = createCoachSession(db, { promptVersion: "v1" }, clock);
+    const games = createCoachSession(db, { promptVersion: "v1", tab: "games" }, clock);
+    expect(play.tab).toBe("play");
+    expect(findLatestOpenSession(db, "play")?.id).toBe(play.id);
+    expect(findLatestOpenSession(db, "games")?.id).toBe(games.id);
+    expect(findLatestOpenSession(db, "practice")).toBeUndefined();
+    closeCoachSession(db, games.id, clock);
+    expect(findLatestOpenSession(db, "games")).toBeUndefined();
+    expect(findLatestOpenSession(db, "play")?.id).toBe(play.id);
+  });
+
+  it("copies the session's tab onto every message written to it", () => {
+    const practice = createCoachSession(db, { promptVersion: "v1", tab: "practice" }, clock);
+    const play = createCoachSession(db, { promptVersion: "v1" }, clock);
+    expect(appendChatMessage(db, practice.id, text(1), clock).tab).toBe("practice");
+    expect(appendChatMessage(db, play.id, text(2), clock).tab).toBe("play");
+    expect(listChatTail(db, practice.id, 5).map((m) => m.tab)).toEqual(["practice"]);
+  });
+});
+
 describe("chat messages", () => {
   it("assigns gapless seq per session", () => {
     const a = createCoachSession(db, { promptVersion: "v1" }, clock);

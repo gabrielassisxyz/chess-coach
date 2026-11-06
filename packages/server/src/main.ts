@@ -4,7 +4,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ActivityService } from "./activity/service.js";
 import { buildApp, type Readiness } from "./app.js";
 import { assertSubscriptionAuth } from "./coach/auth.js";
-import { CoachSession } from "./coach/session.js";
+import { CoachSession, coachNotificationSinks } from "./coach/session.js";
 import { openDatabase } from "./db/open.js";
 import { bootEngines } from "./engine/boot.js";
 import { evaluatePlayerMove } from "./engine/evaluate.js";
@@ -56,14 +56,15 @@ const db = openDatabase(dataDir());
 const seeded = seedPuzzles(db, contentDir());
 log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
 const pool = new EnginePool(() => spawnStockfish());
-// The sink reads `coach` when a turn commits, long after the constant below is initialised.
+// The sinks read `coach` when a turn commits, long after the constant below is initialised.
+const sinks = coachNotificationSinks({ ensureSessionId: (tab) => coach.ensureSessionId(tab) });
 const game = new GameService({
   db,
   engine: poolGameEngine(pool),
-  notifications: { sessionId: () => coach.ensureSessionId() },
+  notifications: sinks.game,
   log,
 });
-const notifications = { sessionId: () => coach.ensureSessionId() };
+const notifications = sinks.training;
 const desk = new ReviewDesk({ db, notifications });
 const activity = new ActivityService({
   db,
@@ -143,7 +144,13 @@ app.listen({ port, host: "127.0.0.1" }).then(async (address) => {
   log.info("server.listening", { address });
   try {
     await coach.start();
-    log.info("coach.started", { coach_session_id: coach.sessionRow?.id ?? null });
+    log.info("coach.started", {
+      coach_session_ids: {
+        play: coach.conversationRow("play")?.id ?? null,
+        games: coach.conversationRow("games")?.id ?? null,
+        practice: coach.conversationRow("practice")?.id ?? null,
+      },
+    });
     if (engines.ok && !engineFault) readiness = { ready: true };
   } catch (error) {
     readiness = { ready: false, reason: error instanceof Error ? error.message : String(error) };

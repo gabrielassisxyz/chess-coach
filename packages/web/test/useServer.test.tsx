@@ -5,6 +5,7 @@ import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 
 const delta = (seq: number, messageId: number, text: string) => ({
   type: "chat",
+  tab: "play",
   message_id: messageId,
   seq,
   event: { kind: "text_delta", text },
@@ -44,7 +45,7 @@ describe("useServer", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "bootstrap",
-        transcript: [],
+        conversations: { play: [], games: [], practice: [] },
         activity: demoState(1, "8/8/8/8/8/8/8/K6k w - - 0 1"),
       }),
     );
@@ -61,13 +62,19 @@ describe("useServer", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "bootstrap",
-        transcript: [],
+        conversations: { play: [], games: [], practice: [] },
         activity: null,
         current_elo: 700,
       }),
     );
     expect(result.current.currentElo).toBe(700);
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
     expect(result.current.currentElo).toBeNull();
   });
 
@@ -92,7 +99,13 @@ describe("useServer", () => {
   it("merges deltas of one message into a single assistant item", () => {
     const { result } = mount();
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
     act(() => FakeSocket.latest.receive(delta(1, 1, "Hel")));
     act(() => FakeSocket.latest.receive(delta(2, 1, "lo")));
     expect(result.current.items).toHaveLength(1);
@@ -107,25 +120,29 @@ describe("useServer", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "bootstrap",
-        transcript: [
-          { id: 1, seq: 1, role: "user", kind: "text", content: { text: "hi" }, created_at: "t" },
-          {
-            id: 2,
-            seq: 2,
-            role: "assistant",
-            kind: "tool_use",
-            content: { toolUseId: "t1", name: "look", input: { a: 1 } },
-            created_at: "t",
-          },
-          {
-            id: 3,
-            seq: 3,
-            role: "user",
-            kind: "tool_result",
-            content: { toolUseId: "t1", output: "done" },
-            created_at: "t",
-          },
-        ],
+        conversations: {
+          play: [
+            { id: 1, seq: 1, role: "user", kind: "text", content: { text: "hi" }, created_at: "t" },
+            {
+              id: 2,
+              seq: 2,
+              role: "assistant",
+              kind: "tool_use",
+              content: { toolUseId: "t1", name: "look", input: { a: 1 } },
+              created_at: "t",
+            },
+            {
+              id: 3,
+              seq: 3,
+              role: "user",
+              kind: "tool_result",
+              content: { toolUseId: "t1", output: "done" },
+              created_at: "t",
+            },
+          ],
+          games: [],
+          practice: [],
+        },
         activity: null,
       }),
     );
@@ -139,24 +156,28 @@ describe("useServer", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "bootstrap",
-        transcript: [
-          {
-            id: 1,
-            seq: 1,
-            role: "assistant",
-            kind: "tool_use",
-            content: { toolUseId: "t1", name: "look", input: {} },
-            created_at: "t",
-          },
-          {
-            id: 2,
-            seq: 2,
-            role: "user",
-            kind: "tool_result",
-            content: { toolUseId: "t1", output: "boom", isError: true },
-            created_at: "t",
-          },
-        ],
+        conversations: {
+          play: [
+            {
+              id: 1,
+              seq: 1,
+              role: "assistant",
+              kind: "tool_use",
+              content: { toolUseId: "t1", name: "look", input: {} },
+              created_at: "t",
+            },
+            {
+              id: 2,
+              seq: 2,
+              role: "user",
+              kind: "tool_result",
+              content: { toolUseId: "t1", output: "boom", isError: true },
+              created_at: "t",
+            },
+          ],
+          games: [],
+          practice: [],
+        },
         activity: null,
       }),
     );
@@ -164,6 +185,7 @@ describe("useServer", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "chat",
+        tab: "play",
         message_id: 9,
         seq: 9,
         event: { kind: "tool_use", tool_use_id: "t2", name: "look", input: {} },
@@ -172,6 +194,7 @@ describe("useServer", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "chat",
+        tab: "play",
         message_id: 10,
         seq: 10,
         event: { kind: "tool_result", tool_use_id: "t2", output: "boom", is_error: true },
@@ -183,7 +206,13 @@ describe("useServer", () => {
   it("resets transcript and approvals on reconnect and resends nothing", () => {
     const { result } = mount();
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
     act(() => FakeSocket.latest.receive(delta(1, 1, "partial")));
     act(() =>
       FakeSocket.latest.receive({
@@ -203,7 +232,13 @@ describe("useServer", () => {
     const second = FakeSocket.latest;
     expect(second).not.toBe(first);
     act(() => second.open());
-    act(() => second.receive({ type: "bootstrap", transcript: [], activity: null }));
+    act(() =>
+      second.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
 
     expect(result.current.connection).toBe("connected");
     expect(result.current.items).toEqual([]);
@@ -214,14 +249,26 @@ describe("useServer", () => {
   it("settles the coach turn to idle when the socket drops mid-turn", () => {
     const { result } = mount();
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
     act(() => FakeSocket.latest.receive(delta(1, 1, "partial")));
     expect(result.current.turn).toBe("streaming");
 
     act(() => FakeSocket.latest.drop());
     act(() => vi.advanceTimersByTime(500));
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
     expect(result.current.turn).toBe("idle");
     expect(result.current.items).toEqual([]);
   });
@@ -258,13 +305,21 @@ describe("useServer", () => {
   it("sends say with a command_id and shows the echo locally", () => {
     const { result } = mount();
     act(() => FakeSocket.latest.open());
-    act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: null }));
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
     let sent = false;
     act(() => {
       sent = result.current.say("hello");
     });
     expect(sent).toBe(true);
-    expect(FakeSocket.latest.sent).toEqual([{ type: "say", command_id: "c1", text: "hello" }]);
+    expect(FakeSocket.latest.sent).toEqual([
+      { type: "say", command_id: "c1", tab: "play", text: "hello" },
+    ]);
     expect(result.current.items[0]).toMatchObject({ role: "user", text: "hello" });
   });
 
@@ -275,5 +330,110 @@ describe("useServer", () => {
     expect(result.current.lastError).toBe("boom");
     act(() => FakeSocket.latest.receive({ type: "chat", nonsense: true }));
     expect(result.current.lastError).toBe("received a malformed server frame");
+  });
+
+  describe("per-tab conversations", () => {
+    const entry = (id: number, role: string, text: string) => ({
+      id,
+      seq: id,
+      role,
+      kind: "text",
+      content: { text },
+      created_at: "2026-01-01T00:00:00Z",
+    });
+
+    function mountOn(tab: "play" | "games" | "practice") {
+      const view = renderHook(
+        ({ visible }) =>
+          useServer({ url: "ws://test/api/ws", createSocket: createFakeSocket, tab: visible }),
+        { initialProps: { visible: tab } },
+      );
+      act(() => FakeSocket.latest.open());
+      act(() =>
+        FakeSocket.latest.receive({
+          type: "bootstrap",
+          conversations: {
+            play: [entry(1, "user", "about my game")],
+            games: [],
+            practice: [entry(2, "assistant", "about the puzzle")],
+          },
+          activity: null,
+        }),
+      );
+      return view;
+    }
+
+    it("shows the visible tab's conversation and follows the tab when it changes", () => {
+      const { result, rerender } = mountOn("practice");
+      expect(result.current.tab).toBe("practice");
+      expect(result.current.items).toEqual([
+        expect.objectContaining({ role: "assistant", text: "about the puzzle" }),
+      ]);
+      rerender({ visible: "play" });
+      expect(result.current.items).toEqual([
+        expect.objectContaining({ role: "user", text: "about my game" }),
+      ]);
+      rerender({ visible: "games" });
+      expect(result.current.items).toEqual([]);
+    });
+
+    it("keeps a chat event in its own tab, says into the visible one, and asks for a fresh one", () => {
+      const { result } = mountOn("games");
+      act(() => FakeSocket.latest.receive({ ...delta(1, 1, "Puzzle reply"), tab: "practice" }));
+      expect(result.current.items).toEqual([]);
+      expect(result.current.conversations.practice.items.at(-1)).toMatchObject({
+        text: "Puzzle reply",
+      });
+      expect(result.current.conversations.practice.coachMessages).toBe(1);
+      expect(result.current.turn).toBe("idle");
+      act(() => {
+        result.current.say("why this move?");
+        result.current.newConversation();
+      });
+      expect(FakeSocket.latest.sent).toEqual([
+        { type: "say", command_id: "c1", tab: "games", text: "why this move?" },
+        { type: "new_conversation", command_id: "c2", tab: "games" },
+      ]);
+      expect(result.current.conversations.games.items).toHaveLength(1);
+    });
+
+    it("empties only the named tab when the server starts a fresh conversation", () => {
+      const { result } = mountOn("play");
+      act(() => FakeSocket.latest.receive({ type: "conversation_started", tab: "play" }));
+      expect(result.current.items).toEqual([]);
+      expect(result.current.lastMessageAt).toBeNull();
+      expect(result.current.conversations.practice.items).toHaveLength(1);
+    });
+
+    it("appends a divider row to its tab", () => {
+      const { result } = mountOn("practice");
+      act(() =>
+        FakeSocket.latest.receive({
+          type: "chat_row",
+          tab: "practice",
+          entry: {
+            id: 7,
+            seq: 2,
+            role: "system",
+            kind: "text",
+            content: { label: "Puzzles", at: "2026-01-01T16:30:00Z" },
+            created_at: "2026-01-01T16:30:00Z",
+          },
+        }),
+      );
+      expect(result.current.items.at(-1)).toEqual({
+        type: "divider",
+        key: "row-7",
+        label: "Puzzles",
+        at: "2026-01-01T16:30:00Z",
+      });
+      expect(result.current.conversations.play.items).toHaveLength(1);
+    });
+
+    it("dates the conversation by its newest bootstrap row", () => {
+      const { result } = mountOn("play");
+      expect(result.current.lastMessageAt).toBe(Date.parse("2026-01-01T00:00:00Z"));
+      expect(result.current.conversations.games.lastMessageAt).toBeNull();
+    });
   });
 });

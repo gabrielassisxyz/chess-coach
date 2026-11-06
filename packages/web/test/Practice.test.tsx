@@ -4,12 +4,14 @@ import type {
   PausedTraining,
   TrainingActivity,
 } from "@chess-coach/shared";
+
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import { type ServerApi, useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
 import { formatInterval, NONE, nextBatchParts, trainingView } from "../src/state/practice.js";
+import { initialChatState } from "../src/state/transcript.js";
 import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
 import { motifCounts, progressOf } from "./practice-fixtures.js";
@@ -126,6 +128,10 @@ function api(activity: TrainingActivity | null): ServerApi {
     localCount: 0,
     cardsCreated: {},
     coachMessages: 0,
+    lastMessageAt: null,
+    tab: "play",
+    conversations: initialChatState.conversations,
+    newConversation: vi.fn(() => true),
     practiceReplyPending: false,
     practiceEndedItem: null,
     reconnectAttempt: 0,
@@ -799,7 +805,7 @@ describe("a paused session", () => {
     act(() =>
       FakeSocket.latest.receive({
         type: "bootstrap",
-        transcript: [],
+        conversations: { play: [], games: [], practice: [] },
         activity,
         paused_training: pausedTraining,
       }),

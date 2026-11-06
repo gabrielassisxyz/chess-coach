@@ -75,7 +75,7 @@ describe("training notifications", () => {
       log: silentLog,
     });
     await session.start();
-    appendChatMessage(db, session.ensureSessionId(), {
+    appendChatMessage(db, session.ensureSessionId("practice"), {
       role: "user",
       kind: "notification",
       contentJson: JSON.stringify(srs),

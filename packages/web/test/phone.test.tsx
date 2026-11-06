@@ -36,6 +36,7 @@ function coachSays(text: string): void {
   act(() =>
     FakeSocket.latest.receive({
       type: "chat",
+      tab: "play",
       message_id: seq,
       seq,
       event: { kind: "text_delta", text },
@@ -45,7 +46,13 @@ function coachSays(text: string): void {
 
 function connect(): void {
   act(() => FakeSocket.latest.open());
-  act(() => FakeSocket.latest.receive({ type: "bootstrap", transcript: [], activity: liveGame() }));
+  act(() =>
+    FakeSocket.latest.receive({
+      type: "bootstrap",
+      conversations: { play: [], games: [], practice: [] },
+      activity: liveGame(),
+    }),
+  );
 }
 
 describe("coach bar on a phone", () => {

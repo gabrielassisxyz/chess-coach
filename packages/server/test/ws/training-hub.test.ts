@@ -48,7 +48,7 @@ async function start(db: Database = seededDatabase(), log?: Log) {
   });
   app = buildApp({
     hub: {
-      coach: new FakeCoach(),
+      coach: new FakeCoach(db),
       activity,
       db,
       allowedOrigins: ["http://localhost:5173"],
@@ -131,6 +131,10 @@ describe("training over the socket", () => {
     const first = ServerEventSchema.parse(await next("training"));
     expect(first).toMatchObject({ type: "training", status: "prompt" });
     await next("activity");
+    expect(ServerEventSchema.parse(await next("chat_row"))).toMatchObject({
+      tab: "practice",
+      entry: { role: "system", kind: "text", content: { label: "Puzzles" } },
+    });
     socket.send(JSON.stringify({ type: "try_move", command_id: "c2", uci: "a1a8" }));
     const solved = await next("training");
     expect(solved).toMatchObject({ status: "solved" });

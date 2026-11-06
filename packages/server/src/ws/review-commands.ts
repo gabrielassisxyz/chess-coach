@@ -1,4 +1,4 @@
-import type { ServerEvent } from "@chess-coach/shared";
+import type { CoachTab, ServerEvent } from "@chess-coach/shared";
 import { type Clock, systemClock } from "../clock.js";
 import type { Database } from "../db/open.js";
 import { plyQuestionContent, writeNotification } from "../game/notifications.js";
@@ -7,14 +7,20 @@ import { createCardsFromGame } from "../srs/cards.js";
 export interface ReviewCommandDeps {
   db: Database;
   clock?: Clock;
-  coach: { ensureSessionId(): number; flushNotifications(): void };
+  coach: { ensureSessionId(tab: CoachTab): number; flushNotifications(): void };
 }
 
 // The row is built here from stored data and never from client text, so a question about a move
-// cannot be forged and never shows up as something the student typed.
+// cannot be forged and never shows up as something the student typed. Moves are asked about from
+// the Games screen, so the question lands in that tab's conversation.
 export function askCoachAboutPly(deps: ReviewCommandDeps, gameId: number, ply: number): void {
   const content = plyQuestionContent(deps.db, { gameId, ply });
-  writeNotification(deps.db, deps.coach.ensureSessionId(), content, deps.clock ?? systemClock);
+  writeNotification(
+    deps.db,
+    deps.coach.ensureSessionId("games"),
+    content,
+    deps.clock ?? systemClock,
+  );
   deps.coach.flushNotifications();
 }
 

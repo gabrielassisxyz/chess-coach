@@ -1,7 +1,17 @@
-import { type ActivityCommand, ClientCommandSchema, ServerEventSchema } from "@chess-coach/shared";
+import {
+  type ActivityCommand,
+  ClientCommandSchema,
+  type CoachTab,
+  ServerEventSchema,
+} from "@chess-coach/shared";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { reportClient } from "../state/client-log.js";
-import { type ChatState, chatReducer, initialChatState } from "../state/transcript.js";
+import {
+  type ChatState,
+  chatReducer,
+  initialChatState,
+  type TabChat,
+} from "../state/transcript.js";
 
 export type ConnectionState = "connected" | "reconnecting";
 
@@ -18,13 +28,20 @@ export interface SocketLike {
 export interface UseServerOptions {
   url?: string;
   createSocket?: (url: string) => SocketLike;
+  // The tab on screen: what the student says goes to its conversation, and its chat is the one shown.
+  tab?: CoachTab;
 }
 
-export interface ServerApi extends ChatState {
+// The visible tab's conversation is spread at the top level, so a screen reads `items` and `turn`
+// without knowing there are others.
+export interface ServerApi extends ChatState, TabChat {
+  tab: CoachTab;
   connection: ConnectionState;
   // Failed connection attempts since the socket was last open; 0 while connected and before the first try fails.
   reconnectAttempt: number;
   say(text: string): boolean;
+  /** Closes the visible tab's conversation; the server answers with an empty one. */
+  newConversation(): boolean;
   approve(requestId: string, allow: boolean): void;
   dismissError(): void;
   send(command: DistributiveOmit<ActivityCommand, "command_id">): boolean;
@@ -63,6 +80,7 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
   const commandCount = useRef(0);
   const url = options.url ?? defaultUrl();
   const createSocket = options.createSocket;
+  const tab = options.tab ?? "play";
 
   useEffect(() => {
     let disposed = false;
@@ -142,11 +160,16 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
 
   const say = useCallback(
     (text: string): boolean => {
-      const sent = sendCommand((command_id) => ({ type: "say", command_id, text }));
-      if (sent) dispatch({ type: "local_say", text });
+      const sent = sendCommand((command_id) => ({ type: "say", command_id, tab, text }));
+      if (sent) dispatch({ type: "local_say", text, tab });
       return sent;
     },
-    [sendCommand],
+    [sendCommand, tab],
+  );
+
+  const newConversation = useCallback(
+    (): boolean => sendCommand((command_id) => ({ type: "new_conversation", command_id, tab })),
+    [sendCommand, tab],
   );
 
   const approve = useCallback(
@@ -170,7 +193,18 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
     [sendCommand],
   );
 
-  return { ...state, connection, reconnectAttempt, say, approve, dismissError, send };
+  return {
+    ...state,
+    ...state.conversations[tab],
+    tab,
+    connection,
+    reconnectAttempt,
+    say,
+    newConversation,
+    approve,
+    dismissError,
+    send,
+  };
 }
 
 function parseJson(data: unknown): unknown {

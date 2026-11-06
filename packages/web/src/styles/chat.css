@@ -431,3 +431,47 @@ body {
     animation: none;
   }
 }
+
+.chat__new {
+  flex: none;
+  font-size: var(--text-xs);
+}
+
+/* Where a practice queue or a game began inside the tab's conversation. */
+.chat__divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+
+.chat__divider::before,
+.chat__divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.chat__suggest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+
+.chat__suggest-text {
+  margin: 0;
+  color: var(--text-1);
+}
+
+.chat__suggest-actions {
+  display: flex;
+  gap: var(--space-2);
+}

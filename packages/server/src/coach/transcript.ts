@@ -17,6 +17,29 @@ export function recordUserText(
   );
 }
 
+/**
+ * Marks where a practice queue or a game began inside a tab's conversation. It is a system text
+ * row: the kind CHECK on chat_messages cannot be widened without rebuilding a table that
+ * training_explorations references, and a system row is never sent to the coach.
+ */
+export function recordDivider(
+  db: Database,
+  sessionId: number,
+  label: string,
+  clock: Clock,
+): ChatMessage {
+  return appendChatMessage(
+    db,
+    sessionId,
+    {
+      role: "system",
+      kind: "text",
+      contentJson: JSON.stringify({ label, at: clock.now().toISOString() }),
+    },
+    clock,
+  );
+}
+
 export function recordFinalized(
   db: Database,
   sessionId: number,

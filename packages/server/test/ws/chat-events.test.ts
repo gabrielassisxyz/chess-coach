@@ -5,18 +5,24 @@ import { ChatEventNumbering } from "../../src/ws/chat-events.js";
 describe("ChatEventNumbering", () => {
   it("puts is_error on the wire only for a failed tool result", () => {
     const numbering = new ChatEventNumbering();
-    const failed = numbering.next({
-      kind: "tool_result",
-      toolUseId: "t1",
-      output: "x",
-      isError: true,
-    });
-    const fine = numbering.next({
-      kind: "tool_result",
-      toolUseId: "t2",
-      output: "y",
-      isError: false,
-    });
+    const failed = numbering.next(
+      {
+        kind: "tool_result",
+        toolUseId: "t1",
+        output: "x",
+        isError: true,
+      },
+      "play",
+    );
+    const fine = numbering.next(
+      {
+        kind: "tool_result",
+        toolUseId: "t2",
+        output: "y",
+        isError: false,
+      },
+      "play",
+    );
     expect(failed.event).toEqual({
       kind: "tool_result",
       tool_use_id: "t1",

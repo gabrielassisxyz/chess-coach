@@ -47,9 +47,10 @@ function setup(query?: (sdk: FakeSdk) => QueryFn) {
   const events: CoachEvent[] = [];
   session.onEvent((event) => events.push(event));
   const add = (content: TurnNotification): void => {
-    writeNotification(db, session.ensureSessionId(), content);
+    writeNotification(db, session.ensureSessionId("play"), content);
   };
-  const undelivered = () => listUndeliveredNotifications(db, session.ensureSessionId()).length;
+  const undelivered = () =>
+    listUndeliveredNotifications(db, session.ensureSessionId("play")).length;
   return { db, dataDir, sdk, session, events, add, undelivered };
 }
 
@@ -102,7 +103,7 @@ describe("notification delivery", () => {
     const { db, session, add } = setup();
     add(turn(1));
     await session.start();
-    const rows = listChatTail(db, session.ensureSessionId(), 10);
+    const rows = listChatTail(db, session.ensureSessionId("play"), 10);
     expect(rows.map((row) => row.kind)).toEqual(["notification"]);
     await session.stop();
   });

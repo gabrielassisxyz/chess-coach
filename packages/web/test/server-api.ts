@@ -1,6 +1,7 @@
 import type { ActivityState } from "@chess-coach/shared";
 import { vi } from "vitest";
 import type { ServerApi } from "../src/hooks/useServer.js";
+import { initialChatState } from "../src/state/transcript.js";
 
 export function serverApi(
   activity: ActivityState | null = null,
@@ -17,6 +18,10 @@ export function serverApi(
     activity,
     cardsCreated: {},
     coachMessages: 0,
+    lastMessageAt: null,
+    tab: "play",
+    conversations: initialChatState.conversations,
+    newConversation: vi.fn(() => true),
     practiceReplyPending: false,
     practiceEndedItem: null,
     reconnectAttempt: 0,
