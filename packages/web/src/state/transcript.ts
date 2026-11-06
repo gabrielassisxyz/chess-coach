@@ -49,6 +49,9 @@ export interface ChatState {
   coachMessages: number;
   // A practice item ended and its notification was sent, so the coach owes a reply for it.
   practiceReplyPending: boolean;
+  // The ended item that last set the flag: a later activity event for the same item (a demo
+  // closing, a reconnect echo) must not ask for a reply the coach has already given.
+  practiceEndedItem: string | null;
 }
 
 export const initialChatState: ChatState = {
@@ -65,6 +68,7 @@ export const initialChatState: ChatState = {
   cardsCreated: {},
   coachMessages: 0,
   practiceReplyPending: false,
+  practiceEndedItem: null,
 };
 
 function textOf(content: unknown): string {
@@ -181,9 +185,17 @@ export type ChatAction =
 
 // A practice item whose notification the coach has not answered yet: solved or failed with
 // the queue still open. A rated card or a finished queue owes no reply.
-function endedTraining(activity: ActivityState | null): boolean {
-  if (activity?.kind !== "training" || activity.summary !== null) return false;
-  return activity.status === "solved" || activity.status === "failed";
+function endedItemKey(activity: ActivityState | null): string | null {
+  if (activity?.kind !== "training" || activity.summary !== null) return null;
+  if (activity.status !== "solved" && activity.status !== "failed") return null;
+  return `${activity.served_at}#${activity.item.position_in_queue}`;
+}
+
+function pendingAfter(state: ChatState, activity: ActivityState | null): Partial<ChatState> {
+  const key = endedItemKey(activity);
+  if (key === null) return { practiceReplyPending: false };
+  if (key === state.practiceEndedItem) return {};
+  return { practiceReplyPending: true, practiceEndedItem: key };
 }
 
 // A bootstrap replaces everything: after a reconnect the server's transcript is the truth, so
@@ -229,7 +241,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...state,
         activity: event.state,
         pausedTraining: event.paused_training ?? null,
-        practiceReplyPending: endedTraining(event.state),
+        ...pendingAfter(state, event.state),
       };
     case "error":
       return withError(state, event.message, event.code);

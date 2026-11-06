@@ -128,6 +128,12 @@ describe("the coach reply pending on an ended item", () => {
     ).toBe(false);
   });
 
+  it("is not set again for the same ended item once the reply came", () => {
+    const ended = activityOf(puzzle({ status: "solved" }));
+    const replied = reduce(ended, chatOf(1, { kind: "text_delta", text: "Boa" }), ended);
+    expect(replied.practiceReplyPending).toBe(false);
+  });
+
   it("survives a tool call, which still means the coach is working", () => {
     const ended = activityOf(puzzle({ status: "solved" }));
     expect(

@@ -125,6 +125,7 @@ function api(activity: TrainingActivity | null): ServerApi {
     cardsCreated: {},
     coachMessages: 0,
     practiceReplyPending: false,
+    practiceEndedItem: null,
     reconnectAttempt: 0,
     activity,
     connection: "connected",
