@@ -195,7 +195,8 @@ describe("the hub", () => {
   });
 
   it("lists a row per motif with its 30-day success and leaves the opening motifs to their own card", async () => {
-    render(<Practice server={api(null)} {...hubProps} />);
+    const motifs = async () => [...motifCounts, { motif: "opening-italian", count: 7 }];
+    render(<Practice server={api(null)} {...hubProps} fetchMotifs={motifs} />);
     const card = await screen.findByRole("region", { name: "Puzzles by motif" });
     await within(card).findByRole("radio", { name: /fork/i });
     expect(
@@ -209,6 +210,7 @@ describe("the hub", () => {
     ).toContain("not tried yet");
     expect(card.textContent).not.toContain("smothered-mate");
     expect(within(card).queryByRole("radio", { name: /opening/ })).toBeNull();
+    expect(within(card).queryByRole("radio", { name: /italian/i })).toBeNull();
     const empty = within(card).getByRole("radio", { name: /smothered/i }) as HTMLInputElement;
     expect(empty.disabled).toBe(true);
     expect(empty.closest("label")?.textContent).toContain(NONE);
@@ -235,7 +237,8 @@ describe("the hub", () => {
   it("drills the openings per colour from the motif counts, disabling a colour with none", async () => {
     const server = api(null);
     render(<Practice server={server} {...hubProps} />);
-    const card = await screen.findByRole("region", { name: "Opening drill" });
+    const card = await screen.findByRole("region", { name: "Openings" });
+    expect(within(card).getByText("Common positions")).toBeTruthy();
     await within(card).findByText("12 positions");
     expect(
       (within(card).getByRole("button", { name: "Drill as Black" }) as HTMLButtonElement).disabled,
@@ -247,6 +250,35 @@ describe("the hub", () => {
       color: "white",
       size: 10,
     });
+  });
+
+  it("shows the Italian row with its count and starts it as a puzzles drill", async () => {
+    const server = api(null);
+    const motifs = async () => [
+      { motif: "fork", count: 28 },
+      { motif: "opening-white", count: 12 },
+      { motif: "opening-black", count: 0 },
+      { motif: "opening-italian", count: 7 },
+    ];
+    render(<Practice server={server} {...hubProps} fetchMotifs={motifs} />);
+    const card = await screen.findByRole("region", { name: "Openings" });
+    expect(within(card).getByText("Italian Opening")).toBeTruthy();
+    await within(card).findByText("7 positions");
+    fireEvent.click(within(card).getByRole("button", { name: "Drill" }));
+    expect(server.send).toHaveBeenCalledWith({
+      type: "start_training",
+      mode: "puzzles",
+      motif: "opening-italian",
+      size: 10,
+    });
+  });
+
+  it("disables the Italian drill at 0 with the generate hint", async () => {
+    render(<Practice server={api(null)} {...hubProps} />);
+    const card = await screen.findByRole("region", { name: "Openings" });
+    const drill = within(card).getByRole("button", { name: "Drill" }) as HTMLButtonElement;
+    expect(drill.disabled).toBe(true);
+    expect(within(card).getByText("Generate the Italian drill first")).toBeTruthy();
   });
 
   it("starts the due-card review with the default size", async () => {
@@ -288,7 +320,7 @@ describe("a hub with a problem", () => {
     reason: "stockfish_missing",
   });
 
-  it("explains a missing engine, disables the three starts and retries the health check", async () => {
+  it("explains a missing engine, disables the starts and retries the health check", async () => {
     const fetchHealth = vi.fn(missing);
     render(<Practice server={api(null)} {...hubProps} fetchHealth={fetchHealth} />);
     const card = await screen.findByRole("alert", { name: "Engine missing" });
@@ -297,6 +329,10 @@ describe("a hub with a problem", () => {
       const button = await screen.findByRole("button", { name });
       expect((button as HTMLButtonElement).disabled).toBe(true);
     }
+    const openings = await screen.findByRole("region", { name: "Openings" });
+    expect(
+      (within(openings).getByRole("button", { name: "Drill" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     const before = fetchHealth.mock.calls.length;
     fireEvent.click(within(card).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(fetchHealth.mock.calls.length).toBeGreaterThan(before));
@@ -432,6 +468,19 @@ describe("a puzzle on the board", () => {
     render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
     expect(screen.getByRole("heading", { name: "Puzzles · Fork 2 of 10" })).toBeTruthy();
     expect(screen.queryByText(/Motif:/)).toBeNull();
+  });
+
+  it("reads Italian Opening for an italian drill", () => {
+    const open = puzzle({ status: "prompt", run_motif: "opening-italian" });
+    const { unmount } = render(
+      <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    expect(screen.getByRole("heading", { name: "Italian Opening · 2 of 10" })).toBeTruthy();
+    expect(screen.queryByText(/Motif:/)).toBeNull();
+    unmount();
+    const ended = puzzle({ status: "solved", run_motif: "opening-italian" });
+    render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.getByRole("heading", { name: "Italian Opening · 2 of 10" })).toBeTruthy();
   });
 
   it("is never rateable, even answered and carrying an exposure id", () => {
