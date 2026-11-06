@@ -39,7 +39,7 @@
 - **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
   proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
   Stockfish missing, engine fault, dropped socket, restart per game phase, undelivered
-  notifications, refresh per activity kind) and reads the files from disk. Renaming or
+  notifications, refresh per activity kind, restart during training) and reads the files from disk. Renaming or
   deleting one of those tests means updating the inventory in the same change.
 - **Design:** `packages/web/src/styles/tokens.css` is the only file allowed a colour literal;
   `packages/web/DESIGN-CHECK.md` is the rule-by-screen checklist. Change a screen, re-check
@@ -57,6 +57,10 @@
   `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
   is opt-in at the call and never runs after an import. The explorer now answers 401 without a Lichess API
   token: set `LICHESS_API_TOKEN`.
+- **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
+  each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
+  (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The
+  boot never puts it back on the board by itself. A single item the coach serves is not persisted.
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
 
