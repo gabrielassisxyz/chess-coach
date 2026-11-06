@@ -32,20 +32,53 @@ const attempt = (puzzleId: string, solved: boolean) =>
     gaveUp: !solved,
   });
 
+// Deterministic source for the shuffle, so the order is stable in tests.
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 describe("listPuzzles", () => {
   it("orders by attempts, then id, so unseen puzzles come first", () => {
     attempt("forks:0", false);
     attempt("forks:0", true);
     attempt("forks:1", true);
-    const all = listPuzzles(db, { motif: "fork", limit: 50 }).puzzles;
+    const all = listPuzzles(db, { motif: "fork", limit: 50 }, seededRandom(7)).puzzles;
     expect(all.at(-1)?.id).toBe("forks:0");
     expect(all.at(-2)?.id).toBe("forks:1");
     expect(all.at(-1)).toMatchObject({ attempts: 2, solved: 1 });
   });
 
-  it("sorts equal attempt counts by id", () => {
-    const ids = listPuzzles(db, { motif: "pin", limit: 3 }).puzzles.map((p) => p.id);
-    expect(ids).toEqual(["pins:0", "pins:1", "pins:10"]);
+  it("shuffles within equal attempt counts, stably for one seed", () => {
+    const first = listPuzzles(db, { motif: "pin", limit: 28 }, seededRandom(11)).puzzles.map(
+      (p) => p.id,
+    );
+    const second = listPuzzles(db, { motif: "pin", limit: 28 }, seededRandom(11)).puzzles.map(
+      (p) => p.id,
+    );
+    expect(first).toEqual(second);
+    expect(new Set(first).size).toBe(28);
+  });
+
+  it("gives different orders for different seeds over unseen puzzles", () => {
+    const first = listPuzzles(
+      db,
+      { motif: "back_rank_mate", limit: 30 },
+      seededRandom(1),
+    ).puzzles.map((p) => p.id);
+    const second = listPuzzles(
+      db,
+      { motif: "back_rank_mate", limit: 30 },
+      seededRandom(2),
+    ).puzzles.map((p) => p.id);
+    expect(first).not.toEqual(second);
+    expect([...first].sort()).toEqual([...second].sort());
   });
 
   it("defaults to 10, caps at 50 and floors at 1", () => {

@@ -30,13 +30,45 @@ export interface PuzzleFilter {
   limit?: number | undefined;
 }
 
+// Injected shuffle source, so tests stay deterministic while production shuffles.
+export type PuzzleShuffleRandom = () => number;
+
 export function clampLimit(limit: number | undefined, max: number = MAX_PUZZLE_LIMIT): number {
   if (limit === undefined || !Number.isFinite(limit)) return Math.min(DEFAULT_PUZZLE_LIMIT, max);
   return Math.min(Math.max(Math.trunc(limit), 1), max);
 }
 
-// Fewest attempts first, so unseen puzzles lead; `total` is the whole matching inventory, not the page.
-export function listPuzzles(db: Database, filter: PuzzleFilter = {}): PuzzleListing {
+// Least-attempted groups stay in order; inside one group the id order is shuffled, so an
+// Any-motif queue does not repeat the same fixed sequence. Fisher-Yates with the injected source.
+function shufflePuzzlesWithinAttempts(
+  ranked: PuzzleSummary[],
+  randomSource: PuzzleShuffleRandom,
+): PuzzleSummary[] {
+  const out: PuzzleSummary[] = [];
+  let start = 0;
+  while (start < ranked.length) {
+    let end = start + 1;
+    while (end < ranked.length && ranked[end]?.attempts === ranked[start]?.attempts) end += 1;
+    const group = ranked.slice(start, end);
+    for (let i = group.length - 1; i > 0; i--) {
+      const j = Math.floor(randomSource() * (i + 1));
+      const current = group[i] as PuzzleSummary;
+      group[i] = group[j] as PuzzleSummary;
+      group[j] = current;
+    }
+    out.push(...group);
+    start = end;
+  }
+  return out;
+}
+
+// Fewest attempts first, so unseen puzzles lead, shuffled within equal counts; `total`
+// is the whole matching inventory, not the page.
+export function listPuzzles(
+  db: Database,
+  filter: PuzzleFilter = {},
+  randomSource: PuzzleShuffleRandom = Math.random,
+): PuzzleListing {
   const where: string[] = [];
   const params: string[] = [];
   if (filter.motif !== undefined) {
@@ -48,17 +80,20 @@ export function listPuzzles(db: Database, filter: PuzzleFilter = {}): PuzzleList
     params.push(filter.difficulty);
   }
   const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-  const puzzles = db
+  const ranked = db
     .prepare(
       `SELECT p.id, p.motif, p.difficulty, p.fen, p.explanation,
               COUNT(a.id) AS attempts, COALESCE(SUM(a.solved), 0) AS solved
        FROM puzzles p LEFT JOIN puzzle_attempts a ON a.puzzle_id = p.id
        ${clause}
        GROUP BY p.id
-       ORDER BY attempts ASC, p.id ASC
-       LIMIT ?`,
+       ORDER BY attempts ASC, p.id ASC`,
     )
-    .all(...params, clampLimit(filter.limit)) as PuzzleSummary[];
+    .all(...params) as PuzzleSummary[];
+  const puzzles = shufflePuzzlesWithinAttempts(ranked, randomSource).slice(
+    0,
+    clampLimit(filter.limit),
+  );
   const counted = db.prepare(`SELECT COUNT(*) AS n FROM puzzles p ${clause}`).get(...params) as {
     n: number;
   };
