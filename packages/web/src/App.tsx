@@ -11,7 +11,7 @@ import { Play } from "./screens/Play.js";
 import { Practice } from "./screens/Practice.js";
 import { DEFAULT_COACH_IDLE, useCoachPanel } from "./state/coach-panel.js";
 import { serviceNotice } from "./state/health.js";
-import { practiceIdleLabel } from "./state/practice.js";
+import { practiceIdleLabel, practiceWaitingLabel } from "./state/practice.js";
 import { useTheme } from "./state/theme.js";
 
 const SCREENS = ["Play", "Games", "Practice"] as const;
@@ -36,8 +36,12 @@ export function App({ fetchHealth }: AppProps = {}) {
     if (server.activity === null) setLiveGame(null);
   }, [server.activity]);
   // Practice words the coach's idle state from the activity; Games sets it from the open game.
+  // An ended item names the coach's pending reply first, until the chat events clear it.
   const idleLabel =
-    (screen === "Practice" ? practiceIdleLabel(server.activity) : coachIdle) ?? DEFAULT_COACH_IDLE;
+    (screen === "Practice"
+      ? (practiceWaitingLabel(server.activity, server.practiceReplyPending) ??
+        practiceIdleLabel(server.activity))
+      : coachIdle) ?? DEFAULT_COACH_IDLE;
 
   return (
     <div className="shell">
