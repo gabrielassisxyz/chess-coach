@@ -94,6 +94,7 @@ describe("browser refresh", () => {
       gave_up: false,
       solution_line: null,
       suggested_quality: null,
+      hint_square: null,
       summary: null,
     });
     expect(server.activity).toMatchObject({ kind: "training", exposure_id: "ex-1" });
@@ -124,6 +125,7 @@ describe("browser refresh", () => {
       gave_up: false,
       solution_line: null,
       suggested_quality: null,
+      hint_square: null,
       summary: null,
     });
     expect(server.activity).toMatchObject({ kind: "training", item: { cursor: 2 } });
