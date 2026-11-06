@@ -159,6 +159,7 @@ describe("hub", () => {
       transcript: [],
       activity: null,
       current_elo: 600,
+      paused_training: null,
     });
   });
 

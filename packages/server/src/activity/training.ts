@@ -1,5 +1,6 @@
 import type {
   ExpectedMove,
+  PausedTraining,
   ExploredEvent as ShownEvent,
   TrainingActivity,
   TrainingItem,
@@ -24,10 +25,18 @@ import {
   amendPendingNotification,
   closeTrainingItem,
   type ExplorationKind,
+  endOpenTrainingRuns,
+  endTrainingRun,
   insertExplorationEvent,
+  insertTrainingRun,
+  lastExplorationSeq,
   linkItemMessage,
   listItemMessageTexts,
   openTrainingItem,
+  type RunEndReason,
+  type StoredRunItem,
+  saveTrainingRun,
+  type TrainingRunRow,
 } from "../db/training.js";
 import type { NotificationSink } from "../game/notifications.js";
 import { type AttemptState, answer as answerPuzzle, startAttempt } from "../puzzles/attempt.js";
@@ -86,6 +95,52 @@ interface Served {
   shown: ShownEvent[];
 }
 
+// The served item as `training_runs.current_json` keeps it: enough to put the same item back at
+// the same puzzle step. The explored line is not kept; a resumed item starts from its position.
+interface StoredCurrent {
+  item_id: number;
+  served_at: string;
+  status: TrainingStatus;
+  fen: string;
+  last_move: string | null;
+  expected: ExpectedMove | null;
+  reply_uci: string | null;
+  attempt: Omit<AttemptState, "solution"> | null;
+}
+
+interface ResumePoint {
+  position: number;
+  solved: number;
+  failed: number;
+  current: StoredCurrent;
+}
+
+function storedItemOf(entry: QueueEntry): StoredRunItem {
+  return entry.kind === "card"
+    ? { kind: "card", id: entry.cardId }
+    : { kind: "puzzle", id: entry.id };
+}
+
+function queueEntryOf(db: Database, item: StoredRunItem): QueueEntry {
+  if (item.kind === "card") return { kind: "card", cardId: Number(item.id) };
+  const id = String(item.id);
+  const header = getPuzzleHeader(db, id);
+  return { kind: "puzzle", id, motif: header?.motif ?? "", difficulty: header?.difficulty ?? "" };
+}
+
+export function pausedTrainingOf(row: TrainingRunRow): PausedTraining {
+  return {
+    run_id: row.id,
+    mode: row.mode,
+    motif: row.motif,
+    color: row.color,
+    position: row.position,
+    size: row.size,
+    solved: row.solved,
+    failed: row.failed,
+  };
+}
+
 const turnOf = (fen: string): PlayerColor => (fen.split(" ")[1] === "b" ? "black" : "white");
 
 function isLegalUci(fen: string, uci: string): boolean {
@@ -105,24 +160,78 @@ export class TrainingRun {
   private summary: TrainingSummary | null = null;
   private served: Served;
   private readonly clock: Clock;
+  // Set while a transition writes, so the coach is woken once the rows are committed.
+  private wake = false;
 
+  /**
+   * `runId` is the `training_runs` row this queue keeps current; a single item the coach served
+   * has none and is never persisted.
+   */
   private constructor(
     private readonly deps: TrainingDeps,
     private readonly mode: TrainingMode,
     private readonly queue: QueueEntry[],
+    readonly runId: number | null,
+    resume: ResumePoint | null = null,
   ) {
     this.clock = deps.clock ?? systemClock;
-    this.served = this.serve(0);
+    if (resume === null) {
+      this.served = this.serve(0);
+      return;
+    }
+    this.position = resume.position;
+    this.solved = resume.solved;
+    this.failed = resume.failed;
+    this.served = this.restoreServed(resume.current);
   }
 
   // A queue that would hold nothing is refused, so the board never shows an item that is not there.
+  // A new queue ends any run still open, paused or on the board, as replaced.
   static begin(deps: TrainingDeps, input: TrainingInput): TrainingRun {
     const queue = TrainingRun.materialize(deps, input);
     if (queue.length === 0) {
       const what = input.mode === "srs" ? "no review card is due" : "no puzzle matches";
       throw new ActivityError("empty_queue", what);
     }
-    return new TrainingRun(deps, input.mode, queue);
+    const startedAt = (deps.clock ?? systemClock).now().toISOString();
+    return deps.db.transaction(() => {
+      endOpenTrainingRuns(deps.db, "replaced", startedAt);
+      const runId = insertTrainingRun(deps.db, {
+        mode: input.mode,
+        motif: input.motif ?? null,
+        color: input.color ?? null,
+        size: queue.length,
+        items: queue.map(storedItemOf),
+        position: 0,
+        solved: 0,
+        failed: 0,
+        currentJson: "{}",
+        startedAt,
+      });
+      const run = new TrainingRun(deps, input.mode, queue, runId);
+      run.save();
+      return run;
+    })();
+  }
+
+  /** Puts a paused run back at its stored item; a card is served again, with a fresh exposure. */
+  static resume(deps: TrainingDeps, row: TrainingRunRow): TrainingRun {
+    const queue = row.items.map((item) => queueEntryOf(deps.db, item));
+    const resume: ResumePoint = {
+      position: row.position,
+      solved: row.solved,
+      failed: row.failed,
+      current: JSON.parse(row.currentJson) as StoredCurrent,
+    };
+    return deps.db.transaction(() => {
+      const run = new TrainingRun(deps, row.mode, queue, row.id, resume);
+      run.save();
+      return run;
+    })();
+  }
+
+  static discard(deps: TrainingDeps, runId: number): void {
+    endTrainingRun(deps.db, runId, "discarded", (deps.clock ?? systemClock).now().toISOString());
   }
 
   /** A queue of one item the coach picked; unlike `begin`, an unknown id is refused by name. */
@@ -131,7 +240,7 @@ export class TrainingRun {
       if (!getCard(deps.db, item.id)) {
         throw new ActivityError("card_not_found", `card ${item.id} does not exist`);
       }
-      return new TrainingRun(deps, "srs", [{ kind: "card", cardId: item.id }]);
+      return new TrainingRun(deps, "srs", [{ kind: "card", cardId: item.id }], null);
     }
     const header = getPuzzleHeader(deps.db, item.id);
     if (!header) throw new ActivityError("puzzle_not_found", `puzzle ${item.id} does not exist`);
@@ -141,7 +250,7 @@ export class TrainingRun {
       motif: header.motif,
       difficulty: header.difficulty,
     };
-    return new TrainingRun(deps, "puzzles", [entry]);
+    return new TrainingRun(deps, "puzzles", [entry], null);
   }
 
   private static materialize(deps: TrainingDeps, input: TrainingInput): QueueEntry[] {
@@ -250,8 +359,10 @@ export class TrainingRun {
     if (!this.isOpen()) {
       throw new ActivityError("item_finished", "this item is already answered");
     }
-    if (s.item.kind === "card") this.answerCard(s, s.item.exposure_id, uci);
-    else this.answerPuzzle(s, s.item, uci);
+    this.transition(() => {
+      if (s.item.kind === "card") this.answerCard(s, s.item.exposure_id, uci);
+      else this.answerPuzzle(s, s.item, uci);
+    });
   }
 
   rate(exposureId: string, quality: number): void {
@@ -263,8 +374,10 @@ export class TrainingRun {
     if (s.item.kind !== "card" || s.item.exposure_id !== exposureId) {
       throw new SrsError("exposure_unknown", "that card is not the one on the board");
     }
-    this.deps.desk.rate(exposureId, quality);
-    s.status = "rated";
+    this.transition(() => {
+      this.deps.desk.rate(exposureId, quality);
+      s.status = "rated";
+    });
   }
 
   // The last item's next ends the queue: the summary is written once, here.
@@ -280,17 +393,74 @@ export class TrainingRun {
     if (!done) {
       throw new ActivityError("item_unfinished", "answer this item before moving on");
     }
-    if (this.position === this.queue.length - 1) {
-      this.finish();
-      return;
-    }
-    this.position += 1;
-    this.served = this.serve(this.position);
+    this.transition(() => {
+      if (this.position === this.queue.length - 1) {
+        this.finish();
+        return;
+      }
+      this.position += 1;
+      this.served = this.serve(this.position);
+    });
+  }
+
+  /** The student left the queue; a finished queue keeps the reason it already has. */
+  end(): void {
+    this.closeRun("ended");
   }
 
   private finish(): void {
     this.summary = { solved: this.solved, failed: this.failed };
     this.notify({ type: "training_summary", mode: this.mode, ...this.summary });
+    this.closeRun("finished");
+  }
+
+  private closeRun(reason: RunEndReason): void {
+    if (this.runId === null) return;
+    endTrainingRun(this.deps.db, this.runId, reason, this.clock.now().toISOString());
+  }
+
+  // The ledger rows a step writes and the run row that follows them commit together, so a restart
+  // between two steps finds the run exactly where the ledger says it was.
+  private transition(change: () => void): void {
+    this.wake = false;
+    this.deps.db.transaction(() => {
+      change();
+      this.save();
+    })();
+    if (!this.wake) return;
+    this.wake = false;
+    this.deps.onNotification?.();
+  }
+
+  private save(): void {
+    if (this.runId === null) return;
+    const s = this.served;
+    const attempt = s.attempt;
+    const current: StoredCurrent = {
+      item_id: s.itemId,
+      served_at: new Date(s.servedAtMs).toISOString(),
+      status: s.status,
+      fen: s.fen,
+      last_move: s.lastMove,
+      expected: s.expected,
+      reply_uci: s.item.kind === "puzzle" ? s.item.reply_uci : null,
+      attempt: attempt
+        ? {
+            cursor: attempt.cursor,
+            fen: attempt.fen,
+            answered: attempt.answered,
+            status: attempt.status,
+            failedPly: attempt.failedPly,
+          }
+        : null,
+    };
+    saveTrainingRun(this.deps.db, this.runId, {
+      position: this.position,
+      solved: this.solved,
+      failed: this.failed,
+      currentJson: JSON.stringify(current),
+      updatedAt: this.clock.now().toISOString(),
+    });
   }
 
   private answerCard(s: Served, exposureId: string, uci: string): void {
@@ -305,7 +475,7 @@ export class TrainingRun {
     s.expected = { uci: result.expected_uci, san: result.expected_san };
     s.lastMove = result.expected_uci;
     this.tally(result.correct);
-    this.deps.onNotification?.();
+    this.wake = true;
   }
 
   private answerPuzzle(s: Served, item: TrainingItem & { kind: "puzzle" }, uci: string): void {
@@ -411,7 +581,11 @@ export class TrainingRun {
       item: Omit<Parameters<typeof openTrainingItem>[1], "servedAt">,
       fen: string,
     ) => ({
-      itemId: openTrainingItem(this.deps.db, { ...item, servedAt: servedAt.toISOString() }),
+      itemId: openTrainingItem(this.deps.db, {
+        ...item,
+        servedAt: servedAt.toISOString(),
+        runId: this.runId,
+      }),
       servedAtMs: servedAt.getTime(),
       explore: new Exploration(fen),
       seq: 0,
@@ -470,6 +644,54 @@ export class TrainingRun {
     };
   }
 
+  private restoreServed(current: StoredCurrent): Served {
+    const entry = this.queue[this.position] as QueueEntry;
+    if (entry.kind === "card") return this.restoreCard(current);
+    return this.restorePuzzle(entry, current);
+  }
+
+  // An exposure lives only in the desk's memory, so the card is served again. One answered but not
+  // yet rated cannot be rated without its exposure: it is asked again and its tally taken back.
+  private restoreCard(current: StoredCurrent): Served {
+    if (current.status === "solved") this.solved -= 1;
+    if (current.status === "failed") this.failed -= 1;
+    const served = this.serve(this.position);
+    if (current.status !== "rated") return served;
+    return { ...served, status: "rated", expected: current.expected, lastMove: current.last_move };
+  }
+
+  private restorePuzzle(entry: QueueEntry & { kind: "puzzle" }, current: StoredCurrent): Served {
+    const puzzle = getPuzzle(this.deps.db, entry.id);
+    if (!puzzle) throw new ActivityError("empty_queue", `puzzle ${entry.id} no longer exists`);
+    const stored = current.attempt ?? startAttempt(puzzle.fen, puzzle.solution);
+    const attempt: AttemptState = { ...stored, solution: puzzle.solution };
+    return {
+      item: {
+        kind: "puzzle",
+        puzzle_id: entry.id,
+        motif: entry.motif,
+        difficulty: entry.difficulty,
+        fen: puzzle.fen,
+        cursor: attempt.cursor,
+        reply_uci: current.reply_uci,
+        position_in_queue: this.position + 1,
+        queue_length: this.queue.length,
+      },
+      status: current.status,
+      fen: current.fen,
+      orientation: turnOf(puzzle.fen),
+      lastMove: current.last_move,
+      expected: current.expected,
+      attempt,
+      itemId: current.item_id,
+      servedAtMs: Date.parse(current.served_at),
+      explore: new Exploration(current.fen),
+      seq: lastExplorationSeq(this.deps.db, current.item_id),
+      trail: [],
+      shown: [],
+    };
+  }
+
   private notify(content: PuzzleResultNotification | TrainingSummaryNotification): void {
     const sink = this.deps.notifications;
     if (!sink) return;
@@ -479,6 +701,6 @@ export class TrainingRun {
       { role: "user", kind: "notification", contentJson: JSON.stringify(content) },
       this.clock,
     );
-    this.deps.onNotification?.();
+    this.wake = true;
   }
 }

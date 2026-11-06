@@ -165,6 +165,20 @@ export const TrainingActivitySchema = z.object({
   summary: TrainingSummarySchema.nullable(),
 });
 
+// A practice queue that is open but not on the board. `position` is the 0-based index of the item
+// it stopped on and `size` the length of its queue, so the hub reads "position + 1 of size".
+export const PausedTrainingSchema = z.object({
+  run_id: z.number().int().positive(),
+  mode: TrainingModeSchema,
+  motif: z.string().nullable(),
+  color: ColorSchema.nullable(),
+  position: z.number().int().nonnegative(),
+  size: z.number().int().positive(),
+  solved: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+export type PausedTraining = z.infer<typeof PausedTrainingSchema>;
+
 export const DemoActivitySchema = z.object({
   kind: z.literal("demo"),
   ...boardFields,

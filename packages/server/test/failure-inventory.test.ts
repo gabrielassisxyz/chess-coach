@@ -124,6 +124,26 @@ const INVENTORY: FailureCase[] = [
     ],
   },
   {
+    name: "server restart during training",
+    proofs: [
+      {
+        file: "server/src/activity/training-runs.test.ts",
+        titles: [
+          "keeps the run row current at start, answer, next and finish across restarts",
+          "restores a single-move puzzle at the same item after a restart",
+          "restores a multi-move puzzle at the same step after a restart",
+          "re-serves a restored card with a fresh exposure",
+        ],
+      },
+      {
+        file: "server/test/ws/training-hub.test.ts",
+        titles: [
+          "offers the run in the bootstrap after a server restart and resumes it at the same item",
+        ],
+      },
+    ],
+  },
+  {
     name: "browser refresh in every activity kind",
     proofs: [
       {

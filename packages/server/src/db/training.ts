@@ -8,15 +8,16 @@ export interface NewTrainingItem {
   puzzleId: string | null;
   exposureId: string | null;
   servedAt: string;
+  runId?: number | null;
 }
 
 export function openTrainingItem(db: Database, item: NewTrainingItem): number {
   const row = db
     .prepare(
-      `INSERT INTO training_items (kind, card_id, puzzle_id, exposure_id, served_at)
-       VALUES (@kind, @cardId, @puzzleId, @exposureId, @servedAt) RETURNING id`,
+      `INSERT INTO training_items (kind, card_id, puzzle_id, exposure_id, served_at, run_id)
+       VALUES (@kind, @cardId, @puzzleId, @exposureId, @servedAt, @runId) RETURNING id`,
     )
-    .get(item) as { id: number };
+    .get({ ...item, runId: item.runId ?? null }) as { id: number };
   return row.id;
 }
 
@@ -93,4 +94,131 @@ export function amendPendingNotification(
     row.id,
   );
   return true;
+}
+
+export type RunEndReason = "finished" | "ended" | "discarded" | "replaced";
+
+export interface StoredRunItem {
+  kind: "card" | "puzzle";
+  id: number | string;
+}
+
+export interface TrainingRunRow {
+  id: number;
+  mode: "srs" | "puzzles" | "openings";
+  motif: string | null;
+  color: "white" | "black" | null;
+  size: number;
+  items: StoredRunItem[];
+  position: number;
+  solved: number;
+  failed: number;
+  currentJson: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface RunProgress {
+  position: number;
+  solved: number;
+  failed: number;
+  currentJson: string;
+  updatedAt: string;
+}
+
+export function insertTrainingRun(
+  db: Database,
+  run: Omit<TrainingRunRow, "id" | "updatedAt">,
+): number {
+  const row = db
+    .prepare(
+      `INSERT INTO training_runs (mode, motif, color, size, items_json, position, solved, failed,
+         current_json, started_at, updated_at)
+       VALUES (@mode, @motif, @color, @size, @itemsJson, @position, @solved, @failed,
+         @currentJson, @startedAt, @startedAt) RETURNING id`,
+    )
+    .get({
+      mode: run.mode,
+      motif: run.motif,
+      color: run.color,
+      size: run.size,
+      itemsJson: JSON.stringify(run.items),
+      position: run.position,
+      solved: run.solved,
+      failed: run.failed,
+      currentJson: run.currentJson,
+      startedAt: run.startedAt,
+    }) as { id: number };
+  return row.id;
+}
+
+export function saveTrainingRun(db: Database, runId: number, progress: RunProgress): void {
+  db.prepare(
+    `UPDATE training_runs SET position = @position, solved = @solved, failed = @failed,
+       current_json = @currentJson, updated_at = @updatedAt WHERE id = @runId`,
+  ).run({ ...progress, runId });
+}
+
+// Only an open run is closed, so the first reason recorded is the one that stays.
+export function endTrainingRun(
+  db: Database,
+  runId: number,
+  reason: RunEndReason,
+  endedAt: string,
+): void {
+  db.prepare(
+    `UPDATE training_runs SET ended_at = ?, ended_reason = ?, updated_at = ?
+     WHERE id = ? AND ended_at IS NULL`,
+  ).run(endedAt, reason, endedAt, runId);
+}
+
+export function endOpenTrainingRuns(db: Database, reason: RunEndReason, endedAt: string): void {
+  db.prepare(
+    `UPDATE training_runs SET ended_at = ?, ended_reason = ?, updated_at = ?
+     WHERE ended_at IS NULL`,
+  ).run(endedAt, reason, endedAt);
+}
+
+interface TrainingRunDbRow {
+  id: number;
+  mode: TrainingRunRow["mode"];
+  motif: string | null;
+  color: TrainingRunRow["color"];
+  size: number;
+  items_json: string;
+  position: number;
+  solved: number;
+  failed: number;
+  current_json: string;
+  started_at: string;
+  updated_at: string;
+}
+
+export function findOpenTrainingRun(db: Database): TrainingRunRow | null {
+  const row = db
+    .prepare("SELECT * FROM training_runs WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")
+    .get() as TrainingRunDbRow | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    mode: row.mode,
+    motif: row.motif,
+    color: row.color,
+    size: row.size,
+    items: JSON.parse(row.items_json) as StoredRunItem[],
+    position: row.position,
+    solved: row.solved,
+    failed: row.failed,
+    currentJson: row.current_json,
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// A resumed item keeps logging exploration under its own row, after the events already there.
+export function lastExplorationSeq(db: Database, itemId: number): number {
+  const row = db
+    .prepare("SELECT MAX(seq) AS seq FROM exploration_events WHERE item_id = ?")
+    .get(itemId) as { seq: number | null };
+  return row.seq ?? 0;
 }
