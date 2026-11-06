@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { chatReducer, initialChatState } from "../src/state/transcript.js";
 import { FakeSocket } from "./fake-socket.js";
-import { liveGame } from "./fixtures.js";
+import { liveGame, START_FEN } from "./fixtures.js";
 
 // The stylesheet is read as text because vitest does not process CSS imports.
 const layoutCss = readFileSync(join(import.meta.dirname, "../src/styles/layout.css"), "utf8");
@@ -56,6 +56,47 @@ describe("App", () => {
     expect(screen.getByRole("alert").textContent).toContain("not legal");
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("does not show an aborted game on Play once a practice session is open", () => {
+    render(<App />);
+    connect();
+    act(() => FakeSocket.latest.receive({ type: "activity", state: null }));
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "activity",
+        state: {
+          kind: "training",
+          activity_id: 11,
+          orientation: "white",
+          fen: START_FEN,
+          turn: "white",
+          last_move: null,
+          legal_moves: [],
+          input_enabled: true,
+          pending: "none",
+          mode: "puzzles",
+          item: {
+            kind: "puzzle",
+            puzzle_id: "p1",
+            motif: "fork",
+            difficulty: "easy",
+            fen: START_FEN,
+            cursor: 0,
+            reply_uci: null,
+            position_in_queue: 1,
+            queue_length: 5,
+          },
+          status: "prompt",
+          served_at: "2026-03-01T00:00:00.000Z",
+          expected: null,
+          exploring: { fen: START_FEN, line_san: [], trail: [] },
+          summary: null,
+        },
+      }),
+    );
+    expect(screen.getByText("A practice session is open")).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Moves" })).toBeNull();
   });
 
   it("reduces a repeated error to a new errorCount so the board can resync", () => {

@@ -30,8 +30,10 @@ export function App({ fetchHealth }: AppProps = {}) {
   const [coachIdle, setCoachIdle] = useState<string | null>(null);
   // The live game underneath a training run, so Play can show it read-only.
   const [liveGame, setLiveGame] = useState<LiveGameActivity | null>(null);
+  // An empty board means the game is gone (aborted), so Play must not show it afterwards.
   useEffect(() => {
     if (server.activity?.kind === "live_game") setLiveGame(server.activity);
+    if (server.activity === null) setLiveGame(null);
   }, [server.activity]);
   // Practice words the coach's idle state from the activity; Games sets it from the open game.
   const idleLabel =
