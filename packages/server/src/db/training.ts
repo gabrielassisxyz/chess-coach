@@ -31,6 +31,12 @@ export function closeTrainingItem(
   ).run(result.answeredAt, result.answerUci, result.correct ? 1 : 0, itemId);
 }
 
+// A hint marks the piece that should move; the ledger keeps it so a hinted solve never counts
+// as solved first try.
+export function setTrainingItemHinted(db: Database, itemId: number): void {
+  db.prepare(`UPDATE training_items SET hinted = 1 WHERE id = ?`).run(itemId);
+}
+
 export function insertExplorationEvent(
   db: Database,
   event: {

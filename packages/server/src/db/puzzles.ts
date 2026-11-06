@@ -95,13 +95,15 @@ export interface AttemptRecord {
   /** How many wrong tries the attempt took. */
   tries: number;
   gaveUp: boolean;
+  /** A hint was used, so the item never counts as solved first try. */
+  hinted?: boolean | undefined;
 }
 
 export function recordPuzzleAttempt(db: Database, attempt: AttemptRecord): void {
   db.prepare(
     `INSERT INTO puzzle_attempts
-       (puzzle_id, attempted_at, solved, answered_uci, failed_ply, first_try, tries, gave_up)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (puzzle_id, attempted_at, solved, answered_uci, failed_ply, first_try, tries, gave_up, hinted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     attempt.puzzleId,
     attempt.attemptedAt,
@@ -111,6 +113,7 @@ export function recordPuzzleAttempt(db: Database, attempt: AttemptRecord): void 
     attempt.firstTry ? 1 : 0,
     attempt.tries,
     attempt.gaveUp ? 1 : 0,
+    attempt.hinted ? 1 : 0,
   );
 }
 
