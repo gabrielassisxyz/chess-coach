@@ -137,3 +137,107 @@ describe("Chat", () => {
     expect(box.value).toBe("hello");
   });
 });
+
+describe("coach Markdown", () => {
+  it("renders bold and italics as their elements", () => {
+    const { container } = render(
+      <Chat
+        server={api({
+          items: [{ type: "text", key: "m", role: "assistant", text: "**bold** and *italic*" }],
+        })}
+      />,
+    );
+    expect(screen.getByText("bold").tagName).toBe("STRONG");
+    expect(screen.getByText("italic").tagName).toBe("EM");
+    expect(container.querySelector(".message--assistant")).not.toBeNull();
+  });
+
+  it("renders unordered and ordered lists as their elements", () => {
+    const { container } = render(
+      <Chat
+        server={api({
+          items: [
+            { type: "text", key: "u", role: "assistant", text: "- apple\n- pear" },
+            { type: "text", key: "o", role: "assistant", text: "1. first\n2. second" },
+          ],
+        })}
+      />,
+    );
+    const list = container.querySelector("ul");
+    expect(list).not.toBeNull();
+    expect([...(list as HTMLElement).querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      "apple",
+      "pear",
+    ]);
+    const ordered = container.querySelector("ol");
+    expect(ordered).not.toBeNull();
+    expect(
+      [...(ordered as HTMLElement).querySelectorAll("li")].map((li) => li.textContent),
+    ).toEqual(["first", "second"]);
+  });
+
+  it("renders inline code and fenced code blocks as their elements", () => {
+    const { container } = render(
+      <Chat
+        server={api({
+          items: [
+            { type: "text", key: "i", role: "assistant", text: "Play `Nf3` here" },
+            { type: "text", key: "f", role: "assistant", text: "```\ne4 e5\n```" },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("Nf3").tagName).toBe("CODE");
+    expect(screen.getByText("Nf3").closest("pre")).toBeNull();
+    const pre = container.querySelector("pre");
+    expect(pre).not.toBeNull();
+    expect((pre as HTMLElement).querySelector("code")?.textContent).toContain("e4 e5");
+  });
+
+  it("escapes raw HTML as text and never renders markup", () => {
+    const { container } = render(
+      <Chat
+        server={api({
+          items: [
+            { type: "text", key: "x", role: "assistant", text: "<img src=x onerror=alert(1)>" },
+          ],
+        })}
+      />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(document.body.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+
+  it("renders links as plain text with no anchor", () => {
+    const { container } = render(
+      <Chat
+        server={api({
+          items: [
+            {
+              type: "text",
+              key: "l",
+              role: "assistant",
+              text: "[text](https://example.com)",
+            },
+          ],
+        })}
+      />,
+    );
+    expect(container.querySelector("a")).toBeNull();
+    expect(screen.getByText("text")).toBeTruthy();
+    expect(screen.getByText("text").tagName).not.toBe("A");
+  });
+
+  it("keeps student text plain and unformatted", () => {
+    const { container } = render(
+      <Chat
+        server={api({
+          items: [{ type: "text", key: "s", role: "user", text: "**not bold**" }],
+        })}
+      />,
+    );
+    expect(container.querySelector("strong")).toBeNull();
+    expect(container.querySelector("em")).toBeNull();
+    expect(container.querySelector(".message--user")?.textContent).toBe("**not bold**");
+  });
+});

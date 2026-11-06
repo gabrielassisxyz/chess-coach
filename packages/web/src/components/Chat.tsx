@@ -1,5 +1,6 @@
 import { MAX_SAY_LENGTH } from "@chess-coach/shared";
 import { Fragment, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import type { ServerApi } from "../hooks/useServer.js";
 import { coachErrorHint } from "../state/coach-hint.js";
 import { coachStateWords, DEFAULT_COACH_IDLE } from "../state/coach-panel.js";
@@ -7,10 +8,25 @@ import type { ChatItem } from "../state/transcript.js";
 import { ApprovalCard } from "./ApprovalCard.js";
 import { ToolCard } from "./ToolCard.js";
 
+// The coach writes Markdown; links would take the student off-site and images
+// are not part of the subset, so both render as their text. Raw HTML is never
+// parsed because no rehype-raw plugin is added, and React escapes the rest.
+const coachMarkdownComponents: Components = {
+  a: ({ children }) => <>{children}</>,
+  img: ({ alt }) => <>{alt ?? ""}</>,
+};
+
 function ItemView({ item }: { item: ChatItem }) {
   switch (item.type) {
     case "text":
-      return <p className={`message message--${item.role}`}>{item.text}</p>;
+      if (item.role === "assistant") {
+        return (
+          <div className="message message--assistant message--markdown">
+            <ReactMarkdown components={coachMarkdownComponents}>{item.text}</ReactMarkdown>
+          </div>
+        );
+      }
+      return <p className="message message--user">{item.text}</p>;
     case "tool":
       return <ToolCard item={item} />;
     case "turn_error": {
