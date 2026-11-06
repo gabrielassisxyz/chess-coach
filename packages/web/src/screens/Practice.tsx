@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
 import { CoachLoginCard } from "../components/CoachLoginCard.js";
 import { EngineMissingCard } from "../components/EngineMissingCard.js";
-import { PracticeHub } from "../components/PracticeHub.js";
+import { PracticeHub, ResumeCard } from "../components/PracticeHub.js";
 import { PracticeItem, type PracticeItemActions } from "../components/PracticeItem.js";
 import { type FetchHealth, useHealth } from "../hooks/useHealth.js";
 import { useLoaded } from "../hooks/useLoaded.js";
@@ -111,6 +111,14 @@ function Hub({
         <EngineMissingCard notice={notice} onRetry={() => setRetries((count) => count + 1)} />
       ) : null}
       {login ? <CoachLoginCard fix={login.fix} onCheckAgain={login.checkAgain} /> : null}
+      {server.pausedTraining ? (
+        <ResumeCard
+          paused={server.pausedTraining}
+          engineMissing={engineMissing}
+          onResume={() => server.send({ type: "resume_training" })}
+          onDiscard={() => server.send({ type: "discard_training" })}
+        />
+      ) : null}
       <PracticeHub
         progress={progress}
         motifs={motifs}

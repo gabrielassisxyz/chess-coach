@@ -1,10 +1,11 @@
-import type { TrainingActivity } from "@chess-coach/shared";
+import type { PausedTraining, TrainingActivity } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
-import type { ServerApi } from "../src/hooks/useServer.js";
+import { type ServerApi, useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
 import { formatInterval, NONE, nextBatchParts, trainingView } from "../src/state/practice.js";
+import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
 import { motifCounts, progressOf } from "./practice-fixtures.js";
 
@@ -609,5 +610,74 @@ describe("rating a card", () => {
     render(<Practice server={api(solved)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
     expect(screen.getByText("Right e4")).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
+  });
+});
+
+// The page as the browser builds it: a socket, the bootstrap frame, and the screen on top.
+function Connected() {
+  const server = useServer({ url: "ws://test/api/ws", createSocket: createFakeSocket });
+  return <Practice server={server} {...hubProps} />;
+}
+
+describe("a paused session", () => {
+  const paused: PausedTraining = {
+    run_id: 3,
+    mode: "puzzles",
+    motif: "fork",
+    color: null,
+    position: 2,
+    size: 5,
+    solved: 1,
+    failed: 1,
+  };
+
+  function bootInto(activity: TrainingActivity | null, pausedTraining: PausedTraining | null) {
+    FakeSocket.reset();
+    render(<Connected />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        transcript: [],
+        activity,
+        paused_training: pausedTraining,
+      }),
+    );
+    return FakeSocket.latest;
+  }
+
+  it("shows the resume card from a bootstrap carrying a paused run", async () => {
+    bootInto(null, paused);
+    const resume = await screen.findByRole("region", { name: "Paused session" });
+    expect(within(resume).getByText("Resume: Puzzles · 3 of 5")).toBeTruthy();
+    expect(within(resume).getByText("1 right, 1 missed so far")).toBeTruthy();
+  });
+
+  it("sends resume_training and discard_training from its buttons", async () => {
+    const socket = bootInto(null, paused);
+    const resume = await screen.findByRole("region", { name: "Paused session" });
+    fireEvent.click(within(resume).getByRole("button", { name: "Resume" }));
+    fireEvent.click(within(resume).getByRole("button", { name: "Discard" }));
+    expect(socket.sent.map((frame) => (frame as { type: string }).type)).toEqual([
+      "resume_training",
+      "discard_training",
+    ]);
+  });
+
+  it("leaves the card out with no paused run, and while the board is training", async () => {
+    bootInto(null, null);
+    await screen.findByRole("region", { name: "Due cards" });
+    expect(screen.queryByRole("region", { name: "Paused session" })).toBeNull();
+    cleanup();
+    bootInto(card(), paused);
+    expect(screen.queryByRole("region", { name: "Due cards" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Paused session" })).toBeNull();
+  });
+
+  it("drops the card once an activity update says nothing is paused", async () => {
+    const socket = bootInto(null, paused);
+    await screen.findByRole("region", { name: "Paused session" });
+    act(() => socket.receive({ type: "activity", state: null, paused_training: null }));
+    expect(screen.queryByRole("region", { name: "Paused session" })).toBeNull();
   });
 });

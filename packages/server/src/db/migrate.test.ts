@@ -114,7 +114,39 @@ describe("011_move_times", () => {
       `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player)
        VALUES (1, 1, 'e4', 'e2e4', 'a', 'b', 1)`,
     ).run();
-    expect(runMigrations(db, defaultMigrationsDir)).toEqual(["011_move_times.sql"]);
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("011_move_times.sql");
     expect(db.prepare("SELECT created_at FROM moves").get()).toEqual({ created_at: null });
+  });
+});
+
+describe("012_training_runs", () => {
+  it("adds training_runs and a null run_id to a database at 011", () => {
+    const db = new BetterSqlite3(":memory:");
+    const all = listMigrations(defaultMigrationsDir);
+    const upTo011 = migrationsDir(
+      Object.fromEntries(
+        all
+          .filter((name) => name < "012")
+          .map((name) => [name, readFileSync(join(defaultMigrationsDir, name), "utf8")]),
+      ),
+    );
+    runMigrations(db, upTo011);
+    db.prepare(
+      `INSERT INTO training_items (kind, puzzle_id, served_at)
+       VALUES ('puzzle', 'p1', '2026-11-06T00:00:00Z')`,
+    ).run();
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("012_training_runs.sql");
+    expect(db.prepare("SELECT run_id FROM training_items").get()).toEqual({ run_id: null });
+    expect(count(db, "training_runs")).toBe(0);
+    const insert = (reason: string) =>
+      db
+        .prepare(
+          `INSERT INTO training_runs (mode, size, items_json, position, solved, failed,
+             current_json, started_at, updated_at, ended_reason)
+           VALUES ('puzzles', 1, '[]', 0, 0, 0, '{}', 'x', 'x', ?)`,
+        )
+        .run(reason);
+    expect(() => insert("replaced")).not.toThrow();
+    expect(() => insert("abandoned")).toThrow();
   });
 });

@@ -7,8 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ActivityService } from "../../src/activity/service.js";
 import { buildApp } from "../../src/app.js";
 import { createCoachSession } from "../../src/db/chat.js";
-import { openDatabase } from "../../src/db/open.js";
+import { type Database, openDatabase } from "../../src/db/open.js";
 import { GameService } from "../../src/game/service.js";
+import { type Log, RecordingLog } from "../../src/log.js";
 import { ReviewDesk } from "../../src/srs/review.js";
 import { FakeCoach } from "../fakes/fake-coach.js";
 import { ScriptedEngine } from "../fakes/scripted-engine.js";
@@ -21,7 +22,7 @@ afterEach(async () => {
 
 const BACK_RANK = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1";
 
-async function start() {
+function seededDatabase(): Database {
   const db = openDatabase(mkdtempSync(join(tmpdir(), "hub-train-")));
   db.prepare(
     `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
@@ -33,6 +34,11 @@ async function start() {
        VALUES (?, 'test', 'drill', 'easy', ?, '["a1a8"]', '["Ra8#"]', 'why')`,
     ).run(`d${i}`, BACK_RANK);
   }
+  return db;
+}
+
+// A second call over the same database is a server restart: every in-memory object is new.
+async function start(db: Database = seededDatabase(), log?: Log) {
   const session = createCoachSession(db, { promptVersion: "v" });
   const notifications = { sessionId: () => session.id };
   const activity = new ActivityService({
@@ -46,6 +52,7 @@ async function start() {
       activity,
       db,
       allowedOrigins: ["http://localhost:5173"],
+      ...(log ? { log } : {}),
     },
   });
   await app.listen({ port: 0, host: "127.0.0.1" });
@@ -88,6 +95,8 @@ describe("training over the socket", () => {
       { type: "explore", kind: "move", uci: "e2e4", activity_id: 3 },
       { type: "explore", kind: "undo" },
       { type: "answer", uci: "e7e8q" },
+      { type: "resume_training" },
+      { type: "discard_training" },
     ];
     for (const command of ok) {
       expect(ClientCommandSchema.safeParse({ ...command, command_id: "c" }).success).toBe(true);
@@ -208,5 +217,88 @@ describe("training over the socket", () => {
     socket.send(JSON.stringify({ type: "explore", command_id: "c1", kind: "undo" }));
     expect(await next("error")).toMatchObject({ code: "not_exploring", command_id: "c1" });
     socket.close();
+  });
+});
+
+describe("a paused practice session over the socket", () => {
+  const send = (socket: { send(text: string): void }, command: Record<string, unknown>) =>
+    socket.send(JSON.stringify(command));
+
+  it("offers the run in the bootstrap after a server restart and resumes it at the same item", async () => {
+    const db = seededDatabase();
+    const before = await start(db);
+    const first = await connect(before);
+    await first.next("bootstrap");
+    send(first.socket, {
+      type: "start_training",
+      command_id: "c1",
+      mode: "puzzles",
+      motif: "drill",
+      size: 5,
+    });
+    const served = ServerEventSchema.parse(await first.next("activity"));
+    if (served.type !== "activity" || served.state?.kind !== "training") throw new Error("no item");
+    expect(served.paused_training).toBeNull();
+    const activityId = served.state.activity_id;
+    send(first.socket, { type: "answer", command_id: "c2", uci: "a1a8", activity_id: activityId });
+    await first.next("activity");
+    send(first.socket, { type: "next_training_item", command_id: "c3", activity_id: activityId });
+    const second = ServerEventSchema.parse(await first.next("activity"));
+    if (second.type !== "activity" || second.state?.kind !== "training") throw new Error("no item");
+    first.socket.terminate();
+    await before.close();
+    app = undefined;
+
+    const after = await start(db);
+    const { socket, next } = await connect(after);
+    const boot = ServerEventSchema.parse(await next("bootstrap"));
+    if (boot.type !== "bootstrap") throw new Error("expected bootstrap");
+    expect(boot.activity).toBeNull();
+    expect(boot.paused_training).toMatchObject({
+      mode: "puzzles",
+      motif: "drill",
+      position: 1,
+      size: 5,
+      solved: 1,
+      failed: 0,
+    });
+
+    send(socket, { type: "resume_training", command_id: "r1" });
+    const resumed = ServerEventSchema.parse(await next("activity"));
+    if (resumed.type !== "activity" || resumed.state?.kind !== "training") {
+      throw new Error("expected training");
+    }
+    expect(resumed.state.item).toEqual(second.state.item);
+    expect(resumed.paused_training).toBeNull();
+  });
+
+  it("discards a paused run, logs both commands, and refuses them when none is paused", async () => {
+    const log = new RecordingLog();
+    const server = await start(seededDatabase(), log);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    send(socket, { type: "resume_training", command_id: "r0" });
+    expect(await next("error")).toMatchObject({ code: "no_paused_training", command_id: "r0" });
+    send(socket, { type: "discard_training", command_id: "d0" });
+    expect(await next("error")).toMatchObject({ code: "no_paused_training", command_id: "d0" });
+
+    send(socket, { type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" });
+    await next("activity");
+    send(socket, { type: "new_game", command_id: "c2", color: "white", elo: 1200 });
+    const paused = ServerEventSchema.parse(await next("activity"));
+    if (paused.type !== "activity") throw new Error("expected activity");
+    expect(paused.state?.kind).toBe("live_game");
+    expect(paused.paused_training).toMatchObject({ mode: "puzzles", position: 0, size: 1 });
+
+    send(socket, { type: "discard_training", command_id: "d1" });
+    const discarded = ServerEventSchema.parse(await next("activity"));
+    if (discarded.type !== "activity") throw new Error("expected activity");
+    expect(discarded.state?.kind).toBe("live_game");
+    expect(discarded.paused_training).toBeNull();
+
+    const commands = log.named("ws.command").map((entry) => entry.fields.type);
+    expect(commands).toEqual(
+      expect.arrayContaining(["resume_training", "discard_training", "start_training"]),
+    );
   });
 });

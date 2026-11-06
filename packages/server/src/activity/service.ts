@@ -1,6 +1,7 @@
 import type {
   ActivityKind,
   ActivityState,
+  PausedTraining,
   PromotionPiece,
   TrainingMode,
 } from "@chess-coach/shared";
@@ -13,7 +14,7 @@ import {
   type PlayerColor,
 } from "../db/games.js";
 import type { Database } from "../db/open.js";
-import type { ExplorationKind } from "../db/training.js";
+import { type ExplorationKind, findOpenTrainingRun, type TrainingRunRow } from "../db/training.js";
 import { GameError } from "../game/errors.js";
 import type { GameService, TurnReport } from "../game/service.js";
 import type { GameSnapshot } from "../game/snapshot.js";
@@ -22,6 +23,7 @@ import { ActivityError } from "./errors.js";
 import { demoState, liveGameState, reviewState } from "./state.js";
 import {
   type DrillSize,
+  pausedTrainingOf,
   type TrainingDeps,
   type TrainingItemRef,
   TrainingRun,
@@ -268,11 +270,59 @@ export class ActivityService {
   // Back to what was under the queue: the live game if it is still unfinished, else an empty board.
   endTraining(expectedActivityId?: number): Promise<ActivityState | null> {
     return this.enqueue("training", async () => {
-      this.requireTraining(expectedActivityId);
+      this.requireTraining(expectedActivityId).end();
       this.run = null;
       if (this.game.current()?.finishedAt === null) return this.setLiveGame("endTraining");
       return this.publish(null, "endTraining");
     });
+  }
+
+  /** The practice queue that is open but not on the board, or null. */
+  pausedTraining(): PausedTraining | null {
+    const row = this.pausedRun();
+    return row ? pausedTrainingOf(row) : null;
+  }
+
+  // The student asked for it from the hub, so it replaces whatever the board shows, as a start does.
+  resumeTraining(): Promise<ActivityState> {
+    return this.enqueue("training", async () => {
+      const deps = this.requireTrainingDeps();
+      const row = this.requirePausedRun();
+      const run = TrainingRun.resume(deps, row);
+      this.leaveSideBoards();
+      this.run = run;
+      return this.logServed(this.publish(run.state(this.nextId++), "resumeTraining"));
+    });
+  }
+
+  // The board does not change; the state is published again so every tab learns the run is gone.
+  discardTraining(): Promise<ActivityState | null> {
+    return this.enqueue("training", async () => {
+      const deps = this.requireTrainingDeps();
+      TrainingRun.discard(deps, this.requirePausedRun().id);
+      return this.publish(this.state, "discardTraining");
+    });
+  }
+
+  private requireTrainingDeps(): TrainingDeps {
+    if (!this.trainingDeps) {
+      throw new ActivityError("not_in_training", "training is not available");
+    }
+    return { ...this.trainingDeps, db: this.db };
+  }
+
+  private requirePausedRun(): TrainingRunRow {
+    const row = this.pausedRun();
+    if (!row) throw new ActivityError("no_paused_training", "no practice session is paused");
+    return row;
+  }
+
+  // An open run is paused unless it is the one on the board.
+  private pausedRun(): TrainingRunRow | null {
+    const row = findOpenTrainingRun(this.db);
+    if (!row) return null;
+    const onBoard = this.state?.kind === "training" ? (this.run?.runId ?? null) : null;
+    return row.id === onBoard ? null : row;
   }
 
   private stepTraining(
@@ -420,6 +470,7 @@ export class ActivityService {
     return this.publish(reviewState(this.nextId++, game, moves, ply ?? moves.length), cause);
   }
 
+  // Dropping the run pauses it: its row stays open until it is finished, ended, discarded or replaced.
   private leaveSideBoards(): void {
     this.run = null;
     this.demo = null;
