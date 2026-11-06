@@ -47,6 +47,8 @@ export interface ChatState {
   cardsCreated: Record<number, number>;
   // Assistant messages that started live since the page loaded; a view that was away compares it to what it last saw.
   coachMessages: number;
+  // A practice item ended and its notification was sent, so the coach owes a reply for it.
+  practiceReplyPending: boolean;
 }
 
 export const initialChatState: ChatState = {
@@ -62,6 +64,7 @@ export const initialChatState: ChatState = {
   pausedTraining: null,
   cardsCreated: {},
   coachMessages: 0,
+  practiceReplyPending: false,
 };
 
 function textOf(content: unknown): string {
@@ -136,7 +139,12 @@ function applyChat(state: ChatState, event: ChatEvent): ChatState {
   } else if (payload.kind === "turn_error") {
     items.push({ type: "turn_error", key, message: payload.message });
   }
-  return { ...state, items, turn, coachMessages };
+  // The coach's reply has started or finished, so an ended practice item no longer waits for one.
+  const practiceReplyPending =
+    payload.kind === "text_delta" || payload.kind === "turn_end" || payload.kind === "turn_error"
+      ? false
+      : state.practiceReplyPending;
+  return { ...state, items, turn, coachMessages, practiceReplyPending };
 }
 
 // A tool call or its result means the coach is still working on the answer; only the end of
@@ -170,6 +178,13 @@ export type ChatAction =
   | { type: "permission_answered"; requestId: string }
   | { type: "protocol_error"; message: string }
   | { type: "dismiss_error" };
+
+// A practice item whose notification the coach has not answered yet: solved or failed with
+// the queue still open. A rated card or a finished queue owes no reply.
+function endedTraining(activity: ActivityState | null): boolean {
+  if (activity?.kind !== "training" || activity.summary !== null) return false;
+  return activity.status === "solved" || activity.status === "failed";
+}
 
 // A bootstrap replaces everything: after a reconnect the server's transcript is the truth, so
 // nothing from the previous socket (half-streamed text, open approval cards) survives it.
@@ -210,7 +225,12 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "permission_request":
       return addPermission(state, event);
     case "activity":
-      return { ...state, activity: event.state, pausedTraining: event.paused_training ?? null };
+      return {
+        ...state,
+        activity: event.state,
+        pausedTraining: event.paused_training ?? null,
+        practiceReplyPending: endedTraining(event.state),
+      };
     case "error":
       return withError(state, event.message, event.code);
     // The activity event that precedes it already carries the same item and status.

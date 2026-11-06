@@ -17,6 +17,7 @@ function api(overrides: Partial<ServerApi> = {}): ServerApi {
     activity: null,
     cardsCreated: {},
     coachMessages: 0,
+    practiceReplyPending: false,
     reconnectAttempt: 0,
     connection: "connected",
     say: vi.fn(() => true),
