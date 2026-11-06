@@ -1,12 +1,17 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ActivityState } from "@chess-coach/shared";
+import type { ActivityState, TrainingActivity } from "@chess-coach/shared";
+import { ErrorCodeSchema } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
+import { START_FEN } from "../../test/fixture-game.js";
+import { createCoachSession } from "../db/chat.js";
 import { type Database, openDatabase } from "../db/open.js";
+import { insertCard } from "../db/srs.js";
 import { GameService } from "../game/service.js";
 import { RecordingLog } from "../log.js";
+import { ReviewDesk } from "../srs/review.js";
 import { ActivityService } from "./service.js";
 
 const DEMO_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -306,5 +311,180 @@ describe("serialization", () => {
     const good = activity.startDemo(DEMO_FEN);
     await expect(bad).rejects.toMatchObject({ code: "invalid_position" });
     await expect(good).resolves.toMatchObject({ kind: "demo" });
+  });
+});
+
+const FORK_FEN = "r2qk2r/pQp1ppbp/6p1/1N3P2/2p2B2/8/PPn2P1P/R4K1R w kq - 2 14";
+
+function addPuzzleRow(id: string, motif: string, fen: string, solution: string[]): void {
+  db.prepare(
+    `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
+     VALUES (?, 'test', ?, 'easy', ?, ?, '[]', 'why')`,
+  ).run(id, motif, fen, JSON.stringify(solution));
+}
+
+function addTrainingCard(expectedUci = "d2d4"): number {
+  const card = insertCard(db, {
+    sourceKind: "teaching",
+    sourceGameId: null,
+    sourceMoveId: null,
+    promptFen: START_FEN,
+    studentColor: "white",
+    playedUci: "e2e4",
+    expectedUci,
+    cpLoss: 100,
+    classification: "inaccuracy",
+    explanation: null,
+    createdAt: new Date("2026-03-01T00:00:00.000Z").toISOString(),
+  });
+  return (card as { id: number }).id;
+}
+
+function setupTraining() {
+  const engine = new ScriptedEngine(["e7e5"]);
+  const game = new GameService({ db, engine });
+  const session = createCoachSession(db, { promptVersion: "v" });
+  const notifications = { sessionId: () => session.id };
+  const desk = new ReviewDesk({ db, notifications });
+  const activity = new ActivityService({ db, game, training: { desk, notifications } });
+  return { activity, game };
+}
+
+const asTraining = (state: ActivityState | null): TrainingActivity => {
+  if (state?.kind !== "training") throw new Error(`expected training, got ${state?.kind}`);
+  return state;
+};
+
+describe("training_item_open error code", () => {
+  it("is carried in the shared wire contract", () => {
+    expect(ErrorCodeSchema.safeParse("training_item_open").success).toBe(true);
+  });
+});
+
+describe("demo over training", () => {
+  it("refuses a demo while a card item is open and changes nothing", async () => {
+    addTrainingCard();
+    const { activity } = setupTraining();
+    const open = asTraining(await activity.startTraining({ mode: "srs" }));
+    expect(open.status).toBe("prompt");
+    const before = activity.current();
+    await expect(activity.startDemo(DEMO_FEN)).rejects.toMatchObject({
+      code: "training_item_open",
+    });
+    expect(activity.current()).toEqual(before);
+  });
+
+  it("refuses a demo while a puzzle is mid-way and changes nothing", async () => {
+    addPuzzleRow("f1", "fork", FORK_FEN, ["b5c7", "e8f8", "a1c1"]);
+    const { activity } = setupTraining();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const mid = asTraining(await activity.trainingAnswer("b5c7"));
+    expect(mid.status).toBe("in_progress");
+    const before = activity.current();
+    await expect(activity.startDemo(DEMO_FEN)).rejects.toMatchObject({
+      code: "training_item_open",
+    });
+    expect(activity.current()).toEqual(before);
+  });
+
+  it("allows a demo after a card is solved", async () => {
+    addTrainingCard();
+    const { activity } = setupTraining();
+    await activity.startTraining({ mode: "srs" });
+    const solved = asTraining(await activity.trainingAnswer("d2d4"));
+    expect(solved.status).toBe("solved");
+    await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
+      kind: "demo",
+      returns_to: "training",
+    });
+    await activity.leaveDemo();
+  });
+
+  it("allows a demo after a card is failed", async () => {
+    addTrainingCard();
+    const { activity } = setupTraining();
+    await activity.startTraining({ mode: "srs" });
+    const failed = asTraining(await activity.trainingAnswer("e2e4"));
+    expect(failed.status).toBe("failed");
+    await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
+      kind: "demo",
+      returns_to: "training",
+    });
+    await activity.leaveDemo();
+  });
+
+  it("allows a demo after a card is rated", async () => {
+    addTrainingCard();
+    const { activity } = setupTraining();
+    const start = asTraining(await activity.startTraining({ mode: "srs" }));
+    await activity.trainingAnswer("d2d4");
+    await activity.rateCard((start.item as { exposure_id: string }).exposure_id, 4);
+    expect(asTraining(activity.current()).status).toBe("rated");
+    await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
+      kind: "demo",
+      returns_to: "training",
+    });
+    await activity.leaveDemo();
+  });
+
+  it("allows a demo after a puzzle is solved or failed", async () => {
+    addPuzzleRow("f1", "fork", FORK_FEN, ["b5c7", "e8f8", "a1c1"]);
+    const { activity } = setupTraining();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const solved = asTraining(await activity.trainingAnswer("b5c7"));
+    expect(solved.status).toBe("in_progress");
+    const done = asTraining(await activity.trainingAnswer("a1c1"));
+    expect(done.status).toBe("solved");
+    await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
+      kind: "demo",
+      returns_to: "training",
+    });
+    await activity.leaveDemo();
+
+    await activity.endTraining();
+    addPuzzleRow("f2", "fork", FORK_FEN, ["b5c7"]);
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const failed = asTraining(await activity.trainingAnswer("f4e5"));
+    expect(failed.status).toBe("failed");
+    await expect(activity.startDemo(DEMO_FEN)).resolves.toMatchObject({
+      kind: "demo",
+      returns_to: "training",
+    });
+    await activity.leaveDemo();
+  });
+
+  it("leaves the demo on the same training item with a fresh id, then serves the next item", async () => {
+    addTrainingCard();
+    addTrainingCard();
+    const { activity } = setupTraining();
+    await activity.startTraining({ mode: "srs" });
+    const finished = asTraining(await activity.trainingAnswer("d2d4"));
+    expect(finished.status).toBe("solved");
+    const demo = await activity.startDemo(DEMO_FEN);
+    if (demo.kind !== "demo") throw new Error("expected demo");
+    const back = asTraining(await activity.leaveDemo(demo.activity_id));
+    expect(back).toMatchObject({
+      kind: "training",
+      status: finished.status,
+      summary: finished.summary,
+      item: finished.item,
+    });
+    expect(back.activity_id).not.toBe(finished.activity_id);
+    const next = asTraining(await activity.nextTrainingItem(back.activity_id));
+    expect(next.item.position_in_queue).toBe(2);
+  });
+
+  it("ends training from a demo over training on the unfinished live game", async () => {
+    addPuzzleRow("f1", "fork", FORK_FEN, ["b5c7"]);
+    const { activity, game } = setupTraining();
+    await activity.newGame({ color: "white", elo: 1200 });
+    const gameId = game.current()?.id as number;
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingAnswer("b5c7");
+    const demo = await activity.startDemo(DEMO_FEN);
+    expect(demo).toMatchObject({ kind: "demo", returns_to: "training" });
+    if (demo.kind !== "demo") throw new Error("expected demo");
+    const back = await activity.endTraining(demo.activity_id);
+    expect(back).toMatchObject({ kind: "live_game", game_id: gameId });
   });
 });

@@ -1,4 +1,9 @@
-import type { PromotionPiece, TrainingMode } from "@chess-coach/shared";
+import type {
+  ActivityState,
+  DemoActivity,
+  PromotionPiece,
+  TrainingMode,
+} from "@chess-coach/shared";
 import { useEffect, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
 import { CoachLoginCard } from "../components/CoachLoginCard.js";
@@ -133,6 +138,11 @@ function Hub({
   );
 }
 
+function demoOverTraining(activity: ActivityState | null): DemoActivity | null {
+  if (activity?.kind === "demo" && activity.returns_to === "training") return activity;
+  return null;
+}
+
 export function Practice({
   server,
   createBoard,
@@ -140,6 +150,36 @@ export function Practice({
   fetchProgress = fetchProgressFromServer,
   fetchHealth,
 }: PracticeProps) {
+  const demo = demoOverTraining(server.activity);
+  if (demo) {
+    const activityId = demo.activity_id;
+    return (
+      <>
+        <section className="screen practice" aria-label="Practice">
+          <h2 className="screen__title practice__crumb">Practice · Coach demo</h2>
+          <p className="screen__note">The coach is showing a position from your session.</p>
+          <div className="controls__row">
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={() => server.send({ type: "leave_demo", activity_id: activityId })}
+            >
+              Back to session
+            </button>
+          </div>
+        </section>
+        <div className="stage">
+          <Board
+            activity={demo}
+            onMove={() => undefined}
+            syncToken={server.errorCount}
+            createBoard={createBoard}
+          />
+        </div>
+      </>
+    );
+  }
+
   const training = trainingOf(server.activity);
   if (!training) {
     return (

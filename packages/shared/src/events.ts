@@ -87,6 +87,7 @@ export const ErrorCodeSchema = z.enum([
   "not_in_live_game",
   "demo_active",
   "live_game_active",
+  "training_item_open",
   "game_not_found",
   "invalid_ply",
   "game_in_progress",

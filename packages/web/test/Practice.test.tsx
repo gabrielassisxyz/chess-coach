@@ -1,4 +1,9 @@
-import type { PausedTraining, TrainingActivity } from "@chess-coach/shared";
+import type {
+  ActivityState,
+  DemoActivity,
+  PausedTraining,
+  TrainingActivity,
+} from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
@@ -610,6 +615,50 @@ describe("rating a card", () => {
     render(<Practice server={api(solved)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
     expect(screen.getByText("Right e4")).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
+  });
+});
+
+describe("a coach demo over training", () => {
+  function demoActivity(): DemoActivity {
+    return {
+      kind: "demo",
+      activity_id: 9,
+      orientation: "white",
+      fen: START_FEN,
+      turn: "white",
+      last_move: null,
+      legal_moves: [],
+      input_enabled: false,
+      pending: "none",
+      returns_to: "training",
+      moves_played: ["e4"],
+    };
+  }
+
+  it("renders the demo board with a Back to session button that leaves the demo", () => {
+    boards.length = 0;
+    const server = api(demoActivity() as unknown as TrainingActivity);
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(boards.at(-1)?.fen).toBe(START_FEN);
+    const back = screen.getByRole("button", { name: "Back to session" });
+    expect(back).toBeTruthy();
+    fireEvent.click(back);
+    expect(server.send).toHaveBeenCalledWith({ type: "leave_demo", activity_id: 9 });
+  });
+
+  it("keeps the hub hidden while the demo is on the board", () => {
+    const server = api(demoActivity() as unknown as TrainingActivity);
+    render(<Practice server={server} {...hubProps} createBoard={spyBoard} />);
+    expect(screen.queryByRole("button", { name: "Review 4 cards" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Back to session" })).toBeTruthy();
+  });
+
+  it("ignores a demo that does not return to training", async () => {
+    const other: ActivityState = { ...demoActivity(), returns_to: null };
+    const server = api(other as unknown as TrainingActivity);
+    render(<Practice server={server} {...hubProps} createBoard={spyBoard} />);
+    expect(screen.queryByRole("button", { name: "Back to session" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Review 4 cards" })).toBeTruthy();
   });
 });
 

@@ -5,6 +5,7 @@ export type ActivityErrorCode =
   | "not_in_live_game"
   | "demo_active"
   | "live_game_active"
+  | "training_item_open"
   | "game_not_found"
   | "invalid_ply"
   | "illegal_move"
