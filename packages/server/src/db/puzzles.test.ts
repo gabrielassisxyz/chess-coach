@@ -27,6 +27,9 @@ const attempt = (puzzleId: string, solved: boolean) =>
     solved,
     answered: ["a1a2"],
     failedPly: solved ? null : 0,
+    firstTry: solved,
+    tries: solved ? 0 : 1,
+    gaveUp: !solved,
   });
 
 describe("listPuzzles", () => {

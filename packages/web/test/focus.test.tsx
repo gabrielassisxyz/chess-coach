@@ -144,6 +144,11 @@ const card = {
   exposure_id: "ex-1",
   expected: null,
   exploring: { fen: START_FEN, line_san: [], trail: [] },
+  tries: 0,
+  last_try: null,
+  gave_up: false,
+  solution_line: null,
+  suggested_quality: null,
   summary: null,
 };
 

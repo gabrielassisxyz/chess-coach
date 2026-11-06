@@ -150,8 +150,18 @@ export const ExploringSchema = z.object({
 });
 export type Exploring = z.infer<typeof ExploringSchema>;
 
+// The latest graded try on the open item; a wrong one is what the board shows as "try again".
+export const LastTrySchema = z.object({
+  uci: z.string(),
+  san: z.string().nullable(),
+  correct: z.boolean(),
+});
+export type LastTry = z.infer<typeof LastTrySchema>;
+
 // `summary` is set once the queue has ended; the last item then stays on the board, locked.
-// `fen` is the position the item was served in, the one an answer is graded against.
+// `fen` is the position the current step is graded against. `tries` counts the wrong tries on the
+// item. `solution_line` is set once the student gave up: the UCI moves from `fen` to the end.
+// `suggested_quality` is the rating a finished card pre-selects, from how its first try went.
 export const TrainingActivitySchema = z.object({
   kind: z.literal("training"),
   ...boardFields,
@@ -162,6 +172,11 @@ export const TrainingActivitySchema = z.object({
   exposure_id: z.string().optional(),
   expected: ExpectedMoveSchema.nullable(),
   exploring: ExploringSchema,
+  tries: z.number().int().nonnegative(),
+  last_try: LastTrySchema.nullable(),
+  gave_up: z.boolean(),
+  solution_line: z.array(z.string()).nullable(),
+  suggested_quality: z.number().int().min(0).max(5).nullable(),
   summary: TrainingSummarySchema.nullable(),
 });
 

@@ -121,13 +121,20 @@ export function renderPlyQuestion(question: PlyQuestionNotification): string {
   ].join("\n");
 }
 
+function cardVerdict(answer: SrsAnswerNotification, played: string, expected: string): string {
+  const card = `review card ${answer.card_id}`;
+  if (answer.reasoning?.gave_up) return `The student gave up on ${card} and was shown ${expected}.`;
+  if (answer.correct) return `The student answered ${card} correctly with ${played}.`;
+  if (answer.reasoning?.tries?.some((attempt) => attempt.correct)) {
+    return `The student missed ${card} on the first try with ${played}, then found ${expected}.`;
+  }
+  return `The student missed ${card}: they played ${played} and the expected move was ${expected}.`;
+}
+
 export function renderSrsAnswer(answer: SrsAnswerNotification): string {
   const played = answer.answered_san ?? answer.answered_uci;
   const expected = answer.expected_san ?? answer.expected_uci;
-  const verdict = answer.correct
-    ? `The student answered review card ${answer.card_id} correctly with ${played}.`
-    : `The student missed review card ${answer.card_id}: they played ${played} and the expected move was ${expected}.`;
-  const lines = [verdict, `Position (FEN): ${answer.prompt_fen}`];
+  const lines = [cardVerdict(answer, played, expected), `Position (FEN): ${answer.prompt_fen}`];
   if (answer.reasoning) lines.push(renderReasoning(answer.reasoning, played, answer.correct));
   return lines.join("\n");
 }
@@ -136,6 +143,20 @@ const explorationOffset = (atMs: number): string => `+${Math.round(atMs / 1000)}
 
 function exploredLine(event: ExploredEvent): string {
   return `${explorationOffset(event.at_ms)}  ${event.line ?? event.kind}`;
+}
+
+function triedLine(attempt: TriedMove): string {
+  const move = attempt.san ?? attempt.uci;
+  return `${explorationOffset(attempt.at_ms)}  ${move} (${attempt.correct ? "right" : "wrong"})`;
+}
+
+// Every graded try with its offset; a row written before retries existed has its one answer instead.
+function triesLines(reasoning: TrainingReasoning, played: string, correct: boolean): string[] {
+  if (reasoning.tries === undefined)
+    return [`Answer: ${played} (${correct ? "correct" : "wrong"})`];
+  const tried =
+    reasoning.tries.length === 0 ? ["Tries: none"] : ["Tries:", ...reasoning.tries.map(triedLine)];
+  return [...tried, `Solution shown: ${reasoning.gave_up ? "yes" : "no"}`];
 }
 
 // What the student thought before answering, so the coach can name what they never looked at.
@@ -148,7 +169,7 @@ function renderReasoning(reasoning: TrainingReasoning, played: string, correct: 
     reasoning.explored.length === 0
       ? ["Explored: nothing"]
       : ["Explored:", ...reasoning.explored.map(exploredLine)];
-  return [...wrote, ...explored, `Answer: ${played} (${correct ? "correct" : "wrong"})`].join("\n");
+  return [...wrote, ...explored, ...triesLines(reasoning, played, correct)].join("\n");
 }
 
 /** One step of the student's scratch play; `line` is the whole line after a move, else null. */
@@ -158,10 +179,23 @@ export interface ExploredEvent {
   line: string | null;
 }
 
-/** What the student typed and tried on the board while an item was open. */
+/** One graded move dropped on the board; `at_ms` is measured from the moment the item was served. */
+export interface TriedMove {
+  at_ms: number;
+  uci: string;
+  san: string | null;
+  correct: boolean;
+}
+
+/**
+ * What the student typed and tried on the board while an item was open. `tries` and `gave_up` are
+ * absent from rows written before a move was graded on drop.
+ */
 export interface TrainingReasoning {
   messages: string[];
   explored: ExploredEvent[];
+  tries?: TriedMove[];
+  gave_up?: boolean;
 }
 
 /** Row content written when the student answers a review card; the coach comments on a miss. */
@@ -188,6 +222,10 @@ export interface PuzzleResultNotification {
   answered_uci: string[];
   expected_uci: string | null;
   expected_san: string | null;
+  /** Absent from rows written before a move was graded on drop. */
+  first_try?: boolean;
+  tries?: number;
+  gave_up?: boolean;
   reasoning?: TrainingReasoning;
 }
 
@@ -213,14 +251,26 @@ function isTrainingRow(item: CoachNotification): item is TrainingRow {
   );
 }
 
+function puzzleVerdict(result: PuzzleResultNotification, played: string): string[] {
+  const puzzle = `the ${result.motif} puzzle ${result.puzzle_id} (${result.difficulty})`;
+  const expected = result.expected_san ?? result.expected_uci ?? "unknown";
+  const position = `Position (FEN): ${result.fen}`;
+  if (result.gave_up) {
+    return [`The student gave up on ${puzzle}; the expected move was ${expected}.`, position];
+  }
+  if (result.solved && result.first_try === false) {
+    return [`The student solved ${puzzle} after ${result.tries ?? 0} wrong tries.`, position];
+  }
+  if (result.solved) return [`The student solved ${puzzle}.`];
+  return [
+    `The student failed ${puzzle}: they played ${played} and the expected move was ${expected}.`,
+    position,
+  ];
+}
+
 function renderPuzzleResult(result: PuzzleResultNotification): string {
   const played = result.answered_uci.at(-1) ?? "nothing";
-  const lines = result.solved
-    ? [`The student solved the ${result.motif} puzzle ${result.puzzle_id} (${result.difficulty}).`]
-    : [
-        `The student failed the ${result.motif} puzzle ${result.puzzle_id} (${result.difficulty}): they played ${played} and the expected move was ${result.expected_san ?? result.expected_uci ?? "unknown"}.`,
-        `Position (FEN): ${result.fen}`,
-      ];
+  const lines = puzzleVerdict(result, played);
   if (result.reasoning) lines.push(renderReasoning(result.reasoning, played, result.solved));
   return lines.join("\n");
 }

@@ -47,6 +47,11 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
     served_at: "2026-03-01T00:00:00.000Z",
     expected: null,
     exploring: { fen: START_FEN, line_san: [], trail: [] },
+    tries: 0,
+    last_try: null,
+    gave_up: false,
+    solution_line: null,
+    suggested_quality: null,
     summary: null,
     ...overrides,
   };

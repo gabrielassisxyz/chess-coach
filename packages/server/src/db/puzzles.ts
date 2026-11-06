@@ -90,18 +90,27 @@ export interface AttemptRecord {
   solved: boolean;
   answered: readonly string[];
   failedPly: number | null;
+  /** Solved with no wrong try on any step. */
+  firstTry: boolean;
+  /** How many wrong tries the attempt took. */
+  tries: number;
+  gaveUp: boolean;
 }
 
 export function recordPuzzleAttempt(db: Database, attempt: AttemptRecord): void {
   db.prepare(
-    `INSERT INTO puzzle_attempts (puzzle_id, attempted_at, solved, answered_uci, failed_ply)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO puzzle_attempts
+       (puzzle_id, attempted_at, solved, answered_uci, failed_ply, first_try, tries, gave_up)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     attempt.puzzleId,
     attempt.attemptedAt,
     attempt.solved ? 1 : 0,
     JSON.stringify(attempt.answered),
     attempt.failedPly,
+    attempt.firstTry ? 1 : 0,
+    attempt.tries,
+    attempt.gaveUp ? 1 : 0,
   );
 }
 

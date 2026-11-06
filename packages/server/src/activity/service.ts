@@ -215,13 +215,16 @@ export class ActivityService {
     });
   }
 
-  trainingAnswer(uci: string, expectedActivityId?: number): Promise<ActivityState> {
-    return this.stepTraining(expectedActivityId, "trainingAnswer", (run) => run.answer(uci)).then(
+  trainingTry(uci: string, expectedActivityId?: number): Promise<ActivityState> {
+    return this.stepTraining(expectedActivityId, "trainingTry", (run) => run.tryMove(uci)).then(
       (state) => {
         if (state.kind === "training") {
           this.log.info("training.answer", {
             activity_id: state.activity_id,
+            try: true,
             uci,
+            correct: state.last_try?.correct ?? null,
+            tries: state.tries,
             item: state.item,
             status: state.status,
             expected: state.expected,
@@ -230,6 +233,24 @@ export class ActivityService {
         return state;
       },
     );
+  }
+
+  trainingShowSolution(expectedActivityId?: number): Promise<ActivityState> {
+    return this.stepTraining(expectedActivityId, "trainingShowSolution", (run) =>
+      run.showSolution(),
+    ).then((state) => {
+      if (state.kind === "training") {
+        this.log.info("training.answer", {
+          activity_id: state.activity_id,
+          gave_up: true,
+          tries: state.tries,
+          item: state.item,
+          status: state.status,
+          solution_line: state.solution_line,
+        });
+      }
+      return state;
+    });
   }
 
   trainingExplore(

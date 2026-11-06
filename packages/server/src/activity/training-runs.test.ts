@@ -102,13 +102,16 @@ describe("a persisted practice session", () => {
       failed: 0,
     });
 
-    await first.trainingAnswer("a1a8", started.activity_id);
+    await first.trainingTry("a1a8", started.activity_id);
     expect(boot().pausedTraining()).toMatchObject({ position: 0, solved: 1, failed: 0 });
 
     await first.nextTrainingItem(started.activity_id);
     expect(boot().pausedTraining()).toMatchObject({ position: 1, solved: 1 });
 
-    await first.trainingAnswer("h2h3", started.activity_id);
+    await first.trainingTry("h2h3", started.activity_id);
+    expect(boot().pausedTraining()).toMatchObject({ position: 1, solved: 1, failed: 0 });
+
+    await first.trainingShowSolution(started.activity_id);
     expect(boot().pausedTraining()).toMatchObject({ position: 1, solved: 1, failed: 1 });
 
     await first.nextTrainingItem(started.activity_id);
@@ -122,7 +125,7 @@ describe("a persisted practice session", () => {
     const started = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
     db.exec(`CREATE TRIGGER refuse_run_update BEFORE UPDATE ON training_runs
              BEGIN SELECT RAISE(ABORT, 'run row refused'); END`);
-    await expect(activity.trainingAnswer("a1a8", started.activity_id)).rejects.toThrow(
+    await expect(activity.trainingTry("a1a8", started.activity_id)).rejects.toThrow(
       "run row refused",
     );
     expect(db.prepare("SELECT answered_at FROM training_items").all()).toEqual([
@@ -136,7 +139,7 @@ describe("a persisted practice session", () => {
     addPuzzle("p2", BACK_RANK, ["a1a8"]);
     const activity = boot();
     const started = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
-    await activity.trainingAnswer("a1a8", started.activity_id);
+    await activity.trainingTry("a1a8", started.activity_id);
     await activity.nextTrainingItem(started.activity_id);
     const rows = db.prepare("SELECT run_id FROM training_items ORDER BY id").all();
     expect(rows).toEqual([{ run_id: 1 }, { run_id: 1 }]);
@@ -147,7 +150,7 @@ describe("a persisted practice session", () => {
     addPuzzle("p2", BACK_RANK, ["a1a8"]);
     const first = boot();
     const started = training(await first.startTraining({ mode: "puzzles", motif: "fork" }));
-    await first.trainingAnswer("a1a8", started.activity_id);
+    await first.trainingTry("a1a8", started.activity_id);
     const before = training(await first.nextTrainingItem(started.activity_id));
 
     const after = boot();
@@ -155,7 +158,7 @@ describe("a persisted practice session", () => {
     const resumed = training(await after.resumeTraining());
     expect(resumed.item).toEqual(before.item);
     expect(resumed).toMatchObject({ status: "prompt", fen: before.fen, input_enabled: true });
-    const solved = training(await after.trainingAnswer("a1a8", resumed.activity_id));
+    const solved = training(await after.trainingTry("a1a8", resumed.activity_id));
     expect(solved.status).toBe("solved");
     const done = training(await after.nextTrainingItem(resumed.activity_id));
     expect(done.summary).toEqual({ solved: 2, failed: 0 });
@@ -165,7 +168,7 @@ describe("a persisted practice session", () => {
     addPuzzle("f1", FORK, ["b5c7", "e8f8", "a1c1"]);
     const first = boot();
     const started = training(await first.startTraining({ mode: "puzzles", motif: "fork" }));
-    const mid = training(await first.trainingAnswer("b5c7", started.activity_id));
+    const mid = training(await first.trainingTry("b5c7", started.activity_id));
     expect(mid.status).toBe("in_progress");
 
     const after = boot();
@@ -177,7 +180,7 @@ describe("a persisted practice session", () => {
       last_move: mid.last_move,
       input_enabled: true,
     });
-    const solved = training(await after.trainingAnswer("a1c1", resumed.activity_id));
+    const solved = training(await after.trainingTry("a1c1", resumed.activity_id));
     expect(solved.status).toBe("solved");
     const attempts = db.prepare("SELECT solved, answered_uci FROM puzzle_attempts").all();
     expect(attempts).toEqual([{ solved: 1, answered_uci: '["b5c7","a1c1"]' }]);
@@ -193,7 +196,7 @@ describe("a persisted practice session", () => {
     expect(resumed.item).toMatchObject({ kind: "card", card_id: cardId });
     expect(resumed.exposure_id).toBeDefined();
     expect(resumed.exposure_id).not.toBe(started.exposure_id);
-    await after.trainingAnswer("d2d4", resumed.activity_id);
+    await after.trainingTry("d2d4", resumed.activity_id);
     const rated = training(
       await after.rateCard(resumed.exposure_id as string, 4, resumed.activity_id),
     );
@@ -204,14 +207,15 @@ describe("a persisted practice session", () => {
     addCard();
     const first = boot();
     const started = training(await first.startTraining({ mode: "srs" }));
-    await first.trainingAnswer("e2e4", started.activity_id);
+    await first.trainingTry("e2e4", started.activity_id);
+    await first.trainingShowSolution(started.activity_id);
     expect(boot().pausedTraining()).toMatchObject({ failed: 1 });
 
     const after = boot();
     const resumed = training(await after.resumeTraining());
     expect(resumed.status).toBe("prompt");
     expect(after.pausedTraining()).toBeNull();
-    await after.trainingAnswer("d2d4", resumed.activity_id);
+    await after.trainingTry("d2d4", resumed.activity_id);
     const done = training(await after.nextTrainingItem(resumed.activity_id));
     expect(done.summary).toEqual({ solved: 1, failed: 0 });
   });
@@ -222,7 +226,7 @@ describe("a persisted practice session", () => {
     const activity = boot();
     const started = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
     expect(activity.pausedTraining()).toBeNull();
-    await activity.trainingAnswer("a1a8", started.activity_id);
+    await activity.trainingTry("a1a8", started.activity_id);
     const before = training(await activity.nextTrainingItem(started.activity_id));
 
     await activity.newGame({ color: "white", elo: 1200 });

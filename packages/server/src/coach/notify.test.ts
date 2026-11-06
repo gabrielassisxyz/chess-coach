@@ -285,6 +285,91 @@ describe("the student's reasoning in a training result", () => {
   });
 });
 
+describe("the tries in a training result", () => {
+  const tries = [
+    { at_ms: 4_000, uci: "g1f3", san: "Nf3", correct: false },
+    { at_ms: 9_600, uci: "c2c4", san: null, correct: false },
+    { at_ms: 15_000, uci: "d2d4", san: "d4", correct: true },
+  ];
+  const card: SrsAnswerNotification = {
+    type: "srs_answer",
+    card_id: 7,
+    prompt_fen: FEN,
+    answered_uci: "g1f3",
+    answered_san: "Nf3",
+    expected_uci: "d2d4",
+    expected_san: "d4",
+    correct: false,
+  };
+
+  it("lists every try with its offset and correctness, and that no solution was shown", () => {
+    const text = renderSrsAnswer({
+      ...card,
+      reasoning: { messages: [], explored: [], tries, gave_up: false },
+    });
+    expect(text).toBe(
+      [
+        "The student missed review card 7 on the first try with Nf3, then found d4.",
+        `Position (FEN): ${FEN}`,
+        "What the student wrote: nothing",
+        "Explored: nothing",
+        "Tries:",
+        "+4s  Nf3 (wrong)",
+        "+10s  c2c4 (wrong)",
+        "+15s  d4 (right)",
+        "Solution shown: no",
+      ].join("\n"),
+    );
+  });
+
+  it("says a card was given up, and that the solution was shown", () => {
+    const text = renderSrsAnswer({
+      ...card,
+      answered_uci: "0000",
+      answered_san: null,
+      reasoning: { messages: [], explored: [], tries: [], gave_up: true },
+    });
+    expect(text).toContain("The student gave up on review card 7 and was shown d4.");
+    expect(text).toContain("Tries: none\nSolution shown: yes");
+    expect(text).not.toContain("0000");
+  });
+
+  it("says a puzzle was solved after wrong tries, or given up, with its position", () => {
+    const puzzle: PuzzleResultNotification = {
+      type: "puzzle_result",
+      puzzle_id: "f1",
+      motif: "fork",
+      difficulty: "easy",
+      fen: FEN,
+      solved: true,
+      answered_uci: ["g1f3", "c2c4", "d2d4"],
+      expected_uci: null,
+      expected_san: null,
+      first_try: false,
+      tries: 2,
+      gave_up: false,
+      reasoning: { messages: [], explored: [], tries, gave_up: false },
+    };
+    const retried = renderNotifications([puzzle]);
+    expect(retried).toContain("The student solved the fork puzzle f1 (easy) after 2 wrong tries.");
+    expect(retried).toContain(`Position (FEN): ${FEN}`);
+    const gaveUp = renderNotifications([
+      {
+        ...puzzle,
+        solved: false,
+        gave_up: true,
+        expected_uci: "d2d4",
+        expected_san: "d4",
+        reasoning: { messages: [], explored: [], tries: tries.slice(0, 1), gave_up: true },
+      },
+    ]);
+    expect(gaveUp).toContain(
+      "The student gave up on the fork puzzle f1 (easy); the expected move was d4.",
+    );
+    expect(gaveUp).toContain("+4s  Nf3 (wrong)\nSolution shown: yes");
+  });
+});
+
 describe("difficulty change", () => {
   const change: DifficultyChangeNotification = {
     type: "difficulty_change",

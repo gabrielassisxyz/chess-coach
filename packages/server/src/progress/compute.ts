@@ -66,6 +66,8 @@ function recentGames(db: Database): ProgressGame[] {
   }));
 }
 
+// The 30-day rate is accuracy: only a puzzle solved with no wrong try counts, so one solved after
+// retries or given up is an attempt and not a success.
 function puzzlesByMotif(db: Database, now: Date): ProgressResponse["puzzles_by_motif"] {
   const from = new Date(now.getTime() - MONTH_MS).toISOString();
   const to = now.toISOString();
@@ -73,7 +75,7 @@ function puzzlesByMotif(db: Database, now: Date): ProgressResponse["puzzles_by_m
     .prepare(
       `SELECT p.motif, COUNT(*) AS attempts, SUM(a.solved) AS solved,
          COALESCE(SUM(a.attempted_at >= ? AND a.attempted_at <= ?), 0) AS attempts_30d,
-         COALESCE(SUM(a.solved AND a.attempted_at >= ? AND a.attempted_at <= ?), 0) AS solved_30d
+         COALESCE(SUM(a.first_try AND a.attempted_at >= ? AND a.attempted_at <= ?), 0) AS solved_30d
        FROM puzzle_attempts a JOIN puzzles p ON p.id = a.puzzle_id
        GROUP BY p.motif ORDER BY p.motif`,
     )

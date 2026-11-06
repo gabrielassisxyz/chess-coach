@@ -57,6 +57,10 @@
   `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
   is opt-in at the call and never runs after an import. The explorer now answers 401 without a Lichess API
   token: set `LICHESS_API_TOKEN`.
+- **Grading:** a practice move is graded the moment it is dropped (`try_move`). A wrong try leaves
+  the item open at the same position; `show_solution` ends it as given up and the board plays the
+  solution line. Every try is kept in `training_tries`, and puzzle accuracy is first-try solves
+  (`puzzle_attempts.first_try`). The coach hears once per item, when it ends.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
   each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
   (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The

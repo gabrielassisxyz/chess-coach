@@ -51,7 +51,8 @@ export type ActivityPort = Pick<
   | "undo"
   | "startTraining"
   | "trainingExplore"
-  | "trainingAnswer"
+  | "trainingTry"
+  | "trainingShowSolution"
   | "rateCard"
   | "nextTrainingItem"
   | "endTraining"
@@ -219,7 +220,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         return;
       case "move":
         if (activity.current()?.kind === "training") {
-          throw new ActivityError("use_answer", "grade a training item with answer, not move");
+          throw new ActivityError("use_try_move", "grade a training item with try_move, not move");
         }
         await activity.playerMove(
           {
@@ -247,8 +248,11 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
           command.activity_id,
         );
         return;
-      case "answer":
-        await activity.trainingAnswer(command.uci, command.activity_id);
+      case "try_move":
+        await activity.trainingTry(command.uci, command.activity_id);
+        return;
+      case "show_solution":
+        await activity.trainingShowSolution(command.activity_id);
         return;
       case "rate_card":
         await activity.rateCard(command.exposure_id, command.quality, command.activity_id);

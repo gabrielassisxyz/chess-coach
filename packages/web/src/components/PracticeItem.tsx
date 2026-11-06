@@ -2,23 +2,18 @@ import type { TrainingActivity } from "@chess-coach/shared";
 import { useState } from "react";
 import { useElapsed } from "../hooks/useElapsed.js";
 import {
-  answeredSanOf,
   breadcrumbOf,
   formatElapsed,
   lookedAtMs,
-  NONE,
+  playedSanOf,
   promptOf,
   type TrainingView,
 } from "../state/practice.js";
 import { ExplorationTrail } from "./ExplorationTrail.js";
 import { RatingButtons } from "./RatingButtons.js";
 
-const ANSWER_LOCKED = `Answer ${NONE} make your move first`;
-
 export interface PracticeItemActions {
-  answer(): void;
-  takeBack(): void;
-  reset(): void;
+  showSolution(): void;
   rate(quality: number): void;
   next(): void;
   end(): void;
@@ -30,73 +25,73 @@ export interface PracticeItemProps {
   actions: PracticeItemActions;
 }
 
-function Verdict({ training, view }: Pick<PracticeItemProps, "training" | "view">) {
-  const played = answeredSanOf(training);
+function wrongTries(count: number): string {
+  return count === 1 ? "1 wrong try" : `${count} wrong tries`;
+}
+
+function verdictLine(training: TrainingActivity): string {
+  if (training.status === "rated") return "Rated";
+  if (training.gave_up) return "Solution shown";
+  const played = playedSanOf(training);
   const word = training.status === "solved" ? "Right" : "Wrong";
+  return `${word}${played ? ` ${played}` : ""}`;
+}
+
+function Verdict({ training, view }: Pick<PracticeItemProps, "training" | "view">) {
+  const solved = training.status === "solved";
   // A right answer never reads as wrong, even if the server sent an expected move.
-  const expected = training.status === "solved" ? null : view.expected;
+  const expected = solved ? null : view.expected;
   return (
     <div className="practice__verdict">
       <p role="status" className="practice__verdict-line">
-        {training.status === "rated" ? "Rated" : `${word}${played ? ` ${played}` : ""}`}
+        {verdictLine(training)}
       </p>
+      {solved && training.tries > 0 ? (
+        <p className="practice__expected">After {wrongTries(training.tries)}</p>
+      ) : null}
       {expected ? <p className="practice__expected">Expected {expected}</p> : null}
     </div>
   );
 }
 
-function Exploring({ training, view, actions }: PracticeItemProps) {
+function Open({ training, view, actions }: PracticeItemProps) {
   const elapsed = useElapsed(training.served_at, true);
   return (
     <>
       <p role="status" className="screen__note">
         {view.status}
       </p>
-      <ExplorationTrail
-        trail={training.exploring.trail}
-        answered={false}
-        heading="Explored so far"
-      />
       <div className="practice__timer">
         <span className="practice__elapsed" role="timer" aria-label="Time on this item">
           {formatElapsed(elapsed)}
         </span>
-        <button type="button" className="button" disabled={!view.canAnswer} onClick={actions.reset}>
-          Reset
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={!view.canAnswer}
-          onClick={actions.takeBack}
-        >
-          Take back
+        <button type="button" className="button" onClick={actions.showSolution}>
+          Solution
         </button>
       </div>
-      <button
-        type="button"
-        className="button button--primary practice__answer"
-        disabled={!view.canAnswer}
-        onClick={actions.answer}
-      >
-        {view.canAnswer ? "Answer" : ANSWER_LOCKED}
-      </button>
     </>
   );
 }
 
-function Answered({ training, view, actions }: PracticeItemProps) {
+function Finished({ training, view, actions }: PracticeItemProps) {
   const { item } = training;
+  const trail = training.exploring.trail;
   return (
     <>
       <Verdict training={training} view={view} />
-      <ExplorationTrail
-        trail={training.exploring.trail}
-        answered
-        heading={`What you looked at · ${formatElapsed(lookedAtMs(training))}`}
-      />
+      {trail.length > 0 ? (
+        <ExplorationTrail
+          trail={trail}
+          answered={false}
+          heading={`What you looked at · ${formatElapsed(lookedAtMs(training))}`}
+        />
+      ) : null}
       {view.canRate && item.kind === "card" ? (
-        <RatingButtons preview={item.rating_preview} onRate={actions.rate} />
+        <RatingButtons
+          preview={item.rating_preview}
+          suggested={training.suggested_quality}
+          onRate={actions.rate}
+        />
       ) : null}
     </>
   );
@@ -114,7 +109,7 @@ export function PracticeItem(props: PracticeItemProps) {
           Queue finished: {view.summary.solved} solved, {view.summary.failed} failed.
         </p>
       ) : null}
-      {view.canExplore ? <Exploring {...props} /> : <Answered {...props} />}
+      {view.open ? <Open {...props} /> : <Finished {...props} />}
       <div className="controls__row">
         {view.summary ? null : (
           <button

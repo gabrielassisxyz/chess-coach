@@ -24,7 +24,7 @@ export function openTrainingItem(db: Database, item: NewTrainingItem): number {
 export function closeTrainingItem(
   db: Database,
   itemId: number,
-  result: { answeredAt: string; answerUci: string; correct: boolean },
+  result: { answeredAt: string; answerUci: string | null; correct: boolean },
 ): void {
   db.prepare(
     `UPDATE training_items SET answered_at = ?, answer_uci = ?, correct = ? WHERE id = ?`,
@@ -46,6 +46,37 @@ export function insertExplorationEvent(
     `INSERT INTO exploration_events (item_id, seq, at_ms, kind, uci, fen_after)
      VALUES (@itemId, @seq, @atMs, @kind, @uci, @fenAfter)`,
   ).run(event);
+}
+
+export interface TrainingTry {
+  seq: number;
+  atMs: number;
+  ply: number;
+  uci: string;
+  correct: boolean;
+}
+
+export function insertTrainingTry(db: Database, itemId: number, attempt: TrainingTry): void {
+  db.prepare(
+    `INSERT INTO training_tries (item_id, seq, at_ms, ply, uci, correct)
+     VALUES (@itemId, @seq, @atMs, @ply, @uci, @correct)`,
+  ).run({ ...attempt, itemId, correct: attempt.correct ? 1 : 0 });
+}
+
+// In the order they were dropped, so a resumed item continues the same count.
+export function listTrainingTries(db: Database, itemId: number): TrainingTry[] {
+  const rows = db
+    .prepare(
+      `SELECT seq, at_ms, ply, uci, correct FROM training_tries WHERE item_id = ? ORDER BY seq`,
+    )
+    .all(itemId) as { seq: number; at_ms: number; ply: number; uci: string; correct: number }[];
+  return rows.map((row) => ({
+    seq: row.seq,
+    atMs: row.at_ms,
+    ply: row.ply,
+    uci: row.uci,
+    correct: row.correct === 1,
+  }));
 }
 
 export function linkItemMessage(db: Database, itemId: number, messageId: number): void {

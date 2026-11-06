@@ -61,14 +61,22 @@ function insertMoves(gameId: number, student: [number, string][], opponentCpLoss
   });
 }
 
-function insertAttempt(motif: string, puzzleId: string, solved: boolean, day: number): void {
+// `firstTry` defaults to `solved`, which is what every attempt recorded before retries means.
+function insertAttempt(
+  motif: string,
+  puzzleId: string,
+  solved: boolean,
+  day: number,
+  firstTry: boolean = solved,
+): void {
   db.prepare(
     `INSERT OR IGNORE INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
      VALUES (?, 'test', ?, 'easy', 'fen', 'e2e4', 'e4', 'x')`,
   ).run(puzzleId, motif);
   db.prepare(
-    `INSERT INTO puzzle_attempts (puzzle_id, attempted_at, solved, answered_uci) VALUES (?, ?, ?, 'e2e4')`,
-  ).run(puzzleId, at(day), solved ? 1 : 0);
+    `INSERT INTO puzzle_attempts (puzzle_id, attempted_at, solved, answered_uci, first_try)
+     VALUES (?, ?, ?, 'e2e4', ?)`,
+  ).run(puzzleId, at(day), solved ? 1 : 0, firstTry ? 1 : 0);
 }
 
 function insertCard(
@@ -272,6 +280,17 @@ describe("computeProgress on a fixture database", () => {
     const { games } = computeProgress(db, clockOn(10));
     expect(games).toHaveLength(50);
     expect(games[0]?.played_at).toBe(new Date(2026, 0, 55).toISOString());
+  });
+});
+
+describe("puzzle accuracy", () => {
+  it("counts only first-try solves over the attempts of the last 30 days", () => {
+    insertAttempt("fork", "f1", true, 9);
+    insertAttempt("fork", "f2", true, 8, false);
+    insertAttempt("fork", "f3", false, 7);
+    insertAttempt("fork", "f4", true, 6);
+    const [fork] = computeProgress(db, clockOn(10)).puzzles_by_motif;
+    expect(fork).toMatchObject({ attempts_30d: 4, solved_30d: 2, success_rate_30d: 0.5 });
   });
 });
 
