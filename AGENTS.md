@@ -55,7 +55,7 @@
   `opening-black`); the import grader runs it after each game. Practice's openings mode drills them. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
   student's first moves with the replies most played at 400-600 on the Lichess explorer (`explorer:` ids, source
   `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
-  is opt-in at the call and never runs after an import. The explorer now answers 401 without a Lichess API
+  is opt-in at the call and never runs after an import. `POST /api/openings/generate {sources: ["italian"]}` builds the White Italian drill from the 1800-2200 band against 400-600 replies (`italian:` ids, source `italian-explorer`, motif `opening-italian`). The explorer now answers 401 without a Lichess API
   token: set `LICHESS_API_TOKEN`.
 - **Grading:** a practice move is graded the moment it is dropped (`try_move`). A wrong try leaves
   the item open at the same position; `show_solution` ends it as given up and the board plays the
