@@ -8,9 +8,9 @@ import type { GenerationResult } from "../openings/from-games.js";
 const generateBody = z
   .object({
     sources: z
-      .array(z.enum(["own", "explorer"]))
+      .array(z.enum(["own", "explorer", "italian"]))
       .min(1)
-      .max(2),
+      .max(3),
   })
   .partial()
   .nullish();
@@ -19,9 +19,10 @@ export function registerOpeningRoutes(
   app: FastifyInstance,
   generate: () => Promise<GenerationResult>,
   generateFromExplorer?: () => Promise<ExplorerResult>,
+  generateItalian?: () => Promise<ExplorerResult>,
   log: Log = silentLog,
 ): void {
-  // The explorer half runs for minutes at one request a second; a second run would only queue behind it.
+  // The explorer halves run for minutes at one request a second; a second run would only queue behind it.
   let explorerRunning = false;
 
   app.post("/api/openings/generate", async (request, reply) => {
@@ -29,13 +30,19 @@ export function registerOpeningRoutes(
     if (!body.success) {
       return reply
         .code(400)
-        .send({ error: "invalid_sources", message: "sources is own, explorer" });
+        .send({ error: "invalid_sources", message: "sources is own, explorer, italian" });
     }
     const sources = body.data?.sources;
     if (sources?.includes("explorer") && !generateFromExplorer) {
       return reply.code(404).send({ error: "explorer_unavailable", message: "not configured" });
     }
-    if (sources?.includes("explorer") && explorerRunning) {
+    if (sources?.includes("italian") && !generateItalian) {
+      return reply.code(404).send({ error: "italian_unavailable", message: "not configured" });
+    }
+    if (
+      sources?.some((source) => source === "explorer" || source === "italian") &&
+      explorerRunning
+    ) {
       return reply
         .code(409)
         .send({ error: "already_running", message: "explorer run in progress" });
@@ -49,11 +56,18 @@ export function registerOpeningRoutes(
         log.info("openings.generate", { sources: ["own"], result, duration_ms: elapsed() });
         return result;
       }
-      const out: { own?: GenerationResult; explorer?: ExplorerResult } = {};
+      const out: { own?: GenerationResult; explorer?: ExplorerResult; italian?: ExplorerResult } =
+        {};
       if (sources.includes("own")) out.own = await generate();
       if (sources.includes("explorer") && generateFromExplorer) {
         explorerRunning = true;
         out.explorer = await generateFromExplorer().finally(() => {
+          explorerRunning = false;
+        });
+      }
+      if (sources.includes("italian") && generateItalian) {
+        explorerRunning = true;
+        out.italian = await generateItalian().finally(() => {
           explorerRunning = false;
         });
       }
