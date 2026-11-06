@@ -26,6 +26,26 @@ describe("explorer client", () => {
     expect(url.searchParams.get("fen")).toBe(FEN);
   });
 
+  it("accepts a rating band per call for the Italian walk", () => {
+    const low = new URL(explorerUrl(FEN, "400,600"));
+    expect(low.searchParams.get("ratings")).toBe("400,600");
+    const high = new URL(explorerUrl(FEN, "1800,2000,2200"));
+    expect(high.searchParams.get("ratings")).toBe("1800,2000,2200");
+    expect(high.searchParams.get("fen")).toBe(FEN);
+  });
+
+  it("requests the given band from the network", async () => {
+    let seenUrl = "";
+    const spy = (async (url: string) => {
+      seenUrl = url;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    await httpExplorerFetcher("secret", spy).fetch(FEN, "1800,2000,2200");
+    expect(new URL(seenUrl).searchParams.get("ratings")).toBe("1800,2000,2200");
+    await httpExplorerFetcher("secret", spy).fetch(FEN);
+    expect(new URL(seenUrl).searchParams.get("ratings")).toBe("400,600");
+  });
+
   it("names the app and sends the token when there is one", async () => {
     let seen: Headers | undefined;
     const spy = (async (_url: string, init: RequestInit) => {

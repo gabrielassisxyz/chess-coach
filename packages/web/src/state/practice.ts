@@ -28,7 +28,11 @@ export const DRILL_SIZES: readonly DrillSize[] = [5, 10, 20];
 export const DEFAULT_DRILL_SIZE: DrillSize = 10;
 
 // Opening drills are their own card, so their puzzles stay out of the motif rows.
-const OPENING_MOTIFS = { white: "opening-white", black: "opening-black" } as const;
+const OPENING_MOTIFS = {
+  white: "opening-white",
+  black: "opening-black",
+  italian: "opening-italian",
+} as const;
 
 // Stored motifs read like `back_rank_mate`; the hub and the heading show words.
 export function motifLabel(motif: string): string {
@@ -65,6 +69,10 @@ export function motifRows(list: MotifCount[], progress: ProgressResponse | null)
 
 export function openingCount(list: MotifCount[], color: "white" | "black"): number {
   return list.find((entry) => entry.motif === OPENING_MOTIFS[color])?.count ?? 0;
+}
+
+export function italianOpeningCount(list: MotifCount[]): number {
+  return list.find((entry) => entry.motif === OPENING_MOTIFS.italian)?.count ?? 0;
 }
 
 const CLASSIFICATION_ORDER = ["blunder", "mistake", "inaccuracy", "opening", "teaching"];
@@ -181,6 +189,7 @@ export function breadcrumbOf(training: TrainingActivity, runMotif?: string | nul
   const { item, mode } = training;
   if (mode === "puzzles" && item.kind === "puzzle") {
     const count = `${item.position_in_queue} of ${item.queue_length}`;
+    if (runMotif === OPENING_MOTIFS.italian) return `Italian Opening · ${count}`;
     const chosen = runMotif !== undefined && runMotif !== null && runMotif !== "";
     if (chosen) return `Puzzles · ${motifLabel(runMotif)}\n${count}`;
     return `Puzzles\n${count}`;

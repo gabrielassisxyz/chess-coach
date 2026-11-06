@@ -7,6 +7,8 @@ import { USER_AGENT } from "../import/chesscom.js";
 export const EXPLORER_RATINGS = "400,600";
 export const EXPLORER_SPEEDS = "rapid,blitz";
 export const EXPLORER_BAND_LABEL = "400-600";
+export const ITALIAN_WHITE_RATINGS = "1800,2000,2200";
+export const ITALIAN_WHITE_BAND_LABEL = "1800-2200";
 export const MIN_REQUEST_GAP_MS = 1100;
 export const RATE_LIMIT_WAIT_MS = 30_000;
 export const CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -55,7 +57,7 @@ export const gamesOf = (stats: { white: number; draws: number; black: number }):
 /** Moves are matched by SAN: the explorer writes castling as king-takes-rook in UCI. */
 export interface ExplorerFetcher {
   /** The raw JSON text of one position; a 429 is an `ExplorerRateLimited`. */
-  fetch(fen: string): Promise<string>;
+  fetch(fen: string, ratings?: string): Promise<string>;
 }
 
 export interface ExplorerClock {
@@ -69,11 +71,11 @@ export const systemExplorerClock: ExplorerClock = {
 };
 
 // The FEN comes from chess.js and the rest from constants, never from the browser.
-export function explorerUrl(fen: string): string {
+export function explorerUrl(fen: string, ratings: string = EXPLORER_RATINGS): string {
   const query = new URLSearchParams({
     variant: "standard",
     speeds: EXPLORER_SPEEDS,
-    ratings: EXPLORER_RATINGS,
+    ratings,
     moves: String(MOVES_REQUESTED),
     topGames: "0",
     recentGames: "0",
@@ -87,13 +89,13 @@ export function httpExplorerFetcher(
   fetchImpl: typeof fetch = fetch,
 ): ExplorerFetcher {
   return {
-    async fetch(fen) {
+    async fetch(fen, ratings: string = EXPLORER_RATINGS) {
       const headers: Record<string, string> = {
         "User-Agent": USER_AGENT,
         Accept: "application/json",
       };
       if (token) headers.Authorization = `Bearer ${token}`;
-      const response = await fetchImpl(explorerUrl(fen), {
+      const response = await fetchImpl(explorerUrl(fen, ratings), {
         headers,
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       }).catch((error: unknown) => {
@@ -146,17 +148,17 @@ export class CachedExplorer {
     private readonly maxRequests: number = MAX_REQUESTS_PER_RUN,
   ) {}
 
-  async position(fen: string): Promise<ExplorerPosition> {
+  async position(fen: string, ratings: string = EXPLORER_RATINGS): Promise<ExplorerPosition> {
     const file = join(
       this.cacheDir,
-      `${createHash("sha256").update(explorerUrl(fen)).digest("hex")}.json`,
+      `${createHash("sha256").update(explorerUrl(fen, ratings)).digest("hex")}.json`,
     );
     const cached = this.readFresh(file);
     if (cached) {
       this.cacheHits += 1;
       return cached;
     }
-    const response = parsePosition(await this.fetchPaced(fen));
+    const response = parsePosition(await this.fetchPaced(fen, ratings));
     this.store(file, response);
     return response;
   }
@@ -177,22 +179,22 @@ export class CachedExplorer {
     renameSync(partial, file);
   }
 
-  private async fetchPaced(fen: string): Promise<string> {
+  private async fetchPaced(fen: string, ratings: string): Promise<string> {
     try {
-      return await this.attempt(fen);
+      return await this.attempt(fen, ratings);
     } catch (error) {
       if (!(error instanceof ExplorerRateLimited)) throw error;
       await this.clock.sleep(RATE_LIMIT_WAIT_MS);
     }
     try {
-      return await this.attempt(fen);
+      return await this.attempt(fen, ratings);
     } catch (error) {
       if (!(error instanceof ExplorerRateLimited)) throw error;
       throw new ExplorerError("upstream", "the explorer is still rate limiting after a wait");
     }
   }
 
-  private async attempt(fen: string): Promise<string> {
+  private async attempt(fen: string, ratings: string): Promise<string> {
     if (this.requests >= this.maxRequests) {
       throw new ExplorerError("budget", `the run reached its ${this.maxRequests} request limit`);
     }
@@ -202,6 +204,6 @@ export class CachedExplorer {
     }
     this.requests += 1;
     this.lastRequestAt = this.clock.now();
-    return this.fetcher.fetch(fen);
+    return this.fetcher.fetch(fen, ratings);
   }
 }

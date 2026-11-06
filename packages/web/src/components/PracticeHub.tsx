@@ -5,6 +5,7 @@ import {
   DRILL_SIZES,
   type DrillSize,
   dueBreakdown,
+  italianOpeningCount,
   type LastSession,
   type MotifCount,
   motifLabel,
@@ -49,6 +50,34 @@ function motifNote(motifs: Loaded<MotifCount[]>): string | null {
   return motifs.value.length === 0
     ? "No puzzles are loaded. Restart the server to load the puzzle library."
     : null;
+}
+
+function ItalianRow({
+  counts,
+  known,
+  startButton,
+}: {
+  counts: MotifCount[];
+  known: boolean;
+  startButton: (props: StartProps) => ReactNode;
+}): ReactNode {
+  const count = italianOpeningCount(counts);
+  const empty = known && count === 0;
+  return (
+    <div className="practice__opening" key="italian">
+      <span className="practice__opening-side">As White</span>
+      <span className="practice__opening-count">
+        {known ? (count === 0 ? NONE : `${count} positions`) : ""}
+      </span>
+      {startButton({
+        mode: "puzzles",
+        motif: "opening-italian",
+        idle: "Drill",
+        disabled: empty,
+      })}
+      {empty ? <span className="practice__card-note">Generate the Italian drill first</span> : null}
+    </div>
+  );
 }
 
 export function PracticeHub(props: PracticeHubProps) {
@@ -136,11 +165,12 @@ export function PracticeHub(props: PracticeHubProps) {
         })}
       </section>
 
-      <section className="practice__card" aria-label="Opening drill">
-        <h3 className="practice__card-title">Opening drill</h3>
+      <section className="practice__card" aria-label="Openings">
+        <h3 className="practice__card-title">Openings</h3>
         <p className="practice__card-note">
           Best move in the positions that actually occur in your games
         </p>
+        <p className="practice__card-note">Common positions</p>
         {(["white", "black"] as const).map((color) => {
           const count = openingCount(counts, color);
           const known = motifs.status === "ready";
@@ -159,6 +189,8 @@ export function PracticeHub(props: PracticeHubProps) {
             </div>
           );
         })}
+        <p className="practice__card-note">Italian Opening</p>
+        <ItalianRow counts={counts} known={motifs.status === "ready"} startButton={startButton} />
         {engineMissing ? <p className="practice__card-note">{NEEDS_ENGINE}</p> : null}
       </section>
 

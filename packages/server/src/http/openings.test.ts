@@ -83,6 +83,14 @@ describe("POST /api/openings/generate", () => {
       cacheHits: 0,
       truncated: false,
     };
+    const italian = {
+      positions: 3,
+      created: 3,
+      skippedOwn: 0,
+      requests: 5,
+      cacheHits: 0,
+      truncated: false,
+    };
     const build = (calls: string[]) =>
       buildApp({
         db: db(),
@@ -93,6 +101,10 @@ describe("POST /api/openings/generate", () => {
         generateExplorerOpenings: async () => {
           calls.push("explorer");
           return explorer;
+        },
+        generateItalianOpenings: async () => {
+          calls.push("italian");
+          return italian;
         },
       });
     const post = async (calls: string[], payload?: unknown) => {
@@ -187,6 +199,45 @@ describe("POST /api/openings/generate", () => {
       await app.close();
       expect(response.statusCode).toBe(502);
       expect(response.json()).toMatchObject({ error: "explorer_unavailable" });
+    });
+
+    it("runs only the italian source when asked for it, and returns its counts", async () => {
+      const calls: string[] = [];
+      const response = await post(calls, { sources: ["italian"] });
+      expect(response.json()).toEqual({ italian });
+      expect(calls).toEqual(["italian"]);
+    });
+
+    it("answers 404 when the italian source is not wired", async () => {
+      const app = buildApp({ db: db(), generateOpenings: async () => own });
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["italian"] },
+      });
+      await app.close();
+      expect(response.statusCode).toBe(404);
+    });
+
+    it("reports a missing token for the italian source as a 502 with the 401 message", async () => {
+      const app = buildApp({
+        db: db(),
+        generateOpenings: async () => own,
+        generateItalianOpenings: async () => {
+          throw new ExplorerError("unauthorized", "the explorer wants a Lichess API token");
+        },
+      });
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["italian"] },
+      });
+      await app.close();
+      expect(response.statusCode).toBe(502);
+      expect(response.json()).toMatchObject({
+        error: "explorer_unavailable",
+        message: "the explorer wants a Lichess API token",
+      });
     });
   });
 });

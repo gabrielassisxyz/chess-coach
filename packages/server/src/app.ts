@@ -30,6 +30,8 @@ export interface AppOptions {
   generateOpenings?: () => Promise<GenerationResult>;
   /** Expands the drills with the Lichess explorer; only asked for by name, never after an import. */
   generateExplorerOpenings?: () => Promise<ExplorerResult>;
+  /** Builds the White Italian drill from the explorer; only asked for by name, never after an import. */
+  generateItalianOpenings?: () => Promise<ExplorerResult>;
   log?: Log;
 }
 
@@ -71,7 +73,13 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       registerImportRoutes(app, { db: options.db, log, ...options.importer });
     }
     if (options.generateOpenings) {
-      registerOpeningRoutes(app, options.generateOpenings, options.generateExplorerOpenings, log);
+      registerOpeningRoutes(
+        app,
+        options.generateOpenings,
+        options.generateExplorerOpenings,
+        options.generateItalianOpenings,
+        log,
+      );
     }
   }
 
