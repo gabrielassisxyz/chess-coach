@@ -60,7 +60,10 @@
 - **Grading:** a practice move is graded the moment it is dropped (`try_move`). A wrong try leaves
   the item open at the same position; `show_solution` ends it as given up and the board plays the
   solution line. Every try is kept in `training_tries`, and puzzle accuracy is first-try solves
-  (`puzzle_attempts.first_try`). The coach hears once per item, when it ends.
+  (`puzzle_attempts.first_try`). The coach hears once per item, when it ends. A `hint` marks the
+  origin square of the expected move, clears on the next try, and makes the solve count as missed.
+  Explore is a client mode that routes drops to `explore` instead of grading; Back to puzzle clears
+  the line and restores graded drops.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
   each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
   (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The
