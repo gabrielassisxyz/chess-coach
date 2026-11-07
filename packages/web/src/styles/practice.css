@@ -204,12 +204,20 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The confirm sits over everything: inside a clipped panel it would paint under the board,
+ * where a pointer cannot reach it. */
 .practice__confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  width: fit-content;
+  height: fit-content;
+  margin: auto;
+  padding: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-1);
   color: var(--text-1);
-  padding: var(--space-4);
 }
 
 .practice__trail {
@@ -744,8 +752,10 @@
   width: min(100cqw, 100cqh - 48px);
 }
 
+/* Chessground's edge coordinates run past the board's right edge, which would widen the column. */
 .puzzle-stage .board {
   width: 100%;
+  overflow: hidden;
 }
 
 .board-bar {
