@@ -1,12 +1,15 @@
 import type {
   ExpectedMove,
   PausedTraining,
+  PlayedMove,
+  QueueOutcome,
   ExploredEvent as ShownEvent,
   TrainingActivity,
   TrainingItem,
   TrainingMode,
   TrainingStatus,
   TrainingSummary,
+  WrongTry,
 } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { type Clock, systemClock } from "../clock.js";
@@ -28,6 +31,7 @@ import {
   type ExplorationKind,
   endOpenTrainingRuns,
   endTrainingRun,
+  type ItemOutcome,
   insertExplorationEvent,
   insertTrainingRun,
   insertTrainingTry,
@@ -42,6 +46,7 @@ import {
   setTrainingItemHinted,
   type TrainingRunRow,
 } from "../db/training.js";
+import { applyUci } from "../engine/moves.js";
 import type { NotificationSink } from "../game/notifications.js";
 import {
   type AttemptState,
@@ -51,6 +56,7 @@ import {
   startAttempt,
   tryMove as tryPuzzleMove,
 } from "../puzzles/attempt.js";
+import { currentPuzzleRating, ratingAfter, setPuzzleRating } from "../puzzles/rating.js";
 import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
 import type { ReviewDesk } from "../srs/review.js";
@@ -113,6 +119,8 @@ interface Served {
   suggestedQuality: number | null;
   hintSquare: string | null;
   hinted: boolean;
+  // How this item moved the student's puzzle rating; null until a rated puzzle ends.
+  ratingChange: number | null;
 }
 
 // UCI's null move: a card given up before any try has no move of the student's to record.
@@ -141,12 +149,14 @@ interface StoredCurrent {
   attempt: (Omit<AttemptState, "solution" | "wrongTries"> & { wrongTries?: number }) | null;
   hinted?: boolean | undefined;
   hint_square?: string | null | undefined;
+  rating_change?: number | null | undefined;
 }
 
 interface ResumePoint {
   position: number;
   solved: number;
   failed: number;
+  outcomes: ItemOutcome[];
   current: StoredCurrent;
 }
 
@@ -178,6 +188,32 @@ export function pausedTrainingOf(row: TrainingRunRow): PausedTraining {
 
 const turnOf = (fen: string): PlayerColor => (fen.split(" ")[1] === "b" ? "black" : "white");
 
+// The solution moves on the board so far: everything before the cursor, plus the student's last
+// move once the puzzle is solved, because the cursor stays on it.
+function playedSolution(attempt: AttemptState): string[] {
+  const played = attempt.solution.slice(0, attempt.cursor);
+  const last = attempt.solution[attempt.cursor];
+  if (attempt.status === "solved" && last) played.push(last);
+  return played;
+}
+
+// Even solution indices are the student's, odd ones the puzzle's replies.
+function lineFrom(fen: string, ucis: readonly string[]): PlayedMove[] {
+  const board = new Chess(fen);
+  return ucis.map((uci, ply) => ({
+    ply,
+    uci,
+    san: applyUci(board, uci).san,
+    by: ply % 2 === 0 ? "student" : "reply",
+  }));
+}
+
+function fenAfter(fen: string, ucis: readonly string[]): string {
+  const board = new Chess(fen);
+  for (const uci of ucis) applyUci(board, uci);
+  return board.fen();
+}
+
 function isLegalUci(fen: string, uci: string): boolean {
   return new Chess(fen)
     .moves({ verbose: true })
@@ -192,6 +228,8 @@ export class TrainingRun {
   private position = 0;
   private solved = 0;
   private failed = 0;
+  // One entry per answered item, in queue order; the client draws its progress from it.
+  private outcomes: ItemOutcome[] = [];
   private summary: TrainingSummary | null = null;
   private served: Served;
   private readonly clock: Clock;
@@ -218,6 +256,7 @@ export class TrainingRun {
     this.position = resume.position;
     this.solved = resume.solved;
     this.failed = resume.failed;
+    this.outcomes = [...resume.outcomes];
     this.served = this.restoreServed(resume.current);
   }
 
@@ -241,6 +280,7 @@ export class TrainingRun {
         position: 0,
         solved: 0,
         failed: 0,
+        outcomes: [],
         currentJson: "{}",
         startedAt,
       });
@@ -258,6 +298,7 @@ export class TrainingRun {
       position: row.position,
       solved: row.solved,
       failed: row.failed,
+      outcomes: row.outcomes,
       current: JSON.parse(row.currentJson) as StoredCurrent,
     };
     return deps.db.transaction(() => {
@@ -350,7 +391,25 @@ export class TrainingRun {
       suggested_quality: s.suggestedQuality,
       hint_square: open ? s.hintSquare : null,
       summary: this.summary,
+      moves: this.playedLine(s),
+      wrong_tries: s.tries
+        .filter((attempt) => !attempt.correct)
+        .map(({ ply, uci, san }): WrongTry => ({ ply, uci, san })),
+      queue_outcomes: this.queue.map(
+        (_entry, index): QueueOutcome =>
+          this.outcomes[index] ?? (index === this.position ? "current" : "pending"),
+      ),
+      student_rating: currentPuzzleRating(this.deps.db),
+      rating_change: s.ratingChange,
     };
+  }
+
+  private playedLine(s: Served): PlayedMove[] {
+    if (s.item.kind === "puzzle")
+      return lineFrom(s.item.fen, playedSolution(s.attempt as AttemptState));
+    const right = s.tries.find((attempt) => attempt.correct);
+    if (!right || s.gaveUp) return [];
+    return [{ ply: 0, uci: right.uci, san: right.san ?? right.uci, by: "student" }];
   }
 
   private isOpen(): boolean {
@@ -549,11 +608,13 @@ export class TrainingRun {
         : null,
       hinted: s.hinted,
       hint_square: s.hintSquare,
+      rating_change: s.ratingChange,
     };
     saveTrainingRun(this.deps.db, this.runId, {
       position: this.position,
       solved: this.solved,
       failed: this.failed,
+      outcomes: this.outcomes,
       currentJson: JSON.stringify(current),
       updatedAt: this.clock.now().toISOString(),
     });
@@ -672,6 +733,7 @@ export class TrainingRun {
       gaveUp: s.gaveUp,
       hinted: s.hinted,
     });
+    s.ratingChange = this.movePuzzleRating(item.rating ?? null, firstTry);
     this.tally(solved);
     if (!firstTry) this.cardFromMiss(item, state, s.tries.find((t) => !t.correct)?.uci ?? null);
     this.notify({
@@ -717,6 +779,16 @@ export class TrainingRun {
   private tally(correct: boolean): void {
     if (correct) this.solved += 1;
     else this.failed += 1;
+    this.outcomes[this.position] = correct ? "solved" : "failed";
+  }
+
+  // A puzzle without a rating says nothing about the student's; one with a rating is a game of Elo.
+  private movePuzzleRating(puzzleRating: number | null, won: boolean): number | null {
+    if (puzzleRating === null) return null;
+    const before = currentPuzzleRating(this.deps.db);
+    const after = ratingAfter(before, puzzleRating, won);
+    setPuzzleRating(this.deps.db, after, this.clock.now().toISOString());
+    return after - before;
   }
 
   private serve(index: number): Served {
@@ -743,6 +815,7 @@ export class TrainingRun {
       suggestedQuality: null,
       hintSquare: null,
       hinted: false,
+      ratingChange: null,
     });
     if (entry.kind === "card") {
       const card = this.deps.desk.serveCard(entry.cardId);
@@ -784,6 +857,7 @@ export class TrainingRun {
         fen: puzzle.fen,
         cursor: 0,
         reply_uci: null,
+        rating: puzzle.rating,
         ...position,
       },
       status: "prompt",
@@ -807,6 +881,9 @@ export class TrainingRun {
   private restoreCard(current: StoredCurrent): Served {
     if (current.status === "solved") this.solved -= 1;
     if (current.status === "failed") this.failed -= 1;
+    if (current.status === "solved" || current.status === "failed") {
+      this.outcomes.splice(this.position, 1);
+    }
     const served = this.serve(this.position);
     const hinted = current.hinted ?? false;
     const hintSquare = current.hint_square ?? null;
@@ -840,6 +917,7 @@ export class TrainingRun {
         fen: puzzle.fen,
         cursor: attempt.cursor,
         reply_uci: current.reply_uci,
+        rating: puzzle.rating,
         position_in_queue: this.position + 1,
         queue_length: this.queue.length,
       },
@@ -859,7 +937,7 @@ export class TrainingRun {
         at_ms: stored.atMs,
         ply: stored.ply,
         uci: stored.uci,
-        san: null,
+        san: sanFor(fenAfter(puzzle.fen, puzzle.solution.slice(0, stored.ply)), stored.uci),
         correct: stored.correct,
       })),
       gaveUp,
@@ -867,6 +945,7 @@ export class TrainingRun {
       suggestedQuality: null,
       hintSquare: current.hint_square ?? null,
       hinted: current.hinted ?? false,
+      ratingChange: current.rating_change ?? null,
     };
   }
 

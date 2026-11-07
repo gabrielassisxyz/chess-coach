@@ -63,7 +63,14 @@
   (`puzzle_attempts.first_try`). The coach hears once per item, when it ends. A `hint` marks the
   origin square of the expected move, clears on the next try, and makes the solve count as missed.
   Explore is a client mode that routes drops to `explore` instead of grading; Back to puzzle clears
-  the line and restores graded drops.
+  the line and restores graded drops. The activity carries the item's line so far (`moves`), the
+  wrong tries beside their ply (`wrong_tries`) and one outcome per queue position
+  (`queue_outcomes`, kept in `training_runs.outcomes_json`).
+- **Puzzle rating:** the student's puzzle rating is plain Elo (K 32, start 1200) against the
+  library's `difficulty_rating`; a first-try solve wins, anything else loses, an unrated puzzle
+  (opening drills) moves nothing. It lives in `settings.puzzle_rating`, is replayed once from
+  the stored attempts at boot when absent (`puzzles.rating` log event), and the activity carries it
+  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
   each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
   (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The
@@ -89,7 +96,7 @@
   `RecordingLog` and assert on events. No `console.*` in `packages/server/src`.
 - **Correlation:** `conn` (one per websocket), `command_id`, `activity_id`, `game_id`,
   `coach_session_id`, `tab` (the coach conversation), `turn` (one per message handed to the coach), `tool_use_id`.
-- **Events:** `server.*`, `logs.pruned`, `process.*`, `puzzles.seeded`, `engine.start`,
+- **Events:** `server.*`, `logs.pruned`, `process.*`, `puzzles.seeded`, `puzzles.rating`, `engine.start`,
   `engine.start_failed`, `engine.fault`, `http.request`, `http.client_error`, `http.error`,
   `ws.connect`,
   `ws.disconnect`, `ws.ping_timeout`, `ws.invalid_frame`, `ws.command`, `ws.command_done`,

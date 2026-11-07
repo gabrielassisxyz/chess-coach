@@ -32,11 +32,17 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-function addPuzzle(id: string, motif: string, fen: string, solution: string[]): void {
+function addPuzzle(
+  id: string,
+  motif: string,
+  fen: string,
+  solution: string[],
+  rating: number | null = null,
+): void {
   db.prepare(
-    `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
-     VALUES (?, 'test', ?, 'easy', ?, ?, '[]', 'why')`,
-  ).run(id, motif, fen, JSON.stringify(solution));
+    `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, difficulty_rating)
+     VALUES (?, 'test', ?, 'easy', ?, ?, '[]', 'why', ?)`,
+  ).run(id, motif, fen, JSON.stringify(solution), rating);
 }
 
 function addCard(expectedUci = "d2d4"): number {
@@ -1017,5 +1023,85 @@ describe("hint", () => {
     await activity.startTraining({ mode: "srs" });
     await activity.trainingShowSolution();
     expect(await code(activity.trainingHint())).toBe("item_finished");
+  });
+});
+
+describe("move list, progress and rating", () => {
+  it("carries the played line and the wrong tries beside the ply they were graded at", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    expect(start).toMatchObject({ moves: [], wrong_tries: [], queue_outcomes: ["current"] });
+    const wrong = training(await activity.trainingTry("f4e5", start.activity_id));
+    expect(wrong.wrong_tries).toEqual([{ ply: 0, uci: "f4e5", san: "Be5" }]);
+    expect(wrong.moves).toEqual([]);
+    const mid = training(await activity.trainingTry("b5c7", start.activity_id));
+    expect(mid.moves).toEqual([
+      { ply: 0, uci: "b5c7", san: "Nxc7+", by: "student" },
+      { ply: 1, uci: "e8f8", san: "Kf8", by: "reply" },
+    ]);
+    const done = training(await activity.trainingTry("a1c1", start.activity_id));
+    expect((done.moves ?? []).map((move) => move.uci)).toEqual(["b5c7", "e8f8", "a1c1"]);
+    expect((done.moves ?? []).at(-1)).toMatchObject({ ply: 2, by: "student" });
+    expect(done.wrong_tries).toEqual([{ ply: 0, uci: "f4e5", san: "Be5" }]);
+  });
+
+  it("keeps the line at the step a given-up puzzle stopped on", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    await activity.trainingTry("b5c7", start.activity_id);
+    const given = training(await activity.trainingShowSolution(start.activity_id));
+    expect((given.moves ?? []).map((move) => move.uci)).toEqual(["b5c7", "e8f8"]);
+    expect(given.solution_line).toEqual(["a1c1"]);
+  });
+
+  it("holds a card's right answer as its one-move line, with the wrong tries beside it", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "srs" }));
+    await activity.trainingTry("e2e4", start.activity_id);
+    const done = training(await activity.trainingTry("d2d4", start.activity_id));
+    expect(done.moves).toEqual([{ ply: 0, uci: "d2d4", san: "d4", by: "student" }]);
+    expect(done.wrong_tries).toEqual([{ ply: 0, uci: "e2e4", san: "e4" }]);
+  });
+
+  it("marks each queue position as the run moves on", async () => {
+    addPuzzle("b1", "fork", BACK_RANK, ["a1a8"]);
+    addPuzzle("b2", "fork", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    expect(start.queue_outcomes).toEqual(["current", "pending"]);
+    const solved = training(await activity.trainingTry("a1a8", start.activity_id));
+    expect(solved.queue_outcomes).toEqual(["solved", "pending"]);
+    const second = training(await activity.nextTrainingItem(start.activity_id));
+    expect(second.queue_outcomes).toEqual(["solved", "current"]);
+    const given = training(await activity.trainingShowSolution(start.activity_id));
+    expect(given.queue_outcomes).toEqual(["solved", "failed"]);
+  });
+
+  it("moves the student's rating on a rated puzzle and leaves it alone on an unrated one", async () => {
+    addPuzzle("r1", "fork", BACK_RANK, ["a1a8"], 1400);
+    addPuzzle("u1", "pin", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    expect(start).toMatchObject({ student_rating: 1200, rating_change: null });
+    expect(start.item).toMatchObject({ kind: "puzzle", rating: 1400 });
+    const solved = training(await activity.trainingTry("a1a8", start.activity_id));
+    expect(solved).toMatchObject({ student_rating: 1224, rating_change: 24 });
+    await activity.endTraining();
+    const unrated = training(await activity.startTraining({ mode: "puzzles", motif: "pin" }));
+    expect(unrated.item).toMatchObject({ kind: "puzzle", rating: null });
+    const done = training(await activity.trainingTry("a1a8", unrated.activity_id));
+    expect(done).toMatchObject({ student_rating: 1224, rating_change: null });
+  });
+
+  it("counts a hinted solve as a loss for the rating", async () => {
+    addPuzzle("r1", "fork", BACK_RANK, ["a1a8"], 1200);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    await activity.trainingHint(start.activity_id);
+    const solved = training(await activity.trainingTry("a1a8", start.activity_id));
+    expect(solved).toMatchObject({ status: "solved", student_rating: 1184, rating_change: -16 });
   });
 });

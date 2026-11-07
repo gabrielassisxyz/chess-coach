@@ -140,6 +140,8 @@ export interface StoredRunItem {
   id: number | string;
 }
 
+export type ItemOutcome = "solved" | "failed";
+
 export interface TrainingRunRow {
   id: number;
   mode: "srs" | "puzzles" | "openings";
@@ -150,6 +152,8 @@ export interface TrainingRunRow {
   position: number;
   solved: number;
   failed: number;
+  // One entry per answered item, in queue order.
+  outcomes: ItemOutcome[];
   currentJson: string;
   startedAt: string;
   updatedAt: string;
@@ -159,6 +163,7 @@ export interface RunProgress {
   position: number;
   solved: number;
   failed: number;
+  outcomes: ItemOutcome[];
   currentJson: string;
   updatedAt: string;
 }
@@ -170,9 +175,9 @@ export function insertTrainingRun(
   const row = db
     .prepare(
       `INSERT INTO training_runs (mode, motif, color, size, items_json, position, solved, failed,
-         current_json, started_at, updated_at)
+         outcomes_json, current_json, started_at, updated_at)
        VALUES (@mode, @motif, @color, @size, @itemsJson, @position, @solved, @failed,
-         @currentJson, @startedAt, @startedAt) RETURNING id`,
+         @outcomesJson, @currentJson, @startedAt, @startedAt) RETURNING id`,
     )
     .get({
       mode: run.mode,
@@ -183,6 +188,7 @@ export function insertTrainingRun(
       position: run.position,
       solved: run.solved,
       failed: run.failed,
+      outcomesJson: JSON.stringify(run.outcomes),
       currentJson: run.currentJson,
       startedAt: run.startedAt,
     }) as { id: number };
@@ -192,8 +198,17 @@ export function insertTrainingRun(
 export function saveTrainingRun(db: Database, runId: number, progress: RunProgress): void {
   db.prepare(
     `UPDATE training_runs SET position = @position, solved = @solved, failed = @failed,
-       current_json = @currentJson, updated_at = @updatedAt WHERE id = @runId`,
-  ).run({ ...progress, runId });
+       outcomes_json = @outcomesJson, current_json = @currentJson, updated_at = @updatedAt
+     WHERE id = @runId`,
+  ).run({
+    position: progress.position,
+    solved: progress.solved,
+    failed: progress.failed,
+    outcomesJson: JSON.stringify(progress.outcomes),
+    currentJson: progress.currentJson,
+    updatedAt: progress.updatedAt,
+    runId,
+  });
 }
 
 // Only an open run is closed, so the first reason recorded is the one that stays.
@@ -226,6 +241,7 @@ interface TrainingRunDbRow {
   position: number;
   solved: number;
   failed: number;
+  outcomes_json: string;
   current_json: string;
   started_at: string;
   updated_at: string;
@@ -246,6 +262,7 @@ export function findOpenTrainingRun(db: Database): TrainingRunRow | null {
     position: row.position,
     solved: row.solved,
     failed: row.failed,
+    outcomes: JSON.parse(row.outcomes_json) as ItemOutcome[],
     currentJson: row.current_json,
     startedAt: row.started_at,
     updatedAt: row.updated_at,

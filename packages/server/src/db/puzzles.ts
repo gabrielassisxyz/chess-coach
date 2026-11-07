@@ -22,6 +22,8 @@ export interface StoredPuzzle {
   id: string;
   fen: string;
   solution: string[];
+  // The library's difficulty rating; null for a puzzle generated without one (opening drills).
+  rating: number | null;
 }
 
 export interface PuzzleFilter {
@@ -101,11 +103,18 @@ export function listPuzzles(
 }
 
 export function getPuzzle(db: Database, id: string): StoredPuzzle | null {
-  const row = db.prepare("SELECT id, fen, solution_uci FROM puzzles WHERE id = ?").get(id) as
-    | { id: string; fen: string; solution_uci: string }
+  const row = db
+    .prepare("SELECT id, fen, solution_uci, difficulty_rating FROM puzzles WHERE id = ?")
+    .get(id) as
+    | { id: string; fen: string; solution_uci: string; difficulty_rating: number | null }
     | undefined;
   if (!row) return null;
-  return { id: row.id, fen: row.fen, solution: JSON.parse(row.solution_uci) as string[] };
+  return {
+    id: row.id,
+    fen: row.fen,
+    solution: JSON.parse(row.solution_uci) as string[],
+    rating: row.difficulty_rating,
+  };
 }
 
 export interface PuzzleHeader {
