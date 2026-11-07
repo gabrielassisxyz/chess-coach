@@ -237,9 +237,12 @@ describe("panel header wording", () => {
 
 describe("frame styles", () => {
   it("fixes the coach column at 360px open and 32px collapsed", () => {
-    expect(layoutCss).toMatch(/grid-template-columns: 220px minmax\(0, 1fr\) 360px;/);
+    expect(layoutCss).toMatch(/--left-column: 220px;/);
     expect(layoutCss).toMatch(
-      /\.frame\[data-coach="collapsed"\] \{\s*grid-template-columns: 220px minmax\(0, 1fr\) 32px;/,
+      /grid-template-columns: var\(--left-column\) minmax\(0, 1fr\) 360px;/,
+    );
+    expect(layoutCss).toMatch(
+      /\.frame\[data-coach="collapsed"\] \{\s*grid-template-columns: var\(--left-column\) minmax\(0, 1fr\) 32px;/,
     );
   });
 });

@@ -101,16 +101,28 @@
   font-size: var(--text-sm);
 }
 
-/* Left column, board, coach. The board column takes what is left and the stage fits the square into it. */
+/*
+ * Left column, board, coach: three panels on the app surface with the frame's padding around
+ * them and a gap between. The board column takes what is left and the stage fits the square
+ * into it. The left column is 220 on Play and Games; a practice item widens it to the
+ * prototype's 328, because its move list and state card need the room.
+ */
 .frame {
+  --left-column: 220px;
   display: grid;
   flex: 1;
-  grid-template-columns: 220px minmax(0, 1fr) 360px;
+  grid-template-columns: var(--left-column) minmax(0, 1fr) 360px;
+  gap: var(--space-4);
   min-height: 0;
+  padding: var(--space-6);
 }
 
 .frame[data-coach="collapsed"] {
-  grid-template-columns: 220px minmax(0, 1fr) 32px;
+  grid-template-columns: var(--left-column) minmax(0, 1fr) 32px;
+}
+
+.frame:has(.practice-item) {
+  --left-column: 328px;
 }
 
 .stage {
@@ -119,7 +131,6 @@
   justify-content: center;
   min-width: 0;
   min-height: 0;
-  padding: var(--space-4);
   container-type: size;
 }
 
@@ -133,7 +144,6 @@
   flex-direction: column;
   gap: var(--space-4);
   min-height: 0;
-  padding: var(--space-6) var(--space-4);
   overflow-y: auto;
   font-family: var(--font-ui);
 }
@@ -141,7 +151,6 @@
 /* A screen with no board (the game list, the practice chooser) uses the left and board columns together. */
 .screen--wide {
   grid-column: 1 / 3;
-  padding-right: var(--space-6);
 }
 
 .screen__title {
@@ -286,6 +295,8 @@
   .frame[data-coach="collapsed"] {
     display: flex;
     flex-direction: column;
+    gap: 0;
+    padding: 0;
     overflow-x: hidden;
     overflow-y: auto;
   }
@@ -293,7 +304,6 @@
   .frame > .stage {
     order: -1;
     flex: none;
-    padding: 0;
     container-type: inline-size;
   }
 
