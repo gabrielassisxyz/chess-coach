@@ -28,7 +28,7 @@ export const DRILL_SIZES: readonly DrillSize[] = [5, 10, 20];
 export const DEFAULT_DRILL_SIZE: DrillSize = 10;
 
 // Opening drills are their own card, so their puzzles stay out of the motif rows.
-const OPENING_MOTIFS = {
+export const OPENING_MOTIFS = {
   white: "opening-white",
   black: "opening-black",
   italian: "opening-italian",
@@ -185,38 +185,8 @@ const MODE_LABEL: Record<TrainingMode, string> = {
   openings: "Opening drill",
 };
 
-export function breadcrumbOf(training: TrainingActivity, runMotif?: string | null): string {
-  const { item, mode } = training;
-  if (mode === "puzzles" && item.kind === "puzzle") {
-    const count = `${item.position_in_queue} of ${item.queue_length}`;
-    if (runMotif === OPENING_MOTIFS.italian) return `Italian Opening · ${count}`;
-    const chosen = runMotif !== undefined && runMotif !== null && runMotif !== "";
-    if (chosen) return `Puzzles · ${motifLabel(runMotif)}\n${count}`;
-    return `Puzzles\n${count}`;
-  }
-  return `Practice › ${MODE_LABEL[mode]} · ${item.position_in_queue} of ${item.queue_length}`;
-}
-
-// After an Any-motif item ends, its pattern is named below the heading; while it is open,
-// or for a run the student chose, the heading already says what it may.
-export function endedMotifText(
-  training: TrainingActivity,
-  runMotif?: string | null,
-): string | null {
-  if (training.mode !== "puzzles" || training.item.kind !== "puzzle") return null;
-  if (training.status !== "solved" && training.status !== "failed") return null;
-  const chosen = runMotif !== undefined && runMotif !== null && runMotif !== "";
-  if (chosen) return null;
-  return `Motif: ${motifLabel(training.item.motif)}`;
-}
-
 export function resumeLabelOf(paused: PausedTraining): string {
   return `Resume: ${MODE_LABEL[paused.mode]} · ${paused.position + 1} of ${paused.size}`;
-}
-
-export function promptOf(training: TrainingActivity): string {
-  const side = training.item.kind === "card" ? training.item.student_color : training.turn;
-  return `${side === "white" ? "White" : "Black"} to move`;
 }
 
 export function formatElapsed(ms: number): string {

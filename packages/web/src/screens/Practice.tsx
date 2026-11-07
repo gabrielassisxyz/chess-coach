@@ -1,22 +1,21 @@
-import type {
-  ActivityState,
-  DemoActivity,
-  PromotionPiece,
-  TrainingMode,
-} from "@chess-coach/shared";
+import type { ActivityState, DemoActivity, TrainingMode } from "@chess-coach/shared";
 import { useEffect, useRef, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
+import { BoardSettingsPanel } from "../components/BoardSettings.js";
 import { CoachLoginCard } from "../components/CoachLoginCard.js";
 import { EngineMissingCard } from "../components/EngineMissingCard.js";
+import { PracticeColumn, type PracticeColumnActions } from "../components/PracticeColumn.js";
 import { PracticeHub, ResumeCard } from "../components/PracticeHub.js";
-import { PracticeItem, type PracticeItemActions } from "../components/PracticeItem.js";
+import { PuzzleBoardBar } from "../components/PuzzleBoardBar.js";
+import { useElapsed } from "../hooks/useElapsed.js";
 import { type FetchHealth, useHealth } from "../hooks/useHealth.js";
 import { useLoaded } from "../hooks/useLoaded.js";
+import { usePracticeBoard } from "../hooks/usePracticeBoard.js";
 import type { ServerApi } from "../hooks/useServer.js";
+import { useBoardTheme } from "../state/board-theme.js";
 import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
 import { serviceNotice } from "../state/health.js";
 import {
-  boardOf,
   clearLastSession,
   DEFAULT_DRILL_SIZE,
   type DrillSize,
@@ -30,6 +29,7 @@ import {
   trainingOf,
   trainingView,
 } from "../state/practice.js";
+import { stateCardOf } from "../state/practice-item.js";
 import { type FetchProgress, fetchProgressFromServer } from "../state/progress-api.js";
 
 export interface PracticeProps {
@@ -148,6 +148,93 @@ function demoOverTraining(activity: ActivityState | null): DemoActivity | null {
   return null;
 }
 
+// The puzzle column beside the board, the board with its bar, and the settings under it.
+function Item({
+  server,
+  createBoard,
+}: {
+  server: ServerApi;
+  createBoard: BoardFactory | undefined;
+}) {
+  const training = trainingOf(server.activity) as NonNullable<ReturnType<typeof trainingOf>>;
+  const view = trainingView(training);
+  const board = usePracticeBoard(training, server.send);
+  const elapsedMs = useElapsed(training.served_at, view.open);
+  const theme = useBoardTheme();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const activityId = training.activity_id;
+  const exposureId = training.exposure_id;
+  const card = stateCardOf(training, view, board.scratchLine, elapsedMs);
+  const actions: PracticeColumnActions = {
+    showSolution: () => server.send({ type: "show_solution", activity_id: activityId }),
+    rate: (quality) => {
+      if (exposureId) {
+        server.send({
+          type: "rate_card",
+          exposure_id: exposureId,
+          quality,
+          activity_id: activityId,
+        });
+      }
+    },
+    next: () => server.send({ type: "next_training_item", activity_id: activityId }),
+    end: () => server.send({ type: "end_training", activity_id: activityId }),
+    hint: () => server.send({ type: "hint", activity_id: activityId }),
+    toggleScratch: board.toggleScratch,
+    takeBack: board.takeBack,
+    resetLine: board.resetLine,
+  };
+
+  return (
+    <>
+      <PracticeColumn
+        training={training}
+        view={view}
+        actions={actions}
+        card={card}
+        elapsedMs={elapsedMs}
+        scratchLine={board.scratchLine}
+        shownPly={board.shownPly}
+      />
+      <div className="stage">
+        <div className="puzzle-stage">
+          <Board
+            activity={board.activity}
+            onMove={board.move}
+            syncToken={server.errorCount}
+            bothSides={board.bothSides}
+            hintSquare={board.hintSquare}
+            line={board.line}
+            orientation={board.orientation}
+            badge={board.badge}
+            createBoard={createBoard}
+          />
+          <PuzzleBoardBar
+            atStart={board.shownPly === 0}
+            atEnd={board.shownPly >= board.tip}
+            onFirst={() => board.step(0)}
+            onPrevious={() => board.step(board.shownPly - 1)}
+            onNext={() => board.step(board.shownPly + 1)}
+            onLast={() => board.step(board.tip)}
+            scratch={board.scratchLine !== null}
+            onToggleScratch={board.toggleScratch}
+            onFlip={board.flip}
+            settingsOpen={settingsOpen}
+            onToggleSettings={() => setSettingsOpen((open) => !open)}
+          />
+          {settingsOpen ? (
+            <BoardSettingsPanel
+              theme={theme.theme}
+              onChoose={theme.choose}
+              onClose={() => setSettingsOpen(false)}
+            />
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function Practice({
   server,
   createBoard,
@@ -186,23 +273,6 @@ export function Practice({
     }
   }, [sessionTraining]);
 
-  // Free analysis is a client mode on top of the graded position. While it is on, drops go
-  // through `explore` and nothing is graded; leaving it restores the graded drops.
-  const [exploring, setExploring] = useState(false);
-  const servedAt = sessionTraining?.served_at ?? "none";
-  const servedPosition = sessionTraining?.item.position_in_queue ?? 0;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new served item resets explore mode
-  useEffect(() => {
-    setExploring(false);
-  }, [servedAt, servedPosition]);
-  const sessionOpen =
-    sessionTraining != null &&
-    sessionTraining.summary === null &&
-    (sessionTraining.status === "prompt" || sessionTraining.status === "in_progress");
-  useEffect(() => {
-    if (!sessionOpen) setExploring(false);
-  }, [sessionOpen]);
-
   const demo = demoOverTraining(server.activity);
   if (demo) {
     const activityId = demo.activity_id;
@@ -233,8 +303,7 @@ export function Practice({
     );
   }
 
-  const training = trainingOf(server.activity);
-  if (!training) {
+  if (!sessionTraining) {
     return (
       <section className="screen screen--wide practice" aria-label="Practice">
         <Hub
@@ -248,60 +317,5 @@ export function Practice({
     );
   }
 
-  const view = trainingView(training);
-  const activityId = training.activity_id;
-  // Every drop is graded; a wrong one comes back as the same position, which snaps the piece home.
-  const move = (from: string, to: string, promotion?: PromotionPiece): void => {
-    const uci = `${from}${to}${promotion ?? ""}`;
-    if (exploring) {
-      server.send({ type: "explore", kind: "move", uci, activity_id: activityId });
-      return;
-    }
-    server.send({ type: "try_move", uci, activity_id: activityId });
-  };
-  const exposureId = training.exposure_id;
-  const explored = training.exploring.line_san.length > 0;
-  const actions: PracticeItemActions = {
-    showSolution: () => {
-      setExploring(false);
-      server.send({ type: "show_solution", activity_id: activityId });
-    },
-    rate: (quality) => {
-      if (exposureId) {
-        server.send({
-          type: "rate_card",
-          exposure_id: exposureId,
-          quality,
-          activity_id: activityId,
-        });
-      }
-    },
-    next: () => server.send({ type: "next_training_item", activity_id: activityId }),
-    end: () => server.send({ type: "end_training", activity_id: activityId }),
-    hint: () => server.send({ type: "hint", activity_id: activityId }),
-    startExplore: () => setExploring(true),
-    takeBack: () => server.send({ type: "explore", kind: "undo", activity_id: activityId }),
-    resetLine: () => server.send({ type: "explore", kind: "reset", activity_id: activityId }),
-    backToPuzzle: () => {
-      if (explored) server.send({ type: "explore", kind: "reset", activity_id: activityId });
-      setExploring(false);
-    },
-  };
-
-  return (
-    <>
-      <PracticeItem training={training} view={view} actions={actions} exploring={exploring} />
-      <div className="stage">
-        <Board
-          activity={boardOf(training)}
-          onMove={move}
-          syncToken={server.errorCount}
-          bothSides={exploring}
-          hintSquare={training.hint_square}
-          line={training.gave_up ? training.solution_line : null}
-          createBoard={createBoard}
-        />
-      </div>
-    </>
-  );
+  return <Item server={server} createBoard={createBoard} />;
 }

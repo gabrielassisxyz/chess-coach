@@ -46,8 +46,12 @@ body {
 
 .chat__state {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-2);
   font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .coach--collapsed {

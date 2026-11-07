@@ -212,49 +212,6 @@
   padding: var(--space-4);
 }
 
-.practice__crumb {
-  font-size: var(--text-lg);
-  overflow-wrap: anywhere;
-}
-
-.practice__crumb-count {
-  display: block;
-  font-size: var(--text-sm);
-  color: var(--text-2);
-}
-
-.practice__prompt {
-  margin: 0;
-  font-size: var(--text-sm);
-}
-
-.practice__verdict {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.practice__verdict p {
-  margin: 0;
-}
-
-.practice__verdict-line {
-  font-family: var(--font-mono);
-  font-weight: 500;
-}
-
-.practice__expected {
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-}
-
-.practice__summary {
-  margin: 0;
-  font-size: var(--text-lg);
-  font-variant-numeric: tabular-nums;
-}
-
 .practice__trail {
   display: flex;
   flex-direction: column;
@@ -305,19 +262,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.practice__timer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.practice__elapsed {
-  margin-right: auto;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
 .practice__rating {
   display: flex;
   flex-direction: column;
@@ -362,4 +306,529 @@
 .practice__grade-days {
   color: var(--text-2);
   font-size: var(--text-xs);
+}
+
+/*
+ * The puzzle column: everything about the item, stacked by how often it is read. The move list is
+ * the one block that stretches; the rest keep their height, so the list is never squeezed out.
+ */
+.practice-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.practice-item__head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.practice-item__title-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.practice-item__title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: var(--leading-body);
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.practice-item__tag {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.practice-item__elapsed {
+  margin-left: auto;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.button--quiet {
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.button--quiet:hover {
+  color: var(--text-1);
+}
+
+.practice-item__end {
+  padding: 0 var(--space-1);
+  font-size: var(--text-xs);
+}
+
+/* One segment per queue position: solved, missed, the current item, and what is still to come. */
+.practice-item__progress {
+  display: flex;
+  gap: 3px;
+  height: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.practice-item__progress li {
+  flex: 1;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.practice-item__progress li[data-outcome="solved"] {
+  background: var(--status-ready);
+}
+
+.practice-item__progress li[data-outcome="failed"] {
+  background: var(--status-error);
+}
+
+.practice-item__progress li[data-outcome="current"] {
+  background: var(--accent);
+}
+
+.practice-item__ratings {
+  display: grid;
+  flex: none;
+  grid-template-columns: 1fr 1fr;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.practice-item__rating {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px var(--space-4);
+}
+
+.practice-item__rating:first-child {
+  border-right: 1px solid var(--border);
+}
+
+.practice-item__rating dt {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.practice-item__rating dd {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  line-height: var(--leading-title);
+  font-variant-numeric: tabular-nums;
+}
+
+.practice-item__rating--hidden {
+  color: var(--text-3);
+}
+
+.practice-item__rating-note {
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+.practice-item__rating-change {
+  font-size: var(--text-xs);
+}
+
+.practice-item__rating-change[data-direction="up"] {
+  color: var(--quality-best);
+}
+
+.practice-item__rating-change[data-direction="down"] {
+  color: var(--quality-blunder);
+}
+
+.practice-item__engine {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.practice-item__engine .icon-button {
+  margin-left: auto;
+}
+
+/* A 32 by 18 switch: the knob slides right and the track takes the accent when on. */
+.toggle {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  cursor: pointer;
+}
+
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.toggle[aria-checked="true"] {
+  background: var(--accent);
+}
+
+.toggle[aria-checked="true"]::after {
+  background: var(--on-accent);
+  transform: translateX(14px);
+}
+
+.toggle:disabled {
+  cursor: not-allowed;
+}
+
+.icon-button--quiet {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  color: var(--text-2);
+}
+
+.icon-button:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.icon-button:disabled:hover {
+  background: transparent;
+}
+
+/* The move list: the item's line with a mark on the student's right moves, the wrong tries as
+ * red variations under the ply they were tried at, and the shown ply highlighted. */
+.moves-list {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-2);
+  overflow-y: auto;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.moves-list__line {
+  display: grid;
+  grid-template-columns: 2rem 1fr 1fr;
+  align-items: stretch;
+}
+
+.moves-list__number {
+  padding-left: var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 28px;
+}
+
+.moves-list__cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.moves-list__cell[data-current="true"] {
+  background: var(--surface-2);
+}
+
+.moves-list__cell[data-by="student"] {
+  color: var(--quality-best);
+}
+
+.moves-list__cell[data-by="solution"],
+.moves-list__cell--ellipsis {
+  color: var(--text-3);
+}
+
+.moves-list__mark {
+  font-size: var(--text-xs);
+}
+
+.moves-list__variation {
+  padding: 2px var(--space-2) 6px 2.5rem;
+  color: var(--quality-blunder);
+  font-size: var(--text-xs);
+  line-height: 16px;
+}
+
+/* The state card: one title in a colour and a word, the body under it, the moment's actions. */
+.state-card {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.state-card[data-tone="wrong"] {
+  background: var(--quality-blunder-bg);
+}
+
+.state-card[data-tone="right"] {
+  background: var(--quality-best-bg);
+}
+
+.state-card__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.state-card__icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--on-status);
+}
+
+.state-card[data-tone="neutral"] .state-card__icon {
+  border: 2px solid var(--accent);
+}
+
+.state-card__icon-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.state-card[data-tone="wrong"] .state-card__icon {
+  background: var(--status-error);
+}
+
+.state-card[data-tone="right"] .state-card__icon {
+  background: var(--status-ready);
+}
+
+.state-card__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.state-card__title,
+.state-card__body {
+  margin: 0;
+}
+
+.state-card__title {
+  font-size: var(--text-md);
+  font-weight: 500;
+  line-height: var(--leading-heading);
+}
+
+.state-card[data-tone="wrong"] .state-card__title {
+  color: var(--quality-blunder);
+}
+
+.state-card[data-tone="right"] .state-card__title {
+  color: var(--quality-best);
+}
+
+.state-card__body {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-label);
+  overflow-wrap: anywhere;
+}
+
+.state-card[data-tone="wrong"] .state-card__body,
+.state-card[data-tone="right"] .state-card__body {
+  color: var(--text-1);
+}
+
+.state-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.state-card__actions--even .button {
+  flex: 1;
+}
+
+.state-card .button {
+  height: 32px;
+  padding: 0 var(--space-3);
+}
+
+/* On a tinted card the hairline and the quiet text take the card's hue, so they sit in it. */
+.state-card[data-tone="wrong"] .button:not(.button--primary) {
+  border-color: color-mix(in srgb, var(--quality-blunder) 40%, var(--border));
+}
+
+.state-card[data-tone="wrong"] .button--quiet {
+  border-color: transparent;
+  color: color-mix(in srgb, var(--quality-blunder) 55%, var(--text-2));
+}
+
+.state-card[data-tone="right"] .button:not(.button--primary) {
+  border-color: color-mix(in srgb, var(--quality-best) 40%, var(--border));
+}
+
+.state-card[data-tone="right"] .button--quiet {
+  border-color: transparent;
+  color: color-mix(in srgb, var(--quality-best) 55%, var(--text-2));
+}
+
+.state-card .button--primary.state-card__continue {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 40px;
+  border: 0;
+}
+
+.state-card .practice__trail {
+  padding: var(--space-2) var(--space-3);
+}
+
+/* The board column: the square, then the 40 px bar under it, together as wide as the board. */
+.puzzle-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(100cqw, 100cqh - 48px);
+}
+
+.puzzle-stage .board {
+  width: 100%;
+}
+
+.board-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 40px;
+}
+
+.board-bar__hint {
+  margin-left: var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.board-bar__scratch {
+  margin-left: auto;
+}
+
+/* A narrow board column drops the key hint before the buttons would overflow the board. */
+@container (max-width: 440px) {
+  .board-bar__hint {
+    display: none;
+  }
+}
+
+.board-bar__scratch[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+/* The mark on the square a piece just landed on: a 28 px disc ringed by the panel colour. */
+.board__badge {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--surface-1);
+  border-radius: 50%;
+  color: var(--on-status);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.board__badge[data-kind="check"] {
+  background: var(--status-ready);
+}
+
+.board__badge[data-kind="cross"] {
+  background: var(--status-error);
+}
+
+@media (max-width: 899px) {
+  .frame > .practice-item {
+    border: 0;
+    border-radius: 0;
+  }
+
+  .moves-list {
+    flex: none;
+    max-height: 12rem;
+  }
+
+  .puzzle-stage {
+    width: 100%;
+  }
+
+  .board-bar {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 0 var(--space-4);
+  }
+
+  .board-bar .icon-button,
+  .state-card .button,
+  .practice-item__end {
+    min-height: 44px;
+  }
+
+  .state-card .button--primary.state-card__continue {
+    height: 44px;
+  }
 }

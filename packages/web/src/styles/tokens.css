@@ -54,6 +54,8 @@
   --status-ready: #35b283;
   --status-busy: #d6a62a;
   --status-error: #e05858;
+  /* The glyph on a status-coloured mark: light in both themes, since the marks keep their colour. */
+  --on-status: #f7f8fa;
   --error-border: #e05858;
   --error-text: var(--quality-blunder);
 

@@ -153,7 +153,7 @@ describe("Board configuration", () => {
         createBoard={recorder.factory}
       />,
     );
-    expect(recorder.sets.at(-1)?.highlight?.custom).toBeUndefined();
+    expect(recorder.sets.at(-1)?.highlight?.custom?.size).toBe(0);
   });
 });
 
