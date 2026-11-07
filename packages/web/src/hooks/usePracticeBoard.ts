@@ -118,6 +118,8 @@ export function usePracticeBoard(
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         step(shownPly + 1);
+      } else if (event.key === "f") {
+        setFlipped((on) => !on);
       }
     };
     window.addEventListener("keydown", onKey);

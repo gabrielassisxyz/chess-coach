@@ -746,10 +746,180 @@
 
 /* The board column: the square, then the 40 px bar under it, together as wide as the board. */
 .puzzle-stage {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   width: min(100cqw, 100cqh - 48px);
+}
+
+/* The settings popover: 320 wide, anchored over the bar's right end, a panel with no shadow. */
+.popover {
+  position: absolute;
+  right: 0;
+  bottom: 48px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  font-size: var(--text-sm);
+}
+
+.popover__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 44px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.popover__head .icon-button {
+  margin-left: auto;
+}
+
+.popover__title {
+  font-weight: 500;
+}
+
+.popover__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.popover__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.popover__label {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.popover__row .popover__label {
+  flex: 1;
+  color: var(--text-1);
+  font-size: var(--text-sm);
+}
+
+.popover__themes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.popover__themes legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+}
+
+.popover__rule {
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--border);
+}
+
+.popover__foot {
+  padding: 10px var(--space-4);
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+
+.swatch-choice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.swatch-choice[data-selected="true"] {
+  color: var(--text-1);
+}
+
+/* The radio itself is hidden; the swatch and the name are its label, and the ring marks the choice. */
+.swatch-choice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.swatch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  height: 36px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+.swatch-choice[data-selected="true"] .swatch,
+.swatch-choice:has(input:focus-visible) .swatch {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.swatch__light {
+  background: var(--board-light);
+}
+
+.swatch__dark {
+  background: var(--board-dark);
+}
+
+/* A segmented control: one inset track, the chosen option raised on the border tone. */
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+}
+
+.segmented__option {
+  padding: var(--space-1) 10px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.segmented__option[aria-checked="true"] {
+  background: var(--border);
+  color: var(--text-1);
+  font-weight: 500;
 }
 
 /* Chessground's edge coordinates run past the board's right edge, which would widen the column. */
@@ -830,6 +1000,13 @@
     flex-wrap: wrap;
     height: auto;
     padding: 0 var(--space-4);
+  }
+
+  .popover {
+    position: fixed;
+    inset: auto 0 0;
+    width: auto;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
   }
 
   .board-bar .icon-button,

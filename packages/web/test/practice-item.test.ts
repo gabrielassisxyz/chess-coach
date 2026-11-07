@@ -104,9 +104,7 @@ describe("moveRowsOf", () => {
     expect(rows[0]?.number).toBe(31);
     expect(rows[0]?.white).toBe("ellipsis");
     expect(rows[0]?.black).toMatchObject({ san: "Be2+", by: "student" });
-    expect(rows[0]?.black !== "ellipsis" && rows[0]?.black?.wrongTries).toEqual([
-      { ply: 0, uci: "h5f3", san: "Bf3" },
-    ]);
+    expect(rows[0]?.black?.wrongTries).toEqual([{ ply: 0, uci: "h5f3", san: "Bf3" }]);
     expect(rows[1]).toMatchObject({ number: 32, white: { san: "Kd4", by: "reply" } });
     expect(rows[1]?.black).toMatchObject({ by: "pending", ply: 2 });
   });

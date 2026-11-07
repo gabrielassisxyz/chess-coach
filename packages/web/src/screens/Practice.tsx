@@ -1,7 +1,12 @@
-import type { ActivityState, DemoActivity, TrainingMode } from "@chess-coach/shared";
-import { useEffect, useRef, useState } from "react";
+import type {
+  ActivityState,
+  DemoActivity,
+  TrainingActivity,
+  TrainingMode,
+} from "@chess-coach/shared";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
-import { BoardSettingsPanel } from "../components/BoardSettings.js";
+import { BoardDisplayPopover } from "../components/BoardDisplayPopover.js";
 import { CoachLoginCard } from "../components/CoachLoginCard.js";
 import { EngineMissingCard } from "../components/EngineMissingCard.js";
 import { PracticeColumn, type PracticeColumnActions } from "../components/PracticeColumn.js";
@@ -12,6 +17,7 @@ import { type FetchHealth, useHealth } from "../hooks/useHealth.js";
 import { useLoaded } from "../hooks/useLoaded.js";
 import { usePracticeBoard } from "../hooks/usePracticeBoard.js";
 import type { ServerApi } from "../hooks/useServer.js";
+import { useBoardPrefs } from "../state/board-prefs.js";
 import { useBoardTheme } from "../state/board-theme.js";
 import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
 import { serviceNotice } from "../state/health.js";
@@ -26,6 +32,7 @@ import {
   OFFLINE_START_TEXT,
   saveLastSession,
   startFailureText,
+  type TrainingView,
   trainingOf,
   trainingView,
 } from "../state/practice.js";
@@ -143,6 +150,58 @@ function Hub({
   );
 }
 
+function typing(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+  );
+}
+
+// h asks for a hint while the item is open; space continues once it ended. The arrows and f
+// live with the board state, which owns stepping and the orientation.
+function useItemShortcuts(view: TrainingView, actions: PracticeColumnActions): void {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.ctrlKey || event.metaKey || event.altKey || typing(event.target)) return;
+      if (event.key === "h" && view.open) {
+        event.preventDefault();
+        actions.hint();
+      } else if (event.key === " " && !view.open && view.canAdvance && !view.summary) {
+        event.preventDefault();
+        actions.next();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view.open, view.canAdvance, view.summary, actions]);
+}
+
+// With the setting on, a puzzle that ended moves on by itself once its mark has settled. A card
+// waits for its rating, so it never auto-advances.
+export const AUTO_NEXT_MS = 1200;
+function useAutoNext(
+  training: TrainingActivity,
+  view: TrainingView,
+  enabled: boolean,
+  next: () => void,
+): void {
+  const key = `${training.served_at}:${training.item.position_in_queue}:${training.status}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the key names the ended item
+  useEffect(() => {
+    if (
+      !enabled ||
+      view.open ||
+      view.summary ||
+      training.item.kind === "card" ||
+      !view.canAdvance
+    ) {
+      return;
+    }
+    const timer = setTimeout(next, AUTO_NEXT_MS);
+    return () => clearTimeout(timer);
+  }, [key, enabled]);
+}
+
 function demoOverTraining(activity: ActivityState | null): DemoActivity | null {
   if (activity?.kind === "demo" && activity.returns_to === "training") return activity;
   return null;
@@ -161,7 +220,9 @@ function Item({
   const board = usePracticeBoard(training, server.send);
   const elapsedMs = useElapsed(training.served_at, view.open);
   const theme = useBoardTheme();
+  const { prefs, set: setPrefs } = useBoardPrefs();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const activityId = training.activity_id;
   const exposureId = training.exposure_id;
   const card = stateCardOf(training, view, board.scratchLine, elapsedMs);
@@ -184,6 +245,8 @@ function Item({
     takeBack: board.takeBack,
     resetLine: board.resetLine,
   };
+  useItemShortcuts(view, actions);
+  useAutoNext(training, view, prefs.autoNext, actions.next);
 
   return (
     <>
@@ -207,6 +270,7 @@ function Item({
             line={board.line}
             orientation={board.orientation}
             badge={board.badge}
+            prefs={prefs}
             createBoard={createBoard}
           />
           <PuzzleBoardBar
@@ -223,10 +287,12 @@ function Item({
             onToggleSettings={() => setSettingsOpen((open) => !open)}
           />
           {settingsOpen ? (
-            <BoardSettingsPanel
+            <BoardDisplayPopover
               theme={theme.theme}
-              onChoose={theme.choose}
-              onClose={() => setSettingsOpen(false)}
+              onTheme={theme.choose}
+              prefs={prefs}
+              onPrefs={setPrefs}
+              onClose={closeSettings}
             />
           ) : null}
         </div>

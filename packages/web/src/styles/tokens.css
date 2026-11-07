@@ -130,19 +130,28 @@
   --quality-blunder-bg: #43252a;
 }
 
-:root[data-board="chesscom"] {
+/* A swatch shows a theme's two squares without the root wearing it; Lichess is the base set. */
+.swatch[data-board="lichess"] {
+  --board-light: #f0d9b5;
+  --board-dark: #b58863;
+}
+
+:root[data-board="chesscom"],
+.swatch[data-board="chesscom"] {
   --board-light: #ebecd0;
   --board-dark: #779556;
   --board-last-move: rgba(255, 255, 51, 0.5);
 }
 
-:root[data-board="slate"] {
+:root[data-board="slate"],
+.swatch[data-board="slate"] {
   --board-light: #dee3e6;
   --board-dark: #8ca2ad;
   --board-last-move: rgba(242, 196, 70, 0.5);
 }
 
-:root[data-board="teal"] {
+:root[data-board="teal"],
+.swatch[data-board="teal"] {
   --board-light: #425a5a;
   --board-dark: #35484b;
   --board-last-move: #043f42;

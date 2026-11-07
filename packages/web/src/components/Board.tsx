@@ -14,6 +14,7 @@ import type { Api } from "@lichess-org/chessground/api";
 import type { Config } from "@lichess-org/chessground/config";
 import type { Color, Key } from "@lichess-org/chessground/types";
 import { useEffect, useRef, useState } from "react";
+import { ANIMATION_MS, type BoardPrefs, DEFAULT_BOARD_PREFS } from "../state/board-prefs.js";
 import {
   checkedColor,
   destsFrom,
@@ -43,6 +44,8 @@ export interface BoardProps {
   orientation?: Color | undefined;
   // A right or wrong mark on a square, drawn over the board.
   badge?: SquareBadge | null | undefined;
+  // Coordinates, animation and highlights, the same set on every screen.
+  prefs?: BoardPrefs | undefined;
   createBoard?: BoardFactory | undefined;
 }
 
@@ -67,6 +70,7 @@ function toConfig(
   shown: LineStep | null,
   hintSquare: string | null | undefined,
   orientation: Color,
+  prefs: BoardPrefs,
 ): Config {
   const last = shown ?? activity.last_move;
   const lastMove = last ? [last.from, last.to] : [];
@@ -74,6 +78,12 @@ function toConfig(
   return {
     fen,
     orientation,
+    coordinates: prefs.coordinates !== "off",
+    coordinatesOnSquares: prefs.coordinates === "inside",
+    animation: {
+      enabled: prefs.animation !== "off",
+      duration: ANIMATION_MS[prefs.animation],
+    },
     turnColor: shown ? turnOf(shown.fen) : activity.turn,
     check: checkedColor(fen),
     lastMove: lastMove as Key[],
@@ -87,11 +97,12 @@ function toConfig(
           : activity.orientation
         : undefined) as Color,
       dests: destsFrom(activity.legal_moves),
+      showDests: prefs.legalMoves,
     },
     // Always a map: chessground keeps the previous one when the key is absent, so a cleared
     // hint would stay on the square into the next item.
     highlight: {
-      lastMove: true,
+      lastMove: prefs.lastMove,
       check: true,
       custom: new Map(hintSquare ? [[hintSquare as Key, "hint"]] : []),
     },
@@ -160,6 +171,7 @@ export function Board({
   hintSquare = null,
   orientation,
   badge = null,
+  prefs = DEFAULT_BOARD_PREFS,
   createBoard = Chessground,
 }: BoardProps) {
   const facing = orientation ?? activity.orientation;
@@ -170,8 +182,8 @@ export function Board({
   const shown = useLinePlayback(activity.fen, line);
 
   // Chessground callbacks are registered once at creation, so they read the latest props here.
-  const latest = useRef({ activity, onMove, bothSides, hintSquare, facing });
-  latest.current = { activity, onMove, bothSides, hintSquare, facing };
+  const latest = useRef({ activity, onMove, bothSides, hintSquare, facing, prefs });
+  latest.current = { activity, onMove, bothSides, hintSquare, facing, prefs };
 
   useEffect(() => {
     const element = elementRef.current;
@@ -183,6 +195,7 @@ export function Board({
         null,
         latest.current.hintSquare,
         latest.current.facing,
+        latest.current.prefs,
       ),
       draggable: { enabled: false },
       premovable: { enabled: false },
@@ -208,8 +221,8 @@ export function Board({
   // its position, since the step object is rebuilt on every render.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    apiRef.current?.set(toConfig(activity, bothSides, shown, hintSquare, facing));
-  }, [activity, bothSides, hintSquare, facing, syncToken, resync, shown?.fen]);
+    apiRef.current?.set(toConfig(activity, bothSides, shown, hintSquare, facing, prefs));
+  }, [activity, bothSides, hintSquare, facing, prefs, syncToken, resync, shown?.fen]);
 
   const choose = (piece: PromotionPiece): void => {
     if (!pending) return;
