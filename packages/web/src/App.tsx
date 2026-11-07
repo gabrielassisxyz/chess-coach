@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Chat } from "./components/Chat.js";
 import { CoachActions } from "./components/CoachActions.js";
 import { NoticeBanner } from "./components/NoticeBanner.js";
+import { PracticeCoachActions } from "./components/PracticeCoachActions.js";
 import { StatusChip } from "./components/StatusChip.js";
 import { type FetchHealth, useHealth } from "./hooks/useHealth.js";
 import { useServer } from "./hooks/useServer.js";
@@ -11,7 +12,8 @@ import { Play } from "./screens/Play.js";
 import { Practice } from "./screens/Practice.js";
 import { DEFAULT_COACH_IDLE, useCoachPanel, useTabUnread } from "./state/coach-panel.js";
 import { serviceNotice } from "./state/health.js";
-import { practiceIdleLabel, practiceWaitingLabel } from "./state/practice.js";
+import { practiceIdleLabel, practiceWaitingLabel, trainingOf } from "./state/practice.js";
+import { contextLineOf } from "./state/practice-item.js";
 import { useTheme } from "./state/theme.js";
 
 const SCREENS = ["Play", "Games", "Practice"] as const;
@@ -50,6 +52,12 @@ export function App({ fetchHealth }: AppProps = {}) {
       ? (practiceWaitingLabel(server.activity, server.practiceReplyPending) ??
         practiceIdleLabel(server.activity))
       : coachIdle) ?? DEFAULT_COACH_IDLE;
+
+  const practiceItem = trainingOf(server.activity);
+  const contextLine =
+    screen === "Practice" && practiceItem && practiceItem.summary === null
+      ? contextLineOf(practiceItem, practiceItem.run_motif ?? null)
+      : null;
 
   return (
     <div className="shell">
@@ -105,7 +113,14 @@ export function App({ fetchHealth }: AppProps = {}) {
           unread={coach.unread}
           onToggle={coach.toggle}
           idleLabel={idleLabel}
-          actions={screen === "Play" ? <CoachActions server={server} /> : null}
+          contextLine={contextLine}
+          actions={
+            screen === "Play" ? (
+              <CoachActions server={server} />
+            ) : screen === "Practice" ? (
+              <PracticeCoachActions server={server} />
+            ) : null
+          }
         />
       </main>
     </div>

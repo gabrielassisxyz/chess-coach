@@ -44,6 +44,36 @@ export function headingOf(training: TrainingActivity, runMotif: string | null): 
   return { title, tag: ended ? motifLabel(item.motif) : null };
 }
 
+// The line pinned over the conversation: which item is on the board and which side the student
+// plays, with the pattern only when the heading would show it too.
+export function contextLineOf(training: TrainingActivity, runMotif: string | null): string {
+  const heading = headingOf(training, runMotif);
+  const [kind, position] = heading.title.split(" ");
+  const parts = [`${kind} ${position}`];
+  if (heading.tag) parts.push(heading.tag);
+  parts.push(`you play ${sideWord(training.orientation)}`);
+  return parts.join(" \u00b7 ");
+}
+
+export interface WhyChip {
+  key: string;
+  text: string;
+}
+
+// Offered once an item ended after at least one wrong try, about the first wrong move.
+export function whyChipOf(training: TrainingActivity): WhyChip | null {
+  const ended =
+    training.status === "solved" || training.status === "failed" || training.status === "rated";
+  if (!ended) return null;
+  const wrong = wrongTriesOf(training)[0];
+  if (!wrong) return null;
+  const san = wrong.san ?? wrong.uci;
+  return {
+    key: `${training.served_at}:${training.item.position_in_queue}`,
+    text: `Por que ${san} foi ruim?`,
+  };
+}
+
 export const movesOf = (training: TrainingActivity): PlayedMove[] => training.moves ?? [];
 export const wrongTriesOf = (training: TrainingActivity): WrongTry[] => training.wrong_tries ?? [];
 

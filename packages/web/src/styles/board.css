@@ -46,12 +46,18 @@ cg-board {
   text-transform: none;
 }
 
-.cg-wrap coords.squares coord:nth-child(odd),
+.cg-wrap coords.squares coord:nth-child(odd) {
+  color: var(--board-light);
+}
+
+.cg-wrap coords.squares coord:nth-child(even) {
+  color: var(--board-dark);
+}
+
 .cg-wrap coords.squares.black coord:nth-child(even) {
   color: var(--board-light);
 }
 
-.cg-wrap coords.squares coord:nth-child(even),
 .cg-wrap coords.squares.black coord:nth-child(odd) {
   color: var(--board-dark);
 }

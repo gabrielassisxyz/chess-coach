@@ -154,9 +154,13 @@ export interface TrainingView {
 export function practiceIdleLabel(activity: ActivityState | null): string | undefined {
   const training = trainingOf(activity);
   if (!training || training.summary !== null) return undefined;
-  return training.status === "prompt" || training.status === "in_progress"
-    ? "waiting for your answer"
-    : undefined;
+  if (training.status === "prompt" || training.status === "in_progress") {
+    return "waiting for your answer";
+  }
+  const card = training.item.kind === "card";
+  if (training.status === "rated") return "card rated";
+  if (training.status === "failed") return "solution shown";
+  return card ? "card answered" : "puzzle solved";
 }
 
 export const PRACTICE_WAITING_LABEL = "o coach está analisando sua resposta";

@@ -68,7 +68,8 @@ describe("the coach panel while an item is open", () => {
     expect(practiceIdleLabel(null)).toBeUndefined();
     expect(practiceIdleLabel(puzzle())).toBe("waiting for your answer");
     expect(practiceIdleLabel(puzzle({ status: "in_progress" }))).toBe("waiting for your answer");
-    expect(practiceIdleLabel(puzzle({ status: "solved" }))).toBeUndefined();
+    expect(practiceIdleLabel(puzzle({ status: "solved" }))).toBe("puzzle solved");
+    expect(practiceIdleLabel(puzzle({ status: "failed" }))).toBe("solution shown");
     expect(practiceIdleLabel(puzzle({ summary: { solved: 1, failed: 0 } }))).toBeUndefined();
   });
 
@@ -212,7 +213,7 @@ describe("the waiting phrase in the panel header", () => {
         event: { kind: "turn_end", usage: { input_tokens: 1, output_tokens: 1 } },
       }),
     );
-    expect(screen.getByText("watching the board")).toBeTruthy();
+    expect(screen.getByText("puzzle solved")).toBeTruthy();
     expect(screen.queryByText(PRACTICE_WAITING_LABEL)).toBeNull();
   });
 });
