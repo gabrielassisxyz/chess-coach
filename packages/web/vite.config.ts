@@ -14,6 +14,10 @@ const extraHosts = (process.env.CHESS_COACH_ALLOWED_ORIGINS ?? "")
   .filter((origin) => origin !== "")
   .map((origin) => new URL(origin).hostname);
 
+// A second instance beside the daily one (another checkout, a copied database) runs its
+// server on another PORT, so the proxy has to be told which one; the default is the server's.
+const apiPort = process.env.CHESS_COACH_API_PORT ?? "3210";
+
 export default defineConfig({
   plugins: [react()],
   test: { environment: "happy-dom" },
@@ -24,7 +28,7 @@ export default defineConfig({
     allowedHosts: extraHosts,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:3210",
+        target: `http://127.0.0.1:${apiPort}`,
         ws: true,
       },
     },
