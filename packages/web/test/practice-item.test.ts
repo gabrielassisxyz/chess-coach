@@ -152,11 +152,11 @@ describe("stateCardOf", () => {
     expect(cardOf(puzzle({ hint_square: "e2" })).body).toContain("Look at the piece on e2.");
     expect(
       cardOf(puzzle({ tries: 1, last_try: { uci: "e2e3", san: "e3", correct: false } })),
-    ).toEqual({ tone: "wrong", title: "Not that move", body: "e3 — try something else." });
+    ).toEqual({ tone: "wrong", title: "Not that move", body: "e3. Try something else." });
     expect(cardOf(puzzle({ status: "in_progress" }))).toEqual({
       tone: "right",
       title: "Best move",
-      body: "Keep going — your move again.",
+      body: "Keep going. Your move again.",
     });
   });
 

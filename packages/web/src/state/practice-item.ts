@@ -234,10 +234,10 @@ export function stateCardOf(
   if (view.open) {
     if (view.status === MISSED_TRY) {
       const san = training.last_try?.san ?? training.last_try?.uci ?? "That";
-      return { tone: "wrong", title: "Not that move", body: `${san} — try something else.` };
+      return { tone: "wrong", title: "Not that move", body: `${san}. Try something else.` };
     }
     if (training.status === "in_progress") {
-      return { tone: "right", title: "Best move", body: "Keep going — your move again." };
+      return { tone: "right", title: "Best move", body: "Keep going. Your move again." };
     }
     const hint = training.hint_square ? ` Look at the piece on ${training.hint_square}.` : "";
     return {
