@@ -12,4 +12,5 @@ export * from "./activity.js";
 export * from "./events.js";
 export * from "./games.js";
 export * from "./import.js";
+export * from "./motifs.js";
 export * from "./progress.js";

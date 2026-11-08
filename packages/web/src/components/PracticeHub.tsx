@@ -87,7 +87,6 @@ export function PracticeHub(props: PracticeHubProps) {
   const busy = starting !== null;
   const counts = motifs.status === "ready" ? motifs.value : [];
   const rows = motifRows(counts, progress.status === "ready" ? progress.value : null);
-  const total = rows.reduce((sum, row) => sum + row.count, 0);
   const note = motifNote(motifs);
 
   const startButton = ({ mode, motif: target, idle, disabled = false }: StartProps): ReactNode => {
@@ -126,19 +125,23 @@ export function PracticeHub(props: PracticeHubProps) {
           <MotifChoice
             name="Any motif"
             value={ANY_MOTIF}
-            count={total}
+            count={0}
+            description="A mix of everything at your level."
+            kind="lichess"
             selected={motif === ANY_MOTIF}
             onPick={setMotif}
           />
           {rows.map((row) => (
             <MotifChoice
               key={row.motif}
-              name={motifLabel(row.motif)}
+              name={row.label}
               value={row.motif}
               count={row.count}
               rate={row.rate30d}
               attempts={row.attempts30d}
               solved={row.solved30d}
+              description={row.description}
+              kind={row.kind}
               selected={motif === row.motif}
               onPick={setMotif}
             />
@@ -301,9 +304,11 @@ interface MotifChoiceProps {
   name: string;
   value: string;
   count: number;
-  rate?: number | null;
+  rate?: number | null | undefined;
   attempts?: number | undefined;
   solved?: number | undefined;
+  description: string | null;
+  kind: "lichess" | "library";
   selected: boolean;
   onPick(value: string): void;
 }
@@ -320,14 +325,20 @@ function MotifChoice({
   rate,
   attempts = 0,
   solved = 0,
+  description,
+  kind,
   selected,
   onPick,
 }: MotifChoiceProps) {
-  const empty = count === 0;
+  // A Lichess theme always has puzzles at the student's level once imported, so it stays
+  // selectable even though the motif counts cover the library only.
+  const empty = kind === "library" && count === 0;
   const accessibleName =
-    rate === undefined || empty
-      ? `${name}, ${count} puzzles`
-      : `${name}, ${count} puzzles, ${motifRateText(rate, attempts, solved)}`;
+    kind === "lichess"
+      ? `${name}, ${description ?? ""}`
+      : rate === undefined || empty
+        ? `${name}, ${count} puzzles`
+        : `${name}, ${count} puzzles, ${motifRateText(rate, attempts, solved)}`;
   return (
     <label className="practice__motif" data-selected={selected} data-empty={empty}>
       <input
@@ -339,12 +350,15 @@ function MotifChoice({
         onChange={() => onPick(value)}
       />
       <span className="practice__motif-name" aria-hidden="true">
-        {name}
+        <span className="practice__motif-label">{name}</span>
+        {description ? <span className="practice__motif-desc">{description}</span> : null}
       </span>
-      <span className="practice__motif-count" aria-hidden="true">
-        {empty ? NONE : count}
-      </span>
-      {rate === undefined || empty ? null : (
+      {kind === "lichess" ? null : (
+        <span className="practice__motif-count" aria-hidden="true">
+          {empty ? NONE : count}
+        </span>
+      )}
+      {kind === "lichess" || rate === undefined || empty ? null : (
         <span className="practice__motif-rate" aria-hidden="true">
           <span className="practice__bar" aria-hidden="true">
             <span style={{ width: `${Math.round((rate ?? 0) * 100)}%` }} />

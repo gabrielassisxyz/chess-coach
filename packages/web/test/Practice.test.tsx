@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import { type ServerApi, useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
-import { formatInterval, NONE, nextBatchParts, trainingView } from "../src/state/practice.js";
+import { formatInterval, nextBatchParts, trainingView } from "../src/state/practice.js";
 import { initialChatState } from "../src/state/transcript.js";
 import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
@@ -201,29 +201,50 @@ describe("the hub", () => {
     }
   });
 
-  it("lists a row per motif with its 30-day success and leaves the opening motifs to their own card", async () => {
+  it("lists the fourteen Lichess motifs with descriptions plus the six library choices, each once", async () => {
     const motifs = async () => [...motifCounts, { motif: "opening-italian", count: 7 }];
     render(<Practice server={api(null)} {...hubProps} fetchMotifs={motifs} />);
     const card = await screen.findByRole("region", { name: "Puzzles by motif" });
-    await within(card).findByRole("radio", { name: /fork/i });
+    await within(card).findByRole("radio", { name: /hanging piece/i });
+    for (const label of [
+      "Advanced pawn",
+      "Attacking f2 or f7",
+      "Capture the defender",
+      "Discovered attack",
+      "Double check",
+      "Exposed king",
+      "Fork",
+      "Hanging piece",
+      "Kingside attack",
+      "Pin",
+      "Queenside attack",
+      "Sacrifice",
+      "Skewer",
+      "Trapped piece",
+      "Back rank mate",
+      "Checkmate",
+      "Endgame",
+      "Promotion",
+      "Opening",
+      "Opening trap",
+    ]) {
+      const matches = await within(card).findAllByRole("radio", {
+        name: new RegExp(`^${label},`, "i"),
+      });
+      expect(matches).toHaveLength(1);
+    }
     expect(
-      within(card).getByRole("radio", { name: /fork/i }).closest("label")?.textContent,
-    ).toContain("71% · 10 of 14");
+      within(card)
+        .getByRole("radio", { name: /hanging piece/i })
+        .closest("label")?.textContent,
+    ).toContain("An undefended piece, free to capture.");
     expect(
-      within(card).getByRole("radio", { name: /fork/i }).closest("label")?.textContent,
-    ).toContain("Fork");
-    expect(
-      within(card).getByRole("radio", { name: /pin/i }).closest("label")?.textContent,
-    ).toContain("not tried yet");
+      (within(card).getByRole("radio", { name: /hanging piece/i }) as HTMLInputElement).disabled,
+    ).toBe(false);
     expect(card.textContent).not.toContain("smothered-mate");
-    expect(within(card).queryByRole("radio", { name: /opening/ })).toBeNull();
+    expect(card.textContent).not.toContain("tactics");
+    expect(within(card).queryByRole("radio", { name: /opening-white/ })).toBeNull();
     expect(within(card).queryByRole("radio", { name: /italian/i })).toBeNull();
-    const empty = within(card).getByRole("radio", { name: /smothered/i }) as HTMLInputElement;
-    expect(empty.disabled).toBe(true);
-    expect(empty.closest("label")?.textContent).toContain(NONE);
-    expect(within(card).getByRole("radio", { name: /fork/i }).getAttribute("aria-label")).toContain(
-      "puzzles",
-    );
   });
 
   it("starts the chosen motif at the chosen size", async () => {
