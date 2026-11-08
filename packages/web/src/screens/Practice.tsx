@@ -159,6 +159,9 @@ function typing(target: EventTarget | null): boolean {
   );
 }
 
+const INTERACTIVE =
+  "button, a, input, select, textarea, [role=button], [role=switch], [role=radio]";
+
 // h asks for a hint while the item is open; space continues once it ended. The arrows and f
 // live with the board state, which owns stepping and the orientation.
 function useItemShortcuts(view: TrainingView, actions: PracticeColumnActions): void {
@@ -169,6 +172,8 @@ function useItemShortcuts(view: TrainingView, actions: PracticeColumnActions): v
         event.preventDefault();
         actions.hint();
       } else if (event.key === " " && !view.open && view.canAdvance && !view.summary) {
+        // Space on a focused control activates that control; only a bare space continues.
+        if (event.target instanceof Element && event.target.closest(INTERACTIVE)) return;
         event.preventDefault();
         actions.next();
       }
@@ -179,12 +184,14 @@ function useItemShortcuts(view: TrainingView, actions: PracticeColumnActions): v
 }
 
 // With the setting on, a puzzle that ended moves on by itself once its mark has settled. A card
-// waits for its rating, so it never auto-advances.
+// waits for its rating, so it never auto-advances; neither does an item the student is still
+// looking at (analysing, stepping back, or with the engine on).
 export const AUTO_NEXT_MS = 1200;
 function useAutoNext(
   training: TrainingActivity,
   view: TrainingView,
   enabled: boolean,
+  hold: boolean,
   next: () => void,
 ): void {
   const key = `${training.served_at}:${training.item.position_in_queue}:${training.status}`;
@@ -192,6 +199,7 @@ function useAutoNext(
   useEffect(() => {
     if (
       !enabled ||
+      hold ||
       view.open ||
       view.summary ||
       training.item.kind === "card" ||
@@ -201,7 +209,7 @@ function useAutoNext(
     }
     const timer = setTimeout(next, AUTO_NEXT_MS);
     return () => clearTimeout(timer);
-  }, [key, enabled]);
+  }, [key, enabled, hold]);
 }
 
 function demoOverTraining(activity: ActivityState | null): DemoActivity | null {
@@ -251,7 +259,8 @@ function Item({
     resetLine: board.resetLine,
   };
   useItemShortcuts(view, actions);
-  useAutoNext(training, view, prefs.autoNext, actions.next);
+  const busyWithItem = board.scratchLine !== null || board.shownPly < board.tip || engine.on;
+  useAutoNext(training, view, prefs.autoNext, busyWithItem, actions.next);
 
   return (
     <>

@@ -56,13 +56,20 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
 const solved = (): TrainingActivity =>
   puzzle({ status: "solved", input_enabled: false, legal_moves: [] });
 
-function api(activity: TrainingActivity, analysis: AnalysisEvent | null = null): ServerApi {
+function api(
+  activity: TrainingActivity,
+  analysis: AnalysisEvent | null = null,
+  errors: { errorCount: number; lastErrorCode: ServerApi["lastErrorCode"] } = {
+    errorCount: 0,
+    lastErrorCode: null,
+  },
+): ServerApi {
   return {
     items: [],
     permissions: [],
     lastError: null,
-    errorCount: 0,
-    lastErrorCode: null,
+    errorCount: errors.errorCount,
+    lastErrorCode: errors.lastErrorCode,
     turn: "idle",
     localCount: 0,
     cardsCreated: {},
@@ -183,5 +190,27 @@ describe("the engine strip", () => {
     expect(readEnginePrefs()).toMatchObject({ lines: 3, depth: 12 });
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("region", { name: "Engine" })).toBeNull();
+  });
+});
+
+describe("a request that drew an error", () => {
+  it("is not sent again for the same position and the strip says the engine is unavailable", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      window.localStorage.setItem(ENGINE_PREFS_STORAGE_KEY, JSON.stringify({ on: true }));
+      const server = api(solved());
+      const { rerender } = render(
+        <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+      );
+      act(() => vi.advanceTimersByTime(ANALYSE_DEBOUNCE_MS));
+      expect(server.send).toHaveBeenCalledTimes(1);
+      const failed = api(solved(), null, { errorCount: 1, lastErrorCode: "engine_unavailable" });
+      rerender(<Practice server={failed} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      act(() => vi.advanceTimersByTime(ANALYSE_DEBOUNCE_MS * 4));
+      expect(failed.send).not.toHaveBeenCalled();
+      expect(screen.getByText("Stockfish \u00b7 unavailable")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

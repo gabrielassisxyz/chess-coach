@@ -1,5 +1,6 @@
 import {
   type ActivityState,
+  ANALYSIS_BUDGET_MS,
   type AnalyseCommand,
   type ClientCommand,
   ClientCommandSchema,
@@ -24,6 +25,7 @@ import { recordDivider } from "../coach/transcript.js";
 import { type ChatMessage, listChatTail } from "../db/chat.js";
 import type { Database } from "../db/open.js";
 import { getCurrentElo } from "../db/settings.js";
+import { EngineFault } from "../engine/errors.js";
 import { applyUci } from "../engine/moves.js";
 import { AnalyzeSuperseded } from "../engine/pool.js";
 import type { SearchRequest, SearchResult } from "../engine/uci.js";
@@ -135,7 +137,8 @@ class HubRefusal extends Error {
 // Game and activity refusals carry a code the browser can switch on; anything else is a fault.
 function errorCodeOf(error: unknown): ErrorCode {
   if (error instanceof HubRefusal) return error.code;
-  if (error instanceof AnalyzeSuperseded) return "analysis_superseded";
+  // A dead or missing engine is a condition the page can name, not a fault of the coach.
+  if (error instanceof EngineFault) return "engine_unavailable";
   if (error instanceof GameError || error instanceof ActivityError || error instanceof SrsError) {
     const code = ErrorCodeSchema.safeParse(error.code);
     if (code.success) return code.data;
@@ -370,7 +373,14 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         if (!options.analyse) {
           throw new HubRefusal("engine_unavailable", "no engine is available for analysis");
         }
-        if (trainingItemOpen(activity.current())) {
+        const current = activity.current();
+        if (current?.kind !== "training") {
+          throw new ActivityError("not_in_training", "the engine strip belongs to a practice item");
+        }
+        if (command.activity_id !== undefined && command.activity_id !== current.activity_id) {
+          throw new ActivityError("stale_activity", "that item is no longer on the board");
+        }
+        if (trainingItemOpen(current)) {
           throw new ActivityError(
             "training_item_open",
             "the engine stays off while an item is open",
@@ -383,7 +393,19 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         }
         const depth = command.depth ?? DEFAULT_ANALYSIS_DEPTH;
         const lines = command.lines ?? 1;
-        const result = await options.analyse({ fen: command.fen, depth, multipv: lines });
+        let result: SearchResult;
+        try {
+          result = await options.analyse({
+            fen: command.fen,
+            depth,
+            multipv: lines,
+            movetime: ANALYSIS_BUDGET_MS,
+          });
+        } catch (error) {
+          // A newer request took the lane; it answers, this one says nothing.
+          if (error instanceof AnalyzeSuperseded) return;
+          throw error;
+        }
         socket.send(frame(analysisEventOf(command, depth, lines, result)));
         return;
       }

@@ -25,7 +25,8 @@
 - **Dev:** `pnpm dev` runs both packages. The server listens on `127.0.0.1:3210` (`PORT`
   overrides) and Vite serves the app on `http://localhost:5173`, proxying `/api` and the
   WebSocket. The socket only accepts those two origins; `CHESS_COACH_ALLOWED_ORIGINS`
-  (comma-separated) replaces them.
+  (comma-separated) replaces them. A second instance (another checkout, a copied data dir) runs
+  its server on another `PORT` and tells Vite with `CHESS_COACH_API_PORT`.
 - **Data:** one SQLite file, `data/chess-coach.db`, under the repository root and git-ignored.
   `CHESS_COACH_DATA_DIR` moves it, `CHESS_COACH_CONTENT_DIR` moves the teaching content
   (`content/`). Puzzles are seeded from `content/puzzles` at every server start.
@@ -85,8 +86,11 @@
   overrides). The engine is a runtime dependency, never vendored.
 - **Engine on Practice:** `analyse {fen, lines 1-5, depth 8-24}` runs the evaluation engine's
   analysis lane on a position and answers that connection with an `analysis` event (lines with
-  SAN and a centipawn score from White's side, a mate as 10000); it is refused with
-  `training_item_open` while an item is open, so the engine never helps with the answer. The
+  SAN and a centipawn score from White's side, a mate as 10000). The search stops at the depth or
+  after 4 s, whichever first. It is refused with `training_item_open` while an item is open, so the
+  engine never helps with the answer, with `not_in_training` or `stale_activity` off the item, and
+  with `engine_unavailable` when Stockfish is missing or dead; a request a newer one replaced
+  answers nothing. The
   strip's switch, line count and depth are stored in the browser (`chess-coach.engine-prefs`),
   as are the board preferences (`chess-coach.board-prefs`: coordinates, animation, highlights,
   auto-next) beside the board theme.

@@ -1,6 +1,6 @@
 import type { AnalysisEvent, TrainingActivity } from "@chess-coach/shared";
 import type { DrawShape } from "@lichess-org/chessground/draw";
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { type EnginePrefs, useEnginePrefs } from "../state/engine-prefs.js";
 import { MATE_CP, signedPawns } from "../state/play.js";
 import type { TrainingView } from "../state/practice.js";
@@ -53,13 +53,18 @@ export function useEngineAnalysis(
   training: TrainingActivity,
   view: TrainingView,
   fen: string,
-  server: Pick<ServerApi, "send" | "analysis">,
+  server: Pick<ServerApi, "send" | "analysis" | "errorCount" | "lastErrorCode">,
 ): EngineView {
   const { prefs, set } = useEnginePrefs();
   const enabled = !view.open;
   const on = prefs.on && enabled;
   const activityId = training.activity_id;
-  const { send, analysis: latest } = server;
+  const { send, analysis: latest, errorCount, lastErrorCode } = server;
+  const requestKey = `${fen}|${prefs.lines}|${prefs.depth}`;
+  // A request that drew an error frame is not sent again for the same position and settings;
+  // the strip says so, and a change of either, or the switch, asks afresh.
+  const [failedKey, setFailedKey] = useState<string | null>(null);
+  const sent = useRef<{ key: string; errors: number } | null>(null);
   // The answer on hand is for this position at these settings; the engine echoes the request,
   // so a position with fewer legal lines than asked is never asked again.
   const fresh =
@@ -68,9 +73,11 @@ export function useEngineAnalysis(
     latest.depth === prefs.depth &&
     latest.requested_lines === prefs.lines;
 
+  const failed = failedKey === requestKey;
   useEffect(() => {
-    if (!on || fresh) return;
+    if (!on || fresh || failed) return;
     const timer = setTimeout(() => {
+      sent.current = { key: requestKey, errors: errorCount };
       send({
         type: "analyse",
         activity_id: activityId,
@@ -80,25 +87,38 @@ export function useEngineAnalysis(
       });
     }, ANALYSE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [on, fresh, fen, prefs.lines, prefs.depth, activityId, send]);
+  }, [on, fresh, failed, requestKey, fen, prefs.lines, prefs.depth, activityId, send, errorCount]);
+  useEffect(() => {
+    const pending = sent.current;
+    if (!pending || pending.key !== requestKey || fresh || errorCount <= pending.errors) return;
+    sent.current = null;
+    setFailedKey(requestKey);
+  }, [errorCount, requestKey, fresh]);
 
   const analysis = on && latest?.fen === fen ? latest : null;
+  const shapes = useMemo(() => (analysis ? shapesOf(analysis) : []), [analysis]);
   const first = analysis?.lines[0];
   const cp = first ? studentView(first.score_cp, training.orientation) : null;
+  const failureWord = lastErrorCode === "engine_unavailable" ? "unavailable" : "no answer";
   return {
     prefs,
     setPrefs: set,
     enabled,
     on,
-    toggle: () => set({ on: !prefs.on }),
+    toggle: () => {
+      setFailedKey(null);
+      set({ on: !prefs.on });
+    },
     label: !on
       ? "Stockfish · off"
       : analysis
         ? `Stockfish · depth ${analysis.depth}`
-        : "Stockfish · thinking",
+        : failed
+          ? `Stockfish · ${failureWord}`
+          : "Stockfish · thinking",
     evalText: cp === null ? null : evalTextOf(cp),
     evalTone: cp === null || cp === 0 ? "neutral" : cp > 0 ? "better" : "worse",
     analysis,
-    shapes: analysis ? shapesOf(analysis) : [],
+    shapes,
   };
 }

@@ -60,7 +60,9 @@ export interface WhyChip {
   text: string;
 }
 
-// Offered once an item ended after at least one wrong try, about the first wrong move.
+// Offered once an item ended after at least one wrong try, about the first wrong move. The text
+// is what the student would type, so it is in the language of the conversation (Portuguese, like
+// the chat's own buttons), not the language of the column.
 export function whyChipOf(training: TrainingActivity): WhyChip | null {
   const ended =
     training.status === "solved" || training.status === "failed" || training.status === "rated";

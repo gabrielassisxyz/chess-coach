@@ -144,7 +144,6 @@ export const ErrorCodeSchema = z.enum([
   "illegal_exploration",
   "no_paused_training",
   "engine_unavailable",
-  "analysis_superseded",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
@@ -347,6 +346,9 @@ export const MAX_ANALYSIS_LINES = 5;
 export const MIN_ANALYSIS_DEPTH = 8;
 export const MAX_ANALYSIS_DEPTH = 24;
 export const DEFAULT_ANALYSIS_DEPTH = 18;
+// The engine stops at the depth or at this many milliseconds, whichever comes first: a
+// depth-only search has five seconds before the engine process is written off as hung.
+export const ANALYSIS_BUDGET_MS = 4000;
 export const AnalyseCommandSchema = z.object({
   type: z.literal("analyse"),
   command_id: commandId,

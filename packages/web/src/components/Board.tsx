@@ -70,17 +70,20 @@ function turnOf(fen: string): Color {
 
 // The arrow colours come from the overlay tokens, read once the page has them; "currentColor" is
 // the fallback where no stylesheet is loaded (tests).
+let brushes: DrawBrushes | null = null;
 function arrowBrushes(): DrawBrushes {
+  if (brushes) return brushes;
   const style =
     typeof getComputedStyle === "function" ? getComputedStyle(document.documentElement) : null;
   const colour = (name: string): string => style?.getPropertyValue(name).trim() || "currentColor";
-  return {
+  brushes = {
     green: { key: "g", color: colour("--overlay-arrow-1"), opacity: 0.9, lineWidth: 10 },
     blue: { key: "b", color: colour("--overlay-arrow-2"), opacity: 0.8, lineWidth: 8 },
     yellow: { key: "y", color: colour("--overlay-arrow-3"), opacity: 0.7, lineWidth: 7 },
     red: { key: "r", color: colour("--overlay-arrow-3"), opacity: 0.5, lineWidth: 6 },
     paleBlue: { key: "pb", color: colour("--overlay-arrow-3"), opacity: 0.4, lineWidth: 5 },
   };
+  return brushes;
 }
 
 function toConfig(

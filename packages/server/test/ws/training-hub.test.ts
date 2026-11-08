@@ -8,6 +8,8 @@ import { ActivityService } from "../../src/activity/service.js";
 import { buildApp } from "../../src/app.js";
 import { createCoachSession } from "../../src/db/chat.js";
 import { type Database, openDatabase } from "../../src/db/open.js";
+import { EngineFault } from "../../src/engine/errors.js";
+import { AnalyzeSuperseded } from "../../src/engine/pool.js";
 import { GameService } from "../../src/game/service.js";
 import { type Log, RecordingLog } from "../../src/log.js";
 import { ReviewDesk } from "../../src/srs/review.js";
@@ -356,6 +358,23 @@ describe("a paused practice session over the socket", () => {
   });
 });
 
+// Starts a fork drill and gives the first puzzle up, so the engine may be asked.
+async function endedItem(
+  socket: { send(data: string): void },
+  next: (type: string) => Promise<Record<string, unknown>>,
+): Promise<number> {
+  socket.send(
+    JSON.stringify({ type: "start_training", command_id: "s1", mode: "puzzles", motif: "fork" }),
+  );
+  const served = (await next("activity")) as { state: { activity_id: number } };
+  await next("training");
+  const id = served.state.activity_id;
+  socket.send(JSON.stringify({ type: "show_solution", command_id: "s2", activity_id: id }));
+  await next("activity");
+  await next("training");
+  return id;
+}
+
 describe("analysis over the socket", () => {
   async function startWithEngine() {
     const db = seededDatabase();
@@ -422,13 +441,36 @@ describe("analysis over the socket", () => {
       requested_lines: 2,
       lines: [{ moves: ["a1a8"], san: ["Ra8#"], score_cp: 9990 }],
     });
-    expect(asked).toEqual([{ fen: BACK_RANK, depth: 12, multipv: 2 }]);
+    expect(asked).toEqual([{ fen: BACK_RANK, depth: 12, multipv: 2, movetime: 4000 }]);
+  });
+
+  it("refuses the engine off a practice item and for an item no longer on the board", async () => {
+    const { app: server, asked } = await startWithEngine();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(JSON.stringify({ type: "analyse", command_id: "c0", fen: BACK_RANK }));
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c0" });
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    const id = served.state.activity_id;
+    socket.send(JSON.stringify({ type: "show_solution", command_id: "c2", activity_id: id }));
+    await next("activity");
+    await next("training");
+    socket.send(
+      JSON.stringify({ type: "analyse", command_id: "c3", activity_id: id + 1, fen: BACK_RANK }),
+    );
+    expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "c3" });
+    expect(asked).toEqual([]);
   });
 
   it("reports the score from White's side and refuses a position that is not one", async () => {
     const { app: server } = await startWithEngine();
     const { socket, next } = await connect(server);
     await next("bootstrap");
+    await endedItem(socket, next);
     const blackToMove = "6k1/5ppp/8/8/8/8/5PPP/R5K1 b - - 0 1";
     socket.send(JSON.stringify({ type: "analyse", command_id: "c1", fen: blackToMove }));
     const analysis = (await next("analysis")) as { lines: { score_cp: number }[]; depth: number };
@@ -444,7 +486,44 @@ describe("analysis over the socket", () => {
     const server = await start();
     const { socket, next } = await connect(server);
     await next("bootstrap");
+    await endedItem(socket, next);
     socket.send(JSON.stringify({ type: "analyse", command_id: "c1", fen: BACK_RANK }));
     expect(await next("error")).toMatchObject({ code: "engine_unavailable" });
+  });
+
+  it("names a dead engine, and answers nothing for a search a newer one replaced", async () => {
+    const db = seededDatabase();
+    const session = createCoachSession(db, { promptVersion: "v" });
+    const notifications = { sessionId: () => session.id };
+    const activity = new ActivityService({
+      db,
+      game: new GameService({ db, engine: new ScriptedEngine([]) }),
+      training: { desk: new ReviewDesk({ db, notifications }), notifications },
+    });
+    let outcome: "fault" | "superseded" = "fault";
+    app = buildApp({
+      hub: {
+        coach: new FakeCoach(db),
+        activity,
+        db,
+        allowedOrigins: ["http://localhost:5173"],
+        analyse: async () => {
+          if (outcome === "fault") throw new EngineFault("exited", "engine exited");
+          throw new AnalyzeSuperseded();
+        },
+      },
+    });
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const { socket, next, inbox } = await connect(app);
+    await next("bootstrap");
+    await endedItem(socket, next);
+    socket.send(JSON.stringify({ type: "analyse", command_id: "c1", fen: BACK_RANK }));
+    expect(await next("error")).toMatchObject({ code: "engine_unavailable", command_id: "c1" });
+    outcome = "superseded";
+    socket.send(JSON.stringify({ type: "analyse", command_id: "c2", fen: BACK_RANK }));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(inbox.filter((event) => event.type === "error" || event.type === "analysis")).toEqual(
+      [],
+    );
   });
 });

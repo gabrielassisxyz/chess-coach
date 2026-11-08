@@ -164,6 +164,17 @@ describe("keyboard shortcuts on an item", () => {
     expect(done.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
   });
 
+  it("leaves space to a focused control instead of continuing", () => {
+    const done = api(solved());
+    render(<Practice server={done} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Analyse" }), { key: " " });
+    expect(done.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "next_training_item" }),
+    );
+    fireEvent.keyDown(window, { key: " " });
+    expect(done.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
+  });
+
   it("ignores the keys while typing in the composer", () => {
     const server = api(puzzle());
     render(
@@ -187,6 +198,25 @@ describe("jump to the next puzzle automatically", () => {
       expect(server.send).not.toHaveBeenCalledWith(
         expect.objectContaining({ type: "next_training_item" }),
       );
+      act(() => vi.advanceTimersByTime(AUTO_NEXT_MS));
+      expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits while the student analyses the ended position", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      window.localStorage.setItem(BOARD_PREFS_STORAGE_KEY, JSON.stringify({ autoNext: true }));
+      const server = api(solved());
+      render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      fireEvent.click(screen.getByRole("button", { name: "Analyse" }));
+      act(() => vi.advanceTimersByTime(AUTO_NEXT_MS * 2));
+      expect(server.send).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "next_training_item" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Back to position" }));
       act(() => vi.advanceTimersByTime(AUTO_NEXT_MS));
       expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
     } finally {
