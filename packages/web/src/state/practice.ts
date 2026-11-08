@@ -8,7 +8,11 @@ import type {
   TrainingMode,
   TrainingStatus,
 } from "@chess-coach/shared";
-import { LIBRARY_PRACTICE_MOTIFS, LICHESS_PRACTICE_MOTIFS } from "@chess-coach/shared";
+import {
+  LIBRARY_PRACTICE_MOTIFS,
+  LICHESS_OTHER_PRACTICE_MOTIFS,
+  LICHESS_PRACTICE_MOTIFS,
+} from "@chess-coach/shared";
 
 export interface MotifCount {
   motif: string;
@@ -37,18 +41,15 @@ export const OPENING_MOTIFS = {
 
 // Stored motifs read like `back_rank_mate`; Lichess themes read like `hangingPiece`.
 // The hub and the heading show words. Fixed choices use their shared labels first.
+const LICHESS_SERVED_MOTIFS = [...LICHESS_PRACTICE_MOTIFS, ...LICHESS_OTHER_PRACTICE_MOTIFS];
+const FIXED_MOTIFS = [...LICHESS_SERVED_MOTIFS, ...LIBRARY_PRACTICE_MOTIFS];
+
 const PRACTICE_LABEL_OF: ReadonlyMap<string, string> = new Map(
-  [...LICHESS_PRACTICE_MOTIFS, ...LIBRARY_PRACTICE_MOTIFS].map((entry) => [
-    entry.theme,
-    entry.label,
-  ]),
+  FIXED_MOTIFS.map((entry) => [entry.theme, entry.label]),
 );
 
 const PRACTICE_DESCRIPTION_OF: ReadonlyMap<string, string> = new Map(
-  [...LICHESS_PRACTICE_MOTIFS, ...LIBRARY_PRACTICE_MOTIFS].map((entry) => [
-    entry.theme,
-    entry.description,
-  ]),
+  FIXED_MOTIFS.map((entry) => [entry.theme, entry.description]),
 );
 
 export function motifLabel(motif: string): string {
@@ -79,13 +80,13 @@ export interface MotifRow {
   kind: "lichess" | "library";
 }
 
-// The hub offers the fourteen fixed Lichess motifs plus the six library choices that have no
-// replacement yet. Library fork, pin and skewer merge into the Lichess rows; the imported-only
-// fallback tactics and every opening drill stay out of this card.
+// The hub offers the fourteen Lichess motifs, the five other choices a Lichess theme serves, and
+// the library's opening traps. Library fork, pin and skewer merge into the Lichess rows; the
+// imported-only fallback tactics and every opening drill stay out of this card.
 export function motifRows(list: MotifCount[], progress: ProgressResponse | null): MotifRow[] {
   const counts = new Map(list.map((entry) => [entry.motif, entry.count]));
   const byMotif = new Map((progress?.puzzles_by_motif ?? []).map((entry) => [entry.motif, entry]));
-  const lichess = LICHESS_PRACTICE_MOTIFS.map(
+  const lichess = LICHESS_SERVED_MOTIFS.map(
     (entry): MotifRow => ({
       motif: entry.theme,
       count: 0,

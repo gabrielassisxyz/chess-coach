@@ -81,9 +81,9 @@ describe("Practice states", () => {
     render(<Practice server={serverApi()} {...hub} fetchMotifs={fetchMotifs} />);
     expect(screen.getByText("Loading motifs.")).toBeTruthy();
     expect(screen.getByRole("radio", { name: /hanging piece/i })).toBeTruthy();
-    await act(async () => resolve([{ motif: "back_rank_mate", count: 4 }]));
+    await act(async () => resolve([{ motif: "opening_trap", count: 4 }]));
     expect(screen.queryByText("Loading motifs.")).toBeNull();
-    expect(screen.getByRole("radio", { name: /back rank mate/i })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /opening trap, 4 puzzles/i })).toBeTruthy();
   });
 
   it("says so when the motif list cannot be loaded and still allows any motif", async () => {

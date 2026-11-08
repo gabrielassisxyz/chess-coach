@@ -82,10 +82,10 @@ export const LICHESS_PRACTICE_MOTIFS: readonly PracticeMotifChoice[] = [
   },
 ] as const;
 
-// The library's own choices that have no replacement in the Motifs section yet. They stay offered
-// on the library's puzzles until a later change adds the remaining Lichess sections. The library's
-// fork, pin and skewer choices merge into the motifs above, so they are not listed here.
-export const LIBRARY_PRACTICE_MOTIFS: readonly PracticeMotifChoice[] = [
+// Choices outside the Motifs section whose queue is a Lichess theme once the puzzles are imported.
+// The key is the stored motif, which the server maps to the theme. The library's counts say
+// nothing about what these serve, so they are shown like the motifs above.
+export const LICHESS_OTHER_PRACTICE_MOTIFS: readonly PracticeMotifChoice[] = [
   {
     theme: "back_rank_mate",
     label: "Back rank mate",
@@ -111,6 +111,11 @@ export const LIBRARY_PRACTICE_MOTIFS: readonly PracticeMotifChoice[] = [
     label: "Opening",
     description: "Find the strongest move while the pieces develop.",
   },
+] as const;
+
+// Lichess has no theme for these, so they are served from the library alone. The library's fork,
+// pin and skewer choices merge into the motifs above, so they are not listed here.
+export const LIBRARY_PRACTICE_MOTIFS: readonly PracticeMotifChoice[] = [
   {
     theme: "opening_trap",
     label: "Opening trap",
@@ -118,23 +123,13 @@ export const LIBRARY_PRACTICE_MOTIFS: readonly PracticeMotifChoice[] = [
   },
 ] as const;
 
-const LICHESS_PRACTICE_THEME_SET: ReadonlySet<string> = new Set(
-  LICHESS_PRACTICE_MOTIFS.map((entry) => entry.theme),
-);
-
-const LIBRARY_PRACTICE_THEME_SET: ReadonlySet<string> = new Set(
-  LIBRARY_PRACTICE_MOTIFS.map((entry) => entry.theme),
+const FIXED_PRACTICE_THEME_SET: ReadonlySet<string> = new Set(
+  [...LICHESS_PRACTICE_MOTIFS, ...LICHESS_OTHER_PRACTICE_MOTIFS, ...LIBRARY_PRACTICE_MOTIFS].map(
+    (entry) => entry.theme,
+  ),
 );
 
 // A start is valid when its motif names a fixed choice; the server also allows any stored motif.
 export function isFixedPracticeMotif(motif: string): boolean {
-  return LICHESS_PRACTICE_THEME_SET.has(motif) || LIBRARY_PRACTICE_THEME_SET.has(motif);
-}
-
-export function lichessPracticeLabel(theme: string): string | null {
-  return LICHESS_PRACTICE_MOTIFS.find((entry) => entry.theme === theme)?.label ?? null;
-}
-
-export function libraryPracticeLabel(theme: string): string | null {
-  return LIBRARY_PRACTICE_MOTIFS.find((entry) => entry.theme === theme)?.label ?? null;
+  return FIXED_PRACTICE_THEME_SET.has(motif);
 }

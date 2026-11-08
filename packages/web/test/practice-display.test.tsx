@@ -289,6 +289,33 @@ describe("the hub motif list", () => {
     expect(card.textContent).not.toContain("tactics");
   });
 
+  it("shows a library count only on the choice the library alone serves", async () => {
+    const storedCounts = async () => [
+      { motif: "back_rank_mate", count: 30 },
+      { motif: "checkmate", count: 31 },
+      { motif: "endgame", count: 20 },
+      { motif: "promotion", count: 3 },
+      { motif: "opening", count: 40 },
+      { motif: "opening_trap", count: 37 },
+    ];
+    render(
+      <Practice
+        server={serverApi(null)}
+        createBoard={spyBoard}
+        fetchMotifs={storedCounts}
+        fetchProgress={hubProgress}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
+    await within(card).findByRole("radio", { name: /opening trap, 37 puzzles/i });
+    for (const label of ["Back rank mate", "Checkmate", "Endgame", "Promotion", "Opening"]) {
+      const choice = within(card).getByRole("radio", { name: new RegExp(`^${label},`, "i") });
+      expect(choice.getAttribute("aria-label") ?? "").not.toMatch(/puzzles/i);
+      expect(choice.closest("label")?.textContent).not.toMatch(/\d/);
+      expect((choice as HTMLInputElement).disabled).toBe(false);
+    }
+  });
+
   it("starts a hangingPiece queue from its choice", async () => {
     const server = serverApi(null);
     render(
