@@ -58,6 +58,12 @@
   `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
   is opt-in at the call and never runs after an import. `POST /api/openings/generate {sources: ["italian"]}` builds the White Italian drill from the 1800-2200 band against 400-600 replies (`italian:` ids, source `italian-explorer`, motif `opening-italian`). The explorer now answers 401 without a Lichess API
   token: set `LICHESS_API_TOKEN`.
+- **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
+  adds the whole Lichess puzzle database (`lichess-db:` ids, source `lichess-db`) to the library, reading CSV from
+  stdin into the usual data dir and printing rows added, skipped and failed. A row's `FEN` is shown after its first
+  move; the rest is the solution. Every theme gets a `puzzle_themes` row and one motif goes in `puzzles.motif`
+  (rarest first, `tactics` when none maps). A `PuzzleId` already stored as a `lichess_id` is skipped, so a rerun
+  adds nothing. Commits in batches of 5000 rows; the file grows the database to about 2.2 GB, so run it on a copy first.
 - **Grading:** a practice move is graded the moment it is dropped (`try_move`). A wrong try leaves
   the item open at the same position; `show_solution` ends it as given up and the board plays the
   solution line. Every try is kept in `training_tries`, and puzzle accuracy is first-try solves
@@ -119,7 +125,7 @@
   `coach.conversation_reset`, `coach.stream_closed`,
   `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
   `coach.permission_resolved`, `training.item_served`, `training.answer`, `srs.rated`,
-  `review.cards_created`, `import.*`, `openings.generate`, `openings.generate_failed`,
+  `review.cards_created`, `import.*`, `openings.generate`, `openings.generate_failed`, `import_lichess.progress`, `import_lichess.done`,
   `explorer.failed`, `*.listener_failed`, and `client.*` for what
   the browser reports through `POST /api/client-log` (uncaught errors, socket drops and
   reconnects, every error frame it received).
