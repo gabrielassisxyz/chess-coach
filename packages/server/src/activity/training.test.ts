@@ -12,6 +12,7 @@ import { type Database, openDatabase } from "../db/open.js";
 import { getCard, insertCard, updateSchedule } from "../db/srs.js";
 import { GameService } from "../game/service.js";
 import { type Log, RecordingLog, silentLog } from "../log.js";
+import { importLichessPuzzles } from "../puzzles/lichess-import.js";
 import { ReviewDesk } from "../srs/review.js";
 import { ActivityService } from "./service.js";
 
@@ -467,6 +468,32 @@ function steppingClock(): Clock & { advance(seconds: number): void } {
 
 const events = () =>
   db.prepare("SELECT seq, at_ms, kind, uci FROM exploration_events ORDER BY seq").all();
+
+describe("an imported Lichess puzzle", () => {
+  const SAMPLE =
+    "00sHx,q3k1nr/1pp1nQpp/3p4/1P2p3/4P3/B1PP1b2/B5PP/5K2 b k - 0 17,e8d7 a2e6 d7d8 f7f8,1498,76,87,178,mate mateIn2 middlegame short,https://lichess.org/game/yyznGmXs/black#34,,";
+
+  async function* lines(): AsyncGenerator<string> {
+    yield SAMPLE;
+  }
+
+  it("is served by its motif and plays through to solved", async () => {
+    await importLichessPuzzles({ lines: lines(), db, clock: fixedClock, log: silentLog });
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "checkmate" }));
+    expect(start.fen).toBe("q5nr/1ppknQpp/3p4/1P2p3/4P3/B1PP1b2/B5PP/5K2 w - - 1 18");
+    const mid = training(await activity.trainingTry("a2e6"));
+    expect(mid).toMatchObject({
+      status: "in_progress",
+      item: { kind: "puzzle", reply_uci: "d7d8" },
+    });
+    const done = training(await activity.trainingTry("f7f8"));
+    expect(done).toMatchObject({ status: "solved", input_enabled: false });
+    expect(db.prepare("SELECT puzzle_id, solved FROM puzzle_attempts").all()).toEqual([
+      { puzzle_id: "lichess-db:00sHx", solved: 1 },
+    ]);
+  });
+});
 
 describe("exploration", () => {
   it("records moves with the server clock and shows the explored position", async () => {

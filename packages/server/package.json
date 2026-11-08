@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.build.json && cp -r src/db/migrations dist/db/",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
+    "import:lichess-puzzles": "tsx src/puzzles/lichess-import-cli.ts",
     "test": "vitest run",
     "test:sdk": "vitest run test/sdk",
     "test:stockfish": "CHESS_COACH_STOCKFISH=1 vitest run stockfish.real"
