@@ -9,6 +9,7 @@ import {
 } from "./attempt.js";
 
 const MATE_IN_ONE = "6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1";
+const TWO_MATES = "6k1/5ppp/8/8/8/8/5PPP/RR4K1 w - - 0 1";
 const ROOK_LIFT = "4k3/8/8/8/8/8/8/R3K3 w - - 0 1";
 const PROMOTION = "8/4P3/8/8/8/8/k7/4K3 w - - 0 1";
 
@@ -64,6 +65,30 @@ describe("attempt state machine", () => {
     const second = accepted(tryMove(first.state, "a7b7"));
     expect(second.state).toMatchObject({ status: "in_progress", cursor: 2, wrongTries: 1 });
     expect(second.state.fen).toBe(first.state.fen);
+  });
+
+  it("solves a last step with a different move that is checkmate, and keeps the played move", () => {
+    const solution = ["a1a8"];
+    const out = accepted(tryMove(startAttempt(TWO_MATES, solution), "b1b8"));
+    expect(out.correct).toBe(true);
+    expect(out.state).toMatchObject({ status: "solved", answered: ["b1b8"], wrongTries: 0 });
+    expect(out.state.solution).toEqual(["b1b8"]);
+    expect(solution).toEqual(["a1a8"]);
+    expect(solvedFirstTry(out.state)).toBe(true);
+  });
+
+  it("keeps a last step open on a legal move that is not checkmate", () => {
+    const out = accepted(tryMove(startAttempt(TWO_MATES, ["a1a8"]), "a1a7"));
+    expect(out.correct).toBe(false);
+    expect(out.state).toMatchObject({ status: "in_progress", cursor: 0, wrongTries: 1 });
+    expect(out.state.fen).toBe(TWO_MATES);
+  });
+
+  it("stays strict on an earlier step even when the move is checkmate", () => {
+    const start = startAttempt(TWO_MATES, ["a1a7", "g8f8", "a7a8"]);
+    const out = accepted(tryMove(start, "b1b8"));
+    expect(out.correct).toBe(false);
+    expect(out.state).toMatchObject({ status: "in_progress", cursor: 0, wrongTries: 1 });
   });
 
   it("gives up at step 0 with the whole line left to show", () => {
