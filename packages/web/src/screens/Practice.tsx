@@ -1,22 +1,29 @@
 import type {
   ActivityState,
   DemoActivity,
-  PromotionPiece,
+  TrainingActivity,
   TrainingMode,
 } from "@chess-coach/shared";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
+import { BoardDisplayPopover } from "../components/BoardDisplayPopover.js";
 import { CoachLoginCard } from "../components/CoachLoginCard.js";
 import { EngineMissingCard } from "../components/EngineMissingCard.js";
+import { EngineStrip } from "../components/EngineStrip.js";
+import { PracticeColumn, type PracticeColumnActions } from "../components/PracticeColumn.js";
 import { PracticeHub, ResumeCard } from "../components/PracticeHub.js";
-import { PracticeItem, type PracticeItemActions } from "../components/PracticeItem.js";
+import { PuzzleBoardBar } from "../components/PuzzleBoardBar.js";
+import { useElapsed } from "../hooks/useElapsed.js";
+import { useEngineAnalysis } from "../hooks/useEngineAnalysis.js";
 import { type FetchHealth, useHealth } from "../hooks/useHealth.js";
 import { useLoaded } from "../hooks/useLoaded.js";
+import { usePracticeBoard } from "../hooks/usePracticeBoard.js";
 import type { ServerApi } from "../hooks/useServer.js";
+import { useBoardPrefs } from "../state/board-prefs.js";
+import { useBoardTheme } from "../state/board-theme.js";
 import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
 import { serviceNotice } from "../state/health.js";
 import {
-  boardOf,
   clearLastSession,
   DEFAULT_DRILL_SIZE,
   type DrillSize,
@@ -27,9 +34,11 @@ import {
   OFFLINE_START_TEXT,
   saveLastSession,
   startFailureText,
+  type TrainingView,
   trainingOf,
   trainingView,
 } from "../state/practice.js";
+import { stateCardOf } from "../state/practice-item.js";
 import { type FetchProgress, fetchProgressFromServer } from "../state/progress-api.js";
 
 export interface PracticeProps {
@@ -143,9 +152,176 @@ function Hub({
   );
 }
 
+function typing(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+  );
+}
+
+const INTERACTIVE =
+  "button, a, input, select, textarea, [role=button], [role=switch], [role=radio]";
+
+// h asks for a hint while the item is open; space continues once it ended. The arrows and f
+// live with the board state, which owns stepping and the orientation.
+function useItemShortcuts(view: TrainingView, actions: PracticeColumnActions): void {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.ctrlKey || event.metaKey || event.altKey || typing(event.target)) return;
+      if (event.key === "h" && view.open) {
+        event.preventDefault();
+        actions.hint();
+      } else if (event.key === " " && !view.open && view.canAdvance && !view.summary) {
+        // Space on a focused control activates that control; only a bare space continues.
+        if (event.target instanceof Element && event.target.closest(INTERACTIVE)) return;
+        event.preventDefault();
+        actions.next();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view.open, view.canAdvance, view.summary, actions]);
+}
+
+// With the setting on, a puzzle that ended moves on by itself once its mark has settled. A card
+// waits for its rating, so it never auto-advances; neither does an item the student is still
+// looking at (analysing, stepping back, or with the engine on).
+export const AUTO_NEXT_MS = 1200;
+function useAutoNext(
+  training: TrainingActivity,
+  view: TrainingView,
+  enabled: boolean,
+  hold: boolean,
+  next: () => void,
+): void {
+  const key = `${training.served_at}:${training.item.position_in_queue}:${training.status}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the key names the ended item
+  useEffect(() => {
+    if (
+      !enabled ||
+      hold ||
+      view.open ||
+      view.summary ||
+      training.item.kind === "card" ||
+      !view.canAdvance
+    ) {
+      return;
+    }
+    const timer = setTimeout(next, AUTO_NEXT_MS);
+    return () => clearTimeout(timer);
+  }, [key, enabled, hold]);
+}
+
 function demoOverTraining(activity: ActivityState | null): DemoActivity | null {
   if (activity?.kind === "demo" && activity.returns_to === "training") return activity;
   return null;
+}
+
+// The puzzle column beside the board, the board with its bar, and the settings under it.
+function Item({
+  server,
+  createBoard,
+}: {
+  server: ServerApi;
+  createBoard: BoardFactory | undefined;
+}) {
+  const training = trainingOf(server.activity) as NonNullable<ReturnType<typeof trainingOf>>;
+  const view = trainingView(training);
+  const board = usePracticeBoard(training, server.send);
+  const elapsedMs = useElapsed(training.served_at, view.open);
+  const theme = useBoardTheme();
+  const { prefs, set: setPrefs } = useBoardPrefs();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const [engineOpen, setEngineOpen] = useState(false);
+  const closeEngine = useCallback(() => setEngineOpen(false), []);
+  const engine = useEngineAnalysis(training, view, board.activity.fen, server);
+  const activityId = training.activity_id;
+  const exposureId = training.exposure_id;
+  const card = stateCardOf(training, view, board.scratchLine, elapsedMs);
+  const actions: PracticeColumnActions = {
+    showSolution: () => server.send({ type: "show_solution", activity_id: activityId }),
+    rate: (quality) => {
+      if (exposureId) {
+        server.send({
+          type: "rate_card",
+          exposure_id: exposureId,
+          quality,
+          activity_id: activityId,
+        });
+      }
+    },
+    next: () => server.send({ type: "next_training_item", activity_id: activityId }),
+    end: () => server.send({ type: "end_training", activity_id: activityId }),
+    hint: () => server.send({ type: "hint", activity_id: activityId }),
+    toggleScratch: board.toggleScratch,
+    takeBack: board.takeBack,
+    resetLine: board.resetLine,
+  };
+  useItemShortcuts(view, actions);
+  const busyWithItem = board.scratchLine !== null || board.shownPly < board.tip || engine.on;
+  useAutoNext(training, view, prefs.autoNext, busyWithItem, actions.next);
+
+  return (
+    <>
+      <PracticeColumn
+        training={training}
+        view={view}
+        actions={actions}
+        card={card}
+        elapsedMs={elapsedMs}
+        scratchLine={board.scratchLine}
+        shownPly={board.shownPly}
+        engineStrip={
+          <EngineStrip
+            engine={engine}
+            settingsOpen={engineOpen}
+            onToggleSettings={() => setEngineOpen((open) => !open)}
+            onCloseSettings={closeEngine}
+          />
+        }
+      />
+      <div className="stage">
+        <div className="puzzle-stage">
+          <Board
+            activity={board.activity}
+            onMove={board.move}
+            syncToken={server.errorCount}
+            bothSides={board.bothSides}
+            hintSquare={board.hintSquare}
+            line={board.line}
+            orientation={board.orientation}
+            badge={board.badge}
+            prefs={prefs}
+            shapes={engine.shapes}
+            createBoard={createBoard}
+          />
+          <PuzzleBoardBar
+            atStart={board.shownPly === 0}
+            atEnd={board.shownPly >= board.tip}
+            onFirst={() => board.step(0)}
+            onPrevious={() => board.step(board.shownPly - 1)}
+            onNext={() => board.step(board.shownPly + 1)}
+            onLast={() => board.step(board.tip)}
+            scratch={board.scratchLine !== null}
+            onToggleScratch={board.toggleScratch}
+            onFlip={board.flip}
+            settingsOpen={settingsOpen}
+            onToggleSettings={() => setSettingsOpen((open) => !open)}
+          />
+          {settingsOpen ? (
+            <BoardDisplayPopover
+              theme={theme.theme}
+              onTheme={theme.choose}
+              prefs={prefs}
+              onPrefs={setPrefs}
+              onClose={closeSettings}
+            />
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
 }
 
 export function Practice({
@@ -186,23 +362,6 @@ export function Practice({
     }
   }, [sessionTraining]);
 
-  // Free analysis is a client mode on top of the graded position. While it is on, drops go
-  // through `explore` and nothing is graded; leaving it restores the graded drops.
-  const [exploring, setExploring] = useState(false);
-  const servedAt = sessionTraining?.served_at ?? "none";
-  const servedPosition = sessionTraining?.item.position_in_queue ?? 0;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new served item resets explore mode
-  useEffect(() => {
-    setExploring(false);
-  }, [servedAt, servedPosition]);
-  const sessionOpen =
-    sessionTraining != null &&
-    sessionTraining.summary === null &&
-    (sessionTraining.status === "prompt" || sessionTraining.status === "in_progress");
-  useEffect(() => {
-    if (!sessionOpen) setExploring(false);
-  }, [sessionOpen]);
-
   const demo = demoOverTraining(server.activity);
   if (demo) {
     const activityId = demo.activity_id;
@@ -233,8 +392,7 @@ export function Practice({
     );
   }
 
-  const training = trainingOf(server.activity);
-  if (!training) {
+  if (!sessionTraining) {
     return (
       <section className="screen screen--wide practice" aria-label="Practice">
         <Hub
@@ -248,60 +406,5 @@ export function Practice({
     );
   }
 
-  const view = trainingView(training);
-  const activityId = training.activity_id;
-  // Every drop is graded; a wrong one comes back as the same position, which snaps the piece home.
-  const move = (from: string, to: string, promotion?: PromotionPiece): void => {
-    const uci = `${from}${to}${promotion ?? ""}`;
-    if (exploring) {
-      server.send({ type: "explore", kind: "move", uci, activity_id: activityId });
-      return;
-    }
-    server.send({ type: "try_move", uci, activity_id: activityId });
-  };
-  const exposureId = training.exposure_id;
-  const explored = training.exploring.line_san.length > 0;
-  const actions: PracticeItemActions = {
-    showSolution: () => {
-      setExploring(false);
-      server.send({ type: "show_solution", activity_id: activityId });
-    },
-    rate: (quality) => {
-      if (exposureId) {
-        server.send({
-          type: "rate_card",
-          exposure_id: exposureId,
-          quality,
-          activity_id: activityId,
-        });
-      }
-    },
-    next: () => server.send({ type: "next_training_item", activity_id: activityId }),
-    end: () => server.send({ type: "end_training", activity_id: activityId }),
-    hint: () => server.send({ type: "hint", activity_id: activityId }),
-    startExplore: () => setExploring(true),
-    takeBack: () => server.send({ type: "explore", kind: "undo", activity_id: activityId }),
-    resetLine: () => server.send({ type: "explore", kind: "reset", activity_id: activityId }),
-    backToPuzzle: () => {
-      if (explored) server.send({ type: "explore", kind: "reset", activity_id: activityId });
-      setExploring(false);
-    },
-  };
-
-  return (
-    <>
-      <PracticeItem training={training} view={view} actions={actions} exploring={exploring} />
-      <div className="stage">
-        <Board
-          activity={boardOf(training)}
-          onMove={move}
-          syncToken={server.errorCount}
-          bothSides={exploring}
-          hintSquare={training.hint_square}
-          line={training.gave_up ? training.solution_line : null}
-          createBoard={createBoard}
-        />
-      </div>
-    </>
-  );
+  return <Item server={server} createBoard={createBoard} />;
 }

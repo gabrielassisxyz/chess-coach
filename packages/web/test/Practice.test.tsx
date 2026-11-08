@@ -134,6 +134,7 @@ function api(activity: TrainingActivity | null): ServerApi {
     newConversation: vi.fn(() => true),
     practiceReplyPending: false,
     practiceEndedItem: null,
+    analysis: null,
     reconnectAttempt: 0,
     activity,
     connection: "connected",
@@ -396,18 +397,18 @@ describe("a hub with a problem", () => {
 describe("a card on the board", () => {
   it("shows the breadcrumb, the side to move and the prompt status, with no rating yet", () => {
     render(<Practice server={api(card())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByRole("heading", { name: "Practice › Due cards · 1 of 3" })).toBeTruthy();
-    expect(screen.getByText("White to move")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Card 1 of 3" })).toBeTruthy();
+    expect(screen.getByText(/White to play/)).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain("Your move");
     expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
-    expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Continue training" })).toBeNull();
   });
 
   it("shows the verdict, the expected move, the looked-at trail and a locked board once given up", () => {
     boards.length = 0;
     render(<Practice server={api(answeredCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
     expect(screen.getByText("Solution shown")).toBeTruthy();
-    expect(screen.getByText("Expected d4")).toBeTruthy();
+    expect(screen.getByText(/Expected d4/)).toBeTruthy();
     expect(screen.getByRole("region", { name: "What you looked at \u00b7 0:07" })).toBeTruthy();
     expect(screen.getByText("e4 e5 \u2014 back")).toBeTruthy();
     expect(boards.at(-1)?.movableColor).toBeUndefined();
@@ -428,9 +429,9 @@ describe("a card on the board", () => {
       />,
     );
     expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
-    expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 });
 
@@ -440,7 +441,7 @@ describe("a puzzle on the board", () => {
       const { unmount } = render(
         <Practice server={api(puzzle({ status }))} createBoard={spyBoard} fetchMotifs={noMotifs} />,
       );
-      expect(screen.getByRole("heading", { name: "Puzzles 2 of 10" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
       expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
       unmount();
     }
@@ -451,15 +452,15 @@ describe("a puzzle on the board", () => {
     const { unmount } = render(
       <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
     );
-    const heading = screen.getByRole("heading", { name: "Puzzles 2 of 10" });
+    const heading = screen.getByRole("heading", { name: "Puzzle 2 of 10" });
     expect(heading.textContent).not.toContain("fork");
     expect(heading.textContent).not.toContain("Fork");
-    expect(screen.queryByText(/Motif:/)).toBeNull();
+    expect(screen.queryByText("Fork")).toBeNull();
     unmount();
     const ended = puzzle({ status: "solved" });
     render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByRole("heading", { name: "Puzzles 2 of 10" })).toBeTruthy();
-    expect(screen.getByText("Motif: Fork")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
+    expect(screen.getByText("Fork")).toBeTruthy();
   });
 
   it("keeps the motif in the heading for a single-motif run", () => {
@@ -467,13 +468,13 @@ describe("a puzzle on the board", () => {
     const { unmount } = render(
       <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
     );
-    expect(screen.getByRole("heading", { name: "Puzzles · Fork 2 of 10" })).toBeTruthy();
-    expect(screen.queryByText(/Motif:/)).toBeNull();
+    expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
+    expect(screen.getByText("Fork")).toBeTruthy();
     unmount();
     const ended = puzzle({ status: "solved", run_motif: "fork" });
     render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByRole("heading", { name: "Puzzles · Fork 2 of 10" })).toBeTruthy();
-    expect(screen.queryByText(/Motif:/)).toBeNull();
+    expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
+    expect(screen.getAllByText("Fork")).toHaveLength(1);
   });
 
   it("reads Italian Opening for an italian drill", () => {
@@ -481,12 +482,13 @@ describe("a puzzle on the board", () => {
     const { unmount } = render(
       <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
     );
-    expect(screen.getByRole("heading", { name: "Italian Opening · 2 of 10" })).toBeTruthy();
-    expect(screen.queryByText(/Motif:/)).toBeNull();
+    expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
+    expect(screen.getByText("Italian Opening")).toBeTruthy();
     unmount();
     const ended = puzzle({ status: "solved", run_motif: "opening-italian" });
     render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByRole("heading", { name: "Italian Opening · 2 of 10" })).toBeTruthy();
+    expect(screen.getByText("Italian Opening")).toBeTruthy();
+    expect(screen.queryByText("Fork")).toBeNull();
   });
 
   it("is never rateable, even answered and carrying an exposure id", () => {
@@ -495,8 +497,7 @@ describe("a puzzle on the board", () => {
     expect(trainingView(card({ status: "solved" })).canRate).toBe(true);
   });
 
-  it("keeps next disabled until the puzzle is solved or failed", () => {
-    const next = () => screen.getByRole("button", { name: "Next" }) as HTMLButtonElement;
+  it("offers Continue only once the puzzle is solved or failed", () => {
     const { rerender } = render(
       <Practice
         server={api(puzzle({ status: "in_progress" }))}
@@ -504,8 +505,8 @@ describe("a puzzle on the board", () => {
         createBoard={spyBoard}
       />,
     );
-    expect(screen.getByRole("status").textContent).toContain("Correct, keep going");
-    expect(next().disabled).toBe(true);
+    expect(screen.getByRole("status").textContent).toBe("Best move");
+    expect(screen.queryByRole("button", { name: "Continue training" })).toBeNull();
     rerender(
       <Practice
         server={api(puzzle({ status: "solved" }))}
@@ -513,25 +514,26 @@ describe("a puzzle on the board", () => {
         createBoard={spyBoard}
       />,
     );
-    expect(next().disabled).toBe(false);
+    const next = screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement;
+    expect(next.disabled).toBe(false);
   });
 });
 
 describe("the end of the queue", () => {
-  it("offers Finish on the last item and shows the summary afterwards", () => {
+  it("offers Finish training on the last item and shows the summary afterwards", () => {
     const last = puzzle({ status: "solved" });
     if (last.item.kind === "puzzle") last.item.position_in_queue = 10;
     const server = api(last);
     const { rerender } = render(
       <Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish training" }));
     expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
 
     const ended = api(puzzle({ status: "solved", summary: { solved: 7, failed: 3 } }));
     rerender(<Practice server={ended} fetchMotifs={noMotifs} createBoard={spyBoard} />);
     expect(screen.getByTestId("summary").textContent).toContain("7 solved, 3 failed");
-    expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue training" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(ended.send).toHaveBeenCalledWith({ type: "end_training", activity_id: 4 });
   });
@@ -549,7 +551,7 @@ describe("grading on drop", () => {
     expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "explore" }));
   });
 
-  it("says Not it, try again after a wrong try and puts the piece back on the served square", () => {
+  it("says Not that move after a wrong try and puts the piece back on the served square", () => {
     boards.length = 0;
     const { rerender } = render(
       <Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
@@ -558,9 +560,9 @@ describe("grading on drop", () => {
     const before = boards.length;
     const missed = puzzle({ tries: 1, last_try: { uci: "e2e4", san: "e4", correct: false } });
     rerender(<Practice server={api(missed)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByRole("status").textContent).toBe("Not it, try again");
+    expect(screen.getByRole("status").textContent).toBe("Not that move");
     expect(boards.length).toBeGreaterThan(before);
-    expect(boards.at(-1)).toEqual({ movableColor: "white", fen: START_FEN });
+    expect(boards.at(-1)).toEqual({ movableColor: "white", fen: START_FEN, hint: {} });
   });
 
   it("drops the try-again line once a right try moves the puzzle on", () => {
@@ -570,10 +572,10 @@ describe("grading on drop", () => {
       last_try: { uci: "e2e4", san: "e4", correct: true },
     });
     render(<Practice server={api(next)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByRole("status").textContent).toBe("Correct, keep going");
+    expect(screen.getByRole("status").textContent).toBe("Best move");
   });
 
-  it("offers Solution while open, sends show_solution, and has no Answer, Take back or Reset", () => {
+  it("offers View solution while open, sends show_solution, and has no Answer, Take back or Reset", () => {
     const server = api(card());
     const { rerender } = render(
       <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
@@ -581,13 +583,13 @@ describe("grading on drop", () => {
     for (const name of [/^Answer/, "Take back", "Reset"]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
-    fireEvent.click(screen.getByRole("button", { name: "Solution" }));
+    fireEvent.click(screen.getByRole("button", { name: "View solution" }));
     expect(server.send).toHaveBeenCalledWith({ type: "show_solution", activity_id: 4 });
     rerender(<Practice server={api(answeredCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.queryByRole("button", { name: "Solution" })).toBeNull();
-    expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(screen.queryByRole("button", { name: "View solution" })).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 
   it("plays the solution line on the board one move every 600 ms, then stays on the last", () => {
@@ -774,13 +776,13 @@ describe("rating a card", () => {
     expect(pressedOf()).toEqual(["0"]);
   });
 
-  it("shows Right with the played move for a solved puzzle, and no rating", () => {
+  it("reads Solved for a solved puzzle, and offers no rating", () => {
     const solved = puzzle({
       status: "solved",
       last_try: { uci: "e2e4", san: "e4", correct: true },
     });
     render(<Practice server={api(solved)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByText("Right e4")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Solved");
     expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
   });
 });
@@ -908,7 +910,7 @@ describe("finishing a queue", () => {
     }
     const server = api(last);
     const { rerender } = render(<Practice server={server} {...hubProps} createBoard={spyBoard} />);
-    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish training" }));
     expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
 
     const finished = api(puzzle({ status: "solved", summary: { solved: 5, failed: 0 } }));
@@ -927,14 +929,14 @@ describe("ending a session", () => {
   it("asks first, keeps the item on Cancel and ends on End", () => {
     const server = api(card());
     render(<Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />);
-    fireEvent.click(screen.getByRole("button", { name: "End training" }));
+    fireEvent.click(screen.getByRole("button", { name: "End" }));
     const dialog = screen.getByRole("dialog", { name: "End training" });
     expect(dialog.textContent).toContain("End this session? What you answered is kept.");
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "end_training" }));
-    expect(screen.getByRole("heading", { name: "Practice › Due cards · 1 of 3" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Card 1 of 3" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "End training" }));
+    fireEvent.click(screen.getByRole("button", { name: "End" }));
     const confirm = screen.getByRole("dialog", { name: "End training" });
     fireEvent.click(within(confirm).getByRole("button", { name: "End" }));
     expect(server.send).toHaveBeenCalledWith({ type: "end_training", activity_id: 4 });
@@ -952,24 +954,24 @@ describe("a right card answer", () => {
     last_try: { uci: "d2d4", san: "d4", correct: true },
   });
 
-  it("reads Right with the played move and no Expected line", () => {
+  it("reads Solved and no Expected line", () => {
     render(<Practice server={api(solvedCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByText("Right d4")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Solved");
     expect(screen.queryByText(/Expected/)).toBeNull();
   });
 
   it("says how many wrong tries it took when the first try missed", () => {
     const retried = card({ ...solvedCard, tries: 2 });
     render(<Practice server={api(retried)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByText("After 2 wrong tries")).toBeTruthy();
+    expect(screen.getByText(/1 move · 2 wrong tries/)).toBeTruthy();
   });
 
-  it("keeps the rating group visible and Next enabled", () => {
+  it("keeps the rating group visible and Continue enabled", () => {
     render(<Practice server={api(solvedCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
     expect(screen.getByRole("group", { name: "Rate your recall" })).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 });
 
@@ -977,7 +979,7 @@ describe("hint", () => {
   it("sends hint from the button", () => {
     const server = api(card());
     render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    fireEvent.click(screen.getByRole("button", { name: "Hint" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get a hint" }));
     expect(server.send).toHaveBeenCalledWith({ type: "hint", activity_id: 4 });
   });
 
@@ -998,7 +1000,7 @@ describe("hint", () => {
         fetchMotifs={noMotifs}
       />,
     );
-    expect(boards.at(-1)?.hint).toBeUndefined();
+    expect(boards.at(-1)?.hint).toEqual({});
   });
 });
 

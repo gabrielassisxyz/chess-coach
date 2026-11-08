@@ -1,9 +1,12 @@
 import {
   type ActivityState,
+  ANALYSIS_BUDGET_MS,
+  type AnalyseCommand,
   type ClientCommand,
   ClientCommandSchema,
   COACH_TABS,
   type CoachTab,
+  DEFAULT_ANALYSIS_DEPTH,
   type ErrorCode,
   ErrorCodeSchema,
   type ServerEvent,
@@ -12,6 +15,7 @@ import {
   type TranscriptEntry,
 } from "@chess-coach/shared";
 import type { WebSocket } from "@fastify/websocket";
+import { Chess } from "chess.js";
 import type { FastifyInstance } from "fastify";
 import { ActivityError } from "../activity/errors.js";
 import type { ActivityService } from "../activity/service.js";
@@ -21,6 +25,10 @@ import { recordDivider } from "../coach/transcript.js";
 import { type ChatMessage, listChatTail } from "../db/chat.js";
 import type { Database } from "../db/open.js";
 import { getCurrentElo } from "../db/settings.js";
+import { EngineFault } from "../engine/errors.js";
+import { applyUci } from "../engine/moves.js";
+import { AnalyzeSuperseded } from "../engine/pool.js";
+import type { SearchRequest, SearchResult } from "../engine/uci.js";
 import { GameError } from "../game/errors.js";
 import { type Log, silentLog } from "../log.js";
 import { SrsError } from "../srs/errors.js";
@@ -67,6 +75,8 @@ export type ActivityPort = Pick<
 >;
 
 export interface HubOptions {
+  // The engine's analysis lane; without it the analyse command is refused.
+  analyse?: ((request: SearchRequest) => Promise<SearchResult>) | undefined;
   coach: CoachPort;
   activity: ActivityPort;
   db: Database;
@@ -127,6 +137,8 @@ class HubRefusal extends Error {
 // Game and activity refusals carry a code the browser can switch on; anything else is a fault.
 function errorCodeOf(error: unknown): ErrorCode {
   if (error instanceof HubRefusal) return error.code;
+  // A dead or missing engine is a condition the page can name, not a fault of the coach.
+  if (error instanceof EngineFault) return "engine_unavailable";
   if (error instanceof GameError || error instanceof ActivityError || error instanceof SrsError) {
     const code = ErrorCodeSchema.safeParse(error.code);
     if (code.success) return code.data;
@@ -144,6 +156,47 @@ function trainingEventOf(state: TrainingActivity): ServerEvent {
     expected: state.expected,
     summary: state.summary,
   };
+}
+
+function sanLineOf(fen: string, moves: readonly string[]): string[] {
+  const board = new Chess(fen);
+  const san: string[] = [];
+  try {
+    for (const uci of moves) san.push(applyUci(board, uci).san);
+  } catch {
+    // A move the position does not allow ends the line where it stands.
+  }
+  return san;
+}
+
+// UCI scores are from the side to move; the event carries White's view, which the page flips.
+function analysisEventOf(
+  command: AnalyseCommand,
+  depth: number,
+  lines: number,
+  result: SearchResult,
+): ServerEvent {
+  const whiteToMove = command.fen.split(" ")[1] !== "b";
+  return {
+    type: "analysis",
+    command_id: command.command_id,
+    fen: command.fen,
+    depth,
+    requested_lines: lines,
+    lines: result.lines.map((line) => ({
+      moves: line.moves,
+      san: sanLineOf(command.fen, line.moves),
+      score_cp: whiteToMove ? line.score : -line.score,
+    })),
+  };
+}
+
+function trainingItemOpen(state: ActivityState | null): boolean {
+  return (
+    state?.kind === "training" &&
+    state.summary === null &&
+    (state.status === "prompt" || state.status === "in_progress")
+  );
 }
 
 function commandIdOf(raw: unknown): string | undefined {
@@ -316,6 +369,46 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
       case "ask_coach_about_ply":
         askCoachAboutPly(reviewDeps, command.game_id, command.ply);
         return;
+      case "analyse": {
+        if (!options.analyse) {
+          throw new HubRefusal("engine_unavailable", "no engine is available for analysis");
+        }
+        const current = activity.current();
+        if (current?.kind !== "training") {
+          throw new ActivityError("not_in_training", "the engine strip belongs to a practice item");
+        }
+        if (command.activity_id !== undefined && command.activity_id !== current.activity_id) {
+          throw new ActivityError("stale_activity", "that item is no longer on the board");
+        }
+        if (trainingItemOpen(current)) {
+          throw new ActivityError(
+            "training_item_open",
+            "the engine stays off while an item is open",
+          );
+        }
+        try {
+          new Chess(command.fen);
+        } catch {
+          throw new HubRefusal("invalid_position", `${command.fen} is not a position`);
+        }
+        const depth = command.depth ?? DEFAULT_ANALYSIS_DEPTH;
+        const lines = command.lines ?? 1;
+        let result: SearchResult;
+        try {
+          result = await options.analyse({
+            fen: command.fen,
+            depth,
+            multipv: lines,
+            movetime: ANALYSIS_BUDGET_MS,
+          });
+        } catch (error) {
+          // A newer request took the lane; it answers, this one says nothing.
+          if (error instanceof AnalyzeSuperseded) return;
+          throw error;
+        }
+        socket.send(frame(analysisEventOf(command, depth, lines, result)));
+        return;
+      }
     }
   };
 

@@ -87,6 +87,23 @@ const runRows = (): RunRow[] =>
   db.prepare("SELECT ended_at, ended_reason FROM training_runs ORDER BY id").all() as RunRow[];
 
 describe("a persisted practice session", () => {
+  it("brings the per-item outcomes and the rating change back with a resumed run", async () => {
+    addPuzzle("p1", BACK_RANK, ["a1a8"]);
+    addPuzzle("p2", BACK_RANK, ["a1a8"]);
+    const first = boot();
+    const started = training(await first.startTraining({ mode: "puzzles", motif: "fork" }));
+    await first.trainingTry("a1a8", started.activity_id);
+    await first.nextTrainingItem(started.activity_id);
+    const given = training(await first.trainingShowSolution(started.activity_id));
+    expect(given.queue_outcomes).toEqual(["solved", "failed"]);
+
+    const resumed = training(await boot().resumeTraining());
+    expect(resumed.queue_outcomes).toEqual(["solved", "failed"]);
+    expect(resumed.rating_change).toBe(given.rating_change);
+    expect(resumed.moves).toEqual([]);
+    expect(resumed.solution_line).toEqual(["a1a8"]);
+  });
+
   it("keeps the run row current at start, answer, next and finish across restarts", async () => {
     addPuzzle("p1", BACK_RANK, ["a1a8"]);
     addPuzzle("p2", BACK_RANK, ["a1a8"]);

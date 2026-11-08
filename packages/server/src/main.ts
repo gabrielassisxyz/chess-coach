@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ActivityService } from "./activity/service.js";
 import { buildApp, type Readiness } from "./app.js";
+import { systemClock } from "./clock.js";
 import { assertSubscriptionAuth } from "./coach/auth.js";
 import { CoachSession, coachNotificationSinks } from "./coach/session.js";
 import { openDatabase } from "./db/open.js";
@@ -20,6 +21,7 @@ import { generateExplorerPuzzles } from "./openings/from-explorer.js";
 import { generateOpeningPuzzles } from "./openings/from-games.js";
 import { generateItalianPuzzles } from "./openings/from-italian.js";
 import { contentDir, dataDir, resolveAppRoot } from "./paths.js";
+import { ensurePuzzleRating } from "./puzzles/rating.js";
 import { seedPuzzles } from "./puzzles/seed.js";
 import { ReviewDesk } from "./srs/review.js";
 import { allowedOriginsFrom } from "./ws/origin.js";
@@ -56,6 +58,8 @@ const db = openDatabase(dataDir());
 // A bad puzzle entry throws here, naming <file>:<index>, before anything else starts.
 const seeded = seedPuzzles(db, contentDir());
 log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
+const puzzleRating = ensurePuzzleRating(db, systemClock);
+log.info("puzzles.rating", { rating: puzzleRating.rating, replayed: puzzleRating.replayed });
 const pool = new EnginePool(() => spawnStockfish());
 // The sinks read `coach` when a turn commits, long after the constant below is initialised.
 const sinks = coachNotificationSinks({ ensureSessionId: (tab) => coach.ensureSessionId(tab) });
@@ -146,7 +150,13 @@ const app = buildApp({
     grader: importGrader,
     usernames: (process.env.CHESS_COACH_USERNAMES ?? "").split(",").filter(Boolean),
   },
-  hub: { coach, activity, db, allowedOrigins: allowedOriginsFrom() },
+  hub: {
+    analyse: (request) => pool.analyzeWith(request),
+    coach,
+    activity,
+    db,
+    allowedOrigins: allowedOriginsFrom(),
+  },
   log,
 });
 

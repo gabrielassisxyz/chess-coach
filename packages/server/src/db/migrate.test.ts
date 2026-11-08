@@ -254,3 +254,27 @@ describe("014_training_hints", () => {
     expect(db.prepare("SELECT hinted FROM puzzle_attempts").get()).toEqual({ hinted: 0 });
   });
 });
+
+describe("016_training_run_outcomes", () => {
+  it("adds outcomes_json to training_runs with an empty list for the runs already there", () => {
+    const db = new BetterSqlite3(":memory:");
+    const all = listMigrations(defaultMigrationsDir);
+    const upTo015 = migrationsDir(
+      Object.fromEntries(
+        all
+          .filter((name) => name < "016")
+          .map((name) => [name, readFileSync(join(defaultMigrationsDir, name), "utf8")]),
+      ),
+    );
+    runMigrations(db, upTo015);
+    db.prepare(
+      `INSERT INTO training_runs (mode, motif, color, size, items_json, position, solved, failed,
+         current_json, started_at, updated_at)
+       VALUES ('puzzles', 'fork', NULL, 2, '[]', 1, 1, 0, '{}', 'x', 'x')`,
+    ).run();
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("016_training_run_outcomes.sql");
+    expect(db.prepare("SELECT outcomes_json FROM training_runs").all()).toEqual([
+      { outcomes_json: "[]" },
+    ]);
+  });
+});

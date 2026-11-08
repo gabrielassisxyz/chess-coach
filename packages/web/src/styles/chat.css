@@ -13,23 +13,29 @@ body {
   line-height: var(--leading-body);
 }
 
+/* The coach is a panel like the puzzle column: bordered on every side, 8 px radius, on the app surface. */
 .coach {
   min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   background: var(--surface-1);
+  overflow: hidden;
 }
 
+/* One column that can shrink below its content: a long state phrase in the header must not widen the panel. */
 .chat {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr auto;
 }
 
 .chat__header {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  gap: var(--space-2);
+  height: 44px;
+  padding: 0 var(--space-2) 0 var(--space-4);
   border-bottom: 1px solid var(--border);
   font-family: var(--font-ui);
 }
@@ -42,8 +48,12 @@ body {
 
 .chat__state {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-2);
   font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .coach--collapsed {
@@ -299,27 +309,85 @@ body {
   background: var(--accent-hover);
 }
 
+/* The composer: a raised box with the text and its tools inside, the model and the key hint under it. */
 .composer {
   display: flex;
+  flex: none;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-4);
-  border-top: 1px solid var(--border);
+  padding: var(--space-3);
+}
+
+.composer__box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+.composer__box:focus-within {
+  border-color: var(--border-strong);
 }
 
 .composer__input {
-  min-height: 3.5rem;
-  resize: vertical;
-  padding: var(--space-3);
+  min-height: 44px;
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  resize: none;
+}
+
+.composer__input::placeholder {
+  color: var(--text-3);
+}
+
+.composer__tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.composer__tool {
+  border-radius: var(--radius-md);
+}
+
+.composer__dictate {
+  gap: var(--space-1);
+  width: auto;
+  padding: 0 6px;
 }
 
 .composer__row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 0 6px;
   color: var(--text-2);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
+}
+
+.composer__model {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-1);
+}
+
+.chat__context {
+  margin: 0;
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  text-align: center;
 }
 
 .icon-button {
@@ -365,13 +433,18 @@ body {
     min-height: 44px;
   }
 
+  .composer__tool {
+    min-height: 44px;
+  }
+
   .icon-button {
     width: 44px;
   }
 
   .coach {
+    border: 0;
     border-top: 1px solid var(--border);
-    border-left: 0;
+    border-radius: 0;
   }
 
   .coach--collapsed {

@@ -12,8 +12,10 @@ import type { ActivityState, PromotionPiece } from "@chess-coach/shared";
 import { Chessground } from "@lichess-org/chessground";
 import type { Api } from "@lichess-org/chessground/api";
 import type { Config } from "@lichess-org/chessground/config";
+import type { DrawBrushes, DrawShape } from "@lichess-org/chessground/draw";
 import type { Color, Key } from "@lichess-org/chessground/types";
 import { useEffect, useRef, useState } from "react";
+import { ANIMATION_MS, type BoardPrefs, DEFAULT_BOARD_PREFS } from "../state/board-prefs.js";
 import {
   checkedColor,
   destsFrom,
@@ -26,6 +28,7 @@ import { PromotionChooser } from "./PromotionChooser.js";
 export type BoardFactory = (element: HTMLElement, config: Config) => Api;
 
 export const LINE_STEP_MS = 600;
+const NO_SHAPES: readonly DrawShape[] = [];
 
 export interface BoardProps {
   activity: ActivityState;
@@ -39,7 +42,20 @@ export interface BoardProps {
   line?: readonly string[] | null | undefined;
   // Origin square of the expected move after a hint; rendered with the hint highlight.
   hintSquare?: string | null | undefined;
+  // Which side is at the bottom; the activity's own orientation unless the student flipped it.
+  orientation?: Color | undefined;
+  // A right or wrong mark on a square, drawn over the board.
+  badge?: SquareBadge | null | undefined;
+  // Coordinates, animation and highlights, the same set on every screen.
+  prefs?: BoardPrefs | undefined;
+  // Arrows drawn over the board, one per engine line; the student cannot draw their own.
+  shapes?: readonly DrawShape[] | undefined;
   createBoard?: BoardFactory | undefined;
+}
+
+export interface SquareBadge {
+  square: string;
+  kind: "check" | "cross";
 }
 
 interface PendingPromotion {
@@ -52,18 +68,45 @@ function turnOf(fen: string): Color {
   return fen.split(" ")[1] === "b" ? "black" : "white";
 }
 
+// The arrow colours come from the overlay tokens, read once the page has them; "currentColor" is
+// the fallback where no stylesheet is loaded (tests).
+let brushes: DrawBrushes | null = null;
+function arrowBrushes(): DrawBrushes {
+  if (brushes) return brushes;
+  const style =
+    typeof getComputedStyle === "function" ? getComputedStyle(document.documentElement) : null;
+  const colour = (name: string): string => style?.getPropertyValue(name).trim() || "currentColor";
+  brushes = {
+    green: { key: "g", color: colour("--overlay-arrow-1"), opacity: 0.9, lineWidth: 10 },
+    blue: { key: "b", color: colour("--overlay-arrow-2"), opacity: 0.8, lineWidth: 8 },
+    yellow: { key: "y", color: colour("--overlay-arrow-3"), opacity: 0.7, lineWidth: 7 },
+    red: { key: "r", color: colour("--overlay-arrow-3"), opacity: 0.5, lineWidth: 6 },
+    paleBlue: { key: "pb", color: colour("--overlay-arrow-3"), opacity: 0.4, lineWidth: 5 },
+  };
+  return brushes;
+}
+
 function toConfig(
   activity: ActivityState,
   bothSides: boolean,
   shown: LineStep | null,
   hintSquare: string | null | undefined,
+  orientation: Color,
+  prefs: BoardPrefs,
+  shapes: readonly DrawShape[],
 ): Config {
   const last = shown ?? activity.last_move;
   const lastMove = last ? [last.from, last.to] : [];
   const fen = shown ? shown.fen : activity.fen;
   return {
     fen,
-    orientation: activity.orientation,
+    orientation,
+    coordinates: prefs.coordinates !== "off",
+    coordinatesOnSquares: prefs.coordinates === "inside",
+    animation: {
+      enabled: prefs.animation !== "off",
+      duration: ANIMATION_MS[prefs.animation],
+    },
     turnColor: shown ? turnOf(shown.fen) : activity.turn,
     check: checkedColor(fen),
     lastMove: lastMove as Key[],
@@ -77,11 +120,15 @@ function toConfig(
           : activity.orientation
         : undefined) as Color,
       dests: destsFrom(activity.legal_moves),
+      showDests: prefs.legalMoves,
     },
+    drawable: { enabled: false, visible: true, autoShapes: [...shapes], brushes: arrowBrushes() },
+    // Always a map: chessground keeps the previous one when the key is absent, so a cleared
+    // hint would stay on the square into the next item.
     highlight: {
-      lastMove: true,
+      lastMove: prefs.lastMove,
       check: true,
-      ...(hintSquare ? { custom: new Map([[hintSquare as Key, "hint"]]) } : {}),
+      custom: new Map(hintSquare ? [[hintSquare as Key, "hint"]] : []),
     },
   };
 }
@@ -103,6 +150,42 @@ function useLinePlayback(fen: string, line: readonly string[] | null): LineStep 
   return count > 0 ? (steps[count - 1] ?? null) : null;
 }
 
+// The mark sits on the square's centre, so it reads from the piece that just landed there.
+function BadgeMark({ badge, orientation }: { badge: SquareBadge; orientation: Color }) {
+  const file = badge.square.charCodeAt(0) - "a".charCodeAt(0);
+  const rank = Number(badge.square[1]) - 1;
+  const column = orientation === "white" ? file : 7 - file;
+  const row = orientation === "white" ? 7 - rank : rank;
+  const style = { left: `${(column + 0.5) * 12.5}%`, top: `${(row + 0.5) * 12.5}%` };
+  return (
+    <span
+      className="board__badge"
+      data-kind={badge.kind}
+      data-testid="square-badge"
+      style={style}
+      aria-hidden="true"
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {badge.kind === "check" ? (
+          <path d="M3 8.5l3.5 3.5L13 4.5" />
+        ) : (
+          <path d="M4 4l8 8M12 4l-8 8" />
+        )}
+      </svg>
+    </span>
+  );
+}
+
 export function Board({
   activity,
   onMove,
@@ -110,8 +193,13 @@ export function Board({
   bothSides = false,
   line = null,
   hintSquare = null,
+  orientation,
+  badge = null,
+  prefs = DEFAULT_BOARD_PREFS,
+  shapes = NO_SHAPES,
   createBoard = Chessground,
 }: BoardProps) {
+  const facing = orientation ?? activity.orientation;
   const elementRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<Api | null>(null);
   const [pending, setPending] = useState<PendingPromotion | null>(null);
@@ -119,8 +207,8 @@ export function Board({
   const shown = useLinePlayback(activity.fen, line);
 
   // Chessground callbacks are registered once at creation, so they read the latest props here.
-  const latest = useRef({ activity, onMove, bothSides, hintSquare });
-  latest.current = { activity, onMove, bothSides, hintSquare };
+  const latest = useRef({ activity, onMove, bothSides, hintSquare, facing, prefs, shapes });
+  latest.current = { activity, onMove, bothSides, hintSquare, facing, prefs, shapes };
 
   useEffect(() => {
     const element = elementRef.current;
@@ -131,6 +219,9 @@ export function Board({
         latest.current.bothSides,
         null,
         latest.current.hintSquare,
+        latest.current.facing,
+        latest.current.prefs,
+        latest.current.shapes,
       ),
       draggable: { enabled: false },
       premovable: { enabled: false },
@@ -156,8 +247,8 @@ export function Board({
   // its position, since the step object is rebuilt on every render.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    apiRef.current?.set(toConfig(activity, bothSides, shown, hintSquare));
-  }, [activity, bothSides, hintSquare, syncToken, resync, shown?.fen]);
+    apiRef.current?.set(toConfig(activity, bothSides, shown, hintSquare, facing, prefs, shapes));
+  }, [activity, bothSides, hintSquare, facing, prefs, shapes, syncToken, resync, shown?.fen]);
 
   const choose = (piece: PromotionPiece): void => {
     if (!pending) return;
@@ -175,11 +266,12 @@ export function Board({
     // focus ring has something to draw on if a script or a click lands there.
     <div className="board" tabIndex={-1}>
       <div ref={elementRef} className="board__surface" data-testid="board" />
+      {badge ? <BadgeMark badge={badge} orientation={facing} /> : null}
       {pending ? (
         <PromotionChooser
           to={pending.to}
           pieces={pending.pieces}
-          orientation={activity.orientation}
+          orientation={facing}
           onChoose={choose}
           onCancel={cancel}
         />

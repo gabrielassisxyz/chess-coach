@@ -143,6 +143,7 @@ export const ErrorCodeSchema = z.enum([
   "not_exploring",
   "illegal_exploration",
   "no_paused_training",
+  "engine_unavailable",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
@@ -181,7 +182,28 @@ export const CardsCreatedEventSchema = z.object({
 });
 export type CardsCreatedEvent = z.infer<typeof CardsCreatedEventSchema>;
 
+// One engine line for a position: the moves, their SAN, and the score from White's side in
+// centipawns (a mate reads as the mate score, 10000, with its sign).
+export const AnalysisLineSchema = z.object({
+  moves: z.array(z.string()),
+  san: z.array(z.string()),
+  score_cp: z.number(),
+});
+export type AnalysisLine = z.infer<typeof AnalysisLineSchema>;
+
+// The answer to an `analyse` command, sent to the connection that asked.
+export const AnalysisEventSchema = z.object({
+  type: z.literal("analysis"),
+  command_id: commandId.optional(),
+  fen: z.string(),
+  depth: z.number().int(),
+  requested_lines: z.number().int(),
+  lines: z.array(AnalysisLineSchema),
+});
+export type AnalysisEvent = z.infer<typeof AnalysisEventSchema>;
+
 export const ServerEventSchema = z.discriminatedUnion("type", [
+  AnalysisEventSchema,
   BootstrapEventSchema,
   ChatEventSchema,
   ChatRowEventSchema,
@@ -319,6 +341,24 @@ export const HintCommandSchema = z.object({
   activity_id: activityId,
 });
 
+// Asks the engine about a position shown on the board, refused while a training item is open.
+export const MAX_ANALYSIS_LINES = 5;
+export const MIN_ANALYSIS_DEPTH = 8;
+export const MAX_ANALYSIS_DEPTH = 24;
+export const DEFAULT_ANALYSIS_DEPTH = 18;
+// The engine stops at the depth or at this many milliseconds, whichever comes first: a
+// depth-only search has five seconds before the engine process is written off as hung.
+export const ANALYSIS_BUDGET_MS = 4000;
+export const AnalyseCommandSchema = z.object({
+  type: z.literal("analyse"),
+  command_id: commandId,
+  activity_id: activityId,
+  fen: z.string().min(10).max(100),
+  lines: z.number().int().min(1).max(MAX_ANALYSIS_LINES).optional(),
+  depth: z.number().int().min(MIN_ANALYSIS_DEPTH).max(MAX_ANALYSIS_DEPTH).optional(),
+});
+export type AnalyseCommand = z.infer<typeof AnalyseCommandSchema>;
+
 export const RateCardCommandSchema = z.object({
   type: z.literal("rate_card"),
   command_id: commandId,
@@ -387,6 +427,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   DiscardTrainingCommandSchema,
   CreateCardsCommandSchema,
   AskCoachAboutPlyCommandSchema,
+  AnalyseCommandSchema,
 ]);
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
 

@@ -26,6 +26,42 @@ cg-board {
   border-radius: var(--radius-sm);
 }
 
+/* Coordinates: inside the squares they take the opposite square's colour in 10 px mono; on the
+ * edge they sit outside the board in the panel's muted text. Chessground alternates the parity
+ * when the board is flipped, so both orders are written. */
+.cg-wrap coords {
+  opacity: 1;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.cg-wrap coords.ranks,
+.cg-wrap coords.files {
+  color: var(--text-2);
+}
+
+.cg-wrap coords.squares coord {
+  padding: 3px 4px;
+  text-transform: none;
+}
+
+.cg-wrap coords.squares coord:nth-child(odd) {
+  color: var(--board-light);
+}
+
+.cg-wrap coords.squares coord:nth-child(even) {
+  color: var(--board-dark);
+}
+
+.cg-wrap coords.squares.black coord:nth-child(even) {
+  color: var(--board-light);
+}
+
+.cg-wrap coords.squares.black coord:nth-child(odd) {
+  color: var(--board-dark);
+}
+
 cg-board square.move-dest {
   background: radial-gradient(var(--board-dest) 22%, transparent 24%);
 }

@@ -53,9 +53,14 @@ Shell
 
 - Top bar 48 px, active tab marked by a 2 px accent underline, "Routine" a disabled tab
   tagged "soon", a Light/Dark button.
-- Three columns at 900 px and up: left column 220 px, board column the rest, coach 360 px;
-  the coach collapses to a 32 px strip. Panels 8 px radius, controls 4 px, hairline borders,
-  no shadows, no glow.
+- Three columns at 900 px and up inside a frame with 24 px padding and a 16 px gap: left
+  column 220 px (328 px while a practice item is on the board), board column the rest, coach
+  360 px as a panel; the coach collapses to a 32 px strip. Panels 8 px radius, controls 4 px,
+  the composer 16 px, hairline borders, no shadows, no glow.
+- Practice item: one column stacked by reading frequency (header with progress segments,
+  ratings, engine strip, move list, state card), a 40 px bar under the board, popovers for the
+  board and the engine settings anchored to their icons; coordinates inside the squares in
+  10 px mono by default.
 
 Phone (under 900 px)
 
@@ -83,7 +88,7 @@ Motion and focus
 | 8 | The same type scale: controls, notes and lists use the same steps on every screen | ok | ok | ok | ok | ok |
 | 9 | Radii 4 px controls, 8 px panels, hairline borders; no nested cards, no icon tile, eyebrow, hero or gradient text | ok | ok | ok | ok | ok |
 | 10 | Spacing from the 4-based scale; the same screen padding and block gap | ok | partial | ok | ok | ok |
-| 11 | Shell measurements: 48 px bar, 220 / board / 360 columns, 32 px strip | ok | ok | ok | n/a | n/a |
+| 11 | Shell measurements: 48 px bar, 24 px frame padding, 16 px gap, 220 (328 on an item) / board / 360 columns, 32 px strip | ok | ok | ok | ok | n/a |
 | 12 | Running text near 65ch | ok | ok | ok | ok | ok |
 | 13 | Motion under 300 ms, ease-out, transform and opacity only, reduced motion respected | ok | ok | ok | ok | ok |
 | 14 | Focus visible on every interactive element, one ring | ok | ok | ok | ok | ok |
@@ -139,3 +144,9 @@ screens were built to are in the design probe's spec (token layer and interactio
   those never land. `--space-12` is gone, and no `review__` or `train__` name survives.
 - **Placeholder tab.** "Routine" is a disabled tab tagged "soon"; the screen behind it does
   not exist.
+- **Play's board settings.** Play still opens the older settings card in its column with the
+  theme radios alone; the popover with coordinates, animation and highlights exists on Practice
+  only, though every board honours the stored preferences.
+- **The Practice hub** was not part of the puzzle redesign and keeps its three cards.
+- **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
+  and a model setting exist.

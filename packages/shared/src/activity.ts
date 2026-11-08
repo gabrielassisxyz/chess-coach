@@ -101,6 +101,7 @@ export const CardItemSchema = z.object({
 });
 
 // `reply_uci` is the opponent move the server just played after a right answer in a multi-move puzzle.
+// `rating` is the puzzle's difficulty rating; null when the library has none (opening drills).
 export const PuzzleItemSchema = z.object({
   kind: z.literal("puzzle"),
   puzzle_id: z.string(),
@@ -109,6 +110,7 @@ export const PuzzleItemSchema = z.object({
   fen: z.string(),
   cursor: z.number().int().nonnegative(),
   reply_uci: z.string().nullable(),
+  rating: z.number().int().nullable().optional(),
   ...queuePosition,
 });
 
@@ -158,6 +160,27 @@ export const LastTrySchema = z.object({
 });
 export type LastTry = z.infer<typeof LastTrySchema>;
 
+// A move on the item's line from its start position: the student's right moves and the replies
+// the puzzle played back, in order. `ply` is the solution index the move sits at.
+export const PlayedMoveSchema = z.object({
+  ply: z.number().int().nonnegative(),
+  uci: z.string(),
+  san: z.string(),
+  by: z.enum(["student", "reply"]),
+});
+export type PlayedMove = z.infer<typeof PlayedMoveSchema>;
+
+// A wrong try, kept beside the ply it was graded against.
+export const WrongTrySchema = z.object({
+  ply: z.number().int().nonnegative(),
+  uci: z.string(),
+  san: z.string().nullable(),
+});
+export type WrongTry = z.infer<typeof WrongTrySchema>;
+
+export const QueueOutcomeSchema = z.enum(["solved", "failed", "current", "pending"]);
+export type QueueOutcome = z.infer<typeof QueueOutcomeSchema>;
+
 // `summary` is set once the queue has ended; the last item then stays on the board, locked.
 // `fen` is the position the current step is graded against. `tries` counts the wrong tries on the
 // item. `solution_line` is set once the student gave up: the UCI moves from `fen` to the end.
@@ -183,6 +206,15 @@ export const TrainingActivitySchema = z.object({
   suggested_quality: z.number().int().min(0).max(5).nullable(),
   hint_square: SquareSchema.nullable(),
   summary: TrainingSummarySchema.nullable(),
+  // The line played so far and the wrong tries beside it, so the move list needs no replay of
+  // the solution on the client; `queue_outcomes` has one entry per queue position.
+  // `student_rating` is the student's puzzle rating and `rating_change` how this item moved it,
+  // set once a rated puzzle ended. The server always sends these; a fixture need not carry them.
+  moves: z.array(PlayedMoveSchema).optional(),
+  wrong_tries: z.array(WrongTrySchema).optional(),
+  queue_outcomes: z.array(QueueOutcomeSchema).optional(),
+  student_rating: z.number().int().nullable().optional(),
+  rating_change: z.number().int().nullable().optional(),
 });
 
 // A practice queue that is open but not on the board. `position` is the 0-based index of the item

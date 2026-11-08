@@ -153,7 +153,7 @@ describe("Board configuration", () => {
         createBoard={recorder.factory}
       />,
     );
-    expect(recorder.sets.at(-1)?.highlight?.custom).toBeUndefined();
+    expect(recorder.sets.at(-1)?.highlight?.custom?.size).toBe(0);
   });
 });
 
@@ -185,6 +185,45 @@ const settle = (): Promise<void> =>
   act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
+
+describe("Board preferences", () => {
+  it("puts the coordinates on the squares and animates at 200 ms by default", () => {
+    const recorder = new RecordingBoard();
+    render(<Board activity={liveGame()} onMove={vi.fn()} createBoard={recorder.factory} />);
+    expect(recorder.created[0]).toMatchObject({
+      coordinates: true,
+      coordinatesOnSquares: true,
+      animation: { enabled: true, duration: 200 },
+      highlight: { lastMove: true },
+      movable: { showDests: true },
+    });
+  });
+
+  it("draws coordinates, animation and highlights from the prefs it is given", () => {
+    const recorder = new RecordingBoard();
+    render(
+      <Board
+        activity={liveGame()}
+        onMove={vi.fn()}
+        createBoard={recorder.factory}
+        prefs={{
+          coordinates: "off",
+          animation: "off",
+          lastMove: false,
+          legalMoves: false,
+          autoNext: false,
+        }}
+      />,
+    );
+    expect(recorder.created[0]).toMatchObject({
+      coordinates: false,
+      coordinatesOnSquares: false,
+      animation: { enabled: false, duration: 0 },
+      highlight: { lastMove: false },
+      movable: { showDests: false },
+    });
+  });
+});
 
 describe("Board click-to-move", () => {
   beforeEach(() => {

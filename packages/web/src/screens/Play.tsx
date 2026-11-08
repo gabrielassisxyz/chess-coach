@@ -8,6 +8,7 @@ import { EvalBar } from "../components/EvalBar.js";
 import { MoveList } from "../components/MoveList.js";
 import { ServiceBanner } from "../components/ServiceBanner.js";
 import type { ServerApi } from "../hooks/useServer.js";
+import { useBoardPrefs } from "../state/board-prefs.js";
 import { useBoardTheme } from "../state/board-theme.js";
 import type { ServiceNotice } from "../state/health.js";
 import { evalView, lastBlunder, movesOf } from "../state/play.js";
@@ -47,6 +48,7 @@ export function Play({
   const blunder = lastBlunder(moves);
   const facts = usePlayFacts(live?.game_id ?? null, factsApi);
   const board = useBoardTheme();
+  const { prefs } = useBoardPrefs();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   if (activity?.kind === "training") {
@@ -88,6 +90,7 @@ export function Play({
               activity={readOnly}
               onMove={() => undefined}
               syncToken={server.errorCount}
+              prefs={prefs}
               createBoard={createBoard}
             />
           </div>
@@ -158,6 +161,7 @@ export function Play({
               activity={activity}
               onMove={move}
               syncToken={server.errorCount}
+              prefs={prefs}
               createBoard={createBoard}
             />
             <div className="table__bottom">

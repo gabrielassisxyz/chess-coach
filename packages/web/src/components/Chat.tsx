@@ -148,7 +148,12 @@ export interface ChatProps {
   idleLabel?: string;
   // Buttons the screen offers under the latest coach message.
   actions?: ReactNode;
+  // One line pinned over the conversation naming what is on the board.
+  contextLine?: string | null;
 }
+
+// The coach's model, read-only until choosing one is a setting; the server does not report it yet.
+export const COACH_MODEL_LABEL = "Claude";
 
 export function Chat({
   server,
@@ -157,6 +162,7 @@ export function Chat({
   onToggle = () => {},
   idleLabel = DEFAULT_COACH_IDLE,
   actions = null,
+  contextLine = null,
 }: ChatProps) {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -227,6 +233,11 @@ export function Chat({
       </header>
       <div className="chat__log">
         <div className="chat__column">
+          {contextLine ? (
+            <p className="chat__context" data-testid="chat-context">
+              {contextLine}
+            </p>
+          ) : null}
           {server.items.map((item, index) => (
             <Fragment key={item.key}>
               <ItemView item={item} />
@@ -244,30 +255,89 @@ export function Chat({
         </div>
       </div>
       <div className="composer">
-        <textarea
-          className="input composer__input"
-          aria-label="Message to the coach"
-          placeholder="Think out loud…"
-          value={draft}
-          maxLength={MAX_SAY_LENGTH}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            freshStart.check();
-          }}
-          onKeyDown={onKeyDown}
-        />
+        <div className="composer__box">
+          <textarea
+            className="composer__input"
+            aria-label="Message to the coach"
+            placeholder={contextLine ? "Think out loud…" : "Ask about the position…"}
+            value={draft}
+            maxLength={MAX_SAY_LENGTH}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              freshStart.check();
+            }}
+            onKeyDown={onKeyDown}
+          />
+          <div className="composer__tools">
+            <button
+              type="button"
+              className="icon-button icon-button--quiet composer__tool composer__dictate"
+              aria-label="Dictate"
+              title="Soon"
+              disabled
+            >
+              <Icon>
+                <rect x="5.5" y="1.5" width="5" height="8" rx="2.5" />
+                <path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2" />
+              </Icon>
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </button>
+            {draft.trim() === "" ? (
+              <button
+                type="button"
+                className="icon-button icon-button--quiet composer__tool"
+                aria-label="Voice conversation"
+                title="Soon"
+                disabled
+              >
+                <Icon>
+                  <path d="M2.5 7v2M5.5 4.5v7M8.5 2.5v11M11.5 5v6M14.5 7v2" />
+                </Icon>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="icon-button icon-button--primary composer__tool"
+                aria-label="Send"
+                onClick={submit}
+              >
+                <Icon>
+                  <path d="M8 13V3M4 7l4-4 4 4" />
+                </Icon>
+              </button>
+            )}
+          </div>
+        </div>
         <div className="composer__row">
+          <span className="composer__model" title="Coach model">
+            {COACH_MODEL_LABEL}
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </span>
           <span className="composer__hint">Enter to send</span>
-          <button
-            type="button"
-            className="icon-button icon-button--primary"
-            aria-label="Send"
-            onClick={submit}
-          >
-            <Icon>
-              <path d="M3 8h10M9 4l4 4-4 4" />
-            </Icon>
-          </button>
         </div>
       </div>
     </aside>

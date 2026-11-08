@@ -72,6 +72,7 @@ function api(activity: ActivityState | null, overrides: Partial<ServerApi> = {})
     newConversation: vi.fn(() => true),
     practiceReplyPending: false,
     practiceEndedItem: null,
+    analysis: null,
     reconnectAttempt: 0,
     connection: "connected",
     say: vi.fn(() => true),

@@ -25,7 +25,8 @@
 - **Dev:** `pnpm dev` runs both packages. The server listens on `127.0.0.1:3210` (`PORT`
   overrides) and Vite serves the app on `http://localhost:5173`, proxying `/api` and the
   WebSocket. The socket only accepts those two origins; `CHESS_COACH_ALLOWED_ORIGINS`
-  (comma-separated) replaces them.
+  (comma-separated) replaces them. A second instance (another checkout, a copied data dir) runs
+  its server on another `PORT` and tells Vite with `CHESS_COACH_API_PORT`.
 - **Data:** one SQLite file, `data/chess-coach.db`, under the repository root and git-ignored.
   `CHESS_COACH_DATA_DIR` moves it, `CHESS_COACH_CONTENT_DIR` moves the teaching content
   (`content/`). Puzzles are seeded from `content/puzzles` at every server start.
@@ -63,7 +64,14 @@
   (`puzzle_attempts.first_try`). The coach hears once per item, when it ends. A `hint` marks the
   origin square of the expected move, clears on the next try, and makes the solve count as missed.
   Explore is a client mode that routes drops to `explore` instead of grading; Back to puzzle clears
-  the line and restores graded drops.
+  the line and restores graded drops. The activity carries the item's line so far (`moves`), the
+  wrong tries beside their ply (`wrong_tries`) and one outcome per queue position
+  (`queue_outcomes`, kept in `training_runs.outcomes_json`).
+- **Puzzle rating:** the student's puzzle rating is plain Elo (K 32, start 1200) against the
+  library's `difficulty_rating`; a first-try solve wins, anything else loses, an unrated puzzle
+  (opening drills) moves nothing. It lives in `settings.puzzle_rating`, is replayed once from
+  the stored attempts at boot when absent (`puzzles.rating` log event), and the activity carries it
+  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
   each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
   (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The
@@ -76,6 +84,16 @@
   or a practice queue from the UI writes a divider (a `system` text row, `{label, at}`).
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
+- **Engine on Practice:** `analyse {fen, lines 1-5, depth 8-24}` runs the evaluation engine's
+  analysis lane on a position and answers that connection with an `analysis` event (lines with
+  SAN and a centipawn score from White's side, a mate as 10000). The search stops at the depth or
+  after 4 s, whichever first. It is refused with `training_item_open` while an item is open, so the
+  engine never helps with the answer, with `not_in_training` or `stale_activity` off the item, and
+  with `engine_unavailable` when Stockfish is missing or dead; a request a newer one replaced
+  answers nothing. The
+  strip's switch, line count and depth are stored in the browser (`chess-coach.engine-prefs`),
+  as are the board preferences (`chess-coach.board-prefs`: coordinates, animation, highlights,
+  auto-next) beside the board theme.
 
 ## Logs
 
@@ -89,7 +107,7 @@
   `RecordingLog` and assert on events. No `console.*` in `packages/server/src`.
 - **Correlation:** `conn` (one per websocket), `command_id`, `activity_id`, `game_id`,
   `coach_session_id`, `tab` (the coach conversation), `turn` (one per message handed to the coach), `tool_use_id`.
-- **Events:** `server.*`, `logs.pruned`, `process.*`, `puzzles.seeded`, `engine.start`,
+- **Events:** `server.*`, `logs.pruned`, `process.*`, `puzzles.seeded`, `puzzles.rating`, `engine.start`,
   `engine.start_failed`, `engine.fault`, `http.request`, `http.client_error`, `http.error`,
   `ws.connect`,
   `ws.disconnect`, `ws.ping_timeout`, `ws.invalid_frame`, `ws.command`, `ws.command_done`,
