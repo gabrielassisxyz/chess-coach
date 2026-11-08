@@ -63,7 +63,7 @@
   stdin into the usual data dir and printing rows added, skipped and failed. A row's `FEN` is shown after its first
   move; the rest is the solution. Every theme gets a `puzzle_themes` row and one motif goes in `puzzles.motif`
   (rarest first, `tactics` when none maps). A `PuzzleId` already stored as a `lichess_id` is skipped, so a rerun
-  adds nothing. Commits in batches of 5000 rows; the file grows the database to about 2.2 GB, so run it on a copy first.
+  adds nothing. Commits in batches of 5000 rows; the file grows the database to about 3.6 GB, so run it on a copy first.
 - **Grading:** a practice move is graded the moment it is dropped (`try_move`). A wrong try leaves
   the item open at the same position; `show_solution` ends it as given up and the board plays the
   solution line. Every try is kept in `training_tries`, and puzzle accuracy is first-try solves
