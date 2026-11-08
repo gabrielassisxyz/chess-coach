@@ -12,6 +12,7 @@ import type { ActivityState, PromotionPiece } from "@chess-coach/shared";
 import { Chessground } from "@lichess-org/chessground";
 import type { Api } from "@lichess-org/chessground/api";
 import type { Config } from "@lichess-org/chessground/config";
+import type { DrawBrushes, DrawShape } from "@lichess-org/chessground/draw";
 import type { Color, Key } from "@lichess-org/chessground/types";
 import { useEffect, useRef, useState } from "react";
 import { ANIMATION_MS, type BoardPrefs, DEFAULT_BOARD_PREFS } from "../state/board-prefs.js";
@@ -27,6 +28,7 @@ import { PromotionChooser } from "./PromotionChooser.js";
 export type BoardFactory = (element: HTMLElement, config: Config) => Api;
 
 export const LINE_STEP_MS = 600;
+const NO_SHAPES: readonly DrawShape[] = [];
 
 export interface BoardProps {
   activity: ActivityState;
@@ -46,6 +48,8 @@ export interface BoardProps {
   badge?: SquareBadge | null | undefined;
   // Coordinates, animation and highlights, the same set on every screen.
   prefs?: BoardPrefs | undefined;
+  // Arrows drawn over the board, one per engine line; the student cannot draw their own.
+  shapes?: readonly DrawShape[] | undefined;
   createBoard?: BoardFactory | undefined;
 }
 
@@ -64,6 +68,21 @@ function turnOf(fen: string): Color {
   return fen.split(" ")[1] === "b" ? "black" : "white";
 }
 
+// The arrow colours come from the overlay tokens, read once the page has them; "currentColor" is
+// the fallback where no stylesheet is loaded (tests).
+function arrowBrushes(): DrawBrushes {
+  const style =
+    typeof getComputedStyle === "function" ? getComputedStyle(document.documentElement) : null;
+  const colour = (name: string): string => style?.getPropertyValue(name).trim() || "currentColor";
+  return {
+    green: { key: "g", color: colour("--overlay-arrow-1"), opacity: 0.9, lineWidth: 10 },
+    blue: { key: "b", color: colour("--overlay-arrow-2"), opacity: 0.8, lineWidth: 8 },
+    yellow: { key: "y", color: colour("--overlay-arrow-3"), opacity: 0.7, lineWidth: 7 },
+    red: { key: "r", color: colour("--overlay-arrow-3"), opacity: 0.5, lineWidth: 6 },
+    paleBlue: { key: "pb", color: colour("--overlay-arrow-3"), opacity: 0.4, lineWidth: 5 },
+  };
+}
+
 function toConfig(
   activity: ActivityState,
   bothSides: boolean,
@@ -71,6 +90,7 @@ function toConfig(
   hintSquare: string | null | undefined,
   orientation: Color,
   prefs: BoardPrefs,
+  shapes: readonly DrawShape[],
 ): Config {
   const last = shown ?? activity.last_move;
   const lastMove = last ? [last.from, last.to] : [];
@@ -99,6 +119,7 @@ function toConfig(
       dests: destsFrom(activity.legal_moves),
       showDests: prefs.legalMoves,
     },
+    drawable: { enabled: false, visible: true, autoShapes: [...shapes], brushes: arrowBrushes() },
     // Always a map: chessground keeps the previous one when the key is absent, so a cleared
     // hint would stay on the square into the next item.
     highlight: {
@@ -172,6 +193,7 @@ export function Board({
   orientation,
   badge = null,
   prefs = DEFAULT_BOARD_PREFS,
+  shapes = NO_SHAPES,
   createBoard = Chessground,
 }: BoardProps) {
   const facing = orientation ?? activity.orientation;
@@ -182,8 +204,8 @@ export function Board({
   const shown = useLinePlayback(activity.fen, line);
 
   // Chessground callbacks are registered once at creation, so they read the latest props here.
-  const latest = useRef({ activity, onMove, bothSides, hintSquare, facing, prefs });
-  latest.current = { activity, onMove, bothSides, hintSquare, facing, prefs };
+  const latest = useRef({ activity, onMove, bothSides, hintSquare, facing, prefs, shapes });
+  latest.current = { activity, onMove, bothSides, hintSquare, facing, prefs, shapes };
 
   useEffect(() => {
     const element = elementRef.current;
@@ -196,6 +218,7 @@ export function Board({
         latest.current.hintSquare,
         latest.current.facing,
         latest.current.prefs,
+        latest.current.shapes,
       ),
       draggable: { enabled: false },
       premovable: { enabled: false },
@@ -221,8 +244,8 @@ export function Board({
   // its position, since the step object is rebuilt on every render.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    apiRef.current?.set(toConfig(activity, bothSides, shown, hintSquare, facing, prefs));
-  }, [activity, bothSides, hintSquare, facing, prefs, syncToken, resync, shown?.fen]);
+    apiRef.current?.set(toConfig(activity, bothSides, shown, hintSquare, facing, prefs, shapes));
+  }, [activity, bothSides, hintSquare, facing, prefs, shapes, syncToken, resync, shown?.fen]);
 
   const choose = (piece: PromotionPiece): void => {
     if (!pending) return;

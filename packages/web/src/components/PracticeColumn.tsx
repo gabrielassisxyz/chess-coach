@@ -36,6 +36,8 @@ export interface PracticeColumnProps {
   scratchLine: string[] | null;
   // How many of the item's moves the board shows; the cell at that ply reads as current.
   shownPly: number;
+  // The engine strip, rendered by the screen that owns the engine state.
+  engineStrip: ReactNode;
   runMotif?: string | null | undefined;
 }
 
@@ -87,48 +89,6 @@ function Ratings({ training, view }: Pick<PracticeColumnProps, "training" | "vie
         )}
       </div>
     </dl>
-  );
-}
-
-// The engine strip keeps the prototype's place; the analysis behind it lands with the engine
-// command, until then the switch is off and says so.
-function EngineStrip() {
-  return (
-    <div className="practice-item__engine">
-      <button
-        type="button"
-        role="switch"
-        aria-checked="false"
-        aria-label="Engine"
-        className="toggle"
-        disabled
-        title="Available after solving"
-      />
-      <span>Stockfish · off</span>
-      <button
-        type="button"
-        className="icon-button icon-button--quiet"
-        aria-label="Engine settings"
-        disabled
-      >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M2 4h12M2 8h12M2 12h12" />
-          <circle cx="5.5" cy="4" r="1.6" fill="var(--surface-1)" />
-          <circle cx="10.5" cy="8" r="1.6" fill="var(--surface-1)" />
-          <circle cx="7" cy="12" r="1.6" fill="var(--surface-1)" />
-        </svg>
-      </button>
-    </div>
   );
 }
 
@@ -316,6 +276,7 @@ function EndedActions({
 
 export function PracticeColumn(props: PracticeColumnProps) {
   const { training, view, actions, card, elapsedMs, scratchLine, shownPly, runMotif } = props;
+  const { engineStrip } = props;
   const [confirming, setConfirming] = useState(false);
   const heading = headingOf(
     training,
@@ -344,7 +305,7 @@ export function PracticeColumn(props: PracticeColumnProps) {
         <Segments training={training} />
       </header>
       <Ratings training={training} view={view} />
-      <EngineStrip />
+      {engineStrip}
       <MovesList training={training} shownPly={shownPly} />
       <div className="state-card" data-tone={card.tone}>
         <div className="state-card__head">

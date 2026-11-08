@@ -1,5 +1,6 @@
 import {
   type ActivityState,
+  type AnalysisEvent,
   type ChatEvent,
   COACH_TABS,
   type CoachTab,
@@ -76,6 +77,8 @@ export interface ChatState {
   // The ended item that last set the flag: a later activity event for the same item (a demo
   // closing, a reconnect echo) must not ask for a reply the coach has already given.
   practiceEndedItem: string | null;
+  // The engine's latest answer; the screen shows it only while it matches the position on the board.
+  analysis: AnalysisEvent | null;
 }
 
 export const initialChatState: ChatState = {
@@ -91,6 +94,7 @@ export const initialChatState: ChatState = {
   cardsCreated: {},
   practiceReplyPending: false,
   practiceEndedItem: null,
+  analysis: null,
 };
 
 function textOf(content: unknown): string {
@@ -306,6 +310,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         pausedTraining: event.paused_training ?? null,
         ...pendingAfter(state, event.state),
       };
+    case "analysis":
+      return { ...state, analysis: event };
     case "error":
       return withError(state, event.message, event.code);
     // The activity event that precedes it already carries the same item and status.

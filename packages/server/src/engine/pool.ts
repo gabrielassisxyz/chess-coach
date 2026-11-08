@@ -96,6 +96,11 @@ export class EnginePool {
     return this.scheduler.analyze({ fen, depth: ANALYZE_DEPTH, multipv: ANALYZE_LINES });
   }
 
+  /** The same lane with the caller's depth and line count: the practice screen's engine strip. */
+  analyzeWith(request: SearchRequest): Promise<SearchResult> {
+    return this.scheduler.analyze(request);
+  }
+
   async start(): Promise<void> {
     await Promise.all([this.evaluationEngine.start(), this.play.start()]);
   }

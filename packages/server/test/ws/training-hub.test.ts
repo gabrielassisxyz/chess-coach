@@ -77,7 +77,7 @@ async function connect(server: FastifyInstance) {
       if (index >= 0) return inbox.splice(index, 1)[0] as Record<string, unknown>;
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    throw new Error(`no ${type} event`);
+    throw new Error(`no ${type} event; inbox: ${JSON.stringify(inbox).slice(0, 600)}`);
   };
   return { socket, next, inbox };
 }
@@ -100,6 +100,8 @@ describe("training over the socket", () => {
       { type: "show_solution", activity_id: 3 },
       { type: "resume_training" },
       { type: "discard_training" },
+      { type: "analyse", fen: BACK_RANK, lines: 3, depth: 12 },
+      { type: "analyse", fen: BACK_RANK, activity_id: 3 },
     ];
     for (const command of ok) {
       expect(ClientCommandSchema.safeParse({ ...command, command_id: "c" }).success).toBe(true);
@@ -115,6 +117,9 @@ describe("training over the socket", () => {
       { type: "answer", uci: "a1a8" },
       { type: "try_move" },
       { type: "try_move", uci: "z9z9" },
+      { type: "analyse", fen: "short" },
+      { type: "analyse", fen: BACK_RANK, lines: 6 },
+      { type: "analyse", fen: BACK_RANK, depth: 4 },
     ];
     for (const command of bad) {
       expect(ClientCommandSchema.safeParse({ ...command, command_id: "c" }).success).toBe(false);
@@ -348,5 +353,98 @@ describe("a paused practice session over the socket", () => {
     expect(commands).toEqual(
       expect.arrayContaining(["resume_training", "discard_training", "start_training"]),
     );
+  });
+});
+
+describe("analysis over the socket", () => {
+  async function startWithEngine() {
+    const db = seededDatabase();
+    const session = createCoachSession(db, { promptVersion: "v" });
+    const notifications = { sessionId: () => session.id };
+    const activity = new ActivityService({
+      db,
+      game: new GameService({ db, engine: new ScriptedEngine([]) }),
+      training: { desk: new ReviewDesk({ db, notifications }), notifications },
+    });
+    const asked: { fen: string; depth?: number; multipv?: number }[] = [];
+    app = buildApp({
+      hub: {
+        coach: new FakeCoach(db),
+        activity,
+        db,
+        allowedOrigins: ["http://localhost:5173"],
+        analyse: async (request) => {
+          asked.push(request);
+          return { fen: request.fen, bestmove: "a1a8", lines: [{ moves: ["a1a8"], score: 9990 }] };
+        },
+      },
+    });
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    return { app, asked };
+  }
+
+  it("refuses the engine while an item is open and answers once it ended", async () => {
+    const { app: server, asked } = await startWithEngine();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    const id = served.state.activity_id;
+    socket.send(
+      JSON.stringify({ type: "analyse", command_id: "c2", activity_id: id, fen: BACK_RANK }),
+    );
+    const refused = await next("error");
+    expect(refused).toMatchObject({ code: "training_item_open", command_id: "c2" });
+    expect(asked).toEqual([]);
+
+    socket.send(JSON.stringify({ type: "show_solution", command_id: "c3", activity_id: id }));
+    await next("activity");
+    await next("training");
+    socket.send(
+      JSON.stringify({
+        type: "analyse",
+        command_id: "c4",
+        activity_id: id,
+        fen: BACK_RANK,
+        lines: 2,
+        depth: 12,
+      }),
+    );
+    const analysis = await next("analysis");
+    expect(analysis).toEqual({
+      type: "analysis",
+      command_id: "c4",
+      fen: BACK_RANK,
+      depth: 12,
+      requested_lines: 2,
+      lines: [{ moves: ["a1a8"], san: ["Ra8#"], score_cp: 9990 }],
+    });
+    expect(asked).toEqual([{ fen: BACK_RANK, depth: 12, multipv: 2 }]);
+  });
+
+  it("reports the score from White's side and refuses a position that is not one", async () => {
+    const { app: server } = await startWithEngine();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    const blackToMove = "6k1/5ppp/8/8/8/8/5PPP/R5K1 b - - 0 1";
+    socket.send(JSON.stringify({ type: "analyse", command_id: "c1", fen: blackToMove }));
+    const analysis = (await next("analysis")) as { lines: { score_cp: number }[]; depth: number };
+    expect(analysis.lines[0]?.score_cp).toBe(-9990);
+    expect(analysis.depth).toBe(18);
+    socket.send(
+      JSON.stringify({ type: "analyse", command_id: "c2", fen: "not a position at all" }),
+    );
+    expect(await next("error")).toMatchObject({ code: "invalid_position", command_id: "c2" });
+  });
+
+  it("says no engine is available when the hub was built without one", async () => {
+    const server = await start();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(JSON.stringify({ type: "analyse", command_id: "c1", fen: BACK_RANK }));
+    expect(await next("error")).toMatchObject({ code: "engine_unavailable" });
   });
 });

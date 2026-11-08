@@ -80,6 +80,7 @@ function api(overrides: Partial<ServerApi> = {}): ServerApi {
     newConversation: vi.fn(() => true),
     practiceReplyPending: false,
     practiceEndedItem: null,
+    analysis: null,
     reconnectAttempt: 0,
     connection: "connected",
     say: vi.fn(() => true),

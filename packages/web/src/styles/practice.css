@@ -490,6 +490,19 @@
   margin-left: auto;
 }
 
+.practice-item__eval {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.practice-item__eval[data-tone="better"] {
+  color: var(--quality-best);
+}
+
+.practice-item__eval[data-tone="worse"] {
+  color: var(--quality-blunder);
+}
+
 /* A 32 by 18 switch: the knob slides right and the track takes the accent when on. */
 .toggle {
   position: relative;
@@ -1018,4 +1031,59 @@
   .state-card .button--primary.state-card__continue {
     height: 44px;
   }
+}
+
+/* The engine popover hangs under the strip, inside the column. */
+.practice-item {
+  position: relative;
+}
+
+.engine-popover {
+  top: 140px;
+  right: var(--space-2);
+  bottom: auto;
+  left: var(--space-2);
+  width: auto;
+}
+
+.popover__state {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.popover__note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+}
+
+.engine-popover__row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 3.5rem;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.engine-popover__row .popover__label {
+  flex: none;
+  color: var(--text-1);
+  font-size: var(--text-sm);
+}
+
+.engine-popover__value {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The range input drawn on the tokens: a 4 px track and a 14 px knob. */
+.engine-popover input[type="range"] {
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  accent-color: var(--accent);
 }

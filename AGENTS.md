@@ -83,6 +83,13 @@
   or a practice queue from the UI writes a divider (a `system` text row, `{label, at}`).
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
+- **Engine on Practice:** `analyse {fen, lines 1-5, depth 8-24}` runs the evaluation engine's
+  analysis lane on a position and answers that connection with an `analysis` event (lines with
+  SAN and a centipawn score from White's side, a mate as 10000); it is refused with
+  `training_item_open` while an item is open, so the engine never helps with the answer. The
+  strip's switch, line count and depth are stored in the browser (`chess-coach.engine-prefs`),
+  as are the board preferences (`chess-coach.board-prefs`: coordinates, animation, highlights,
+  auto-next) beside the board theme.
 
 ## Logs
 

@@ -78,6 +78,7 @@ function api(activity: TrainingActivity): ServerApi {
     newConversation: vi.fn(() => true),
     practiceReplyPending: false,
     practiceEndedItem: null,
+    analysis: null,
     reconnectAttempt: 0,
     activity,
     connection: "connected",

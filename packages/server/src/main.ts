@@ -150,7 +150,13 @@ const app = buildApp({
     grader: importGrader,
     usernames: (process.env.CHESS_COACH_USERNAMES ?? "").split(",").filter(Boolean),
   },
-  hub: { coach, activity, db, allowedOrigins: allowedOriginsFrom() },
+  hub: {
+    analyse: (request) => pool.analyzeWith(request),
+    coach,
+    activity,
+    db,
+    allowedOrigins: allowedOriginsFrom(),
+  },
   log,
 });
 

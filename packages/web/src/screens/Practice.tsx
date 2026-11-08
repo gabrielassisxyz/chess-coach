@@ -9,10 +9,12 @@ import { Board, type BoardFactory } from "../components/Board.js";
 import { BoardDisplayPopover } from "../components/BoardDisplayPopover.js";
 import { CoachLoginCard } from "../components/CoachLoginCard.js";
 import { EngineMissingCard } from "../components/EngineMissingCard.js";
+import { EngineStrip } from "../components/EngineStrip.js";
 import { PracticeColumn, type PracticeColumnActions } from "../components/PracticeColumn.js";
 import { PracticeHub, ResumeCard } from "../components/PracticeHub.js";
 import { PuzzleBoardBar } from "../components/PuzzleBoardBar.js";
 import { useElapsed } from "../hooks/useElapsed.js";
+import { useEngineAnalysis } from "../hooks/useEngineAnalysis.js";
 import { type FetchHealth, useHealth } from "../hooks/useHealth.js";
 import { useLoaded } from "../hooks/useLoaded.js";
 import { usePracticeBoard } from "../hooks/usePracticeBoard.js";
@@ -223,6 +225,9 @@ function Item({
   const { prefs, set: setPrefs } = useBoardPrefs();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const [engineOpen, setEngineOpen] = useState(false);
+  const closeEngine = useCallback(() => setEngineOpen(false), []);
+  const engine = useEngineAnalysis(training, view, board.activity.fen, server);
   const activityId = training.activity_id;
   const exposureId = training.exposure_id;
   const card = stateCardOf(training, view, board.scratchLine, elapsedMs);
@@ -258,6 +263,14 @@ function Item({
         elapsedMs={elapsedMs}
         scratchLine={board.scratchLine}
         shownPly={board.shownPly}
+        engineStrip={
+          <EngineStrip
+            engine={engine}
+            settingsOpen={engineOpen}
+            onToggleSettings={() => setEngineOpen((open) => !open)}
+            onCloseSettings={closeEngine}
+          />
+        }
       />
       <div className="stage">
         <div className="puzzle-stage">
@@ -271,6 +284,7 @@ function Item({
             orientation={board.orientation}
             badge={board.badge}
             prefs={prefs}
+            shapes={engine.shapes}
             createBoard={createBoard}
           />
           <PuzzleBoardBar
