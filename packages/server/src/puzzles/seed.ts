@@ -95,6 +95,12 @@ const COLUMNS = [
   "difficulty_rating",
 ] as const;
 
+const THEMED_MOTIFS: ReadonlySet<string> = new Set(["fork", "pin", "skewer"]);
+
+function isThemed(row: Pick<PuzzleRow, "motif" | "difficulty_rating">): boolean {
+  return row.difficulty_rating !== null && THEMED_MOTIFS.has(row.motif);
+}
+
 // Counts come from comparing with the stored row, so a reboot over unchanged files reports zero writes.
 export function seedPuzzles(db: Database, contentRoot: string): SeedResult {
   const rows = validatedRows(contentRoot);
@@ -104,13 +110,28 @@ export function seedPuzzles(db: Database, contentRoot: string): SeedResult {
      VALUES (@id, ${COLUMNS.map((column) => `@${column}`).join(", ")})
      ON CONFLICT(id) DO UPDATE SET ${COLUMNS.map((column) => `${column} = excluded.${column}`).join(", ")}`,
   );
+  // The key starts at the theme, so the stored row has to name the old entry: looking one up by
+  // puzzle id alone would scan the table, which holds millions of rows after a Lichess import.
+  const dropTheme = db.prepare(
+    "DELETE FROM puzzle_themes WHERE theme = ? AND rating = ? AND puzzle_id = ?",
+  );
+  const addTheme = db.prepare(
+    "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+  );
   const result: SeedResult = { inserted: 0, updated: 0, unchanged: 0 };
   db.transaction(() => {
     for (const row of rows) {
       const stored = find.get(row.id) as PuzzleRow | undefined;
+      // Unchanged rows pass here too: the table starts empty on a database that holds the puzzles.
+      if (isThemed(row)) addTheme.run(row.motif, row.difficulty_rating, row.id);
       if (stored && COLUMNS.every((column) => stored[column] === row[column])) {
         result.unchanged += 1;
         continue;
+      }
+      if (stored && isThemed(stored)) {
+        const moved =
+          stored.motif !== row.motif || stored.difficulty_rating !== row.difficulty_rating;
+        if (moved) dropTheme.run(stored.motif, stored.difficulty_rating, stored.id);
       }
       upsert.run(row);
       if (stored) result.updated += 1;

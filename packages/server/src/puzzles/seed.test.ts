@@ -97,3 +97,76 @@ describe("seedPuzzles", () => {
     expect(performance.now() - started).toBeLessThan(2000);
   });
 });
+
+describe("seedPuzzles and puzzle_themes", () => {
+  const themeRows = (): { theme: string; rating: number; puzzle_id: string }[] =>
+    db
+      .prepare("SELECT theme, rating, puzzle_id FROM puzzle_themes ORDER BY puzzle_id, theme")
+      .all() as { theme: string; rating: number; puzzle_id: string }[];
+
+  function seedOne(entry: Record<string, unknown>): string {
+    const root = join(tmp, "one");
+    mkdirSync(join(root, "puzzles"), { recursive: true });
+    writeFileSync(join(root, "puzzles", "one.json"), JSON.stringify([entry]));
+    seedPuzzles(db, root);
+    return root;
+  }
+
+  it("gives every rated fork, pin and skewer of the library one row", () => {
+    seedPuzzles(db, contentDir());
+    const expected = db
+      .prepare(
+        `SELECT motif AS theme, difficulty_rating AS rating, id AS puzzle_id FROM puzzles
+         WHERE motif IN ('fork', 'pin', 'skewer') AND difficulty_rating IS NOT NULL
+         ORDER BY puzzle_id, theme`,
+      )
+      .all();
+    expect(expected.length).toBeGreaterThan(80);
+    expect(themeRows()).toEqual(expected);
+  });
+
+  it.each(["fork", "pin", "skewer"])("indexes a rated %s", (motif) => {
+    seedOne({ ...good, motif, difficulty_rating: 1200 });
+    expect(themeRows()).toEqual([{ theme: motif, rating: 1200, puzzle_id: "one:0" }]);
+  });
+
+  it("indexes neither an unrated fork nor a rated puzzle of another motif", () => {
+    seedOne({ ...good, motif: "fork" });
+    expect(themeRows()).toEqual([]);
+    seedOne({ ...good, motif: "endgame", difficulty_rating: 1200 });
+    expect(themeRows()).toEqual([]);
+  });
+
+  it("writes nothing new on a second boot", () => {
+    seedPuzzles(db, contentDir());
+    const before = themeRows();
+    seedPuzzles(db, contentDir());
+    expect(themeRows()).toEqual(before);
+  });
+
+  it("fills the table on a database that already holds the puzzles", () => {
+    seedPuzzles(db, contentDir());
+    const before = themeRows();
+    db.prepare("DELETE FROM puzzle_themes").run();
+    expect(seedPuzzles(db, contentDir())).toEqual({ inserted: 0, updated: 0, unchanged: 238 });
+    expect(themeRows()).toEqual(before);
+  });
+
+  it("keeps the row when an edit leaves the rating and the motif alone", () => {
+    const entry = { ...good, motif: "fork", difficulty_rating: 1200 };
+    seedOne(entry);
+    seedOne({ ...entry, explanation: "edited" });
+    expect(themeRows()).toEqual([{ theme: "fork", rating: 1200, puzzle_id: "one:0" }]);
+  });
+
+  it("moves the row when a puzzle's rating or motif changes, and drops it when it stops qualifying", () => {
+    const entry = { ...good, motif: "fork", difficulty_rating: 1200 };
+    seedOne(entry);
+    seedOne({ ...entry, difficulty_rating: 1300 });
+    expect(themeRows()).toEqual([{ theme: "fork", rating: 1300, puzzle_id: "one:0" }]);
+    seedOne({ ...entry, motif: "pin", difficulty_rating: 1300 });
+    expect(themeRows()).toEqual([{ theme: "pin", rating: 1300, puzzle_id: "one:0" }]);
+    seedOne({ ...entry, motif: "pin", difficulty_rating: undefined });
+    expect(themeRows()).toEqual([]);
+  });
+});
