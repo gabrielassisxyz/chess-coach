@@ -40,13 +40,22 @@ function isLegalUci(fen: string, uci: string): boolean {
     .some((move) => `${move.from}${move.to}${move.promotion ?? ""}` === uci);
 }
 
+// Lichess allows several mates in one, so on the last step any checkmate wins.
+function deliversMate(fen: string, uci: string): boolean {
+  const board = new Chess(fen);
+  applyUci(board, uci);
+  return board.isCheckmate();
+}
+
 /** Grades one try against the current step; a wrong one keeps the cursor and the position. */
 export function tryMove(state: AttemptState, uci: string): TryOutcome {
   if (state.status !== "in_progress") return { accepted: false, state, reason: "finished" };
   if (!isLegalUci(state.fen, uci)) return { accepted: false, state, reason: "illegal" };
 
   const answered = [...state.answered, uci];
-  if (uci !== state.solution[state.cursor]) {
+  const isLastStep = state.cursor + 1 >= state.solution.length;
+  const alternativeMate = isLastStep && deliversMate(state.fen, uci);
+  if (uci !== state.solution[state.cursor] && !alternativeMate) {
     const missed = { ...state, answered, wrongTries: state.wrongTries + 1 };
     return { accepted: true, correct: false, state: missed, reply: null };
   }
@@ -55,7 +64,9 @@ export function tryMove(state: AttemptState, uci: string): TryOutcome {
   applyUci(board, uci);
   const replyUci = state.solution[state.cursor + 1] ?? null;
   if (replyUci === null) {
-    const solved = { ...state, fen: board.fen(), answered, status: "solved" as const };
+    // The attempt's own copy records the move played, which playedSolution reads back.
+    const solution = [...state.solution.slice(0, state.cursor), uci];
+    const solved = { ...state, solution, fen: board.fen(), answered, status: "solved" as const };
     return { accepted: true, correct: true, state: solved, reply: null };
   }
   applyUci(board, replyUci);

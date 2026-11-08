@@ -309,6 +309,20 @@ describe("a puzzle item", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM puzzle_attempts").get()).toEqual({ n: 0 });
   });
 
+  it("reports the checkmate the student played when it differs from the stored move", async () => {
+    addPuzzle("m1", "mate", "6k1/5ppp/8/8/8/8/5PPP/RR4K1 w - - 0 1", ["a1a8"]);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "mate" });
+    const done = training(await activity.trainingTry("b1b8"));
+    expect(done).toMatchObject({ status: "solved", input_enabled: false });
+    expect(done.item).toMatchObject({ kind: "puzzle" });
+    expect(JSON.stringify(done)).toContain("b1b8");
+    expect(JSON.stringify(done)).not.toContain("a1a8");
+    expect(db.prepare("SELECT solved, first_try FROM puzzle_attempts").all()).toEqual([
+      { solved: 1, first_try: 1 },
+    ]);
+  });
+
   it("gives up mid-way and shows the rest of the line from the current step", async () => {
     addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
     const { activity, rows } = setup();
