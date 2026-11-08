@@ -1,0 +1,168 @@
+[
+  {
+    "name": "centipawn line",
+    "input": {
+      "fen": "3r4/k1P5/P7/1K6/8/8/8/8 w - -",
+      "evals": [
+        {
+          "depth": 40,
+          "knodes": 70000,
+          "pvs": [
+            {
+              "cp": -35,
+              "line": "b5b4"
+            }
+          ]
+        }
+      ]
+    },
+    "key": "0805010200000000b900f5e001",
+    "depth": 40,
+    "value": "010128701101000101ddff6106"
+  },
+  {
+    "name": "mate line",
+    "input": {
+      "fen": "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - -",
+      "evals": [
+        {
+          "depth": 60,
+          "knodes": 5000000000,
+          "pvs": [
+            {
+              "mate": 1,
+              "line": "d1d8"
+            }
+          ]
+        }
+      ]
+    },
+    "key": "40e000000000e0486b660030f5e001",
+    "depth": 60,
+    "value": "01013cffffffff01810100c30e"
+  },
+  {
+    "name": "promotion",
+    "input": {
+      "fen": "8/P1k5/8/8/8/8/5K2/8 w - -",
+      "evals": [
+        {
+          "depth": 25,
+          "knodes": 1200,
+          "pvs": [
+            {
+              "cp": 900,
+              "line": "a7a8q c7b6 a8a1"
+            },
+            {
+              "cp": 300,
+              "line": "a7a8n"
+            }
+          ]
+        }
+      ]
+    },
+    "key": "0005000000002000b0f5e001",
+    "depth": 25,
+    "value": "010119b004000002038403304e720a3800012c01301e"
+  },
+  {
+    "name": "castling written as king takes rook",
+    "input": {
+      "fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq -",
+      "evals": [
+        {
+          "depth": 30,
+          "knodes": 900,
+          "pvs": [
+            {
+              "cp": 12,
+              "line": "e1h1 e8a8"
+            }
+          ]
+        }
+      ]
+    },
+    "key": "9100000000000091b93935fe01",
+    "depth": 30,
+    "value": "01011e8403000001020c00c4013c0e"
+  },
+  {
+    "name": "empty line",
+    "input": {
+      "fen": "4k3/8/8/8/8/8/8/4K3 b - -",
+      "evals": [
+        {
+          "depth": 10,
+          "knodes": 3,
+          "pvs": [
+            {
+              "cp": 0,
+              "line": ""
+            }
+          ]
+        }
+      ]
+    },
+    "key": "10000000000000105be101",
+    "depth": 10,
+    "value": "01010a0300000001000000"
+  },
+  {
+    "name": "deepest set has fewer lines",
+    "input": {
+      "fen": "rnbqkbnr/pp1ppppp/8/2pP4/8/8/PPP1PPPP/RNBQKBNR w KQkq c6",
+      "evals": [
+        {
+          "depth": 20,
+          "knodes": 100,
+          "pvs": [
+            {
+              "cp": 30,
+              "line": "d5c6"
+            },
+            {
+              "cp": 20,
+              "line": "g1f3"
+            },
+            {
+              "mate": -2,
+              "line": "b1c3 a7a6"
+            }
+          ]
+        },
+        {
+          "depth": 35,
+          "knodes": 4000,
+          "pvs": [
+            {
+              "cp": 25,
+              "line": "d5c6 b8c6"
+            }
+          ]
+        },
+        {
+          "depth": 28,
+          "knodes": 900,
+          "pvs": [
+            {
+              "cp": 22,
+              "line": "d5d6"
+            },
+            {
+              "cp": 18,
+              "line": "g1f3"
+            },
+            {
+              "cp": 5,
+              "line": "e2e4"
+            }
+          ]
+        }
+      ]
+    },
+    "key": "fffb000c0000f7ff79a88b976666666600000000134225315e00",
+    "depth": 35,
+    "value": "010223a00f000001021900a30ab90a1c8403000003011600e30a01120046050105000c07"
+  }
+]
