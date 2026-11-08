@@ -10,9 +10,11 @@ import { type CoachNotification, renderNotifications } from "../coach/notify.js"
 import { appendChatMessage, createCoachSession, listChatTail } from "../db/chat.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { getCard, insertCard, updateSchedule } from "../db/srs.js";
+import { findOpenTrainingRun } from "../db/training.js";
 import { GameService } from "../game/service.js";
 import { type Log, RecordingLog, silentLog } from "../log.js";
 import { importLichessPuzzles } from "../puzzles/lichess-import.js";
+import { setPuzzleRating } from "../puzzles/rating.js";
 import { ReviewDesk } from "../srs/review.js";
 import { ActivityService } from "./service.js";
 
@@ -127,8 +129,8 @@ describe("queue materialization", () => {
   });
 
   it("carries the motif filter for a single motif and null for Any", async () => {
-    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
-    addPuzzle("p1", "pin", BACK_RANK, ["a1a8"]);
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"], 1200);
+    addPuzzle("p1", "pin", BACK_RANK, ["a1a8"], 1200);
     const { activity } = setup();
     const single = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
     expect(single.run_motif).toBe("fork");
@@ -1144,5 +1146,91 @@ describe("move list, progress and rating", () => {
     await activity.trainingHint(start.activity_id);
     const solved = training(await activity.trainingTry("a1a8", start.activity_id));
     expect(solved).toMatchObject({ status: "solved", student_rating: 1184, rating_change: -16 });
+  });
+});
+
+describe("the puzzles a queue draws from", () => {
+  function addThemed(id: string, theme: string, rating: number): void {
+    addPuzzle(id, theme, BACK_RANK, ["a1a8"], rating);
+    db.prepare("INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)").run(
+      theme,
+      rating,
+      id,
+    );
+  }
+
+  const queueIds = (): string[] =>
+    (findOpenTrainingRun(db)?.items ?? []).map((item) => (item as { id: string }).id).sort();
+
+  const numbered = (prefix: string, count: number): string[] =>
+    Array.from({ length: count }, (_, i) => `${prefix}${i}`);
+
+  it.each([
+    ["back_rank_mate", "backRankMate"],
+    ["checkmate", "mate"],
+  ])("serves the %s motif from the %s theme", async (motif, theme) => {
+    for (const id of numbered("themed", 5)) addThemed(id, theme, 1200);
+    addPuzzle("stored", motif, BACK_RANK, ["a1a8"], 1200);
+    await setup().activity.startTraining({ mode: "puzzles", motif, size: 5 });
+    expect(queueIds()).toEqual(numbered("themed", 5));
+  });
+
+  it("samples a theme around the student's rating", async () => {
+    for (const id of numbered("near", 5)) addThemed(id, "fork", 1100);
+    for (const id of numbered("far", 5)) addThemed(id, "fork", 1800);
+    await setup().activity.startTraining({ mode: "puzzles", motif: "fork", size: 5 });
+    expect(queueIds()).toEqual(numbered("near", 5));
+  });
+
+  it("follows the student's current rating, not the default", async () => {
+    for (const id of numbered("near", 5)) addThemed(id, "fork", 1100);
+    for (const id of numbered("far", 5)) addThemed(id, "fork", 1800);
+    setPuzzleRating(db, 1800, T0.toISOString());
+    await setup().activity.startTraining({ mode: "puzzles", motif: "fork", size: 5 });
+    expect(queueIds()).toEqual(numbered("far", 5));
+  });
+
+  it("samples an Any queue around the rating, without opening material", async () => {
+    for (const id of numbered("near", 5)) addPuzzle(id, "endgame", BACK_RANK, ["a1a8"], 1100);
+    for (const id of numbered("far", 5)) addPuzzle(id, "endgame", BACK_RANK, ["a1a8"], 1800);
+    addPuzzle("drill", "opening-white", BACK_RANK, ["a1a8"], 1100);
+    await setup().activity.startTraining({ mode: "puzzles", size: 5 });
+    expect(queueIds()).toEqual(numbered("near", 5));
+  });
+
+  it("honours the size in a sampled queue", async () => {
+    for (const id of numbered("near", 12)) addThemed(id, "fork", 1100);
+    const { activity } = setup();
+    const themed = training(
+      await activity.startTraining({ mode: "puzzles", motif: "fork", size: 5 }),
+    );
+    expect(themed.item.queue_length).toBe(5);
+    await activity.endTraining();
+    const any = training(await activity.startTraining({ mode: "puzzles", size: 20 }));
+    expect(any.item.queue_length).toBe(12);
+    await activity.endTraining();
+    const fallback = training(await activity.startTraining({ mode: "puzzles" }));
+    expect(fallback.item.queue_length).toBe(10);
+  });
+
+  it("refuses an Any queue when only opening material is left", async () => {
+    addPuzzle("drill", "opening-white", BACK_RANK, ["a1a8"]);
+    addPuzzle("rated-drill", "opening-black", BACK_RANK, ["a1a8"], 1200);
+    const { activity } = setup();
+    expect(await code(activity.startTraining({ mode: "puzzles" }))).toBe("empty_queue");
+  });
+
+  it("keeps the plain listing for a motif with no theme rows, whatever its rating", async () => {
+    addPuzzle("high", "endgame", BACK_RANK, ["a1a8"], 2500);
+    addPuzzle("unrated", "endgame", BACK_RANK, ["a1a8"]);
+    await setup().activity.startTraining({ mode: "puzzles", motif: "endgame" });
+    expect(queueIds()).toEqual(["high", "unrated"]);
+  });
+
+  it("keeps the plain listing for an opening drill", async () => {
+    addPuzzle("w1", "opening-white", BACK_RANK, ["a1a8"]);
+    addThemed("w2", "opening-white", 2500);
+    await setup().activity.startTraining({ mode: "openings", color: "white" });
+    expect(queueIds()).toEqual(["w1", "w2"]);
   });
 });

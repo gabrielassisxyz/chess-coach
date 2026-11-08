@@ -77,7 +77,13 @@
   library's `difficulty_rating`; a first-try solve wins, anything else loses, an unrated puzzle
   (opening drills) moves nothing. It lives in `settings.puzzle_rating`, is replayed once from
   the stored attempts at boot when absent (`puzzles.rating` log event), and the activity carries it
-  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`.
+  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`. A
+  puzzles queue is sampled by index seek (`listPuzzles` with `ratingAround`, never a count) from
+  puzzles within 200 points of that number, widening by 200 per side until full and repeating a
+  puzzle only when its window has too few new ones, skipping popularity under 50; Any also skips
+  all opening material, and a motif with no `puzzle_themes` rows keeps the plain listing. The plain
+  listing, used by the coach's puzzle tool and `GET /api/puzzles`, and the motif counts cover only the
+  library, never `lichess-db` rows, since they read every matching row.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
   each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
   (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The
