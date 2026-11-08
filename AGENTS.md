@@ -84,6 +84,7 @@
   or a practice queue from the UI writes a divider (a `system` text row, `{label, at}`).
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
+- **Evaluation cache:** `tools/build_eval_cache.py` turns the Lichess evaluation file into `evals.db`, a SQLite file keyed by a packed position; the binary format and the one pipeline command are in `tools/README.md`, and its tests run with `uv run --no-project --with orjson --with pytest pytest tools/test_build_eval_cache.py`. It is not in `bin/ci`.
 - **Engine on Practice:** `analyse {fen, lines 1-5, depth 8-24}` runs the evaluation engine's
   analysis lane on a position and answers that connection with an `analysis` event (lines with
   SAN and a centipawn score from White's side, a mate as 10000). The search stops at the depth or
