@@ -1165,6 +1165,16 @@ describe("the puzzles a queue draws from", () => {
   const numbered = (prefix: string, count: number): string[] =>
     Array.from({ length: count }, (_, i) => `${prefix}${i}`);
 
+  it.each([
+    ["back_rank_mate", "backRankMate"],
+    ["checkmate", "mate"],
+  ])("serves the %s motif from the %s theme", async (motif, theme) => {
+    for (const id of numbered("themed", 5)) addThemed(id, theme, 1200);
+    addPuzzle("stored", motif, BACK_RANK, ["a1a8"], 1200);
+    await setup().activity.startTraining({ mode: "puzzles", motif, size: 5 });
+    expect(queueIds()).toEqual(numbered("themed", 5));
+  });
+
   it("samples a theme around the student's rating", async () => {
     for (const id of numbered("near", 5)) addThemed(id, "fork", 1100);
     for (const id of numbered("far", 5)) addThemed(id, "fork", 1800);

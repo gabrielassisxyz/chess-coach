@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { contentDir } from "../paths.js";
 import { seedPuzzles } from "../puzzles/seed.js";
 import { type Database, openDatabase } from "./open.js";
-import { getPuzzle, listPuzzles, recordPuzzleAttempt } from "./puzzles.js";
+import { getPuzzle, listMotifs, listPuzzles, recordPuzzleAttempt } from "./puzzles.js";
 
 let tmp: string;
 let db: Database;
@@ -520,6 +520,33 @@ describe("listPuzzles around a rating", () => {
         expect(Math.max(...rows)).toBe(200);
       }
     });
+  });
+});
+
+describe("the plain listing and imported puzzles", () => {
+  function addRow(id: string, source: string, motif: string): void {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
+       VALUES (?, ?, ?, 'easy', '8/8/8/8/8/8/8/K6k w - - 0 1', '[]', '[]', 'why')`,
+    ).run(id, source, motif);
+  }
+
+  beforeEach(() => {
+    db.prepare("DELETE FROM puzzles").run();
+    addRow("library", "generated", "fork");
+    addRow("imported", "lichess-db", "fork");
+    addRow("imported-only", "lichess-db", "tactics");
+  });
+
+  it("lists only the library, and counts only the library", () => {
+    const listing = listPuzzles(db, { motif: "fork" });
+    expect(listing.puzzles.map((puzzle) => puzzle.id)).toEqual(["library"]);
+    expect(listing.total).toBe(1);
+    expect(listPuzzles(db).puzzles.map((puzzle) => puzzle.id)).toEqual(["library"]);
+  });
+
+  it("counts motifs over the library only", () => {
+    expect(listMotifs(db)).toEqual([{ motif: "fork", count: 1 }]);
   });
 });
 

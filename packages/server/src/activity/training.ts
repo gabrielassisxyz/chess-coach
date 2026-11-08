@@ -232,6 +232,12 @@ function isLegalUci(fen: string, uci: string): boolean {
  * One queue of cards or puzzles, served one at a time. It holds no activity id: the activity
  * service owns ids and staleness, and asks this for the state to publish.
  */
+// Library motifs whose Lichess theme has another name; the others share theirs.
+const THEME_OF_MOTIF: Readonly<Record<string, string>> = {
+  back_rank_mate: "backRankMate",
+  checkmate: "mate",
+};
+
 export class TrainingRun {
   private position = 0;
   private solved = 0;
@@ -357,7 +363,8 @@ export class TrainingRun {
       puzzles = listed({ motif: `opening-${input.color}`, limit });
     } else {
       const ratingAround = currentPuzzleRating(deps.db);
-      puzzles = listed({ theme: input.motif, ratingAround, limit });
+      const theme = input.motif && (THEME_OF_MOTIF[input.motif] ?? input.motif);
+      puzzles = listed({ theme, ratingAround, limit });
       // A motif no theme row names yet, such as the library's unrated ones, stays reachable.
       if (puzzles.length === 0 && input.motif !== undefined) {
         puzzles = listed({ motif: input.motif, limit });

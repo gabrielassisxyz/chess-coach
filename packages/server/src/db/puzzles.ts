@@ -73,6 +73,8 @@ function shufflePuzzlesWithinAttempts(
   return out;
 }
 
+// Must read exactly as in the partial index `puzzles_library`, or SQLite cannot use it.
+const LIBRARY_ONLY = "p.source <> 'lichess-db'";
 const RATING_STEP = 200;
 const SEEKS_PER_PUZZLE = 4;
 const DIRECT_READ_ROWS = 200;
@@ -259,8 +261,9 @@ function sampleAroundRating(
 }
 
 // Fewest attempts first, so unseen puzzles lead, shuffled within equal counts; `total`
-// is the whole matching inventory, not the page. With `ratingAround` the list is sampled instead,
-// and `total` is the size of the sample, because the inventory cannot be counted cheaply.
+// is the whole matching inventory, not the page. This path reads every matching row, so it never
+// sees imported Lichess puzzles. With `ratingAround` the list is sampled instead, and `total` is
+// the size of the sample, because the inventory cannot be counted cheaply.
 export function listPuzzles(
   db: Database,
   filter: PuzzleFilter | RatingSampleFilter = {},
@@ -270,7 +273,7 @@ export function listPuzzles(
     const puzzles = sampleAroundRating(db, filter, randomSource);
     return { total: puzzles.length, puzzles };
   }
-  const where: string[] = [];
+  const where: string[] = [LIBRARY_ONLY];
   const params: string[] = [];
   if (filter.motif !== undefined) {
     where.push("p.motif = ?");
@@ -284,12 +287,12 @@ export function listPuzzles(
     where.push("p.id IN (SELECT puzzle_id FROM puzzle_themes WHERE theme = ?)");
     params.push(filter.theme);
   }
-  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const clause = `WHERE ${where.join(" AND ")}`;
   const ranked = db
     .prepare(
       `SELECT p.id, p.motif, p.difficulty, p.fen, p.explanation,
               COUNT(a.id) AS attempts, COALESCE(SUM(a.solved), 0) AS solved
-       FROM puzzles p LEFT JOIN puzzle_attempts a ON a.puzzle_id = p.id
+       FROM puzzles p INDEXED BY puzzles_library LEFT JOIN puzzle_attempts a ON a.puzzle_id = p.id
        ${clause}
        GROUP BY p.id
        ORDER BY attempts ASC, p.id ASC`,
@@ -299,7 +302,9 @@ export function listPuzzles(
     0,
     clampLimit(filter.limit),
   );
-  const counted = db.prepare(`SELECT COUNT(*) AS n FROM puzzles p ${clause}`).get(...params) as {
+  const counted = db
+    .prepare(`SELECT COUNT(*) AS n FROM puzzles p INDEXED BY puzzles_library ${clause}`)
+    .get(...params) as {
     n: number;
   };
   return { total: counted.n, puzzles };
@@ -371,7 +376,10 @@ export interface MotifCount {
 
 export function listMotifs(db: Database): MotifCount[] {
   return db
-    .prepare("SELECT motif, COUNT(*) AS count FROM puzzles GROUP BY motif ORDER BY motif")
+    .prepare(
+      `SELECT motif, COUNT(*) AS count FROM puzzles p INDEXED BY puzzles_library
+       WHERE ${LIBRARY_ONLY} GROUP BY motif ORDER BY motif`,
+    )
     .all() as MotifCount[];
 }
 
