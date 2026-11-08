@@ -23,7 +23,15 @@ import type {
 import { appendChatMessage } from "../db/chat.js";
 import type { PlayerColor } from "../db/games.js";
 import type { Database } from "../db/open.js";
-import { getPuzzle, getPuzzleHeader, listPuzzles, recordPuzzleAttempt } from "../db/puzzles.js";
+import {
+  getPuzzle,
+  getPuzzleHeader,
+  listPuzzles,
+  type PuzzleFilter,
+  type PuzzleSummary,
+  type RatingSampleFilter,
+  recordPuzzleAttempt,
+} from "../db/puzzles.js";
 import { getCard, insertCard } from "../db/srs.js";
 import {
   amendPendingNotification,
@@ -340,15 +348,21 @@ export class TrainingRun {
     if (input.mode === "openings" && !input.color) {
       throw new ActivityError("empty_queue", "choose White or Black for the opening drill");
     }
-    const motif = input.mode === "openings" ? `opening-${input.color}` : input.motif;
-    const { puzzles } = listPuzzles(
-      deps.db,
-      {
-        motif,
-        limit: input.size ?? DEFAULT_DRILL_SIZE,
-      },
-      deps.shuffleRandom ?? Math.random,
-    );
+    const limit = input.size ?? DEFAULT_DRILL_SIZE;
+    const random = deps.shuffleRandom ?? Math.random;
+    const listed = (filter: PuzzleFilter | RatingSampleFilter): PuzzleSummary[] =>
+      listPuzzles(deps.db, filter, random).puzzles;
+    let puzzles: PuzzleSummary[];
+    if (input.mode === "openings") {
+      puzzles = listed({ motif: `opening-${input.color}`, limit });
+    } else {
+      const ratingAround = currentPuzzleRating(deps.db);
+      puzzles = listed({ theme: input.motif, ratingAround, limit });
+      // A motif no theme row names yet, such as the library's unrated ones, stays reachable.
+      if (puzzles.length === 0 && input.motif !== undefined) {
+        puzzles = listed({ motif: input.motif, limit });
+      }
+    }
     return puzzles.map((p) => ({
       kind: "puzzle",
       id: p.id,
