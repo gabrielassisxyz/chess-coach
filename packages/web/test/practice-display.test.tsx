@@ -1,5 +1,5 @@
 import type { TrainingActivity } from "@chess-coach/shared";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import type { ServerApi } from "../src/hooks/useServer.js";
@@ -7,6 +7,8 @@ import { AUTO_NEXT_MS, Practice } from "../src/screens/Practice.js";
 import { BOARD_PREFS_STORAGE_KEY } from "../src/state/board-prefs.js";
 import { initialChatState } from "../src/state/transcript.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
+import { motifCounts, progressOf } from "./practice-fixtures.js";
+import { serverApi } from "./server-api.js";
 
 beforeEach(() => window.localStorage.clear());
 afterEach(() => {
@@ -236,5 +238,102 @@ describe("jump to the next puzzle automatically", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("the hub motif list", () => {
+  const hubMotifs = async () => motifCounts;
+  const hubProgress = async () => progressOf();
+
+  it("shows the fourteen motifs with label and description plus the six remaining, each once", async () => {
+    render(
+      <Practice
+        server={serverApi(null)}
+        createBoard={spyBoard}
+        fetchMotifs={hubMotifs}
+        fetchProgress={hubProgress}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
+    for (const label of [
+      "Advanced pawn",
+      "Attacking f2 or f7",
+      "Capture the defender",
+      "Discovered attack",
+      "Double check",
+      "Exposed king",
+      "Fork",
+      "Hanging piece",
+      "Kingside attack",
+      "Pin",
+      "Queenside attack",
+      "Sacrifice",
+      "Skewer",
+      "Trapped piece",
+      "Back rank mate",
+      "Checkmate",
+      "Endgame",
+      "Promotion",
+      "Opening",
+      "Opening trap",
+    ]) {
+      expect(
+        await within(card).findAllByRole("radio", { name: new RegExp(`^${label},`, "i") }),
+      ).toHaveLength(1);
+    }
+    expect(
+      within(card)
+        .getByRole("radio", { name: /hanging piece/i })
+        .closest("label")?.textContent,
+    ).toContain("An undefended piece, free to capture.");
+    expect(card.textContent).not.toContain("tactics");
+  });
+
+  it("shows a library count only on the choice the library alone serves", async () => {
+    const storedCounts = async () => [
+      { motif: "back_rank_mate", count: 30 },
+      { motif: "checkmate", count: 31 },
+      { motif: "endgame", count: 20 },
+      { motif: "promotion", count: 3 },
+      { motif: "opening", count: 40 },
+      { motif: "opening_trap", count: 37 },
+    ];
+    render(
+      <Practice
+        server={serverApi(null)}
+        createBoard={spyBoard}
+        fetchMotifs={storedCounts}
+        fetchProgress={hubProgress}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
+    await within(card).findByRole("radio", { name: /opening trap, 37 puzzles/i });
+    for (const label of ["Back rank mate", "Checkmate", "Endgame", "Promotion", "Opening"]) {
+      const choice = within(card).getByRole("radio", { name: new RegExp(`^${label},`, "i") });
+      expect(choice.getAttribute("aria-label") ?? "").not.toMatch(/puzzles/i);
+      expect(choice.closest("label")?.textContent).not.toMatch(/\d/);
+      expect((choice as HTMLInputElement).disabled).toBe(false);
+    }
+  });
+
+  it("starts a hangingPiece queue from its choice", async () => {
+    const server = serverApi(null);
+    render(
+      <Practice
+        server={server}
+        createBoard={spyBoard}
+        fetchMotifs={hubMotifs}
+        fetchProgress={hubProgress}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
+    fireEvent.click(within(card).getByRole("radio", { name: /hanging piece/i }));
+    fireEvent.click(within(card).getByRole("button", { name: /start hanging piece/i }));
+    expect(server.send).toHaveBeenCalledWith({
+      type: "start_training",
+      mode: "puzzles",
+      motif: "hangingPiece",
+      size: 10,
+    });
   });
 });

@@ -11,6 +11,7 @@ import type {
   TrainingSummary,
   WrongTry,
 } from "@chess-coach/shared";
+import { isFixedPracticeMotif } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { type Clock, systemClock } from "../clock.js";
 import type {
@@ -362,6 +363,12 @@ export class TrainingRun {
     if (input.mode === "openings") {
       puzzles = listed({ motif: `opening-${input.color}`, limit });
     } else {
+      if (input.motif !== undefined && !isFixedPracticeMotif(input.motif)) {
+        const stored = deps.db
+          .prepare("SELECT 1 FROM puzzles WHERE motif = ? LIMIT 1")
+          .get(input.motif);
+        if (!stored) throw new ActivityError("empty_queue", "no puzzle matches");
+      }
       const ratingAround = currentPuzzleRating(deps.db);
       const theme = input.motif && (THEME_OF_MOTIF[input.motif] ?? input.motif);
       puzzles = listed({ theme, ratingAround, limit });

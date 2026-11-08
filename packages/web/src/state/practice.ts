@@ -8,6 +8,11 @@ import type {
   TrainingMode,
   TrainingStatus,
 } from "@chess-coach/shared";
+import {
+  LIBRARY_PRACTICE_MOTIFS,
+  LICHESS_OTHER_PRACTICE_MOTIFS,
+  LICHESS_PRACTICE_MOTIFS,
+} from "@chess-coach/shared";
 
 export interface MotifCount {
   motif: string;
@@ -34,37 +39,79 @@ export const OPENING_MOTIFS = {
   italian: "opening-italian",
 } as const;
 
-// Stored motifs read like `back_rank_mate`; the hub and the heading show words.
+// Stored motifs read like `back_rank_mate`; Lichess themes read like `hangingPiece`.
+// The hub and the heading show words. Fixed choices use their shared labels first.
+const LICHESS_SERVED_MOTIFS = [...LICHESS_PRACTICE_MOTIFS, ...LICHESS_OTHER_PRACTICE_MOTIFS];
+const FIXED_MOTIFS = [...LICHESS_SERVED_MOTIFS, ...LIBRARY_PRACTICE_MOTIFS];
+
+const PRACTICE_LABEL_OF: ReadonlyMap<string, string> = new Map(
+  FIXED_MOTIFS.map((entry) => [entry.theme, entry.label]),
+);
+
+const PRACTICE_DESCRIPTION_OF: ReadonlyMap<string, string> = new Map(
+  FIXED_MOTIFS.map((entry) => [entry.theme, entry.description]),
+);
+
 export function motifLabel(motif: string): string {
-  const words = motif.replace(/[_-]+/g, " ").trim();
-  if (words.length === 0) return "";
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  const fixed = PRACTICE_LABEL_OF.get(motif);
+  if (fixed) return fixed;
+  const spaced = motif
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim();
+  if (spaced.length === 0) return "";
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+export function motifDescription(motif: string): string | null {
+  return PRACTICE_DESCRIPTION_OF.get(motif) ?? null;
 }
 
 export interface MotifRow {
   motif: string;
   count: number;
-  // Share solved over the last 30 days; null when the motif has had no attempt in that window.
-  rate30d: number | null;
+  // Share solved over the last 30 days; null when the motif has had no attempt in that window,
+  // undefined when the row hides its rate (a Lichess theme, whose history is not grouped by theme).
+  rate30d: number | null | undefined;
   attempts30d: number;
   solved30d: number;
+  label: string;
+  description: string | null;
+  kind: "lichess" | "library";
 }
 
+// The hub offers the fourteen Lichess motifs, the five other choices a Lichess theme serves, and
+// the library's opening traps. Library fork, pin and skewer merge into the Lichess rows; the
+// imported-only fallback tactics and every opening drill stay out of this card.
 export function motifRows(list: MotifCount[], progress: ProgressResponse | null): MotifRow[] {
-  const openings = new Set<string>(Object.values(OPENING_MOTIFS));
+  const counts = new Map(list.map((entry) => [entry.motif, entry.count]));
   const byMotif = new Map((progress?.puzzles_by_motif ?? []).map((entry) => [entry.motif, entry]));
-  return list
-    .filter((entry) => !openings.has(entry.motif))
-    .map((entry) => {
-      const found = byMotif.get(entry.motif);
-      return {
-        motif: entry.motif,
-        count: entry.count,
-        rate30d: found?.success_rate_30d ?? null,
-        attempts30d: found?.attempts_30d ?? 0,
-        solved30d: found?.solved_30d ?? 0,
-      };
-    });
+  const lichess = LICHESS_SERVED_MOTIFS.map(
+    (entry): MotifRow => ({
+      motif: entry.theme,
+      count: 0,
+      rate30d: undefined,
+      attempts30d: 0,
+      solved30d: 0,
+      label: entry.label,
+      description: entry.description,
+      kind: "lichess",
+    }),
+  );
+  const library = LIBRARY_PRACTICE_MOTIFS.map((entry): MotifRow => {
+    const found = byMotif.get(entry.theme);
+    return {
+      motif: entry.theme,
+      count: counts.get(entry.theme) ?? 0,
+      rate30d: found?.success_rate_30d ?? null,
+      attempts30d: found?.attempts_30d ?? 0,
+      solved30d: found?.solved_30d ?? 0,
+      label: entry.label,
+      description: entry.description,
+      kind: "library",
+    };
+  });
+  return [...lichess, ...library];
 }
 
 export function openingCount(list: MotifCount[], color: "white" | "black"): number {

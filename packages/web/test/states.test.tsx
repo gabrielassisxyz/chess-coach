@@ -75,15 +75,15 @@ const noProgress = async (): Promise<never> => Promise.reject(new Error("offline
 const hub = { fetchMotifs: motifs, fetchProgress: noProgress };
 
 describe("Practice states", () => {
-  it("shows the motif rows only once the list has loaded", async () => {
+  it("shows the fixed motifs while the counts load, then fills the library ones", async () => {
     let resolve: (value: { motif: string; count: number }[]) => void = () => {};
     const fetchMotifs = () => new Promise<{ motif: string; count: number }[]>((r) => (resolve = r));
     render(<Practice server={serverApi()} {...hub} fetchMotifs={fetchMotifs} />);
     expect(screen.getByText("Loading motifs.")).toBeTruthy();
-    expect(screen.queryByRole("radio", { name: /fork/i })).toBeNull();
-    await act(async () => resolve([{ motif: "fork", count: 4 }]));
-    expect(screen.getByRole("radio", { name: /fork/i })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /hanging piece/i })).toBeTruthy();
+    await act(async () => resolve([{ motif: "opening_trap", count: 4 }]));
     expect(screen.queryByText("Loading motifs.")).toBeNull();
+    expect(screen.getByRole("radio", { name: /opening trap, 4 puzzles/i })).toBeTruthy();
   });
 
   it("says so when the motif list cannot be loaded and still allows any motif", async () => {

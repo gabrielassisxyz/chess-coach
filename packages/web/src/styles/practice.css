@@ -118,6 +118,19 @@
 
 .practice__motif-name {
   overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.practice__motif-label {
+  overflow-wrap: anywhere;
+}
+
+.practice__motif-desc {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
 }
 
 .practice__motif-count,

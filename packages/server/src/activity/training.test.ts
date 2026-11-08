@@ -1175,6 +1175,35 @@ describe("the puzzles a queue draws from", () => {
     expect(queueIds()).toEqual(numbered("themed", 5));
   });
 
+  it("serves a hangingPiece queue holding only puzzles carrying that theme", async () => {
+    for (const id of numbered("hanging", 5)) addThemed(id, "hangingPiece", 1200);
+    addThemed("other", "fork", 1200);
+    const { activity } = setup();
+    const state = training(
+      await activity.startTraining({ mode: "puzzles", motif: "hangingPiece" }),
+    );
+    expect(state.run_motif).toBe("hangingPiece");
+    expect(queueIds()).toEqual(numbered("hanging", 5));
+  });
+
+  it("refuses a theme outside the fixed list and the stored motifs", async () => {
+    for (const id of numbered("mated", 3)) {
+      addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+      db.prepare("INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)").run(
+        "mateIn1",
+        1200,
+        id,
+      );
+    }
+    const { activity } = setup();
+    expect(await code(activity.startTraining({ mode: "puzzles", motif: "mateIn1" }))).toBe(
+      "empty_queue",
+    );
+    expect(await code(activity.startTraining({ mode: "puzzles", motif: "nope" }))).toBe(
+      "empty_queue",
+    );
+  });
+
   it("samples a theme around the student's rating", async () => {
     for (const id of numbered("near", 5)) addThemed(id, "fork", 1100);
     for (const id of numbered("far", 5)) addThemed(id, "fork", 1800);
