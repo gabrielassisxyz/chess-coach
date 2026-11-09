@@ -5,7 +5,7 @@ export type PlayerColor = "white" | "black";
 export type GamePhase = "player_turn" | "evaluating" | "engine_turn" | "finished";
 export type GameResult = "1-0" | "0-1" | "1/2-1/2";
 export type Termination = "checkmate" | "stalemate" | "draw" | "resign" | "abort";
-export type GameSource = "coach" | "chesscom" | "pgn";
+export type GameSource = "coach" | "chesscom" | "lichess" | "pgn";
 export type GradingState = "pending" | "running" | "done" | "failed";
 
 export interface GameRecord {

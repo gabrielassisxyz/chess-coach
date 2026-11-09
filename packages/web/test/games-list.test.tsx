@@ -1,4 +1,4 @@
-import type { GameSummary, ImportStatus } from "@chess-coach/shared";
+import { GameListResponseSchema, type GameSummary, type ImportStatus } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Games } from "../src/screens/Games.js";
@@ -8,6 +8,7 @@ import {
   lossLabel,
   outcomeOf,
   sourceCounts,
+  summaryLabel,
   timeClassOf,
   totalsOf,
 } from "../src/state/games.js";
@@ -83,7 +84,7 @@ describe("game list state", () => {
     expect(filterGames(LIBRARY, "all", "lost").map((g) => g.id)).toEqual([2, 4]);
     expect(filterGames(LIBRARY, "chesscom", "all").map((g) => g.id)).toEqual([2, 3]);
     expect(filterGames(LIBRARY, "coach", "lost").map((g) => g.id)).toEqual([4]);
-    expect(sourceCounts(LIBRARY)).toEqual({ all: 5, coach: 2, chesscom: 2, pgn: 1 });
+    expect(sourceCounts(LIBRARY)).toEqual({ all: 5, coach: 2, chesscom: 2, lichess: 0, pgn: 1 });
   });
 
   it("totals the visible games, averaging only graded accuracy", () => {
@@ -191,6 +192,58 @@ describe("games table", () => {
     expect(getGame).toHaveBeenLastCalledWith(2);
     fireEvent.doubleClick(rows()[0] as HTMLElement);
     expect(getGame).toHaveBeenLastCalledWith(1);
+  });
+});
+
+describe("Lichess games", () => {
+  const lichess = game({
+    id: 6,
+    result: "1-0",
+    termination: "checkmate",
+    move_count: 7,
+    source: "lichess",
+    source_url: "https://lichess.org/Wm4cTe9R",
+    opponent: "fixture-rival",
+    opponent_rating: 1612,
+    student_rating: 1538,
+    time_control: "300+3",
+    played_at: "2026-10-21T12:03:40.000Z",
+  });
+  const withLichess = [...LIBRARY, lichess];
+
+  it("passes the shared schema the browser reads the list with", () => {
+    expect(GameListResponseSchema.parse({ games: [lichess] }).games[0]?.source).toBe("lichess");
+  });
+
+  it("is counted, filtered and labelled apart from Chess.com", () => {
+    expect(sourceCounts(withLichess)).toEqual({
+      all: 6,
+      coach: 2,
+      chesscom: 2,
+      lichess: 1,
+      pgn: 1,
+    });
+    expect(filterGames(withLichess, "lichess", "all").map((g) => g.id)).toEqual([6]);
+    expect(filterGames(withLichess, "chesscom", "all").map((g) => g.id)).toEqual([2, 3]);
+    expect(summaryLabel(lichess)).toContain("2026-10-21, Lichess vs fixture-rival");
+  });
+
+  it("offers Lichess as a source filter that narrows the table to those games", async () => {
+    mount(withLichess);
+    await screen.findByRole("table");
+    expect(screen.getByRole("button", { name: "All · 6" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Chess.com · 2" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Lichess · 1" }));
+    expect(rows()).toHaveLength(1);
+    const row = rows()[0] as HTMLElement;
+    expect(within(row).getByText("Lichess")).toBeTruthy();
+    expect(within(row).getByText("fixture-rival 1612")).toBeTruthy();
+  });
+
+  it("offers no Lichess filter while no game came from Lichess", async () => {
+    mount(LIBRARY);
+    await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: /^Lichess/ })).toBeNull();
   });
 });
 

@@ -66,6 +66,7 @@ const SOURCE_TABS: { id: SourceFilter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "coach", label: "Coached" },
   { id: "chesscom", label: "Chess.com" },
+  { id: "lichess", label: "Lichess" },
   { id: "pgn", label: "PGN" },
 ];
 

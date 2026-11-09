@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProgressResponseSchema } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Database, openDatabase } from "../db/open.js";
 import { computeCoachProgress, computeProgress, timeClassOf } from "./compute.js";
@@ -22,13 +23,14 @@ const at = (day: number, hour = 12): string => new Date(2026, 5, day, hour).toIS
 const clockOn = (day: number) => ({ now: () => new Date(2026, 5, day, 12) });
 
 function insertGame(opts: {
-  source: "coach" | "chesscom";
+  source: "coach" | "chesscom" | "lichess";
   day: number;
   rating?: number;
   timeControl?: string;
   finished?: boolean;
 }): number {
   const finished = opts.finished ?? true;
+  const imported = opts.source !== "coach";
   const row = db
     .prepare(
       `INSERT INTO games (started_at, finished_at, player_color, target_elo, initial_fen, phase, result,
@@ -41,10 +43,10 @@ function insertGame(opts: {
       finished ? "finished" : "player_turn",
       finished ? "1-0" : null,
       opts.source,
-      opts.source === "chesscom" ? `uuid-${opts.day}` : null,
+      imported ? `${opts.source === "chesscom" ? "uuid" : opts.source}-${opts.day}` : null,
       opts.rating ?? null,
       opts.timeControl ?? null,
-      opts.source === "chesscom" ? at(opts.day) : null,
+      imported ? at(opts.day) : null,
     ) as { id: number };
   return row.id;
 }
@@ -280,6 +282,23 @@ describe("computeProgress on a fixture database", () => {
     const { games } = computeProgress(db, clockOn(10));
     expect(games).toHaveLength(50);
     expect(games[0]?.played_at).toBe(new Date(2026, 0, 55).toISOString());
+  });
+});
+
+describe("Lichess games", () => {
+  // A Lichess rating is on another scale, several hundred points above the same player's Chess.com
+  // one at this level, so drawing both on one line would show a jump that never happened.
+  it("leave the rating history as it was, though the game list shows them", () => {
+    seedFixture();
+    const before = computeProgress(db, clockOn(10));
+    insertGame({ source: "lichess", day: 2, rating: 1700, timeControl: "300+3" });
+    insertGame({ source: "lichess", day: 6, rating: 1710, timeControl: "600+0" });
+
+    const after = ProgressResponseSchema.parse(computeProgress(db, clockOn(10)));
+
+    expect(after.rating_history).toEqual(before.rating_history);
+    expect(after.games.filter((game) => game.source === "lichess")).toHaveLength(2);
+    expect(after.games).toHaveLength(before.games.length + 2);
   });
 });
 
