@@ -6,6 +6,7 @@ import { buildApp } from "../app.js";
 import { openDatabase } from "../db/open.js";
 import { RecordingLog } from "../log.js";
 import { ExplorerError } from "../openings/explorer-client.js";
+import { IdeaSessionError } from "../openings/repertoire-ideas.js";
 
 const db = () => openDatabase(mkdtempSync(join(tmpdir(), "opening-route-")));
 
@@ -101,6 +102,7 @@ describe("POST /api/openings/generate", () => {
       cacheHits: 0,
       truncated: false,
     };
+    const ideas = { considered: 40, generated: 38, rejected: 5, empty: 2 };
     const build = (calls: string[]) =>
       buildApp({
         db: db(),
@@ -119,6 +121,10 @@ describe("POST /api/openings/generate", () => {
         generateRepertoireOpenings: async () => {
           calls.push("repertoire");
           return repertoire;
+        },
+        generateRepertoireIdeas: async () => {
+          calls.push("repertoire-ideas");
+          return ideas;
         },
       });
     const post = async (calls: string[], payload?: unknown) => {
@@ -337,6 +343,166 @@ describe("POST /api/openings/generate", () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({ own, explorer, italian, repertoire });
       expect(calls).toEqual(["own", "explorer", "italian", "repertoire"]);
+    });
+
+    it("runs only the repertoire-ideas source when asked for it, and logs its counts", async () => {
+      const calls: string[] = [];
+      const log = new RecordingLog();
+      const app = buildApp({
+        db: db(),
+        log,
+        generateOpenings: async () => own,
+        generateRepertoireIdeas: async () => {
+          calls.push("repertoire-ideas");
+          return ideas;
+        },
+      });
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["repertoire-ideas"] },
+      });
+      await app.close();
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ repertoireIdeas: ideas });
+      expect(calls).toEqual(["repertoire-ideas"]);
+      expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+        sources: ["repertoire-ideas"],
+        result: { repertoireIdeas: { generated: 38, rejected: 5, empty: 2 } },
+      });
+    });
+
+    it("never writes the ideas without being asked", async () => {
+      const calls: string[] = [];
+      await post(calls);
+      await post(calls, { sources: ["own", "explorer", "italian", "repertoire"] });
+      expect(calls).not.toContain("repertoire-ideas");
+    });
+
+    it("answers 404 when the ideas batch is not injected", async () => {
+      const app = buildApp({ db: db(), generateOpenings: async () => own });
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["repertoire-ideas"] },
+      });
+      await app.close();
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toMatchObject({ error: "repertoire_ideas_unavailable" });
+    });
+
+    it("refuses a second ideas run while one is going", async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const app = buildApp({
+        db: db(),
+        generateOpenings: async () => own,
+        generateRepertoireIdeas: async () => {
+          await gate;
+          return ideas;
+        },
+      });
+      const request = {
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["repertoire-ideas"] },
+      } as const;
+      const first = app.inject(request);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const second = await app.inject(request);
+      release();
+      expect((await first).statusCode).toBe(200);
+      const third = await app.inject(request);
+      await app.close();
+      expect(second.statusCode).toBe(409);
+      expect(second.json()).toMatchObject({ error: "already_running" });
+      expect(third.statusCode).toBe(200);
+    });
+
+    it("refuses an ideas run while a combined run is still on its earlier steps", async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const app = buildApp({
+        db: db(),
+        generateOpenings: async () => own,
+        generateRepertoireOpenings: async () => {
+          await gate;
+          return repertoire;
+        },
+        generateRepertoireIdeas: async () => ideas,
+      });
+      const run = (sources: string[]) =>
+        app.inject({ method: "POST", url: "/api/openings/generate", payload: { sources } });
+      const first = run(["repertoire", "repertoire-ideas"]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const second = await run(["repertoire-ideas"]);
+      release();
+      expect((await first).statusCode).toBe(200);
+      await app.close();
+      expect(second.statusCode).toBe(409);
+    });
+
+    it("frees the ideas guard when the run fails", async () => {
+      let fail = true;
+      const app = buildApp({
+        db: db(),
+        generateOpenings: async () => own,
+        generateRepertoireIdeas: async () => {
+          if (fail) throw new IdeaSessionError("5-hour limit reached");
+          return ideas;
+        },
+      });
+      const run = () =>
+        app.inject({
+          method: "POST",
+          url: "/api/openings/generate",
+          payload: { sources: ["repertoire-ideas"] },
+        });
+      expect((await run()).statusCode).toBe(502);
+      fail = false;
+      expect((await run()).statusCode).toBe(200);
+      await app.close();
+    });
+
+    it("reports a session that stopped answering as a 502 naming the ideas", async () => {
+      const app = buildApp({
+        db: db(),
+        generateOpenings: async () => own,
+        generateRepertoireIdeas: async () => {
+          throw new IdeaSessionError("5-hour limit reached");
+        },
+      });
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["repertoire-ideas"] },
+      });
+      await app.close();
+      expect(response.statusCode).toBe(502);
+      expect(response.json()).toEqual({
+        error: "ideas_unavailable",
+        message: "5-hour limit reached",
+      });
+    });
+
+    it("accepts all five sources in one body and runs the ideas last", async () => {
+      const calls: string[] = [];
+      const response = await post(calls, {
+        sources: ["repertoire-ideas", "repertoire", "italian", "explorer", "own"],
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        own,
+        explorer,
+        italian,
+        repertoire,
+        repertoireIdeas: ideas,
+      });
+      expect(calls).toEqual(["own", "explorer", "italian", "repertoire", "repertoire-ideas"]);
     });
 
     it.each(["explorer", "italian", "repertoire"])(
