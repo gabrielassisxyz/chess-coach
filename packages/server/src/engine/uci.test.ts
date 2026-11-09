@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FakeEngineProcess,
   type GoRequest,
   loadFixture,
   replayFixture,
 } from "../../test/support/fake-engine-process.js";
-import { UciEngine } from "./uci.js";
+import { REPERTOIRE_SEARCH_DEADLINE_MS } from "../openings/from-repertoire.js";
+import { type SearchRequest, UciEngine } from "./uci.js";
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const FAST = { startupMs: 40, readyMs: 40, searchSlackMs: 40, quitGraceMs: 40 };
@@ -68,6 +69,45 @@ describe("UciEngine search", () => {
     await engine.search({ fen: START, movetime: 30 });
     expect(processes[0]?.sent).toContain("go movetime 30");
   });
+});
+
+describe("UciEngine search deadline", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function expectTimeoutAfter(
+    request: Partial<SearchRequest>,
+    allowedMs: number,
+  ): Promise<void> {
+    vi.useFakeTimers();
+    const { spawner } = scriptedSpawner(silent);
+    const engine = new UciEngine(spawner);
+    await engine.start();
+    let failure: unknown = null;
+    const search = engine.search({ fen: START, depth: 16, ...request }).catch((error: unknown) => {
+      failure = error;
+    });
+    // The first tick lets the search reach the process, which is when its deadline starts.
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(allowedMs - 1);
+    expect(failure).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    await search;
+    expect(failure).toMatchObject({
+      name: "EngineFault",
+      reason: "timeout",
+      message: `no answer within ${allowedMs} ms`,
+    });
+  }
+
+  it("keeps 5 s when the request gives no deadline", () => expectTimeoutAfter({}, 5000));
+
+  it("adds the slack to a movetime when the request gives no deadline", () =>
+    expectTimeoutAfter({ movetime: 1000 }, 6000));
+
+  it("waits the repertoire generator's 30 s when the request carries it", () =>
+    expectTimeoutAfter({ deadlineMs: REPERTOIRE_SEARCH_DEADLINE_MS }, 30_000));
 });
 
 describe("UciEngine faults", () => {

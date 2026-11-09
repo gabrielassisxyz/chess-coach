@@ -9,6 +9,8 @@ export interface SearchRequest {
   depth?: number;
   movetime?: number;
   multipv?: number;
+  /** How long the answer may take; without it, movetime plus the engine's search slack. */
+  deadlineMs?: number;
 }
 
 export interface SearchResult {
@@ -121,7 +123,7 @@ export class UciEngine implements Searcher {
       request.movetime !== undefined
         ? `movetime ${request.movetime}`
         : `depth ${request.depth ?? 16}`;
-    const deadline = (request.movetime ?? 0) + this.timeouts.searchSlackMs;
+    const deadline = request.deadlineMs ?? (request.movetime ?? 0) + this.timeouts.searchSlackMs;
     const bestmoveLine = await this.guarded(
       this.ask(
         [`position fen ${request.fen}`, `go ${limit}`],
