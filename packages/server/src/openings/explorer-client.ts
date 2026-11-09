@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { z } from "zod";
 import { USER_AGENT } from "../import/chesscom.js";
 
-export const EXPLORER_RATINGS = "400,600";
+// Lichess does not refuse an unlisted rating band; it answers for another group,
+// so every label must name a listed boundary.
+export const EXPLORER_RATINGS = "0,1000";
 export const EXPLORER_SPEEDS = "rapid,blitz";
-export const EXPLORER_BAND_LABEL = "400-600";
+export const EXPLORER_BAND_LABEL = "0-1199";
 export const ITALIAN_WHITE_RATINGS = "1800,2000,2200";
 export const ITALIAN_WHITE_BAND_LABEL = "1800-2200";
 export const MIN_REQUEST_GAP_MS = 1100;
@@ -19,7 +21,7 @@ export const MAX_RESPONSE_BYTES = 256_000;
 const MAX_MOVES_PER_POSITION = 50;
 const MOVES_REQUESTED = 8;
 const FETCH_TIMEOUT_MS = 15_000;
-const EXPLORER_ORIGIN = "https://explorer.lichess.ovh/lichess";
+const EXPLORER_ORIGIN = "https://explorer.lichess.org/lichess";
 
 export class ExplorerError extends Error {
   constructor(
