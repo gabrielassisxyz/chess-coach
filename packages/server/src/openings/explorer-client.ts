@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import { USER_AGENT } from "../import/chesscom.js";
 
-// Lichess does not refuse an unlisted rating band; it answers for another group,
-// so every label must name a listed boundary.
+// The explorer maps each ratings value to the group containing it instead of refusing it,
+// so a value must be a listed boundary; a label names the span its groups cover.
 export const EXPLORER_RATINGS = "0,1000";
 export const EXPLORER_SPEEDS = "rapid,blitz";
 export const EXPLORER_BAND_LABEL = "0-1199";

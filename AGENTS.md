@@ -339,7 +339,7 @@
 | `local/` links to the private notes repository, whose own sync may commit and push a new file within minutes: never write a file holding a secret there, even as an intermediate step. Clean or redact it in a scratch directory first | tripwire | none yet |
 | A verification step that writes to the live database, such as `POST /api/openings/generate`, needs the owner's go-ahead even when an acceptance criterion names it. Run it against a copy of the data directory, on another `PORT` | tripwire | none yet |
 | Biome's formatter turns a unicode escape for an em dash inside a string into the literal character, which the prose check then refuses, UI copy and test fixtures included: write copy without a dash | tripwire | `bin/ci` refuses the result, but only after every test has passed |
-| The explorer does not refuse an unlisted `ratings` band; it answers for another group, so a band that is not a listed boundary (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500) quietly means something else | tripwire | none yet |
+| The explorer does not refuse an unlisted `ratings` value: it maps each value to the group containing it (400 means 0-999), so a value that is not a listed boundary (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500) quietly asks for another group | tripwire | none yet |
 
 **A hurdle promoted to a gate is deleted from this table, not duplicated.** The gate is the
 instruction; a line here restating it only dilutes the ones still unguarded.
