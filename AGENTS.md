@@ -36,7 +36,9 @@
   Claude session probe (`test:sdk`, stdin closed); `CHESS_COACH_RECORD=<file>` records the SDK
   stream to that file. `CHESS_COACH_CHESSCOM=1` makes one real call to the public Chess.com API
   (`chesscom.real.test.ts`, shape only). `CHESS_COACH_EXPLORER=1` does the same for one Lichess explorer
-  call (`explorer.real.test.ts`, needs `LICHESS_API_TOKEN`).
+  call (`explorer.real.test.ts`, needs `LICHESS_API_TOKEN`). `CHESS_COACH_LICHESS_GAMES=1` does it for one
+  game of a public account's Lichess export (the last test of `lichess.test.ts`; the export needs no token,
+  and `LICHESS_API_TOKEN` is sent when set).
 - **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
   proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
   Stockfish missing, engine fault, dropped socket, restart per game phase, undelivered
@@ -48,15 +50,27 @@
 - **Typecheck / lint:** `pnpm typecheck`, `pnpm lint` (Biome, lint and format in one)
 - **Gate:** `bin/ci`, the exact thing GitHub Actions runs. Green locally means green in CI.
 - **After clone:** `bin/install-hooks` once (gitleaks pre-commit, attribution commit-msg).
-- **Import:** the Games screen imports Chess.com games by username and month range, or a pasted
-  PGN, and grades them in the background. `CHESS_COACH_USERNAMES` (comma-separated) names the
-  student's accounts so a pasted PGN finds its side; without it the form asks for the colour.
-  The API is summarised in `docs/chesscom-api.md`.
-- **Connections:** the Games screen's Connections panel saves the Lichess API token and the Chess.com
-  account in `settings` (`lichess_api_token`, `chesscom_username`), through `/api/connections`. A set
-  `LICHESS_API_TOKEN` wins over the saved token, and the saved account joins `CHESS_COACH_USERNAMES`
-  for a pasted PGN; both are read per use. The token is tried against the explorer and the account
-  against the Chess.com profile before saving. The token travels only in a REST body, never over the
+- **Import:** the Games screen imports Chess.com games by username and month range, Lichess games by
+  username and month range, or a pasted PGN, and grades them in the background.
+  `CHESS_COACH_USERNAMES` (comma-separated) names the student's accounts so a pasted PGN finds its
+  side; without it the form asks for the colour. The Chess.com API is summarised in
+  `docs/chesscom-api.md`.
+- **Lichess import:** `POST /api/import/lichess {username, from, to}` takes whole UTC months and imports
+  every finished standard game of the account in one step, with no list to pick from. The export is
+  `GET /api/games/user/{username}` as NDJSON with the PGN inside each line, and it is the only network
+  call. Games are stored as source `lichess` with the Lichess id as `source_id`, so a second run adds
+  none, and the grader is kicked. The username must match `[A-Za-z0-9_-]{2,30}` before it reaches a URL,
+  and a failing one answers 400 with no call. A 429 waits a minute and retries once, then answers 429; an
+  answer over 20 MB is refused. The saved or environment token goes only in the `Authorization` header.
+  The rating progress reads Chess.com games only, since a Lichess rating is on another scale and mixing
+  the two would draw a jump that never happened.
+- **Connections:** the Games screen's Connections panel saves the Lichess API token, the Lichess account
+  and the Chess.com account in `settings` (`lichess_api_token`, `lichess_username`,
+  `chesscom_username`), through `/api/connections`. A set `LICHESS_API_TOKEN` wins over the saved
+  token, and the saved Chess.com account joins `CHESS_COACH_USERNAMES` for a pasted PGN; both are read
+  per use. The token is tried against the explorer and the Chess.com account against its profile before
+  saving; the Lichess account is only checked against its pattern, with no call, and prefills the
+  Lichess import form. The token travels only in a REST body, never over the
   socket, whose `ws.command` logs the whole command, and no route returns it. Writes obey the socket's
   Origin and Host rule, so `CHESS_COACH_ALLOWED_ORIGINS` also governs them.
 - **Openings:** `POST /api/openings/generate` turns the first fifteen moves of every graded game into
@@ -340,6 +354,7 @@
 | A verification step that writes to the live database, such as `POST /api/openings/generate`, needs the owner's go-ahead even when an acceptance criterion names it. Run it against a copy of the data directory, on another `PORT` | tripwire | none yet |
 | Biome's formatter turns a unicode escape for an em dash inside a string into the literal character, which the prose check then refuses, UI copy and test fixtures included: write copy without a dash | tripwire | `bin/ci` refuses the result, but only after every test has passed |
 | The explorer does not refuse an unlisted `ratings` value: it maps each value to the group containing it (400 means 0-999), so a value that is not a listed boundary (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500) quietly asks for another group | tripwire | none yet |
+| A migration runs inside a transaction, where `PRAGMA foreign_keys = OFF` does nothing, so rebuilding `games` (create, copy, drop, rename) cascades into `moves`, clears `srs_cards.source_game_id` and trips `difficulty_changes.game_id`: to change a column of `games`, add the new one, copy it over, drop the old one and rename the new one, as `019_lichess_game_source.sql` does | tripwire | `migration-019.test.ts` holds it for that migration only |
 
 **A hurdle promoted to a gate is deleted from this table, not duplicated.** The gate is the
 instruction; a line here restating it only dilutes the ones still unguarded.

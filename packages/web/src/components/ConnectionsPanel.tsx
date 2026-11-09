@@ -12,6 +12,7 @@ export function ConnectionsPanel({ api = serverConnectionsApi, onChanged }: Conn
   const [status, setStatus] = useState<ConnectionsStatus | null>(null);
   const [token, setToken] = useState("");
   const [username, setUsername] = useState("");
+  const [lichessUsername, setLichessUsername] = useState("");
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -22,6 +23,7 @@ export function ConnectionsPanel({ api = serverConnectionsApi, onChanged }: Conn
         setStatus(loaded);
         // Only an empty field is filled: the answer can arrive after the student started typing.
         setUsername((typed) => (typed === "" ? (loaded.chesscom_username ?? "") : typed));
+        setLichessUsername((typed) => (typed === "" ? (loaded.lichess_username ?? "") : typed));
       },
       () => {
         if (live) setMessage("The saved connections could not be loaded. Reload to try again.");
@@ -51,6 +53,17 @@ export function ConnectionsPanel({ api = serverConnectionsApi, onChanged }: Conn
     });
   };
 
+  const saveLichessAccount = (event: FormEvent): void => {
+    event.preventDefault();
+    void apply(() => api.saveLichessUsername(lichessUsername.trim()));
+  };
+
+  const removeLichessAccount = (): void => {
+    void apply(() => api.removeLichessUsername()).then((removed) => {
+      if (removed) setLichessUsername("");
+    });
+  };
+
   const saveAccount = (event: FormEvent): void => {
     event.preventDefault();
     void apply(() => api.saveChessComUsername(username.trim()));
@@ -64,6 +77,7 @@ export function ConnectionsPanel({ api = serverConnectionsApi, onChanged }: Conn
 
   const tokenSet = status?.lichess_token_set === true;
   const accountSet = status !== null && status.chesscom_username !== null;
+  const lichessAccountSet = status !== null && status.lichess_username !== null;
   return (
     <section className="import" aria-label="Connections">
       <h3 className="import__title">Connections</h3>
@@ -98,6 +112,24 @@ export function ConnectionsPanel({ api = serverConnectionsApi, onChanged }: Conn
             : "No token saved. The opening drills from the Lichess explorer need one, with no scopes."}
         </p>
       )}
+      <form className="import__form" onSubmit={saveLichessAccount}>
+        <label>
+          Lichess username
+          <input
+            className="input"
+            value={lichessUsername}
+            onChange={(e) => setLichessUsername(e.target.value)}
+          />
+        </label>
+        <button type="submit" className="button" disabled={lichessUsername.trim() === ""}>
+          Save Lichess account
+        </button>
+        {lichessAccountSet ? (
+          <button type="button" className="button" onClick={removeLichessAccount}>
+            Remove Lichess account
+          </button>
+        ) : null}
+      </form>
       <form className="import__form" onSubmit={saveAccount}>
         <label>
           Chess.com username

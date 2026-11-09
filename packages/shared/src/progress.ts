@@ -12,7 +12,7 @@ export const RatingPointSchema = z.object({
 export const ProgressGameSchema = z.object({
   id: z.number().int(),
   played_at: z.string(),
-  source: z.enum(["coach", "chesscom", "pgn"]),
+  source: z.enum(["coach", "chesscom", "lichess", "pgn"]),
   result: z.enum(["1-0", "0-1", "1/2-1/2"]).nullable(),
   // Share of graded student plies with a cp loss of 30 or less; null when none was graded.
   accuracy: z.number().min(0).max(1).nullable(),

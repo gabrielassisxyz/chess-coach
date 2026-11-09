@@ -67,13 +67,23 @@ const saveToken = (token: unknown, headers: Record<string, string> = LOCAL_PAGE)
   app.inject({ method: "PUT", url: "/api/connections/lichess", payload: { token }, headers });
 const saveAccount = (username: unknown, headers: Record<string, string> = LOCAL_PAGE) =>
   app.inject({ method: "PUT", url: "/api/connections/chesscom", payload: { username }, headers });
-const remove = (kind: "lichess" | "chesscom", headers: Record<string, string> = LOCAL_PAGE) =>
-  app.inject({ method: "DELETE", url: `/api/connections/${kind}`, headers });
+const saveLichessAccount = (username: unknown, headers: Record<string, string> = LOCAL_PAGE) =>
+  app.inject({
+    method: "PUT",
+    url: "/api/connections/lichess/username",
+    payload: { username },
+    headers,
+  });
+const remove = (
+  kind: "lichess" | "lichess/username" | "chesscom",
+  headers: Record<string, string> = LOCAL_PAGE,
+) => app.inject({ method: "DELETE", url: `/api/connections/${kind}`, headers });
 const settingRows = (): number =>
   (
     db
       .prepare(
-        "SELECT count(*) AS n FROM settings WHERE key IN ('lichess_api_token', 'chesscom_username')",
+        `SELECT count(*) AS n FROM settings
+         WHERE key IN ('lichess_api_token', 'lichess_username', 'chesscom_username')`,
       )
       .get() as { n: number }
   ).n;
@@ -84,7 +94,11 @@ describe("the Lichess token", () => {
     expect(saved.statusCode).toBe(200);
     expect(saved.body).not.toContain(TOKEN);
     const read = await status();
-    expect(read.json()).toEqual({ lichess_token_set: true, chesscom_username: null });
+    expect(read.json()).toEqual({
+      lichess_token_set: true,
+      lichess_username: null,
+      chesscom_username: null,
+    });
     expect(read.body).not.toContain(TOKEN);
   });
 
@@ -213,7 +227,48 @@ describe("the Chess.com account", () => {
   });
 });
 
-describe("both connections", () => {
+describe("the Lichess account", () => {
+  it("is stored lowercased and read back, with no call to Lichess to check it", async () => {
+    const saved = await saveLichessAccount("Fixture-Student");
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().lichess_username).toBe("fixture-student");
+    expect(tried).toEqual([]);
+    expect((await status()).json().lichess_username).toBe("fixture-student");
+    expect(settingRows()).toBe(1);
+  });
+
+  it.each(["", "a", "a".repeat(31), "../x", "a/b", "a?x=1", "name\n", " name", 7, null])(
+    "refuses %j and stores nothing",
+    async (name) => {
+      const answer = await saveLichessAccount(name);
+      expect(answer.statusCode).toBe(400);
+      expect(answer.json()).toMatchObject({ error: "invalid_username" });
+      expect(answer.json().message).toMatch(/2 to 30/);
+      expect(settingRows()).toBe(0);
+    },
+  );
+
+  it("keeps the saved name when a later one is refused", async () => {
+    await saveLichessAccount("fixture-student");
+    expect((await saveLichessAccount("a/b")).statusCode).toBe(400);
+    expect((await status()).json().lichess_username).toBe("fixture-student");
+  });
+
+  it("is removed without touching the token or the Chess.com account", async () => {
+    await saveToken(TOKEN);
+    await saveAccount("someone");
+    await saveLichessAccount("fixture-student");
+    const removed = await remove("lichess/username");
+    expect(removed.json()).toEqual({
+      lichess_token_set: true,
+      lichess_username: null,
+      chesscom_username: "someone",
+    });
+    expect(settingRows()).toBe(2);
+  });
+});
+
+describe("every connection", () => {
   // A rebinding page is same-origin to itself, so its Host and Origin agree; only the list stops it.
   const REBOUND = { origin: "http://evil.example:3210", host: "evil.example:3210" };
   const FOREIGN_ORIGIN = { origin: "http://evil.example", host: "localhost:5173" };
@@ -227,24 +282,29 @@ describe("both connections", () => {
   ])("refuses every write from %s", async (_label, headers) => {
     expect((await saveToken(TOKEN, headers)).statusCode).toBe(403);
     expect((await saveAccount("someone", headers)).statusCode).toBe(403);
+    expect((await saveLichessAccount("someone", headers)).statusCode).toBe(403);
     expect(settingRows()).toBe(0);
     await saveToken(TOKEN);
     await saveAccount("someone");
+    await saveLichessAccount("someone");
     expect((await remove("lichess", headers)).statusCode).toBe(403);
     expect((await remove("chesscom", headers)).statusCode).toBe(403);
-    expect(settingRows()).toBe(2);
+    expect((await remove("lichess/username", headers)).statusCode).toBe(403);
+    expect(settingRows()).toBe(3);
     expect(tried).toEqual([TOKEN]);
   });
 
   it("survive a restart", async () => {
     await saveToken(TOKEN);
     await saveAccount("someone");
+    await saveLichessAccount("fixture-student");
     await app.close();
     db.close();
     db = openDatabase(tmp);
     app = startApp();
     expect((await status()).json()).toEqual({
       lichess_token_set: true,
+      lichess_username: "fixture-student",
       chesscom_username: "someone",
     });
     expect(resolveLichessToken(db, {})).toBe(TOKEN);

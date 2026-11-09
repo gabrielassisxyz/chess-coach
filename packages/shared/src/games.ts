@@ -34,7 +34,7 @@ export const GameSummarySchema = z.object({
   mistakes_count: z.number().int().nonnegative().default(0),
   // The last named position of the game in the openings table; null when no position is named.
   opening: OpeningNameSchema.nullable().default(null),
-  source: z.enum(["coach", "chesscom", "pgn"]),
+  source: z.enum(["coach", "chesscom", "lichess", "pgn"]),
   source_url: z.string().nullable(),
   opponent: z.string().nullable(),
   student_rating: z.number().int().nullable(),

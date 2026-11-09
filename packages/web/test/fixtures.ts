@@ -70,17 +70,24 @@ export const COACH_GAME_SOURCE = {
 export const idleImportApi: ImportApi = {
   listChessCom: async () => [],
   importChessCom: async () => ({ imported: 0, skipped: 0 }),
+  importLichess: async () => ({ imported: 0, skipped: 0 }),
   importPgn: async () => ({ imported: 0, skipped: 0 }),
   status: async () => ({ pending: 0, running: null, failed: 0 }),
 };
 
-const NO_CONNECTIONS = { lichess_token_set: false, chesscom_username: null };
+const NO_CONNECTIONS = {
+  lichess_token_set: false,
+  lichess_username: null,
+  chesscom_username: null,
+};
 
 /** Nothing connected, so a Games render never reaches for the network. */
 export const idleConnectionsApi: ConnectionsApi = {
   get: async () => NO_CONNECTIONS,
   saveLichessToken: async () => NO_CONNECTIONS,
   removeLichessToken: async () => NO_CONNECTIONS,
+  saveLichessUsername: async () => NO_CONNECTIONS,
+  removeLichessUsername: async () => NO_CONNECTIONS,
   saveChessComUsername: async () => NO_CONNECTIONS,
   removeChessComUsername: async () => NO_CONNECTIONS,
 };

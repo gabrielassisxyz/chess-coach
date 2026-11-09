@@ -26,6 +26,11 @@ function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);
 }
 
+function summaryOf(result: ImportResult): string {
+  const failed = result.failed?.length ?? 0;
+  return `Imported ${result.imported}, skipped ${result.skipped}${failed > 0 ? `, ${failed} unreadable` : ""}.`;
+}
+
 // A game whose time control the listing did not give stays visible rather than vanishing.
 function wanted(game: ChessComListedGame, classes: Set<TimeClass>): boolean {
   const timeClass = timeClassOf(game.time_control);
@@ -48,14 +53,22 @@ export function ImportPanel({
   const [pgnColor, setPgnColor] = useState<"" | "white" | "black">("");
   const [message, setMessage] = useState<string | null>(null);
   const [classes, setClasses] = useState<Set<TimeClass>>(new Set(["rapid", "blitz"]));
+  const [lichessUsername, setLichessUsername] = useState("");
+  const [lichessFrom, setLichessFrom] = useState(currentMonth());
+  const [lichessTo, setLichessTo] = useState(currentMonth());
+  const [lichessBusy, setLichessBusy] = useState(false);
 
   // Only an empty field is filled: the answer can arrive after the student started typing.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the revision is what asks for a new read.
   useEffect(() => {
     let live = true;
     connections.get().then(
-      ({ chesscom_username: saved }) => {
-        if (live && saved !== null) setUsername((typed) => (typed === "" ? saved : typed));
+      ({ chesscom_username: saved, lichess_username: savedLichess }) => {
+        if (!live) return;
+        if (saved !== null) setUsername((typed) => (typed === "" ? saved : typed));
+        if (savedLichess !== null) {
+          setLichessUsername((typed) => (typed === "" ? savedLichess : typed));
+        }
       },
       () => undefined,
     );
@@ -91,8 +104,22 @@ export function ImportPanel({
       setPicked(new Set());
       onChanged();
       onImported?.(username, result);
-      const failed = result.failed?.length ?? 0;
-      return `Imported ${result.imported}, skipped ${result.skipped}${failed > 0 ? `, ${failed} unreadable` : ""}.`;
+      return summaryOf(result);
+    });
+  };
+
+  // Disabled while it runs: Lichess may make the server wait a minute before it answers.
+  const importLichess = (event: FormEvent): void => {
+    event.preventDefault();
+    setLichessBusy(true);
+    void run(async () => {
+      try {
+        const result = await api.importLichess(lichessUsername.trim(), lichessFrom, lichessTo);
+        onChanged();
+        return summaryOf(result);
+      } finally {
+        setLichessBusy(false);
+      }
     });
   };
 
@@ -191,6 +218,46 @@ export function ImportPanel({
           </button>
         </>
       ) : null}
+      <h3 className="import__title">Import from Lichess</h3>
+      <form className="import__form" onSubmit={importLichess}>
+        <label>
+          Lichess username
+          <input
+            className="input"
+            value={lichessUsername}
+            onChange={(e) => setLichessUsername(e.target.value)}
+          />
+        </label>
+        <label>
+          First month
+          <input
+            className="input"
+            type="month"
+            value={lichessFrom}
+            onChange={(e) => setLichessFrom(e.target.value)}
+          />
+        </label>
+        <label>
+          Last month
+          <input
+            className="input"
+            type="month"
+            value={lichessTo}
+            onChange={(e) => setLichessTo(e.target.value)}
+          />
+        </label>
+        <button
+          type="submit"
+          className="button"
+          disabled={lichessUsername.trim() === "" || lichessBusy}
+        >
+          {lichessBusy ? "Importing…" : "Import Lichess games"}
+        </button>
+      </form>
+      <p className="screen__note">
+        Every finished standard game in those months is imported at once; a long range can take a
+        while.
+      </p>
       <form className="import__form" onSubmit={importPasted}>
         <label>
           Paste a PGN

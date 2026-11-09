@@ -6,13 +6,17 @@ import { type Clock, systemClock } from "../clock.js";
 import {
   clearChessComUsername,
   clearLichessToken,
+  clearLichessUsername,
   hasLichessToken,
   setChessComUsername,
   setLichessToken,
+  setLichessUsername,
   storedChessComUsername,
+  storedLichessUsername,
 } from "../db/connections.js";
 import type { Database } from "../db/open.js";
 import { assertUsername, ChessComError, type ChessComFetcher } from "../import/chesscom.js";
+import { assertLichessUsername } from "../import/lichess.js";
 import { type Log, silentLog } from "../log.js";
 import { ExplorerError, type ExplorerFetcher } from "../openings/explorer-client.js";
 import { isUpgradeAllowed } from "../ws/origin.js";
@@ -73,6 +77,13 @@ const ACCOUNT_REFUSALS = {
   },
 } as const satisfies Record<string, Refusal>;
 
+// Only the pattern is checked: the name is not looked up, so saving it makes no call to Lichess.
+const LICHESS_USERNAME_REFUSAL = {
+  status: 400,
+  error: "invalid_username",
+  message: "A Lichess username is 2 to 30 letters, digits, _ or -.",
+} as const satisfies Refusal;
+
 // The refusal is chosen here so that no upstream message, which could quote the token, travels on.
 async function tokenRefusal(explorer: ExplorerFetcher): Promise<Refusal | null> {
   try {
@@ -103,6 +114,14 @@ function normalisedUsername(username: string): string | null {
   }
 }
 
+function normalisedLichessUsername(username: string): string | null {
+  try {
+    return assertLichessUsername(username);
+  } catch {
+    return null;
+  }
+}
+
 export function registerConnectionRoutes(
   app: FastifyInstance,
   options: ConnectionRoutesOptions,
@@ -113,6 +132,7 @@ export function registerConnectionRoutes(
   const now = (): string => clock.now().toISOString();
   const status = (): ConnectionsStatus => ({
     lichess_token_set: hasLichessToken(db),
+    lichess_username: storedLichessUsername(db),
     chesscom_username: storedChessComUsername(db),
   });
   const refuse = async (reply: FastifyReply, event: string, refusal: Refusal) => {
@@ -153,6 +173,27 @@ export function registerConnectionRoutes(
     log.info("connections.lichess_removed");
     return status();
   });
+
+  app.put("/api/connections/lichess/username", writeGuard, async (request, reply) => {
+    const body = usernameBody.safeParse(request.body);
+    const username = body.success ? normalisedLichessUsername(body.data.username) : null;
+    if (username === null) {
+      return refuse(reply, "connections.lichess_username_refused", LICHESS_USERNAME_REFUSAL);
+    }
+    setLichessUsername(db, username, now());
+    log.info("connections.lichess_username_saved", { username });
+    return status();
+  });
+
+  app.delete(
+    "/api/connections/lichess/username",
+    writeGuard,
+    async (): Promise<ConnectionsStatus> => {
+      clearLichessUsername(db);
+      log.info("connections.lichess_username_removed");
+      return status();
+    },
+  );
 
   app.put("/api/connections/chesscom", writeGuard, async (request, reply) => {
     const body = usernameBody.safeParse(request.body);

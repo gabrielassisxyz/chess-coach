@@ -22,8 +22,8 @@ export class PgnImportError extends Error {}
 export interface ImportRequest {
   pgn: string;
   playerColor: PlayerColor;
-  source: "chesscom" | "pgn";
-  /** Chess.com uuid; a hash of the PGN text when absent. */
+  source: "chesscom" | "lichess" | "pgn";
+  /** The site's own game id (Chess.com uuid, Lichess id); a hash of the PGN text when absent. */
   sourceId?: string;
   sourceUrl?: string;
   opponent?: string;

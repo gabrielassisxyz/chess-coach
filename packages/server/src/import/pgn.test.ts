@@ -105,6 +105,33 @@ describe("importFinishedGame", () => {
       targetElo: 400,
     });
   });
+
+  it("stores a Lichess game under its own source, with the Lichess id as the dedupe key", () => {
+    const request = {
+      pgn: FIXTURE,
+      playerColor: "white" as const,
+      source: "lichess" as const,
+      sourceId: "Wm4cTe9R",
+      sourceUrl: "https://lichess.org/Wm4cTe9R",
+      opponent: "fixture-rival",
+      studentRating: 1538,
+      opponentRating: 1612,
+      timeControl: "300+3",
+      playedAt: "2026-10-21T12:03:40.000Z",
+    };
+    const id = importFinishedGame(db, request);
+    expect(getGame(db, id as number)).toMatchObject({
+      source: "lichess",
+      sourceId: "Wm4cTe9R",
+      sourceUrl: "https://lichess.org/Wm4cTe9R",
+      studentRating: 1538,
+      opponentRating: 1612,
+      timeControl: "300+3",
+      targetElo: 1538,
+      grading: "pending",
+    });
+    expect(importFinishedGame(db, request)).toBeNull();
+  });
 });
 
 describe("parseFinishedGame", () => {

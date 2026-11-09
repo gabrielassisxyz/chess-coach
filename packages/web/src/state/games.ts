@@ -67,7 +67,7 @@ export function accuracyLabel(accuracy: number | null): string {
 function importedLabel(game: GameSummary): string {
   const result = game.result ?? "no result";
   const ending = game.termination ?? "unfinished";
-  const where = game.source === "chesscom" ? "Chess.com" : "PGN";
+  const where = SOURCE_TAG[game.source];
   const versus = game.opponent ? ` vs ${game.opponent}` : "";
   const grade = game.grading === "done" ? accuracyLabel(game.accuracy) : `grading ${game.grading}`;
   return `${(game.played_at ?? game.started_at).slice(0, 10)}, ${where}${versus}, ${game.player_color}, ${result} by ${ending}, ${game.move_count} moves, ${grade}`;
@@ -107,7 +107,13 @@ export function filterGames(
 }
 
 export function sourceCounts(games: GameSummary[]): Record<SourceFilter, number> {
-  const counts: Record<SourceFilter, number> = { all: games.length, coach: 0, chesscom: 0, pgn: 0 };
+  const counts: Record<SourceFilter, number> = {
+    all: games.length,
+    coach: 0,
+    chesscom: 0,
+    lichess: 0,
+    pgn: 0,
+  };
   for (const game of games) counts[game.source] += 1;
   return counts;
 }
@@ -169,7 +175,12 @@ export function dateLabel(iso: string, now: Date = new Date()): string {
   });
 }
 
-export const SOURCE_TAG = { coach: "Coached", chesscom: "Chess.com", pgn: "PGN" } as const;
+export const SOURCE_TAG = {
+  coach: "Coached",
+  chesscom: "Chess.com",
+  lichess: "Lichess",
+  pgn: "PGN",
+} as const;
 
 export function opponentLabel(
   game: Pick<GameSummary, "source" | "target_elo" | "opponent" | "opponent_rating">,
