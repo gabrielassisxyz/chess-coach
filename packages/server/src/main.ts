@@ -23,6 +23,7 @@ import { generateOpeningPuzzles } from "./openings/from-games.js";
 import { generateItalianPuzzles } from "./openings/from-italian.js";
 import { generateRepertoire } from "./openings/from-repertoire.js";
 import { loadOpeningNames } from "./openings/names.js";
+import { generateRepertoireIdeas, sdkIdeaSession } from "./openings/repertoire-ideas.js";
 import { contentDir, dataDir, resolveAppRoot } from "./paths.js";
 import { ensurePuzzleRating } from "./puzzles/rating.js";
 import { seedPuzzles } from "./puzzles/seed.js";
@@ -109,6 +110,9 @@ const generateRepertoireOpenings = () =>
     systemExplorerClock,
     openingNames,
   );
+// Each run starts its own Claude sessions, so nothing here holds a process open between runs.
+const runRepertoireIdeas = () =>
+  generateRepertoireIdeas(db, sdkIdeaSession(query, { cwd: dataDir() }), log);
 const importGrader = new ImportGrader({
   db,
   log,
@@ -162,6 +166,7 @@ const app = buildApp({
   generateExplorerOpenings,
   generateItalianOpenings,
   generateRepertoireOpenings,
+  generateRepertoireIdeas: runRepertoireIdeas,
   connections: {
     chessCom: httpFetcher(),
     explorerFor: (token) => httpExplorerFetcher(token),
