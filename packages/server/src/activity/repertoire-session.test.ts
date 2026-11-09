@@ -9,7 +9,7 @@ import {
   type TrainingActivity,
 } from "@chess-coach/shared";
 import { Chess } from "chess.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeCoach } from "../../test/fakes/fake-coach.js";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
 import { buildApp } from "../app.js";
@@ -27,6 +27,7 @@ import { positionKey } from "../openings/from-games.js";
 import { ReviewDesk } from "../srs/review.js";
 import { review } from "../srs/sm2.js";
 import {
+  REPERTOIRE_FLAG_BUDGET_MS,
   REPERTOIRE_NO_IDEA,
   REPERTOIRE_RECOMMENDED_SIZE,
   type RepertoireTryJudge,
@@ -50,6 +51,7 @@ beforeEach(() => {
   db = openDatabase(tmp);
 });
 afterEach(() => {
+  vi.useRealTimers();
   db.close();
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -204,6 +206,41 @@ class FakeRepertoireJudge implements RepertoireTryJudge {
     return this.losses[uci] ?? 1000;
   }
 }
+
+// The same table, with an engine that answers only when the test releases it.
+class GatedRepertoireJudge extends FakeRepertoireJudge {
+  private releases: ((loss: number) => void)[] = [];
+
+  override cpLoss(fen: string, uci: string): Promise<number> {
+    void super.cpLoss(fen, uci);
+    return new Promise((resolve) => this.releases.push(resolve));
+  }
+
+  release(loss: number): void {
+    for (const resolve of this.releases.splice(0)) resolve(loss);
+  }
+}
+
+const RUY_LOPEZ_JUDGE_NAMES = (): Record<string, string> => ({
+  [keyAfter("e4 e5 Nf3 Nc6", "Bc4")]: "Italian Game",
+  [keyAfter("e4 e5 Nf3 Nc6", "Bb5")]: "Ruy Lopez",
+});
+
+function addFinishedGame(): number {
+  return Number(
+    db
+      .prepare(
+        `INSERT INTO games (started_at, finished_at, player_color, target_elo, initial_fen, phase,
+           result)
+         VALUES (?, ?, 'white', 1200, ?, 'finished', '1-0')`,
+      )
+      .run(T0.toISOString(), T0.toISOString(), new Chess().fen()).lastInsertRowid,
+  );
+}
+
+const settle = async (until: () => boolean): Promise<void> => {
+  for (let i = 0; i < 100 && !until(); i++) await new Promise((resolve) => setTimeout(resolve, 0));
+};
 
 // Everything a server boot builds that holds memory: a new call is a restart over the same file.
 function boot(judge?: RepertoireTryJudge): ActivityService {
@@ -402,6 +439,19 @@ describe("a repertoire drill", () => {
     expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject(failed);
   });
 
+  it("reschedules a move that fell due while the drill was open, once it is right", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, () => false);
+    db.prepare("UPDATE repertoire_cards SET next_review_at = ?").run(
+      new Date(T0.getTime() + HOUR_MS).toISOString(),
+    );
+    const service = boot();
+    const state = await start(service, id, "all");
+    now = new Date(T0.getTime() + 2 * HOUR_MS);
+    await play(service, state, "e4");
+    expect(cardOf("", "e4")).toMatchObject({ repetitions: 3, reviews: 3 });
+  });
+
   it("shows a new move with its answer on its first pass and rates it only on a later one", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     const service = boot();
@@ -498,6 +548,69 @@ describe("a repertoire drill", () => {
     state = await play(service, state, "h3");
     expect(drillOf(state).flagged_opening).toBeNull();
     expect(judge.searched).toEqual(["f1b5", "d2d4"]);
+  });
+
+  it("keeps a wrong try that waits on the engine when the board moves on meanwhile", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const gameId = addFinishedGame();
+    const judge = new GatedRepertoireJudge(RUY_LOPEZ_JUDGE_NAMES(), {});
+    const service = boot(judge);
+    const state = await start(service, id, "due");
+
+    const tried = service.trainingTry(uciOf(state.fen, "Bb5"), state.activity_id);
+    await settle(() => judge.searched.length > 0);
+    await service.openGame(gameId);
+    judge.release(12);
+    await tried;
+
+    expect(service.current()?.kind).toBe("review");
+    expect(db.prepare("SELECT uci, correct FROM training_tries").all()).toEqual([
+      { uci: "f1b5", correct: 0 },
+    ]);
+    expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
+    const resumed = training(await service.resumeTraining());
+    expect(resumed.last_try).toMatchObject({ san: "Bb5", correct: false });
+    expect(drillOf(resumed)).toMatchObject({ flagged_opening: "Ruy Lopez", moves_wrong: 1 });
+  });
+
+  it("leaves a board opened in the same tick as a move on the board, with the drill paused", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS);
+    const gameId = addFinishedGame();
+    const service = boot();
+    const state = await start(service, id, "due");
+
+    await Promise.all([
+      service.trainingTry(uciOf(state.fen, "e4"), state.activity_id),
+      service.openGame(gameId),
+    ]);
+
+    expect(service.current()?.kind).toBe("review");
+    expect(service.pausedTraining()).toMatchObject({ mode: "repertoire", solved: 1 });
+    expect(db.prepare("SELECT uci, correct FROM training_tries").all()).toEqual([
+      { uci: "e2e4", correct: 1 },
+    ]);
+  });
+
+  it("gives up on the flag when the engine is slower than its budget, and keeps the try", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const judge = new GatedRepertoireJudge(RUY_LOPEZ_JUDGE_NAMES(), {});
+    const service = boot(judge);
+    const state = await start(service, id, "due");
+    vi.useFakeTimers();
+    try {
+      const tried = service.trainingTry(uciOf(state.fen, "Bb5"), state.activity_id);
+      await vi.advanceTimersByTimeAsync(REPERTOIRE_FLAG_BUDGET_MS);
+      const after = training(await tried);
+      expect(judge.searched).toEqual(["f1b5"]);
+      expect(drillOf(after).flagged_opening).toBeNull();
+      expect(after.last_try).toMatchObject({ san: "Bb5", correct: false });
+      expect(after.input_enabled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("carries the scope, the counts and, at the end, the moves practised and the first-try rights", async () => {

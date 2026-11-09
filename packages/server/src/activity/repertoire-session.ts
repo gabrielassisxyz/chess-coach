@@ -56,6 +56,8 @@ import { type PracticeRunPort, pausedTrainingOf, type TrainingDeps } from "./tra
 export const REPERTOIRE_RECOMMENDED_SIZE = 10;
 /** A wrong try this close to the engine's best that reaches another named opening is flagged. */
 export const REPERTOIRE_FLAG_CP = 50;
+/** How long a try waits for the engine before it is left unflagged. */
+export const REPERTOIRE_FLAG_BUDGET_MS = 4000;
 /** What the first hint says when the position stores no idea. */
 export const REPERTOIRE_NO_IDEA = "No idea is stored for this position yet.";
 // The qualities a review card's first try pre-selects in training.ts: right is 4, a miss is 2.
@@ -176,16 +178,24 @@ export function repertoireFlagCandidate(
   return reached === expectedName ? null : reached;
 }
 
-// The flag is a courtesy: without an engine the try just returns, like any other wrong move.
+// The flag is a courtesy: when the engine fails, or is slower than its budget because the queue it
+// shares with grading is busy, the try is left unflagged like any other wrong move.
 async function withinRepertoireFlagMargin(
   judge: RepertoireTryJudge,
   fen: string,
   uci: string,
 ): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), REPERTOIRE_FLAG_BUDGET_MS);
+  });
   try {
-    return (await judge.cpLoss(fen, uci)) <= REPERTOIRE_FLAG_CP;
+    const loss = await Promise.race([judge.cpLoss(fen, uci), late]);
+    return loss !== null && loss <= REPERTOIRE_FLAG_CP;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -198,8 +208,6 @@ interface DrillMoveState {
   move: RepertoireDrillMove;
   stage: RepertoireStage;
   rating: RepertoireRating | null;
-  /** Due when the drill started: a right first attempt reschedules only a due move. */
-  due: boolean;
   /** Asked in the current round; until the round ends a pass plays it for the student. */
   asked: boolean;
 }
@@ -258,7 +266,6 @@ interface StoredDrill {
     row_id: number;
     stage: RepertoireStage;
     rating: RepertoireRating | null;
-    due: boolean;
     asked: boolean;
   }[];
   pass: StoredDrillPass;
@@ -350,7 +357,6 @@ export class RepertoireSession implements PracticeRunPort {
         move,
         stage: move.card === null ? "intro" : "test",
         rating: null,
-        due: isRepertoireMoveDue(move, now),
         asked: false,
       }),
     );
@@ -389,9 +395,7 @@ export class RepertoireSession implements PracticeRunPort {
     const states = stored.moves.flatMap((state): DrillMoveState[] => {
       const move = moves.get(state.row_id);
       if (!move) return [];
-      return [
-        { move, stage: state.stage, rating: state.rating, due: state.due, asked: state.asked },
-      ];
+      return [{ move, stage: state.stage, rating: state.rating, asked: state.asked }];
     });
     const resume = { passIndex: stored.pass_index, outcomes: row.outcomes, pass: stored.pass };
     return deps.db.transaction(() => {
@@ -528,10 +532,10 @@ export class RepertoireSession implements PracticeRunPort {
     }
   }
 
-  // A wrong try is kept and the position stays open. When the table says it reached another
-  // opening, the engine is asked whether it was good enough to name; meanwhile the board may move
-  // on, so the try is applied only if this drill is still the one on it.
-  tryMove(uci: string, stillOnBoard?: () => boolean): void | Promise<void> {
+  // A wrong try is kept at once and the position stays open. When the table says it reached
+  // another opening, the engine is asked whether it was good enough to name; only that name waits
+  // for the answer, so a board that moves on meanwhile loses nothing else.
+  tryMove(uci: string): void | Promise<void> {
     const { ask, state } = this.requireAsk();
     const fen = this.pass.fen;
     if (
@@ -540,16 +544,15 @@ export class RepertoireSession implements PracticeRunPort {
       throw new ActivityError("illegal_move", `${uci} is not legal in this position`);
     }
     if (uci === state.move.uci) return this.transition(() => this.playRight(ask, state, uci));
+    this.transition(() => this.playWrong(ask, state, uci));
     const judge = this.deps.repertoireJudge;
     const candidate = judge ? repertoireFlagCandidate(judge, fen, uci, state.move) : null;
-    if (!judge || candidate === null) {
-      return this.transition(() => this.playWrong(ask, state, uci, null));
-    }
+    if (!judge || candidate === null) return;
     return withinRepertoireFlagMargin(judge, fen, uci).then((close) => {
-      if (stillOnBoard && !stillOnBoard()) {
-        throw new ActivityError("stale_activity", "the board moved on while the try was judged");
-      }
-      this.transition(() => this.playWrong(ask, state, uci, close ? candidate : null));
+      if (!close) return;
+      this.transition(() => {
+        ask.flagged = candidate;
+      });
     });
   }
 
@@ -622,14 +625,9 @@ export class RepertoireSession implements PracticeRunPort {
     this.advance(pass);
   }
 
-  private playWrong(
-    ask: DrillAsk,
-    state: DrillMoveState,
-    uci: string,
-    flagged: string | null,
-  ): void {
+  private playWrong(ask: DrillAsk, state: DrillMoveState, uci: string): void {
     this.recordTry(this.pass, uci, false);
-    ask.flagged = flagged;
+    ask.flagged = null;
     this.pass.missed = true;
     if (!ask.attempted) this.rateFirstAttempt(state, false);
     ask.attempted = true;
@@ -659,14 +657,15 @@ export class RepertoireSession implements PracticeRunPort {
     this.reschedule(state, right);
   }
 
-  // A move played right before it was due keeps its schedule, so practising early earns no longer
-  // interval; a miss fails it like any other.
+  // A move played right before it is due keeps its schedule, so practising early earns no longer
+  // interval; a miss fails it like any other. Due is read when the move is played, so a drill
+  // resumed after its moves fell due treats them as due.
   private reschedule(state: DrillMoveState, right: boolean): void {
-    if (right && !state.due) return;
     const db = this.deps.db;
     const now = this.clock.now();
     introduceRepertoireCard(db, state.move, now.toISOString());
     const card = findRepertoireCard(db, state.move) as RepertoireCardSchedule;
+    if (right && Date.parse(card.next_review_at) > now.getTime()) return;
     const schedule = reviewSchedule(
       card,
       right ? REPERTOIRE_PASS_QUALITY : REPERTOIRE_FAIL_QUALITY,
@@ -828,11 +827,10 @@ export class RepertoireSession implements PracticeRunPort {
       repertoire_id: this.repertoire.id,
       scope: this.scope,
       pass_index: this.passIndex,
-      moves: this.order.map(({ move, stage, rating, due, asked }) => ({
+      moves: this.order.map(({ move, stage, rating, asked }) => ({
         row_id: move.rowId,
         stage,
         rating,
-        due,
         asked,
       })),
       pass: this.storedPass(),

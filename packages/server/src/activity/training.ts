@@ -101,8 +101,8 @@ export interface PracticeRunPort {
   state(activityId: number): TrainingActivity;
   explore(kind: ExplorationKind, uci?: string): void;
   linkMessage(messageId: number): void;
-  /** `stillOnBoard` is asked before a try that waited on the engine is applied. */
-  tryMove(uci: string, stillOnBoard?: () => boolean): void | Promise<void>;
+  /** A repertoire try may wait on the engine for its flag; every other step is synchronous. */
+  tryMove(uci: string): void | Promise<void>;
   showSolution(): void;
   hint(): void;
   rate(exposureId: string, quality: number): void;

@@ -225,23 +225,23 @@ export class ActivityService {
   }
 
   trainingTry(uci: string, expectedActivityId?: number): Promise<ActivityState> {
-    return this.stepTraining(expectedActivityId, "trainingTry", (run) =>
-      run.tryMove(uci, () => this.run === run),
-    ).then((state) => {
-      if (state.kind === "training") {
-        this.log.info("training.answer", {
-          activity_id: state.activity_id,
-          try: true,
-          uci,
-          correct: state.last_try?.correct ?? null,
-          tries: state.tries,
-          item: state.item,
-          status: state.status,
-          expected: state.expected,
-        });
-      }
-      return state;
-    });
+    return this.stepTraining(expectedActivityId, "trainingTry", (run) => run.tryMove(uci)).then(
+      (state) => {
+        if (state.kind === "training") {
+          this.log.info("training.answer", {
+            activity_id: state.activity_id,
+            try: true,
+            uci,
+            correct: state.last_try?.correct ?? null,
+            tries: state.tries,
+            item: state.item,
+            status: state.status,
+            expected: state.expected,
+          });
+        }
+        return state;
+      },
+    );
   }
 
   trainingShowSolution(expectedActivityId?: number): Promise<ActivityState> {
@@ -392,7 +392,18 @@ export class ActivityService {
   ): Promise<ActivityState> {
     return this.enqueue("training", async () => {
       const run = this.requireTraining(expectedActivityId);
-      await step(run);
+      // A step that does not wait publishes in the same turn it changed the run, so no command for
+      // another board can come in between. One that waited on the engine finds the board as it is
+      // now: if the student left the drill meanwhile, the change stays with the paused run and the
+      // board that replaced it is not taken back.
+      const pending = step(run);
+      if (pending) {
+        await pending;
+        if (this.run !== run) {
+          if (this.state) return this.state;
+          throw new ActivityError("not_in_training", "the drill left the board during its step");
+        }
+      }
       return this.publish(run.state((this.state as ActivityState).activity_id), cause);
     });
   }
