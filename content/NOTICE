@@ -28,3 +28,12 @@ tools/generate_puzzles.py adapted (paths and imports for the new layout)
 tools/import_lichess_puzzles.py adapted (data directory moved to tools/data)
 tools/motif_detector.py  verbatim
 tools/validate_puzzles.py adapted (paths, imports, em-dashes, Stockfish lookup)
+
+openings/all.tsv comes from lichess-org/chess-openings
+https://github.com/lichess-org/chess-openings
+commit 3ba6b20d31b2e6125cb0e6a2e792f400717d9d39
+Licence: CC0 1.0 Universal, a public domain dedication.
+
+The upstream source files carry no positions. The file is the upstream dist/all.tsv, built at that
+commit with `make PYTHON="uv run --no-project --with chess python3"` and copied unchanged: 3865
+rows, columns eco, name, pgn, uci and epd, every epd unique.

@@ -12,6 +12,10 @@ export const WorstMomentSchema = z.object({
 });
 export type WorstMoment = z.infer<typeof WorstMomentSchema>;
 
+// An entry of the Lichess openings table: the ECO code and the name of one position.
+export const OpeningNameSchema = z.object({ eco: z.string(), name: z.string() });
+export type OpeningName = z.infer<typeof OpeningNameSchema>;
+
 export const GameSummarySchema = z.object({
   id: z.number().int(),
   started_at: z.string(),
