@@ -21,6 +21,7 @@ import { httpExplorerFetcher, systemExplorerClock } from "./openings/explorer-cl
 import { generateExplorerPuzzles } from "./openings/from-explorer.js";
 import { generateOpeningPuzzles } from "./openings/from-games.js";
 import { generateItalianPuzzles } from "./openings/from-italian.js";
+import { generateRepertoire } from "./openings/from-repertoire.js";
 import { loadOpeningNames } from "./openings/names.js";
 import { contentDir, dataDir, resolveAppRoot } from "./paths.js";
 import { ensurePuzzleRating } from "./puzzles/rating.js";
@@ -99,6 +100,15 @@ const generateItalianOpenings = () =>
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
   );
+const generateRepertoireOpenings = () =>
+  generateRepertoire(
+    db,
+    pool.evaluation,
+    httpExplorerFetcher(resolveLichessToken(db)),
+    join(dataDir(), "explorer-cache"),
+    systemExplorerClock,
+    openingNames,
+  );
 const importGrader = new ImportGrader({
   db,
   log,
@@ -151,6 +161,7 @@ const app = buildApp({
   generateOpenings,
   generateExplorerOpenings,
   generateItalianOpenings,
+  generateRepertoireOpenings,
   connections: {
     chessCom: httpFetcher(),
     explorerFor: (token) => httpExplorerFetcher(token),

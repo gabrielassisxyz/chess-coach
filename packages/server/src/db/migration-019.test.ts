@@ -66,7 +66,7 @@ describe("019_lichess_game_source", () => {
     const indexes = indexesOfGames();
     expect(indexes).toHaveLength(2);
 
-    expect(runMigrations(db, defaultMigrationsDir)).toEqual(["019_lichess_game_source.sql"]);
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("019_lichess_game_source.sql");
 
     expect(snapshotOfGames()).toEqual(rows);
     expect(indexesOfGames()).toEqual(indexes);

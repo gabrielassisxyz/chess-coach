@@ -14,6 +14,7 @@ import { registerRoutineRoutes } from "./http/routine.js";
 import { type Log, silentLog } from "./log.js";
 import type { ExplorerResult } from "./openings/from-explorer.js";
 import type { GenerationResult } from "./openings/from-games.js";
+import type { RepertoireResult } from "./openings/from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames } from "./openings/names.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
 
@@ -38,6 +39,8 @@ export interface AppOptions {
   generateExplorerOpenings?: () => Promise<ExplorerResult>;
   /** Builds the White Italian drill from the explorer; only asked for by name, never after an import. */
   generateItalianOpenings?: () => Promise<ExplorerResult>;
+  /** Builds the first stored Italian variation; only asked for by name, never after an import. */
+  generateRepertoireOpenings?: () => Promise<RepertoireResult>;
   log?: Log;
 }
 
@@ -87,6 +90,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
         options.generateOpenings,
         options.generateExplorerOpenings,
         options.generateItalianOpenings,
+        options.generateRepertoireOpenings,
         log,
       );
     }

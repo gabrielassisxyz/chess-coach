@@ -91,6 +91,16 @@ describe("POST /api/openings/generate", () => {
       cacheHits: 0,
       truncated: false,
     };
+    const repertoire = {
+      variation: "Classical Variation (4.c3)",
+      ownMoves: 40,
+      replies: 60,
+      deepestPly: 28,
+      created: 100,
+      requests: 80,
+      cacheHits: 0,
+      truncated: false,
+    };
     const build = (calls: string[]) =>
       buildApp({
         db: db(),
@@ -105,6 +115,10 @@ describe("POST /api/openings/generate", () => {
         generateItalianOpenings: async () => {
           calls.push("italian");
           return italian;
+        },
+        generateRepertoireOpenings: async () => {
+          calls.push("repertoire");
+          return repertoire;
         },
       });
     const post = async (calls: string[], payload?: unknown) => {
@@ -238,6 +252,83 @@ describe("POST /api/openings/generate", () => {
         error: "explorer_unavailable",
         message: "the explorer wants a Lichess API token",
       });
+    });
+
+    it("runs only the repertoire source when asked for it, and logs its counts", async () => {
+      const calls: string[] = [];
+      const log = new RecordingLog();
+      const app = buildApp({
+        db: db(),
+        log,
+        generateOpenings: async () => own,
+        generateRepertoireOpenings: async () => {
+          calls.push("repertoire");
+          return repertoire;
+        },
+      });
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["repertoire"] },
+      });
+      await app.close();
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ repertoire });
+      expect(calls).toEqual(["repertoire"]);
+      expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+        sources: ["repertoire"],
+        result: { repertoire: { ownMoves: 40, replies: 60, deepestPly: 28 } },
+      });
+    });
+
+    it("never builds the repertoire without being asked", async () => {
+      const calls: string[] = [];
+      await post(calls);
+      await post(calls, { sources: ["own", "explorer", "italian"] });
+      expect(calls).not.toContain("repertoire");
+    });
+
+    it("answers 404 when the repertoire source is not wired", async () => {
+      const app = buildApp({ db: db(), generateOpenings: async () => own });
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["repertoire"] },
+      });
+      await app.close();
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toMatchObject({ error: "repertoire_unavailable" });
+    });
+
+    it("refuses a repertoire run while an explorer run is going", async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const app = buildApp({
+        db: db(),
+        generateOpenings: async () => own,
+        generateExplorerOpenings: async () => {
+          await gate;
+          return explorer;
+        },
+        generateRepertoireOpenings: async () => repertoire,
+      });
+      const first = app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["explorer"] },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const second = await app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["repertoire"] },
+      });
+      release();
+      expect((await first).statusCode).toBe(200);
+      await app.close();
+      expect(second.statusCode).toBe(409);
     });
   });
 });

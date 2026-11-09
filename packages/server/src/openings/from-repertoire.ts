@@ -1,0 +1,411 @@
+import { Chess } from "chess.js";
+import type { Database } from "../db/open.js";
+import {
+  createRepertoireVariation,
+  findFirstRepertoireVariation,
+  findRepertoireOwnMove,
+  insertRepertoireOwnMove,
+  type RepertoireCounts,
+  type RepertoireMoveSource,
+  type RepertoireResultCounts,
+  type RepertoireRow,
+  type RepertoireRowPlace,
+  raiseRepertoireOwnMoveReach,
+  repertoireCounts,
+  type StoredRepertoireOwnMove,
+  upsertRepertoireReply,
+} from "../db/repertoires.js";
+import { EVALUATION_DEPTH } from "../engine/evaluate.js";
+import { applyUci } from "../engine/moves.js";
+import type { Searcher, SearchResult } from "../engine/uci.js";
+import {
+  CachedExplorer,
+  EXPLORER_RATINGS,
+  type ExplorerClock,
+  ExplorerError,
+  type ExplorerFetcher,
+  type ExplorerMove,
+  type ExplorerPosition,
+  gamesOf,
+  ITALIAN_WHITE_RATINGS,
+} from "./explorer-client.js";
+import { MIN_POSITION_GAMES } from "./from-explorer.js";
+import { positionKey } from "./from-games.js";
+import { pickItalianWhiteUci } from "./from-italian.js";
+import type { OpeningNames } from "./names.js";
+
+export const REPERTOIRE_GROUP_ITALIAN = "Italian Game";
+export const REPERTOIRE_MAX_PLY = 30;
+export const REPERTOIRE_MIN_REACH = 1 / 50;
+const REPERTOIRE_SEARCH_LINES = 5;
+
+// The opening is chosen rather than scored, so these plies are played whatever the data says, and
+// reach starts counting after them: a reply that leaves earlier is out of scope for this unit.
+const ITALIAN_SETUP_SAN = ["e4", "e5", "Nf3", "Nc6", "Bc4"];
+// White's answer to this reply is the choice the variation is named after.
+const ITALIAN_NAMING_REPLY_SAN = "Bc5";
+
+export interface RepertoireOptions {
+  maxPly?: number;
+  minGames?: number;
+  minReach?: number;
+  /** Requests allowed to reach the network in this run. */
+  maxRequests?: number;
+}
+
+export interface RepertoireResult {
+  /** Null when the run ended before the variation could be named. */
+  variation: string | null;
+  ownMoves: number;
+  replies: number;
+  deepestPly: number;
+  /** Rows this run added; running again over the same data adds none. */
+  created: number;
+  requests: number;
+  cacheHits: number;
+  /** True when the request budget ended the run early; running again resumes from the cache. */
+  truncated: boolean;
+}
+
+interface RepertoirePlayedMove {
+  uci: string;
+  san: string;
+  after: string;
+}
+
+interface RepertoireStep {
+  fen: string;
+  /** The half-move about to be played, counted from 1. */
+  ply: number;
+  line: string[];
+  /** The position after each ply of `line`, for the opening name. */
+  fens: string[];
+  /** The product of Black's shares since 3.Bc4. */
+  reach: number;
+}
+
+interface RepertoireOwnChoice {
+  move: RepertoirePlayedMove;
+  share: number | null;
+  cpLoss: number;
+  source: RepertoireMoveSource;
+}
+
+interface RepertoirePlayedOwnMove {
+  move: RepertoirePlayedMove;
+  /** The position after the move, in the student's band: its result counts and Black's replies. */
+  after: ExplorerPosition;
+}
+
+interface RepertoireKeptReply {
+  move: RepertoirePlayedMove;
+  share: number | null;
+  reach: number;
+  source: RepertoireMoveSource;
+}
+
+function repertoirePlayUci(fen: string, uci: string): RepertoirePlayedMove | null {
+  const game = new Chess(fen);
+  try {
+    const move = applyUci(game, uci);
+    return { uci, san: move.san, after: game.fen() };
+  } catch {
+    return null;
+  }
+}
+
+function repertoirePlaySan(fen: string, san: string): RepertoirePlayedMove | null {
+  const game = new Chess(fen);
+  try {
+    const move = game.move(san);
+    return {
+      uci: `${move.from}${move.to}${move.promotion ?? ""}`,
+      san: move.san,
+      after: game.fen(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+const advanceRepertoireStep = (
+  step: RepertoireStep,
+  move: RepertoirePlayedMove,
+  reach: number,
+): RepertoireStep => ({
+  fen: move.after,
+  ply: step.ply + 1,
+  line: [...step.line, move.san],
+  fens: [...step.fens, move.after],
+  reach,
+});
+
+function replayRepertoireLine(sans: string[]): RepertoireStep {
+  let step: RepertoireStep = { fen: new Chess().fen(), ply: 1, line: [], fens: [], reach: 1 };
+  for (const san of sans) {
+    const move = repertoirePlaySan(step.fen, san);
+    if (!move) throw new Error(`${san} is not legal after ${step.line.join(" ")}`);
+    step = advanceRepertoireStep(step, move, 1);
+  }
+  return step;
+}
+
+// Moves are matched by playing the SAN: the explorer writes castling as king-takes-rook in UCI.
+function repertoireShareOf(position: ExplorerPosition, fen: string, uci: string): number | null {
+  const total = gamesOf(position);
+  const listed = position.moves.find((move) => repertoirePlaySan(fen, move.san)?.uci === uci);
+  return listed && total > 0 ? gamesOf(listed) / total : null;
+}
+
+const repertoireResultsOf = (position: ExplorerPosition): RepertoireResultCounts | null =>
+  gamesOf(position) > 0
+    ? { wins: position.white, draws: position.draws, losses: position.black }
+    : null;
+
+function repertoireVariationName(openingName: string | null, san: string): string {
+  const afterColon = openingName?.split(":")[1]?.trim();
+  return `${afterColon || openingName || REPERTOIRE_GROUP_ITALIAN} (4.${san})`;
+}
+
+class RepertoireWalk {
+  private repertoireId = 0;
+  private readonly freshChoices = new Map<string, RepertoireOwnChoice | null>();
+  private readonly maxPly: number;
+  private readonly minGames: number;
+  private readonly minReach: number;
+
+  constructor(
+    private readonly db: Database,
+    private readonly engine: Searcher,
+    private readonly explorer: CachedExplorer,
+    private readonly names: OpeningNames,
+    options: RepertoireOptions,
+  ) {
+    this.maxPly = options.maxPly ?? REPERTOIRE_MAX_PLY;
+    this.minGames = options.minGames ?? MIN_POSITION_GAMES;
+    this.minReach = options.minReach ?? REPERTOIRE_MIN_REACH;
+  }
+
+  async run(): Promise<void> {
+    const stored = findFirstRepertoireVariation(this.db, "white", REPERTOIRE_GROUP_ITALIAN);
+    this.repertoireId = (stored ?? (await this.createVariation())).id;
+    await this.visitOwn(replayRepertoireLine([]));
+  }
+
+  private async createVariation(): Promise<RepertoireRow> {
+    const step = replayRepertoireLine([...ITALIAN_SETUP_SAN, ITALIAN_NAMING_REPLY_SAN]);
+    const choice = await this.freshOwnChoice(step);
+    if (!choice) throw new Error("the engine found no answer to 3...Bc5 to name the variation");
+    const opening = this.names.ofGame([...step.fens, choice.move.after])?.name ?? null;
+    return createRepertoireVariation(this.db, {
+      side: "white",
+      groupName: REPERTOIRE_GROUP_ITALIAN,
+      variationName: repertoireVariationName(opening, choice.move.san),
+    });
+  }
+
+  private async visitOwn(step: RepertoireStep): Promise<void> {
+    if (step.ply > this.maxPly) return;
+    const stored = findRepertoireOwnMove(this.db, this.repertoireId, positionKey(step.fen));
+    const played = stored
+      ? await this.followStoredOwnMove(step, stored)
+      : await this.storeFreshOwnMove(step);
+    if (played) {
+      await this.visitReplies(advanceRepertoireStep(step, played.move, step.reach), played.after);
+    }
+  }
+
+  // A stored position keeps its expected move, loss and counts: a rerun or a transposition follows
+  // them rather than asking the engine again, whose answer could differ from what was memorized.
+  private async followStoredOwnMove(
+    step: RepertoireStep,
+    stored: StoredRepertoireOwnMove,
+  ): Promise<RepertoirePlayedOwnMove | null> {
+    raiseRepertoireOwnMoveReach(this.db, stored.id, this.placeOf(step, step.reach));
+    const move = repertoirePlayUci(step.fen, stored.move_uci);
+    if (!move) return null;
+    return { move, after: await this.explorer.position(move.after, EXPLORER_RATINGS) };
+  }
+
+  private async storeFreshOwnMove(step: RepertoireStep): Promise<RepertoirePlayedOwnMove | null> {
+    const choice = await this.freshOwnChoice(step);
+    if (!choice) return null;
+    // Fetched even when the walk goes no deeper: the statistics read these counts with no network.
+    const after = await this.explorer.position(choice.move.after, EXPLORER_RATINGS);
+    insertRepertoireOwnMove(this.db, {
+      ...this.placeOf(step, step.reach),
+      uci: choice.move.uci,
+      san: choice.move.san,
+      share: choice.share,
+      source: choice.source,
+      cpLoss: choice.cpLoss,
+      results: repertoireResultsOf(after),
+    });
+    return { move: choice.move, after };
+  }
+
+  private placeOf(step: RepertoireStep, reach: number): RepertoireRowPlace {
+    return {
+      repertoireId: this.repertoireId,
+      positionKey: positionKey(step.fen),
+      ply: step.ply,
+      line: step.line,
+      reach,
+      openingName: this.names.ofGame(step.fens)?.name ?? null,
+    };
+  }
+
+  private async visitReplies(step: RepertoireStep, position: ExplorerPosition): Promise<void> {
+    if (step.ply > this.maxPly) return;
+    for (const reply of this.repliesToKeep(step, position)) {
+      upsertRepertoireReply(this.db, {
+        ...this.placeOf(step, reply.reach),
+        uci: reply.move.uci,
+        san: reply.move.san,
+        share: reply.share,
+        source: reply.source,
+      });
+      await this.visitOwn(advanceRepertoireStep(step, reply.move, reply.reach));
+    }
+  }
+
+  private repliesToKeep(step: RepertoireStep, position: ExplorerPosition): RepertoireKeptReply[] {
+    const setupSan = ITALIAN_SETUP_SAN[step.ply - 1];
+    return setupSan
+      ? this.setupReply(step, position, setupSan)
+      : this.popularReplies(step, position);
+  }
+
+  private setupReply(
+    step: RepertoireStep,
+    position: ExplorerPosition,
+    san: string,
+  ): RepertoireKeptReply[] {
+    const move = repertoirePlaySan(step.fen, san);
+    if (!move) return [];
+    const share = repertoireShareOf(position, step.fen, move.uci);
+    return [{ move, share, reach: step.reach, source: "setup" }];
+  }
+
+  private popularReplies(step: RepertoireStep, position: ExplorerPosition): RepertoireKeptReply[] {
+    const total = gamesOf(position);
+    if (total === 0) return [];
+    const ranked = [...position.moves].sort(
+      (a, b) => gamesOf(b) - gamesOf(a) || a.san.localeCompare(b.san),
+    );
+    return ranked.flatMap((candidate) => this.keptReply(step, candidate, total));
+  }
+
+  private keptReply(
+    step: RepertoireStep,
+    candidate: ExplorerMove,
+    total: number,
+  ): RepertoireKeptReply[] {
+    const share = gamesOf(candidate) / total;
+    const reach = step.reach * share;
+    if (gamesOf(candidate) < this.minGames || reach < this.minReach) return [];
+    const move = repertoirePlaySan(step.fen, candidate.san);
+    return move ? [{ move, share, reach, source: "explorer" }] : [];
+  }
+
+  // Naming the variation decides the answer to 3...Bc5 before the walk reaches it; the walk must
+  // store that same move, whatever a second search would say.
+  private async freshOwnChoice(step: RepertoireStep): Promise<RepertoireOwnChoice | null> {
+    const key = positionKey(step.fen);
+    const known = this.freshChoices.get(key);
+    if (known !== undefined) return known;
+    const choice = await this.computeOwnChoice(step);
+    this.freshChoices.set(key, choice);
+    return choice;
+  }
+
+  private async computeOwnChoice(step: RepertoireStep): Promise<RepertoireOwnChoice | null> {
+    const position = await this.explorer.position(step.fen, ITALIAN_WHITE_RATINGS);
+    const searched = await this.engine.search({
+      fen: step.fen,
+      depth: EVALUATION_DEPTH,
+      multipv: REPERTOIRE_SEARCH_LINES,
+    });
+    const setupSan = ITALIAN_SETUP_SAN[step.ply - 1];
+    const uci = setupSan
+      ? repertoirePlaySan(step.fen, setupSan)?.uci
+      : pickItalianWhiteUci(step.fen, position, searched.lines, Math.ceil(step.ply / 2));
+    if (!uci) return null;
+    const move = repertoirePlayUci(step.fen, uci);
+    const cpLoss = await this.centipawnLoss(step.fen, uci, searched.lines);
+    if (!move || cpLoss === null) return null;
+    const share = repertoireShareOf(position, step.fen, uci);
+    const source = setupSan ? "setup" : share === null ? "engine" : "explorer";
+    return { move, share, cpLoss, source };
+  }
+
+  private async centipawnLoss(
+    fen: string,
+    uci: string,
+    lines: SearchResult["lines"],
+  ): Promise<number | null> {
+    const best = lines[0];
+    if (!best) return null;
+    const scored = lines.find((line) => line.moves[0] === uci);
+    const score = scored ? scored.score : await this.scoreOutsideLines(fen, uci, best.score);
+    return Math.max(0, best.score - score);
+  }
+
+  // A setup move is played whatever the engine thinks, so it can miss the engine's top lines.
+  private async scoreOutsideLines(fen: string, uci: string, fallback: number): Promise<number> {
+    const move = repertoirePlayUci(fen, uci);
+    if (!move) return fallback;
+    const searched = await this.engine.search({
+      fen: move.after,
+      depth: EVALUATION_DEPTH,
+      multipv: 1,
+    });
+    const reply = searched.lines[0];
+    return reply ? -reply.score : fallback;
+  }
+}
+
+const NO_REPERTOIRE_COUNTS: RepertoireCounts = { ownMoves: 0, replies: 0, deepestPly: 0, total: 0 };
+
+function italianVariationCounts(db: Database): RepertoireCounts {
+  const stored = findFirstRepertoireVariation(db, "white", REPERTOIRE_GROUP_ITALIAN);
+  return stored ? repertoireCounts(db, stored.id) : NO_REPERTOIRE_COUNTS;
+}
+
+/**
+ * Builds the first Italian variation: one expected White move per position and every Black reply
+ * common at the student's rating, from 1.e4 to ply 30, stored row by row so that a run the request
+ * budget cuts short resumes by running again.
+ */
+export async function generateRepertoire(
+  db: Database,
+  engine: Searcher,
+  fetcher: ExplorerFetcher,
+  cacheDir: string,
+  clock: ExplorerClock,
+  names: OpeningNames,
+  options: RepertoireOptions = {},
+): Promise<RepertoireResult> {
+  const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
+  const walk = new RepertoireWalk(db, engine, explorer, names, options);
+  const before = italianVariationCounts(db);
+  let truncated = false;
+  try {
+    await walk.run();
+  } catch (error) {
+    if (!(error instanceof ExplorerError && error.code === "budget")) throw error;
+    truncated = true;
+  }
+  const after = italianVariationCounts(db);
+  return {
+    variation:
+      findFirstRepertoireVariation(db, "white", REPERTOIRE_GROUP_ITALIAN)?.variation_name ?? null,
+    ownMoves: after.ownMoves,
+    replies: after.replies,
+    deepestPly: after.deepestPly,
+    created: after.total - before.total,
+    requests: explorer.requests,
+    cacheHits: explorer.cacheHits,
+    truncated,
+  };
+}
