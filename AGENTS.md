@@ -335,6 +335,10 @@
 | The Agent SDK needs `strictMcpConfig: true`, or the owner's claude.ai connector tools leak into the coach's tool list | tripwire | `session.test.ts` asserts the option; only the opt-in SDK probe proves the tool list |
 | A merge that keeps both sides of "append at end of file" can join two functions across the conflict seam, and the result compiles or fails far from the conflict: read the merged hunk, not just the markers | tripwire | none yet |
 | `grep` (and `find`) are shell functions in an agent session and silently skip git-ignored trees; use `command grep` | tripwire | none yet |
+| The main tree's `node_modules` belongs to `chess-coach.service`, which runs the app from it: never run `pnpm install` there from a session, since an install under another `HOME` rewrites the store path and the service then crash-loops. After merging a change to `pnpm-lock.yaml`, restart the service so its own `pnpm dev` installs. Worktrees have their own `node_modules` and are unaffected | tripwire | none yet |
+| `local/` links to the private notes repository, whose own sync may commit and push a new file within minutes: never write a file holding a secret there, even as an intermediate step. Clean or redact it in a scratch directory first | tripwire | none yet |
+| A verification step that writes to the live database, such as `POST /api/openings/generate`, needs the owner's go-ahead even when an acceptance criterion names it. Run it against a copy of the data directory, on another `PORT` | tripwire | none yet |
+| Biome's formatter turns a unicode escape for an em dash inside a string into the literal character, which the prose check then refuses, UI copy and test fixtures included: write copy without a dash | tripwire | `bin/ci` refuses the result, but only after every test has passed |
 
 **A hurdle promoted to a gate is deleted from this table, not duplicated.** The gate is the
 instruction; a line here restating it only dilutes the ones still unguarded.
