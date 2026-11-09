@@ -78,6 +78,11 @@ describe("reading an opening table", () => {
     expect(() => parseOpeningTable(broken, "table.tsv")).toThrow(/table\.tsv:4/);
   });
 
+  it("refuses a row with more columns than the table has, naming its line", () => {
+    const extra = `${HEADER}\nB00\tKing's Pawn Game\t1. e4\te2e4\t${KINGS_PAWN_EPD}\tstray\n`;
+    expect(() => parseOpeningTable(extra, "table.tsv")).toThrow(/table\.tsv:2/);
+  });
+
   it("refuses a row whose position is already named, naming its line", () => {
     const twice = tableOf(
       ["B00", "King's Pawn Game", KINGS_PAWN_EPD],
