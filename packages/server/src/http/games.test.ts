@@ -1,6 +1,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  GameDetailResponseSchema,
+  GameListResponseSchema,
+  GameSummarySchema,
+} from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertGradedGame, START_FEN } from "../../test/fixture-game.js";
@@ -270,6 +275,20 @@ describe("the opening of a game", () => {
     const id = insertPlayedGame(ITALIAN_BY_TRANSPOSITION);
     const { game } = (await get(`/api/games/${id}`)).json() as { game: { opening: unknown } };
     expect(game.opening).toEqual({ eco: "C50", name: "Italian Game" });
+  });
+
+  // The browser reads both routes through these schemas, and a schema drops any key it does not
+  // name, so a field missing from the shared type would reach the screen as no opening at all.
+  it("survives the shared schemas the browser reads both routes through", async () => {
+    const id = insertPlayedGame(ITALIAN_BY_TRANSPOSITION);
+    const [listed] = GameListResponseSchema.parse((await get("/api/games")).json()).games;
+    const italian = { eco: "C50", name: "Italian Game" };
+    expect(listed?.opening).toEqual(italian);
+    const detail = GameDetailResponseSchema.parse((await get(`/api/games/${id}`)).json());
+    expect(detail.game.opening).toEqual(italian);
+    const { opening, ...sentBeforeTheField } = listed as NonNullable<typeof listed>;
+    expect(opening).not.toBeNull();
+    expect(GameSummarySchema.parse(sentBeforeTheField).opening).toBeNull();
   });
 
   it("leaves every game unnamed when the server holds no table", async () => {
