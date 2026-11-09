@@ -32,6 +32,8 @@ export const GameSummarySchema = z.object({
   // Review cards born from this game, and student plies marked mistake or blunder.
   cards_count: z.number().int().nonnegative().default(0),
   mistakes_count: z.number().int().nonnegative().default(0),
+  // The last named position of the game in the openings table; null when no position is named.
+  opening: OpeningNameSchema.nullable().default(null),
   source: z.enum(["coach", "chesscom", "pgn"]),
   source_url: z.string().nullable(),
   opponent: z.string().nullable(),
@@ -42,8 +44,8 @@ export const GameSummarySchema = z.object({
   // An imported game shows its moves without badges until the background grading is done.
   grading: z.enum(["pending", "running", "done", "failed"]),
 });
-// The three game-list fields default on parse; the input type keeps them optional so a hand-built
-// summary that predates them still typechecks.
+// The four game-list fields above default on parse; the input type keeps them optional so a
+// hand-built summary that predates them still typechecks.
 export type GameSummary = z.input<typeof GameSummarySchema>;
 
 export const GameListResponseSchema = z.object({ games: z.array(GameSummarySchema) });
