@@ -115,6 +115,15 @@
   each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
   (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The
   boot never puts it back on the board by itself. A single item the coach serves is not persisted.
+- **Repertoire drill:** `start_training {mode: "repertoire", repertoire_id, scope}` runs a stored
+  variation as passes from move 1 (`activity/repertoire-session.ts`): the server plays Black and every
+  White move not asked, and stops on the moves still to find. `recommended` takes at most 10 due moves,
+  the highest reach first, `due` every due move and `all` every move; a move with no card is new and
+  due. A new move is first shown with its answer and rated on a later pass; otherwise only the first
+  attempt rates it (SM-2 in `repertoire_cards`, one card per position and move across variations), and
+  a miss comes back on a later pass until it is right first time. In `all`, a move not due keeps its
+  schedule when right. A wrong try within 50 cp of the engine's best that reaches another named opening
+  carries that name. `GET /api/repertoires` lists each variation with what each scope would serve.
 - **Coach conversations:** one per tab (`play`, `games`, `practice`), each its own `coach_sessions`
   row (`tab` column) resumed by its own Claude session id. The live game and the student's chat on
   Play write to `play`, training to `practice`, a question about a stored game to `games`. A tab's
