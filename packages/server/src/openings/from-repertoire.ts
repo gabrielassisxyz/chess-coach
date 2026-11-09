@@ -317,8 +317,9 @@ class RepertoireWalk {
     return move ? [{ move, share, reach, source: "explorer" }] : [];
   }
 
-  // Naming the variation decides the answer to 3...Bc5 before the walk reaches it; the walk must
-  // store that same move, whatever a second search would say.
+  // Naming the variation decides the answer to 3...Bc5 before the walk reaches it, and the memo
+  // makes the walk store that same move later in the run. It lasts one run only: a run cut short
+  // before 3...Bc5 chooses again when resumed, and the stored move can then differ from the name.
   private async freshOwnChoice(step: RepertoireStep): Promise<RepertoireOwnChoice | null> {
     const key = positionKey(step.fen);
     const known = this.freshChoices.get(key);
