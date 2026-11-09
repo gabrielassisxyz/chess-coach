@@ -249,7 +249,13 @@ describe("importing from Lichess", () => {
       skipped: 0,
       failed: [{ id: "Wm4cTe9R", message: "fixture-student did not play game Wm4cTe9R" }],
     });
-    render(<ImportPanel onChanged={vi.fn()} api={apiWith({ importLichess })} />);
+    render(
+      <ImportPanel
+        onChanged={vi.fn()}
+        api={apiWith({ importLichess })}
+        connections={idleConnectionsApi}
+      />,
+    );
     fireEvent.change(usernameField(), { target: { value: "fixture-student" } });
     fireEvent.click(importButton());
     await screen.findByText("Imported 3, skipped 0, 1 unreadable.");
@@ -260,7 +266,13 @@ describe("importing from Lichess", () => {
       throw new Error("Lichess is rate limiting this app. Wait a few minutes, then import again.");
     });
     const onChanged = vi.fn();
-    render(<ImportPanel onChanged={onChanged} api={apiWith({ importLichess })} />);
+    render(
+      <ImportPanel
+        onChanged={onChanged}
+        api={apiWith({ importLichess })}
+        connections={idleConnectionsApi}
+      />,
+    );
     fireEvent.change(usernameField(), { target: { value: "fixture-student" } });
     fireEvent.click(importButton());
     const status = await screen.findByRole("status");
@@ -275,7 +287,13 @@ describe("importing from Lichess", () => {
       new Promise<{ imported: number; skipped: number }>((resolve) => {
         finish = () => resolve({ imported: 1, skipped: 0 });
       });
-    render(<ImportPanel onChanged={vi.fn()} api={apiWith({ importLichess })} />);
+    render(
+      <ImportPanel
+        onChanged={vi.fn()}
+        api={apiWith({ importLichess })}
+        connections={idleConnectionsApi}
+      />,
+    );
     expect((importButton() as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(usernameField(), { target: { value: "fixture-student" } });
     expect((importButton() as HTMLButtonElement).disabled).toBe(false);

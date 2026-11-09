@@ -401,9 +401,12 @@ describe("storing Lichess games", () => {
 // reads, never which games exist. A LICHESS_API_TOKEN is used when set; none is needed.
 describe.skipIf(process.env.CHESS_COACH_LICHESS_GAMES !== "1")("real Lichess games", () => {
   it("reads one game of a busy public account in the shape the importer reads", async () => {
+    // Only the speeds that are standard chess, so the newest game is never a variant the importer
+    // drops, and one game back proves the reader still recognises what Lichess sends.
     const capped: typeof fetch = (input, init) => {
       const url = new URL(String(input));
       url.searchParams.set("max", "1");
+      url.searchParams.set("perfType", "bullet,blitz,rapid,classical");
       return fetch(url, init);
     };
     const now = new Date();
@@ -415,7 +418,7 @@ describe.skipIf(process.env.CHESS_COACH_LICHESS_GAMES !== "1")("real Lichess gam
       () => process.env.LICHESS_API_TOKEN || undefined,
       capped,
     ).games("DrNykterstein", from, to);
-    expect(games.length).toBeLessThanOrEqual(1);
+    expect(games).toHaveLength(1);
     for (const game of games) {
       expect(game.id).toMatch(/^[A-Za-z0-9]{8}$/);
       expect(game.pgn).toContain('[Result "');
