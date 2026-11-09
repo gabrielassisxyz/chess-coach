@@ -141,6 +141,12 @@ const INVENTORY: FailureCase[] = [
           "offers the run in the bootstrap after a server restart and resumes it at the same item",
         ],
       },
+      {
+        file: "server/src/activity/repertoire-session.test.ts",
+        titles: [
+          "pauses a repertoire drill on restart and resumes it on the same move with its progress",
+        ],
+      },
     ],
   },
   {

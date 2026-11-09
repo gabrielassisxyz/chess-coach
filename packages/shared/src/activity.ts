@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RepertoireScopeSchema } from "./repertoires.js";
 
 // What the board is showing right now. The server owns it and broadcasts every change; the
 // browser only renders it. Each kind has its own board and mutation rules, so a command is
@@ -114,13 +115,26 @@ export const PuzzleItemSchema = z.object({
   ...queuePosition,
 });
 
-export const TrainingItemSchema = z.discriminatedUnion("kind", [CardItemSchema, PuzzleItemSchema]);
+// One pass over a repertoire line: `fen` is the position it starts from, move 1. The queue
+// position counts passes, and `queue_length` grows when a missed move brings its line back.
+export const RepertoireItemSchema = z.object({
+  kind: z.literal("repertoire"),
+  repertoire_id: z.number().int().positive(),
+  fen: z.string(),
+  ...queuePosition,
+});
+
+export const TrainingItemSchema = z.discriminatedUnion("kind", [
+  CardItemSchema,
+  PuzzleItemSchema,
+  RepertoireItemSchema,
+]);
 export type TrainingItem = z.infer<typeof TrainingItemSchema>;
 
 export const TrainingStatusSchema = z.enum(["prompt", "in_progress", "solved", "failed", "rated"]);
 export type TrainingStatus = z.infer<typeof TrainingStatusSchema>;
 
-export const TrainingModeSchema = z.enum(["srs", "puzzles", "openings"]);
+export const TrainingModeSchema = z.enum(["srs", "puzzles", "openings", "repertoire"]);
 export type TrainingMode = z.infer<typeof TrainingModeSchema>;
 
 // The move the student should have played, shown once an item is answered wrong or finished.
@@ -181,6 +195,42 @@ export type WrongTry = z.infer<typeof WrongTrySchema>;
 export const QueueOutcomeSchema = z.enum(["solved", "failed", "current", "pending"]);
 export type QueueOutcome = z.infer<typeof QueueOutcomeSchema>;
 
+// What the hints have shown on the current move: the first gives the idea stored on its position,
+// or a fixed sentence saying none is stored, and the second gives the move.
+export const RepertoireHintSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("none") }),
+  z.object({ kind: z.literal("idea"), text: z.string() }),
+  z.object({ kind: z.literal("move"), uci: z.string(), san: z.string() }),
+]);
+export type RepertoireHint = z.infer<typeof RepertoireHintSchema>;
+
+// Set when the drill has ended: every move it served, and how many were right at the first attempt.
+export const RepertoireDrillResultSchema = z.object({
+  practised: z.number().int().nonnegative(),
+  first_try_right: z.number().int().nonnegative(),
+});
+export type RepertoireDrillResult = z.infer<typeof RepertoireDrillResultSchema>;
+
+// What a repertoire drill adds to a training activity. `opening_name` names the current position.
+// `first_pass` is set while the current move is shown for the first time, and `answer` is its move
+// then; later passes hide it. `flagged_opening` names the other opening a good but unexpected try
+// reached, cleared on the next try. A move is left until it is played right at the first attempt
+// of a pass; right and wrong count how that first rated attempt went.
+export const RepertoireDrillSchema = z.object({
+  repertoire_id: z.number().int().positive(),
+  scope: RepertoireScopeSchema,
+  opening_name: z.string().nullable(),
+  first_pass: z.boolean(),
+  answer: ExpectedMoveSchema.nullable(),
+  hint: RepertoireHintSchema,
+  flagged_opening: z.string().nullable(),
+  moves_left: z.number().int().nonnegative(),
+  moves_right: z.number().int().nonnegative(),
+  moves_wrong: z.number().int().nonnegative(),
+  result: RepertoireDrillResultSchema.nullable(),
+});
+export type RepertoireDrill = z.infer<typeof RepertoireDrillSchema>;
+
 // `summary` is set once the queue has ended; the last item then stays on the board, locked.
 // `fen` is the position the current step is graded against. `tries` counts the wrong tries on the
 // item. `solution_line` is set once the student gave up: the UCI moves from `fen` to the end.
@@ -215,10 +265,14 @@ export const TrainingActivitySchema = z.object({
   queue_outcomes: z.array(QueueOutcomeSchema).optional(),
   student_rating: z.number().int().nullable().optional(),
   rating_change: z.number().int().nullable().optional(),
+  // Present on a repertoire drill only.
+  repertoire: RepertoireDrillSchema.optional(),
 });
 
 // A practice queue that is open but not on the board. `position` is the 0-based index of the item
-// it stopped on and `size` the length of its queue, so the hub reads "position + 1 of size".
+// it stopped on and `size` the length of its queue, so the hub reads "position + 1 of size". A
+// repertoire drill counts moves instead: `size` moves served, `position` of them finished, and it
+// names its repertoire and scope.
 export const PausedTrainingSchema = z.object({
   run_id: z.number().int().positive(),
   mode: TrainingModeSchema,
@@ -228,6 +282,8 @@ export const PausedTrainingSchema = z.object({
   size: z.number().int().positive(),
   solved: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
+  repertoire_id: z.number().int().positive().optional(),
+  scope: RepertoireScopeSchema.optional(),
 });
 export type PausedTraining = z.infer<typeof PausedTrainingSchema>;
 

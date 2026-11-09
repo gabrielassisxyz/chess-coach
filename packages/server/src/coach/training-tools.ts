@@ -16,7 +16,12 @@ async function serve(start: () => Promise<ActivityState>): Promise<ToolResult> {
   try {
     const state = await start();
     if (state.kind !== "training") throw new Error(`expected training, got ${state.kind}`);
-    const id = state.item.kind === "card" ? state.item.card_id : state.item.puzzle_id;
+    const id =
+      state.item.kind === "card"
+        ? state.item.card_id
+        : state.item.kind === "puzzle"
+          ? state.item.puzzle_id
+          : state.item.repertoire_id;
     return json({
       item_kind: state.item.kind,
       id,

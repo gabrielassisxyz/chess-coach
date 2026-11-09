@@ -234,6 +234,7 @@ const MODE_LABEL: Record<TrainingMode, string> = {
   srs: "Due cards",
   puzzles: "Puzzles",
   openings: "Opening drill",
+  repertoire: "Repertoire",
 };
 
 export function resumeLabelOf(paused: PausedTraining): string {

@@ -22,6 +22,7 @@ const KIND_WORD: Record<TrainingMode, string> = {
   srs: "Card",
   puzzles: "Puzzle",
   openings: "Opening",
+  repertoire: "Line",
 };
 
 const sideWord = (side: "white" | "black"): string => (side === "white" ? "White" : "Black");
@@ -36,7 +37,7 @@ export interface ItemHeading {
 export function headingOf(training: TrainingActivity, runMotif: string | null): ItemHeading {
   const { item, mode } = training;
   const title = `${KIND_WORD[mode]} ${item.position_in_queue} of ${item.queue_length}`;
-  if (item.kind === "card") return { title, tag: null };
+  if (item.kind !== "puzzle") return { title, tag: null };
   if (mode === "openings") return { title, tag: `As ${sideWord(training.orientation)}` };
   if (runMotif === OPENING_MOTIFS.italian) return { title, tag: "Italian Opening" };
   if (runMotif) return { title, tag: motifLabel(runMotif) };
@@ -193,6 +194,7 @@ function countWord(count: number, singular: string, plural: string): string {
 function studentMoveCount(training: TrainingActivity): number {
   if (training.moves) return training.moves.filter((move) => move.by === "student").length;
   if (training.item.kind === "card") return training.gave_up ? 0 : 1;
+  if (training.item.kind === "repertoire") return 0;
   return Math.floor(training.item.cursor / 2) + (training.status === "solved" ? 1 : 0);
 }
 

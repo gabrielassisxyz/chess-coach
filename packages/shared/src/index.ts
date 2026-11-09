@@ -14,3 +14,4 @@ export * from "./games.js";
 export * from "./import.js";
 export * from "./motifs.js";
 export * from "./progress.js";
+export * from "./repertoires.js";

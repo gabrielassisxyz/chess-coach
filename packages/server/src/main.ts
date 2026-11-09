@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { repertoireTryJudge } from "./activity/repertoire-session.js";
 import { ActivityService } from "./activity/service.js";
 import { buildApp, type Readiness } from "./app.js";
 import { systemClock } from "./clock.js";
@@ -80,7 +81,12 @@ const desk = new ReviewDesk({ db, notifications });
 const activity = new ActivityService({
   db,
   game,
-  training: { desk, notifications, onNotification: () => coach.flushNotifications() },
+  training: {
+    desk,
+    notifications,
+    onNotification: () => coach.flushNotifications(),
+    repertoireJudge: repertoireTryJudge(openingNames, pool.evaluation),
+  },
   log,
 });
 const generateOpenings = () => generateOpeningPuzzles(db, pool.evaluation);
