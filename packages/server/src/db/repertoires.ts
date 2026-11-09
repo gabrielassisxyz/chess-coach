@@ -60,6 +60,19 @@ export interface RepertoireCounts {
   total: number;
 }
 
+/** A White move with no idea yet, carrying what its text is written from. */
+export interface RepertoireIdeaTarget {
+  id: number;
+  variationName: string;
+  ply: number;
+  /** The moves played before this one, in SAN. */
+  line: string[];
+  san: string;
+  uci: string;
+  /** The position after the move, in centipawns from White's side; a mate is 10000. */
+  evalCp: number;
+}
+
 // The oldest of the group: a rerun must land on the variation it built, even if the data has moved
 // since and today's answer to 3...Bc5 would be named differently.
 export function findFirstRepertoireVariation(
@@ -165,6 +178,44 @@ export function raiseRepertoireOwnMoveReach(
     ownMoveId,
     place.reach,
   );
+}
+
+// Shallowest plies first: a run cut short by the subscription's limit leaves the moves the student
+// meets earliest with an idea already, and a rerun carries on from the rest.
+export function listWhiteMovesLackingIdea(db: Database): RepertoireIdeaTarget[] {
+  const rows = db
+    .prepare(
+      `SELECT p.id, r.variation_name, p.ply, p.line_san, p.move_san, p.move_uci, p.eval_cp
+       FROM repertoire_positions p JOIN repertoires r ON r.id = p.repertoire_id
+       WHERE r.side = 'white' AND p.kind = 'own' AND p.idea IS NULL
+       ORDER BY p.repertoire_id, p.ply, p.id`,
+    )
+    .all() as Array<{
+    id: number;
+    variation_name: string;
+    ply: number;
+    line_san: string;
+    move_san: string;
+    move_uci: string;
+    eval_cp: number;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    variationName: row.variation_name,
+    ply: row.ply,
+    line: JSON.parse(row.line_san) as string[],
+    san: row.move_san,
+    uci: row.move_uci,
+    evalCp: row.eval_cp,
+  }));
+}
+
+// Never overwrites: a text already stored stays, whoever wrote it. Returns whether this call wrote.
+export function setRepertoireIdea(db: Database, positionId: number, idea: string): boolean {
+  const result = db
+    .prepare("UPDATE repertoire_positions SET idea = ? WHERE id = ? AND idea IS NULL")
+    .run(idea, positionId);
+  return result.changes > 0;
 }
 
 export function repertoireCounts(db: Database, repertoireId: number): RepertoireCounts {

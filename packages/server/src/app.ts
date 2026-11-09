@@ -16,6 +16,7 @@ import type { ExplorerResult } from "./openings/from-explorer.js";
 import type { GenerationResult } from "./openings/from-games.js";
 import type { RepertoireResult } from "./openings/from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames } from "./openings/names.js";
+import type { RepertoireIdeasResult } from "./openings/repertoire-ideas.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
 
 export interface Readiness {
@@ -41,6 +42,8 @@ export interface AppOptions {
   generateItalianOpenings?: () => Promise<ExplorerResult>;
   /** Builds the first stored Italian variation; only asked for by name, never after an import. */
   generateRepertoireOpenings?: () => Promise<RepertoireResult>;
+  /** Writes the idea of each stored White move through the model; only asked for by name, never at boot. */
+  generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>;
   log?: Log;
 }
 
@@ -91,6 +94,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
         options.generateExplorerOpenings,
         options.generateItalianOpenings,
         options.generateRepertoireOpenings,
+        options.generateRepertoireIdeas,
         log,
       );
     }

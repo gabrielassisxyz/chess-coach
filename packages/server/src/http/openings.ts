@@ -5,13 +5,14 @@ import { ExplorerError } from "../openings/explorer-client.js";
 import type { ExplorerResult } from "../openings/from-explorer.js";
 import type { GenerationResult } from "../openings/from-games.js";
 import type { RepertoireResult } from "../openings/from-repertoire.js";
+import { IdeaSessionError, type RepertoireIdeasResult } from "../openings/repertoire-ideas.js";
 
 const generateBody = z
   .object({
     sources: z
-      .array(z.enum(["own", "explorer", "italian", "repertoire"]))
+      .array(z.enum(["own", "explorer", "italian", "repertoire", "repertoire-ideas"]))
       .min(1)
-      .max(4),
+      .max(5),
   })
   .partial()
   .nullish();
@@ -22,17 +23,20 @@ export function registerOpeningRoutes(
   generateFromExplorer?: () => Promise<ExplorerResult>,
   generateItalian?: () => Promise<ExplorerResult>,
   generateRepertoire?: () => Promise<RepertoireResult>,
+  generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>,
   log: Log = silentLog,
 ): void {
   // The explorer halves run for minutes at one request a second; a second run would only queue behind it.
   let explorerRunning = false;
+  // Writing the ideas takes minutes of model time, and a second run would ask for the same moves again.
+  let ideasRunning = false;
 
   app.post("/api/openings/generate", async (request, reply) => {
     const body = generateBody.safeParse(request.body);
     if (!body.success) {
       return reply.code(400).send({
         error: "invalid_sources",
-        message: "sources is own, explorer, italian, repertoire",
+        message: "sources is own, explorer, italian, repertoire, repertoire-ideas",
       });
     }
     const sources = body.data?.sources;
@@ -44,6 +48,14 @@ export function registerOpeningRoutes(
     }
     if (sources?.includes("repertoire") && !generateRepertoire) {
       return reply.code(404).send({ error: "repertoire_unavailable", message: "not configured" });
+    }
+    if (sources?.includes("repertoire-ideas") && !generateRepertoireIdeas) {
+      return reply
+        .code(404)
+        .send({ error: "repertoire_ideas_unavailable", message: "not configured" });
+    }
+    if (sources?.includes("repertoire-ideas") && ideasRunning) {
+      return reply.code(409).send({ error: "already_running", message: "ideas run in progress" });
     }
     if (
       sources?.some(
@@ -57,6 +69,10 @@ export function registerOpeningRoutes(
     }
     const startedAt = performance.now();
     const elapsed = () => Math.round(performance.now() - startedAt);
+    // Taken with the request, not when the ideas step starts: the steps before it can take minutes,
+    // and a second request arriving meanwhile would otherwise find the guard free.
+    const writesIdeas = sources?.includes("repertoire-ideas") ?? false;
+    if (writesIdeas) ideasRunning = true;
     try {
       // Without `sources` the answer keeps the original flat shape.
       if (!sources) {
@@ -69,6 +85,7 @@ export function registerOpeningRoutes(
         explorer?: ExplorerResult;
         italian?: ExplorerResult;
         repertoire?: RepertoireResult;
+        repertoireIdeas?: RepertoireIdeasResult;
       } = {};
       if (sources.includes("own")) out.own = await generate();
       if (sources.includes("explorer") && generateFromExplorer) {
@@ -89,6 +106,8 @@ export function registerOpeningRoutes(
           explorerRunning = false;
         });
       }
+      if (writesIdeas && generateRepertoireIdeas)
+        out.repertoireIdeas = await generateRepertoireIdeas();
       log.info("openings.generate", { sources, result: out, duration_ms: elapsed() });
       return out;
     } catch (error) {
@@ -101,7 +120,12 @@ export function registerOpeningRoutes(
       if (error instanceof ExplorerError) {
         return reply.code(502).send({ error: "explorer_unavailable", message });
       }
+      if (error instanceof IdeaSessionError) {
+        return reply.code(502).send({ error: "ideas_unavailable", message });
+      }
       return reply.code(502).send({ error: "engine_unavailable", message });
+    } finally {
+      if (writesIdeas) ideasRunning = false;
     }
   });
 }
