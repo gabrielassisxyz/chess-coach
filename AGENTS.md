@@ -83,7 +83,11 @@
   puzzle only when its window has too few new ones, skipping popularity under 50; Any also skips
   all opening material, and a motif with no `puzzle_themes` rows keeps the plain listing. The plain
   listing, used by the coach's puzzle tool and `GET /api/puzzles`, and the motif counts cover only the
-  library, never `lichess-db` rows, since they read every matching row.
+  library, never `lichess-db` rows, since they read every matching row. Elo stays over Glicko-2 on
+  purpose: against puzzles whose rating does not move and whose deviation is low, simulated runs
+  settled on the same level with the same noise, Glicko-2 only arriving 10 to 30 puzzles sooner. A
+  puzzle's own rating never moves, since one student's attempts say nothing about a number built
+  from many players.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
   each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
   (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The
