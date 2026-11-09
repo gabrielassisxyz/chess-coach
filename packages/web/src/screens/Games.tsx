@@ -216,7 +216,7 @@ export function Games({
               aria-expanded={importing}
               onClick={() => setImporting(!importing)}
             >
-              Import from Chess.com…
+              Import games…
             </button>
             <button
               type="button"

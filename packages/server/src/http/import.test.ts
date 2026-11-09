@@ -1,14 +1,17 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { GameListResponseSchema } from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeChessCom } from "../../test/fakes/fake-chesscom.js";
+import { FakeLichess } from "../../test/fakes/fake-lichess.js";
 import { buildApp } from "../app.js";
-import { setChessComUsername } from "../db/connections.js";
+import { setChessComUsername, setLichessToken } from "../db/connections.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { ChessComError, ChessComSource } from "../import/chesscom.js";
 import { ImportGrader } from "../import/grader.js";
+import { httpLichessGamesFetcher, LichessError } from "../import/lichess.js";
 import { MAX_PGN_BYTES } from "../import/pgn.js";
 import { silentLog } from "../log.js";
 
@@ -16,11 +19,18 @@ const FIXTURE_PGN = readFileSync(
   new URL("../../test/fixtures/chesscom_2026-10-28.pgn", import.meta.url),
   "utf8",
 );
+const LICHESS_EXPORT = readFileSync(
+  new URL("../../test/fixtures/lichess/2026-10.ndjson", import.meta.url),
+  "utf8",
+);
 const MONTH_COUNT = 10;
+// Finished standard games in the Lichess fixture; its other two are a variant and an aborted game.
+const LICHESS_GAME_COUNT = 4;
 
 let tmp: string;
 let db: Database;
 let fetcher: FakeChessCom;
+let lichess: FakeLichess;
 let grader: ImportGrader;
 let app: FastifyInstance;
 let gate: Promise<void> | null = null;
@@ -29,6 +39,7 @@ beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "cc-import-http-"));
   db = openDatabase(tmp);
   fetcher = new FakeChessCom();
+  lichess = new FakeLichess();
   grader = new ImportGrader({
     db,
     log: silentLog,
@@ -46,10 +57,12 @@ beforeEach(() => {
   });
   app = buildApp({
     db,
-    importer: { source: new ChessComSource(fetcher), grader, usernames: ["assiszzz"] },
+    importer: { source: new ChessComSource(fetcher), lichess, grader, usernames: ["assiszzz"] },
   });
 });
 afterEach(async () => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   gate = null;
   await grader.idle();
   await app.close();
@@ -186,6 +199,166 @@ describe("POST /api/import/chesscom", () => {
     expect((await post("/api/import/chesscom", { username: "a/b", uuids: ["x"] })).statusCode).toBe(
       400,
     );
+  });
+});
+
+const importLichess = (
+  payload: unknown = { username: "fixture-student", from: "2026-10", to: "2026-10" },
+) => post("/api/import/lichess", payload);
+
+describe("POST /api/import/lichess", () => {
+  it("imports the finished standard games, then a second run adds none", async () => {
+    const first = await importLichess();
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toEqual({ imported: LICHESS_GAME_COUNT, skipped: 0 });
+    const second = await importLichess();
+    expect(second.json()).toEqual({ imported: 0, skipped: LICHESS_GAME_COUNT });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM games").get()).toEqual({ n: LICHESS_GAME_COUNT });
+  });
+
+  it("asks Lichess for the lower-cased account and the months given", async () => {
+    await importLichess({ username: "Fixture-Student", from: "2026-09", to: "2026-11" });
+    expect(lichess.asked).toEqual(["fixture-student/2026-09..2026-11"]);
+  });
+
+  it("stores the source details, grades the games and lists them as Lichess games", async () => {
+    await importLichess();
+    await grader.idle();
+    const answer = await app.inject({ method: "GET", url: "/api/games" });
+    const { games } = GameListResponseSchema.parse(answer.json());
+    expect(games.map((game) => game.source)).toEqual(Array(LICHESS_GAME_COUNT).fill("lichess"));
+    expect(games.map((game) => game.grading)).toEqual(Array(LICHESS_GAME_COUNT).fill("done"));
+    expect(games[0]).toMatchObject({
+      source_url: "https://lichess.org/kP2dQv7x",
+      opponent: "Stockfish level 3",
+      player_color: "black",
+      student_rating: 1544,
+      opponent_rating: null,
+      time_control: "600+0",
+      played_at: "2026-10-28T19:02:11.000Z",
+    });
+    expect(games[3]).toMatchObject({
+      source_url: "https://lichess.org/Hj3uBw2C",
+      time_control: "1/259200",
+    });
+  });
+
+  it("reports a game it cannot read and still imports the rest", async () => {
+    const games = (await lichess.games("fixture-student", "2026-10", "2026-10")).map((game) => ({
+      ...game,
+      players: game.id === "Wm4cTe9R" ? { white: {}, black: {} } : game.players,
+    }));
+    lichess.serves = games;
+    const answer = await importLichess();
+    expect(answer.statusCode).toBe(200);
+    const body = answer.json() as { imported: number; failed: { id: string; message: string }[] };
+    expect(body.imported).toBe(LICHESS_GAME_COUNT - 1);
+    expect(body.failed).toEqual([
+      { id: "Wm4cTe9R", message: expect.stringMatching(/did not play/) },
+    ]);
+  });
+
+  it.each([
+    [{ username: "a", from: "2026-10", to: "2026-10" }, "invalid_username"],
+    [{ username: "../x", from: "2026-10", to: "2026-10" }, "invalid_username"],
+    [{ username: "a/b", from: "2026-10", to: "2026-10" }, "invalid_username"],
+    [{ username: "a".repeat(31), from: "2026-10", to: "2026-10" }, "invalid_username"],
+    [{ username: "fixture-student" }, "invalid_body"],
+  ])("answers 400 for %j without calling Lichess", async (payload, code) => {
+    const answer = await importLichess(payload);
+    expect(answer.statusCode).toBe(400);
+    expect(answer.json()).toMatchObject({ error: code });
+    expect(lichess.asked).toHaveLength(0);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM games").get()).toEqual({ n: 0 });
+  });
+
+  it.each([
+    ["2026-10", "2026-09"],
+    ["2020-01", "2026-10"],
+  ])("answers 400 for the range %s to %s before the real fetcher goes out", async (from, to) => {
+    const calls: string[] = [];
+    await app.close();
+    app = buildApp({
+      db,
+      importer: {
+        source: new ChessComSource(fetcher),
+        lichess: httpLichessGamesFetcher(
+          () => undefined,
+          async (input) => {
+            calls.push(String(input));
+            return new Response(LICHESS_EXPORT);
+          },
+        ),
+        grader,
+        usernames: [],
+      },
+    });
+    const answer = await importLichess({ username: "fixture-student", from, to });
+    expect(answer.statusCode).toBe(400);
+    expect(answer.json()).toMatchObject({ error: "invalid_range" });
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    ["not_found", 404],
+    ["rate_limited", 429],
+    ["upstream", 502],
+  ] as const)("answers %s from Lichess with %i and the reason", async (code, status) => {
+    lichess.failWith = new LichessError(code, `Lichess said ${code}`);
+    const answer = await importLichess();
+    expect(answer.statusCode).toBe(status);
+    expect(answer.json()).toEqual({ error: code, message: `Lichess said ${code}` });
+  });
+
+  it("waits and asks once more on a 429, then reports it and stores nothing", async () => {
+    const waits: number[] = [];
+    const calls: string[] = [];
+    await app.close();
+    app = buildApp({
+      db,
+      importer: {
+        source: new ChessComSource(fetcher),
+        lichess: httpLichessGamesFetcher(
+          () => undefined,
+          async (input) => {
+            calls.push(String(input));
+            return new Response(null, { status: 429 });
+          },
+          async (ms) => {
+            waits.push(ms);
+          },
+        ),
+        grader,
+        usernames: [],
+      },
+    });
+    const answer = await importLichess();
+    expect(answer.statusCode).toBe(429);
+    expect(answer.json()).toMatchObject({
+      error: "rate_limited",
+      message: expect.stringMatching(/rate limiting/),
+    });
+    expect(waits).toEqual([60_000]);
+    expect(calls).toHaveLength(2);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM games").get()).toEqual({ n: 0 });
+  });
+
+  it("uses the token saved in Connections, read when the export is asked for", async () => {
+    vi.stubEnv("LICHESS_API_TOKEN", "");
+    const seen: unknown[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      seen.push((init.headers as Record<string, string>).Authorization);
+      return new Response(LICHESS_EXPORT);
+    });
+    await app.close();
+    app = buildApp({
+      db,
+      importer: { source: new ChessComSource(fetcher), grader, usernames: [] },
+    });
+    await importLichess();
+    setLichessToken(db, "lip_saved-later", "2026-11-09T00:00:00.000Z");
+    await importLichess();
+    expect(seen).toEqual([undefined, "Bearer lip_saved-later"]);
   });
 });
 

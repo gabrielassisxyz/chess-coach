@@ -4,6 +4,8 @@ export interface ConnectionsApi {
   get(): Promise<ConnectionsStatus>;
   saveLichessToken(token: string): Promise<ConnectionsStatus>;
   removeLichessToken(): Promise<ConnectionsStatus>;
+  saveLichessUsername(username: string): Promise<ConnectionsStatus>;
+  removeLichessUsername(): Promise<ConnectionsStatus>;
   saveChessComUsername(username: string): Promise<ConnectionsStatus>;
   removeChessComUsername(): Promise<ConnectionsStatus>;
 }
@@ -27,6 +29,9 @@ export const serverConnectionsApi: ConnectionsApi = {
   get: () => request("/api/connections", "GET"),
   saveLichessToken: (token) => request("/api/connections/lichess", "PUT", { token }),
   removeLichessToken: () => request("/api/connections/lichess", "DELETE"),
+  saveLichessUsername: (username) =>
+    request("/api/connections/lichess/username", "PUT", { username }),
+  removeLichessUsername: () => request("/api/connections/lichess/username", "DELETE"),
   saveChessComUsername: (username) => request("/api/connections/chesscom", "PUT", { username }),
   removeChessComUsername: () => request("/api/connections/chesscom", "DELETE"),
 };

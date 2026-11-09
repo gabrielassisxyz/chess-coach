@@ -6,7 +6,7 @@ import type {
 } from "@chess-coach/shared";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { storedChessComUsername } from "../db/connections.js";
+import { resolveLichessToken, storedChessComUsername } from "../db/connections.js";
 import { getIdsBySource } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import {
@@ -19,6 +19,13 @@ import {
 } from "../import/chesscom.js";
 import type { ImportGrader } from "../import/grader.js";
 import {
+  assertLichessUsername,
+  httpLichessGamesFetcher,
+  LichessError,
+  type LichessGamesFetcher,
+  lichessImportRequest,
+} from "../import/lichess.js";
+import {
   colorFromHeaders,
   importFinishedGame,
   MAX_PGN_BYTES,
@@ -29,6 +36,8 @@ import { type Log, silentLog } from "../log.js";
 export interface ImportRoutesOptions {
   db: Database;
   source: ChessComSource;
+  /** Where Lichess games come from; the real export, with the saved or environment token, when absent. */
+  lichess?: LichessGamesFetcher;
   grader: ImportGrader;
   /** Usernames that identify the student's side in a pasted PGN. */
   usernames: string[];
@@ -37,6 +46,7 @@ export interface ImportRoutesOptions {
 
 const MAX_UUIDS_PER_IMPORT = 100;
 const listBody = z.object({ username: z.string(), from: z.string(), to: z.string() });
+const lichessBody = listBody;
 const importBody = z.object({
   username: z.string(),
   uuids: z.array(z.string().min(1).max(64)).min(1).max(MAX_UUIDS_PER_IMPORT),
@@ -53,6 +63,14 @@ const STATUS_BY_CODE = {
   upstream: 502,
 } as const;
 
+const LICHESS_STATUS_BY_CODE = {
+  invalid_username: 400,
+  invalid_range: 400,
+  not_found: 404,
+  rate_limited: 429,
+  upstream: 502,
+} as const;
+
 async function fail(reply: FastifyReply, status: number, error: string, message: string) {
   await reply.code(status).send({ error, message });
   return undefined;
@@ -61,6 +79,9 @@ async function fail(reply: FastifyReply, status: number, error: string, message:
 async function failFrom(reply: FastifyReply, error: unknown) {
   if (error instanceof ChessComError) {
     return fail(reply, STATUS_BY_CODE[error.code], error.code, error.message);
+  }
+  if (error instanceof LichessError) {
+    return fail(reply, LICHESS_STATUS_BY_CODE[error.code], error.code, error.message);
   }
   if (error instanceof PgnImportError) return fail(reply, 400, "invalid_pgn", error.message);
   throw error;
@@ -106,6 +127,8 @@ function importChessComGame(db: Database, game: ChessComGame, username: string):
 export function registerImportRoutes(app: FastifyInstance, options: ImportRoutesOptions): void {
   const { db, source, grader } = options;
   const log = options.log ?? silentLog;
+  // The token is read at each export, so one saved in Connections applies with no restart.
+  const lichess = options.lichess ?? httpLichessGamesFetcher(() => resolveLichessToken(db));
 
   app.post(
     "/api/import/chesscom/list",
@@ -165,6 +188,45 @@ export function registerImportRoutes(app: FastifyInstance, options: ImportRoutes
       return result;
     } catch (error) {
       log.error("import.failed", error, { route: "chesscom", username: body.data.username });
+      return failFrom(reply, error);
+    }
+  });
+
+  // One step, unlike Chess.com's list and pick: the export is the whole range, and a second run
+  // is safe because a stored game id is skipped.
+  app.post("/api/import/lichess", async (request, reply): Promise<ImportResult | undefined> => {
+    const body = lichessBody.safeParse(request.body);
+    if (!body.success)
+      return fail(reply, 400, "invalid_body", "username, from and to are required");
+    try {
+      const username = assertLichessUsername(body.data.username);
+      const games = await lichess.games(username, body.data.from, body.data.to);
+      const result: ImportResult = { imported: 0, skipped: 0 };
+      const failed: NonNullable<ImportResult["failed"]> = [];
+      for (const game of games) {
+        try {
+          if (importFinishedGame(db, lichessImportRequest(game, username)) === null) {
+            result.skipped += 1;
+          } else result.imported += 1;
+        } catch (error) {
+          if (!(error instanceof PgnImportError)) throw error;
+          failed.push({ id: game.id, message: error.message });
+        }
+      }
+      if (failed.length > 0) result.failed = failed;
+      log.info("import.lichess", {
+        username,
+        from: body.data.from,
+        to: body.data.to,
+        listed: games.length,
+        imported: result.imported,
+        skipped: result.skipped,
+        failed,
+      });
+      if (result.imported > 0) grader.kick();
+      return result;
+    } catch (error) {
+      log.error("import.failed", error, { route: "lichess", username: body.data.username });
       return failFrom(reply, error);
     }
   });

@@ -1,4 +1,4 @@
-import type { ChessComListedGame } from "@chess-coach/shared";
+import type { ChessComListedGame, ConnectionsStatus } from "@chess-coach/shared";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImportPanel } from "../src/components/ImportPanel.js";
@@ -8,6 +8,12 @@ import type { ImportApi } from "../src/state/import-api.js";
 import { COACH_GAME_SOURCE, idleConnectionsApi, idleImportApi } from "./fixtures.js";
 
 afterEach(cleanup);
+
+const NO_ACCOUNTS: ConnectionsStatus = {
+  lichess_token_set: false,
+  lichess_username: null,
+  chesscom_username: null,
+};
 
 const listed = (uuid: string, imported = false): ChessComListedGame => ({
   uuid,
@@ -35,7 +41,7 @@ async function listGames(): Promise<void> {
 describe("ImportPanel", () => {
   const savedAccount = (name: string | null): ConnectionsApi => ({
     ...idleConnectionsApi,
-    get: async () => ({ lichess_token_set: false, chesscom_username: name }),
+    get: async () => ({ ...NO_ACCOUNTS, chesscom_username: name }),
   });
 
   it("starts with the saved account", async () => {
@@ -51,7 +57,7 @@ describe("ImportPanel", () => {
     let saved: string | null = null;
     const connections: ConnectionsApi = {
       ...idleConnectionsApi,
-      get: async () => ({ lichess_token_set: false, chesscom_username: saved }),
+      get: async () => ({ ...NO_ACCOUNTS, chesscom_username: saved }),
     };
     const props = { onChanged: vi.fn(), api: idleImportApi, connections };
     const { rerender } = render(<ImportPanel {...props} connectionRevision={0} />);
@@ -66,7 +72,7 @@ describe("ImportPanel", () => {
   });
 
   it("stays empty with no saved account", async () => {
-    const get = vi.fn(async () => ({ lichess_token_set: false, chesscom_username: null }));
+    const get = vi.fn(async () => NO_ACCOUNTS);
     render(
       <ImportPanel
         onChanged={vi.fn()}
@@ -177,6 +183,108 @@ describe("ImportPanel", () => {
       ["1. e4 e5 1-0", null],
       ["1. e4 e5 1-0", "black"],
     ]);
+  });
+});
+
+describe("importing from Lichess", () => {
+  const lichessConnections = (saved: string | null): ConnectionsApi => ({
+    ...idleConnectionsApi,
+    get: async () => ({ ...NO_ACCOUNTS, lichess_username: saved }),
+  });
+  const usernameField = () => screen.getByLabelText("Lichess username") as HTMLInputElement;
+  const importButton = () =>
+    screen.getByRole("button", { name: /^Import Lichess games|Importing/ });
+
+  it("starts with the saved Lichess account and leaves the Chess.com field alone", async () => {
+    render(
+      <ImportPanel
+        onChanged={vi.fn()}
+        api={idleImportApi}
+        connections={lichessConnections("fixture-student")}
+      />,
+    );
+    await waitFor(() => expect(usernameField().value).toBe("fixture-student"));
+    expect((screen.getByLabelText("Username") as HTMLInputElement).value).toBe("");
+  });
+
+  it("reads the Lichess account again on a new revision without overwriting what was typed", async () => {
+    let saved: string | null = null;
+    const connections: ConnectionsApi = {
+      ...idleConnectionsApi,
+      get: async () => ({ ...NO_ACCOUNTS, lichess_username: saved }),
+    };
+    const props = { onChanged: vi.fn(), api: idleImportApi, connections };
+    const { rerender } = render(<ImportPanel {...props} connectionRevision={0} />);
+    saved = "fixture-student";
+    rerender(<ImportPanel {...props} connectionRevision={1} />);
+    await waitFor(() => expect(usernameField().value).toBe("fixture-student"));
+    fireEvent.change(usernameField(), { target: { value: "typed-name" } });
+    saved = "another-account";
+    rerender(<ImportPanel {...props} connectionRevision={2} />);
+    await waitFor(() => expect(usernameField().value).toBe("typed-name"));
+  });
+
+  it("imports the whole range in one step and reports the counts", async () => {
+    const importLichess = vi.fn(async () => ({ imported: 4, skipped: 1 }));
+    const onChanged = vi.fn();
+    render(
+      <ImportPanel
+        onChanged={onChanged}
+        api={apiWith({ importLichess })}
+        connections={lichessConnections("fixture-student")}
+      />,
+    );
+    await waitFor(() => expect(usernameField().value).toBe("fixture-student"));
+    fireEvent.change(screen.getByLabelText("First month"), { target: { value: "2026-09" } });
+    fireEvent.change(screen.getByLabelText("Last month"), { target: { value: "2026-10" } });
+    fireEvent.click(importButton());
+    await screen.findByText("Imported 4, skipped 1.");
+    expect(importLichess).toHaveBeenCalledWith("fixture-student", "2026-09", "2026-10");
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("says how many games could not be read", async () => {
+    const importLichess = async () => ({
+      imported: 3,
+      skipped: 0,
+      failed: [{ id: "Wm4cTe9R", message: "fixture-student did not play game Wm4cTe9R" }],
+    });
+    render(<ImportPanel onChanged={vi.fn()} api={apiWith({ importLichess })} />);
+    fireEvent.change(usernameField(), { target: { value: "fixture-student" } });
+    fireEvent.click(importButton());
+    await screen.findByText("Imported 3, skipped 0, 1 unreadable.");
+  });
+
+  it("shows the reason Lichess refused and lets the student try again", async () => {
+    const importLichess = vi.fn(async () => {
+      throw new Error("Lichess is rate limiting this app. Wait a few minutes, then import again.");
+    });
+    const onChanged = vi.fn();
+    render(<ImportPanel onChanged={onChanged} api={apiWith({ importLichess })} />);
+    fireEvent.change(usernameField(), { target: { value: "fixture-student" } });
+    fireEvent.click(importButton());
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toContain("Lichess is rate limiting this app");
+    expect((importButton() as HTMLButtonElement).disabled).toBe(false);
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("is disabled with no username, and again while an import runs", async () => {
+    let finish: () => void = () => undefined;
+    const importLichess = () =>
+      new Promise<{ imported: number; skipped: number }>((resolve) => {
+        finish = () => resolve({ imported: 1, skipped: 0 });
+      });
+    render(<ImportPanel onChanged={vi.fn()} api={apiWith({ importLichess })} />);
+    expect((importButton() as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(usernameField(), { target: { value: "fixture-student" } });
+    expect((importButton() as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(importButton());
+    await screen.findByRole("button", { name: "Importing…" });
+    expect((importButton() as HTMLButtonElement).disabled).toBe(true);
+    finish();
+    await screen.findByText("Imported 1, skipped 0.");
+    expect((importButton() as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

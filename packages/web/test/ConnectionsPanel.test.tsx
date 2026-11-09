@@ -8,18 +8,21 @@ import { idleConnectionsApi, idleImportApi } from "./fixtures.js";
 
 afterEach(cleanup);
 
-const EMPTY: ConnectionsStatus = { lichess_token_set: false, chesscom_username: null };
-const WITH_TOKEN: ConnectionsStatus = { lichess_token_set: true, chesscom_username: null };
+const EMPTY: ConnectionsStatus = {
+  lichess_token_set: false,
+  lichess_username: null,
+  chesscom_username: null,
+};
+const WITH_TOKEN: ConnectionsStatus = { ...EMPTY, lichess_token_set: true };
 
 function apiWith(overrides: Partial<ConnectionsApi>): ConnectionsApi {
   return {
     get: async () => EMPTY,
     saveLichessToken: async () => WITH_TOKEN,
     removeLichessToken: async () => EMPTY,
-    saveChessComUsername: async (username) => ({
-      lichess_token_set: false,
-      chesscom_username: username,
-    }),
+    saveLichessUsername: async (username) => ({ ...EMPTY, lichess_username: username }),
+    removeLichessUsername: async () => EMPTY,
+    saveChessComUsername: async (username) => ({ ...EMPTY, chesscom_username: username }),
     removeChessComUsername: async () => EMPTY,
     ...overrides,
   };
@@ -67,7 +70,7 @@ describe("ConnectionsPanel", () => {
     render(<ConnectionsPanel api={apiWith({ get })} />);
     const field = screen.getByLabelText("Chess.com username") as HTMLInputElement;
     fireEvent.change(field, { target: { value: "typed_name" } });
-    answer({ lichess_token_set: false, chesscom_username: "saved_name" });
+    answer({ ...EMPTY, chesscom_username: "saved_name" });
     await screen.findByText(/No token saved/);
     expect(field.value).toBe("typed_name");
   });
@@ -105,7 +108,7 @@ describe("ConnectionsPanel", () => {
       <ConnectionsPanel
         onChanged={onChanged}
         api={apiWith({
-          get: async () => ({ lichess_token_set: false, chesscom_username: "someone" }),
+          get: async () => ({ ...EMPTY, chesscom_username: "someone" }),
         })}
       />,
     );
@@ -113,5 +116,63 @@ describe("ConnectionsPanel", () => {
     fireEvent.change(field, { target: { value: "other" } });
     fireEvent.click(screen.getByRole("button", { name: "Save account" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+  });
+
+  it("starts with the saved Lichess account and saves a new one, trimmed", async () => {
+    const onChanged = vi.fn();
+    const saveLichessUsername = vi.fn(async (username: string) => ({
+      ...EMPTY,
+      lichess_username: username,
+    }));
+    render(
+      <ConnectionsPanel
+        onChanged={onChanged}
+        api={apiWith({
+          get: async () => ({ ...EMPTY, lichess_username: "fixture-student" }),
+          saveLichessUsername,
+        })}
+      />,
+    );
+    const field = (await screen.findByDisplayValue("fixture-student")) as HTMLInputElement;
+    expect(field.labels?.[0]?.textContent).toBe("Lichess username");
+    fireEvent.change(field, { target: { value: "  fixture-rival  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Lichess account" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+    expect(saveLichessUsername).toHaveBeenCalledWith("fixture-rival");
+  });
+
+  it("says why a Lichess username was refused, and keeps what was typed", async () => {
+    const saveLichessUsername = vi.fn(async () => {
+      throw new Error("A Lichess username is 2 to 30 letters, digits, _ or -.");
+    });
+    render(<ConnectionsPanel api={apiWith({ saveLichessUsername })} />);
+    const field = screen.getByLabelText("Lichess username") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "a/b" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Lichess account" }));
+    await screen.findByText("A Lichess username is 2 to 30 letters, digits, _ or -.");
+    expect(field.value).toBe("a/b");
+  });
+
+  it("removes the Lichess account and empties its field, leaving the Chess.com one", async () => {
+    const removeLichessUsername = vi.fn(async () => ({ ...EMPTY, chesscom_username: "someone" }));
+    render(
+      <ConnectionsPanel
+        api={apiWith({
+          get: async () => ({
+            ...EMPTY,
+            lichess_username: "fixture-student",
+            chesscom_username: "someone",
+          }),
+          removeLichessUsername,
+        })}
+      />,
+    );
+    await screen.findByDisplayValue("fixture-student");
+    fireEvent.click(screen.getByRole("button", { name: "Remove Lichess account" }));
+    await waitFor(() => expect(removeLichessUsername).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect((screen.getByLabelText("Lichess username") as HTMLInputElement).value).toBe(""),
+    );
+    expect((screen.getByLabelText("Chess.com username") as HTMLInputElement).value).toBe("someone");
   });
 });

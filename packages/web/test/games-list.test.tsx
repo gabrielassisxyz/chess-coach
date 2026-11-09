@@ -294,8 +294,9 @@ describe("grading line and the import form", () => {
     mount(LIBRARY);
     await screen.findByRole("table");
     expect(screen.queryByLabelText("Username")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Import from Chess.com…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import games…" }));
     expect(screen.getByLabelText("Username")).toBeTruthy();
+    expect(screen.getByLabelText("Lichess username")).toBeTruthy();
     expect(screen.getByText(/about 20 s per game/)).toBeTruthy();
   });
 
@@ -330,7 +331,7 @@ describe("a partial import", () => {
       importChessCom,
     });
     await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("button", { name: "Import from Chess.com…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import games…" }));
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "rafa_400" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch games" }));
     const list = await screen.findByRole("list", { name: "Chess.com games" });

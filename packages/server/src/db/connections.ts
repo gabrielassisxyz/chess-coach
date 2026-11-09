@@ -2,6 +2,7 @@ import type { Database } from "./open.js";
 
 const LICHESS_TOKEN_KEY = "lichess_api_token";
 const CHESSCOM_USERNAME_KEY = "chesscom_username";
+const LICHESS_USERNAME_KEY = "lichess_username";
 
 function read(db: Database, key: string): string | null {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as
@@ -40,6 +41,18 @@ export function resolveLichessToken(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   return env.LICHESS_API_TOKEN || (read(db, LICHESS_TOKEN_KEY) ?? undefined);
+}
+
+export function storedLichessUsername(db: Database): string | null {
+  return read(db, LICHESS_USERNAME_KEY);
+}
+
+export function setLichessUsername(db: Database, username: string, updatedAt: string): void {
+  write(db, LICHESS_USERNAME_KEY, username, updatedAt);
+}
+
+export function clearLichessUsername(db: Database): void {
+  remove(db, LICHESS_USERNAME_KEY);
 }
 
 export function storedChessComUsername(db: Database): string | null {
