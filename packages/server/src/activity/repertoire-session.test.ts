@@ -502,33 +502,34 @@ describe("a repertoire drill", () => {
 
   it("carries the scope, the counts and, at the end, the moves practised and the first-try rights", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
-    addCards(ITALIAN_ROWS, (_lineText, san) => san === "c3" || san === "d3");
+    addCards(ITALIAN_ROWS, (_lineText, san) => ["c3", "d3", "d4"].includes(san));
     const service = boot();
     let state = await start(service, id, "due");
     expect(drillOf(state)).toMatchObject({
       repertoire_id: id,
       scope: "due",
       opening_name: "Italian Game",
-      moves_left: 2,
+      moves_left: 3,
       moves_right: 0,
       moves_wrong: 0,
       result: null,
     });
     state = await play(service, state, "c3");
+    state = await play(service, state, "d4");
     state = await next(service, state);
     state = await play(service, state, "Be2");
-    expect(drillOf(state)).toMatchObject({ moves_left: 1, moves_right: 1, moves_wrong: 1 });
+    expect(drillOf(state)).toMatchObject({ moves_left: 1, moves_right: 2, moves_wrong: 1 });
     state = await play(service, state, "d3");
     state = await next(service, state);
     state = await play(service, state, "d3");
     state = await next(service, state);
 
-    expect(drillOf(state).result).toEqual({ practised: 2, first_try_right: 1 });
+    expect(drillOf(state).result).toEqual({ practised: 3, first_try_right: 2 });
     const summary = db
       .prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification'")
       .all() as { content_json: string }[];
     expect(summary.map((row) => JSON.parse(row.content_json))).toEqual([
-      { type: "training_summary", mode: "repertoire", solved: 1, failed: 1 },
+      { type: "training_summary", mode: "repertoire", solved: 2, failed: 1 },
     ]);
   });
 
