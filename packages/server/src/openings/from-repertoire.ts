@@ -87,10 +87,15 @@ interface RepertoireStep {
   reach: number;
 }
 
-interface RepertoireOwnChoice {
+interface RepertoireOwnScores {
+  cpLoss: number;
+  /** The position after the move, in centipawns from White's side; a mate is 10000. */
+  evalCp: number;
+}
+
+interface RepertoireOwnChoice extends RepertoireOwnScores {
   move: RepertoirePlayedMove;
   share: number | null;
-  cpLoss: number;
   source: RepertoireMoveSource;
 }
 
@@ -242,6 +247,7 @@ class RepertoireWalk {
       share: choice.share,
       source: choice.source,
       cpLoss: choice.cpLoss,
+      evalCp: choice.evalCp,
       results: repertoireResultsOf(after),
     });
     return { move: choice.move, after };
@@ -331,11 +337,11 @@ class RepertoireWalk {
       : pickItalianWhiteUci(step.fen, position, searched.lines, Math.ceil(step.ply / 2));
     if (!uci) return null;
     const move = repertoirePlayUci(step.fen, uci);
-    const cpLoss = await this.centipawnLoss(step.fen, uci, searched.lines);
-    if (!move || cpLoss === null) return null;
+    const scores = await this.scoreOwnMove(step.fen, uci, searched.lines);
+    if (!move || !scores) return null;
     const share = repertoireShareOf(position, step.fen, uci);
     const source = setupSan ? "setup" : share === null ? "engine" : "explorer";
-    return { move, share, cpLoss, source };
+    return { move, share, ...scores, source };
   }
 
   private searchPosition(fen: string, multipv: number): Promise<SearchResult> {
@@ -347,19 +353,22 @@ class RepertoireWalk {
     });
   }
 
-  private async centipawnLoss(
+  // The lines are scored from the side to move, White here, so the chosen move's line already
+  // evaluates the position after it from White's side.
+  private async scoreOwnMove(
     fen: string,
     uci: string,
     lines: SearchResult["lines"],
-  ): Promise<number | null> {
+  ): Promise<RepertoireOwnScores | null> {
     const best = lines[0];
     if (!best) return null;
     const scored = lines.find((line) => line.moves[0] === uci);
-    const score = scored ? scored.score : await this.scoreOutsideLines(fen, uci, best.score);
-    return Math.max(0, best.score - score);
+    const evalCp = scored ? scored.score : await this.scoreOutsideLines(fen, uci, best.score);
+    return { cpLoss: Math.max(0, best.score - evalCp), evalCp };
   }
 
-  // A setup move is played whatever the engine thinks, so it can miss the engine's top lines.
+  // A setup move is played whatever the engine thinks, so it can miss the engine's top lines. The
+  // search after it has Black to move, so its score is negated to read from White's side.
   private async scoreOutsideLines(fen: string, uci: string, fallback: number): Promise<number> {
     const move = repertoirePlayUci(fen, uci);
     if (!move) return fallback;

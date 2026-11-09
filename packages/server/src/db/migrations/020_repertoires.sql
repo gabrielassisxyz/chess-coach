@@ -10,9 +10,11 @@ CREATE TABLE repertoires (
 
 -- One row per position and move of a variation. kind 'own' is the move the student must play and
 -- 'reply' is an opponent's reply on the way there; share and reach are fractions, reach being the
--- product of the opponent's shares since the variation's starting position. cp_loss and the
--- win, draw and loss counts describe an 'own' move, and the counts stay null when the explorer
--- had no games for the position after it; the statistics screen reads them without any network.
+-- product of the opponent's shares since the variation's starting position. cp_loss, eval_cp and
+-- the win, draw and loss counts describe an 'own' move. eval_cp is the engine's evaluation of the
+-- position after the move, in centipawns from White's side with a mate as 10000, and the counts
+-- stay null when the explorer had no games for that position; the statistics screen reads them
+-- without any network.
 CREATE TABLE repertoire_positions (
   id INTEGER PRIMARY KEY,
   repertoire_id INTEGER NOT NULL REFERENCES repertoires(id) ON DELETE CASCADE,
@@ -28,10 +30,12 @@ CREATE TABLE repertoire_positions (
   idea TEXT,
   source TEXT NOT NULL,
   cp_loss INTEGER,
+  eval_cp INTEGER,
   wins INTEGER,
   draws INTEGER,
   losses INTEGER,
-  CHECK (kind = 'reply' OR cp_loss IS NOT NULL)
+  CHECK (kind = 'reply' OR cp_loss IS NOT NULL),
+  CHECK (kind = 'reply' OR eval_cp IS NOT NULL)
 );
 
 -- The rule that keeps a variation from teaching two answers to one position.

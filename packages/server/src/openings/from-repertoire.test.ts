@@ -146,6 +146,7 @@ interface RepertoireTestRow {
   idea: string | null;
   source: string;
   cp_loss: number | null;
+  eval_cp: number | null;
   wins: number | null;
   draws: number | null;
   losses: number | null;
@@ -263,6 +264,7 @@ describe("the repertoire tables", () => {
     share: null,
     source: "explorer" as const,
     cpLoss: 10,
+    evalCp: 25,
     results: null,
   });
 
@@ -287,6 +289,7 @@ describe("the repertoire tables", () => {
       "idea",
       "source",
       "cp_loss",
+      "eval_cp",
       "wins",
       "draws",
       "losses",
@@ -450,6 +453,7 @@ describe("generateRepertoire", () => {
     await generate();
     for (const row of rowsOf(db).filter((row) => row.kind === "own")) {
       expect(row.cp_loss).toEqual(expect.any(Number));
+      expect(row.eval_cp).toEqual(expect.any(Number));
     }
     expect(ownAt(BEFORE_BC4)?.cp_loss).toBe(10);
     expect(ownAt(AFTER_BC5)?.cp_loss).toBe(10);
@@ -462,6 +466,58 @@ describe("generateRepertoire", () => {
     await generate();
     expect(ownAt(BEFORE_BC4)?.cp_loss).toBe(55);
   });
+
+  it("stores the score of the chosen move's own line as the evaluation after it", async () => {
+    writeItalianTree();
+    await generate();
+    // 4.O-O is best at 40 and 4.c3 is chosen at 30: the row keeps the score of 4.c3.
+    expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "c3", cp_loss: 10, eval_cp: 30 });
+    for (const row of rowsOf(db).filter((candidate) => candidate.kind === "reply")) {
+      expect(row.eval_cp).toBeNull();
+    }
+  });
+
+  it("keeps an evaluation below zero when White's chosen move leaves Black better", async () => {
+    writeItalianTree();
+    engine.write(AFTER_BC5, [
+      ["e1g1", -20],
+      ["c2c3", -35],
+    ]);
+    await generate();
+    expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "c3", cp_loss: 15, eval_cp: -35 });
+  });
+
+  it.each([
+    { label: "White mating", score: 10000 },
+    { label: "White being mated", score: -10000 },
+  ])(
+    "stores a mate in the chosen move's line as 10000 with its sign: $label",
+    async ({ score }) => {
+      writeItalianTree();
+      engine.write(AFTER_BC5, [["c2c3", score]]);
+      await generate();
+      expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "c3", cp_loss: 0, eval_cp: score });
+    },
+  );
+
+  it.each([
+    { label: "Black better", replyScore: 60, evalCp: -60, cpLoss: 100 },
+    { label: "White better", replyScore: -25, evalCp: 25, cpLoss: 15 },
+    { label: "Black mated", replyScore: -10000, evalCp: 10000, cpLoss: 0 },
+    { label: "White mated", replyScore: 10000, evalCp: -10000, cpLoss: 10040 },
+  ])(
+    "reads a setup move outside the top lines from White's side: $label",
+    async ({ replyScore, evalCp, cpLoss }) => {
+      writeItalianTree();
+      engine.write(BEFORE_BC4, [["f1b5", 40]]).write(SETUP, [["g8f6", replyScore]]);
+      await generate();
+      expect(ownAt(BEFORE_BC4)).toMatchObject({
+        move_san: "Bc4",
+        cp_loss: cpLoss,
+        eval_cp: evalCp,
+      });
+    },
+  );
 
   it("searches every White position at depth 16 for five lines within 30 s", async () => {
     writeItalianTree();

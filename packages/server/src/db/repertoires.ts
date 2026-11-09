@@ -42,6 +42,8 @@ export interface RepertoireResultCounts {
 
 export interface NewRepertoireOwnMove extends NewRepertoireMove {
   cpLoss: number;
+  /** The position after the move, in centipawns from White's side; a mate is 10000. */
+  evalCp: number;
   results: RepertoireResultCounts | null;
 }
 
@@ -99,8 +101,8 @@ export function insertRepertoireOwnMove(db: Database, move: NewRepertoireOwnMove
   db.prepare(
     `INSERT INTO repertoire_positions
        (repertoire_id, kind, position_key, ply, line_san, move_uci, move_san, share, reach,
-        opening_name, source, cp_loss, wins, draws, losses)
-     VALUES (?, 'own', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        opening_name, source, cp_loss, eval_cp, wins, draws, losses)
+     VALUES (?, 'own', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     move.repertoireId,
     move.positionKey,
@@ -113,6 +115,7 @@ export function insertRepertoireOwnMove(db: Database, move: NewRepertoireOwnMove
     move.openingName,
     move.source,
     move.cpLoss,
+    move.evalCp,
     move.results?.wins ?? null,
     move.results?.draws ?? null,
     move.results?.losses ?? null,
@@ -144,7 +147,7 @@ export function upsertRepertoireReply(db: Database, reply: NewRepertoireMove): v
   );
 }
 
-/** A stored own move keeps its move, loss and counts; only a likelier line moves its place. */
+/** A stored own move keeps its move, scores and counts; only a likelier line moves its place. */
 export function raiseRepertoireOwnMoveReach(
   db: Database,
   ownMoveId: number,
