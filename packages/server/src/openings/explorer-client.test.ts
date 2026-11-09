@@ -3,6 +3,8 @@ import {
   ExplorerError,
   explorerUrl,
   httpExplorerFetcher,
+  ITALIAN_WHITE_BAND_LABEL,
+  ITALIAN_WHITE_RATINGS,
   MAX_RESPONSE_BYTES,
   parsePosition,
 } from "./explorer-client.js";
@@ -32,6 +34,11 @@ describe("explorer client", () => {
     const high = new URL(explorerUrl(FEN, "1800,2000,2200"));
     expect(high.searchParams.get("ratings")).toBe("1800,2000,2200");
     expect(high.searchParams.get("fen")).toBe(FEN);
+  });
+
+  it("keeps the White Italian band on the groups it covers", () => {
+    expect(ITALIAN_WHITE_RATINGS).toBe("1800,2000,2200");
+    expect(ITALIAN_WHITE_BAND_LABEL).toBe("1800-2499");
   });
 
   it("requests the given band from the network", async () => {
