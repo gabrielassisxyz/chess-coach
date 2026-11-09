@@ -98,6 +98,7 @@ describe("POST /api/openings/generate", () => {
       replies: 60,
       deepestPly: 28,
       created: 100,
+      removedReplies: 0,
       requests: 80,
       cacheHits: 0,
       truncated: false,

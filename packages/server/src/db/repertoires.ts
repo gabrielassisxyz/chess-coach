@@ -160,6 +160,20 @@ export function upsertRepertoireReply(db: Database, reply: NewRepertoireMove): v
   );
 }
 
+// Replies only: nothing points at a reply row, while a review card and an idea hang on a White move.
+// Returns how many rows went.
+export function deleteRepertoireRepliesAtPly(
+  db: Database,
+  repertoireId: number,
+  ply: number,
+): number {
+  return db
+    .prepare(
+      "DELETE FROM repertoire_positions WHERE repertoire_id = ? AND kind = 'reply' AND ply = ?",
+    )
+    .run(repertoireId, ply).changes;
+}
+
 /** A stored own move keeps its move, scores and counts; only a likelier line moves its place. */
 export function raiseRepertoireOwnMoveReach(
   db: Database,
