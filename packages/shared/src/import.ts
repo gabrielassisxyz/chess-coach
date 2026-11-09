@@ -34,6 +34,13 @@ export const ImportResultSchema = z.object({
 });
 export type ImportResult = z.infer<typeof ImportResultSchema>;
 
+// Says only whether a token exists: the token itself never leaves the server.
+export const ConnectionsStatusSchema = z.object({
+  lichess_token_set: z.boolean(),
+  chesscom_username: z.string().nullable(),
+});
+export type ConnectionsStatus = z.infer<typeof ConnectionsStatusSchema>;
+
 export const ImportStatusSchema = z.object({
   pending: z.number().int().nonnegative(),
   running: z

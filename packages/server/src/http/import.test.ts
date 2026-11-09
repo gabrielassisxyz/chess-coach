@@ -5,6 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeChessCom } from "../../test/fakes/fake-chesscom.js";
 import { buildApp } from "../app.js";
+import { setChessComUsername } from "../db/connections.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { ChessComError, ChessComSource } from "../import/chesscom.js";
 import { ImportGrader } from "../import/grader.js";
@@ -58,6 +59,29 @@ afterEach(async () => {
 
 const post = (url: string, payload: unknown) =>
   app.inject({ method: "POST", url, payload: payload as object });
+
+describe("a pasted PGN and the saved account", () => {
+  beforeEach(async () => {
+    await app.close();
+    app = buildApp({
+      db,
+      importer: { source: new ChessComSource(fetcher), grader, usernames: [] },
+    });
+  });
+
+  it("asks for the colour when no account names a side", async () => {
+    const answer = await post("/api/import/pgn", { pgn: FIXTURE_PGN });
+    expect(answer.json().error).toBe("student_color_required");
+  });
+
+  it("finds the side from the saved account, with no restart", async () => {
+    setChessComUsername(db, "assiszzz", "2026-11-09T00:00:00.000Z");
+    const answer = await post("/api/import/pgn", { pgn: FIXTURE_PGN });
+    expect(answer.statusCode).toBe(200);
+    expect(answer.json().imported).toBe(1);
+  });
+});
+
 const list = (range = { from: "2026-10", to: "2026-10" }) =>
   post("/api/import/chesscom/list", { username: "assiszzz", ...range });
 

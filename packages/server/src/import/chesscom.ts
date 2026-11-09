@@ -28,10 +28,13 @@ const ChessComGameSchema = z.object({
 });
 export type ChessComGame = z.infer<typeof ChessComGameSchema>;
 const MonthSchema = z.object({ games: z.array(z.unknown()) });
+const ProfileSchema = z.object({ username: z.string() });
 
 export interface ChessComFetcher {
   /** Games of one month; a month the player never played in is an empty list, not an error. */
   month(username: string, year: number, month: number): Promise<ChessComGame[]>;
+  /** False only when Chess.com says the account does not exist; any other failure throws. */
+  playerExists(username: string): Promise<boolean>;
 }
 
 export class ChessComError extends Error {
@@ -54,16 +57,30 @@ export function assertUsername(username: string): string {
 }
 
 export function httpFetcher(fetchImpl: typeof fetch = fetch): ChessComFetcher {
+  const request = (url: string): Promise<Response> =>
+    fetchImpl(url, {
+      headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    }).catch((error: unknown) => {
+      throw new ChessComError("upstream", `Chess.com could not be reached: ${String(error)}`);
+    });
   return {
+    async playerExists(username) {
+      const response = await request(
+        `https://api.chess.com/pub/player/${assertUsername(username)}`,
+      );
+      if (response.status === 404) return false;
+      if (!response.ok)
+        throw new ChessComError("upstream", `Chess.com answered ${response.status}`);
+      const profile = ProfileSchema.safeParse(await response.json().catch(() => null));
+      if (!profile.success) throw new ChessComError("upstream", "Chess.com answer is unreadable");
+      return true;
+    },
     async month(username, year, month) {
       const mm = String(month).padStart(2, "0");
-      const url = `https://api.chess.com/pub/player/${assertUsername(username)}/games/${year}/${mm}`;
-      const response = await fetchImpl(url, {
-        headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      }).catch((error: unknown) => {
-        throw new ChessComError("upstream", `Chess.com could not be reached: ${String(error)}`);
-      });
+      const response = await request(
+        `https://api.chess.com/pub/player/${assertUsername(username)}/games/${year}/${mm}`,
+      );
       if (response.status === 404) return [];
       if (!response.ok)
         throw new ChessComError("upstream", `Chess.com answered ${response.status}`);

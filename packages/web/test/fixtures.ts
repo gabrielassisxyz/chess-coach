@@ -1,5 +1,6 @@
 import type { ActivityMove, LegalMoveEntry, LiveGameActivity } from "@chess-coach/shared";
 import { Chess } from "chess.js";
+import type { ConnectionsApi } from "../src/state/connections-api.js";
 import type { ImportApi } from "../src/state/import-api.js";
 import type { PlayFactsApi } from "../src/state/play-facts.js";
 
@@ -71,6 +72,17 @@ export const idleImportApi: ImportApi = {
   importChessCom: async () => ({ imported: 0, skipped: 0 }),
   importPgn: async () => ({ imported: 0, skipped: 0 }),
   status: async () => ({ pending: 0, running: null, failed: 0 }),
+};
+
+const NO_CONNECTIONS = { lichess_token_set: false, chesscom_username: null };
+
+/** Nothing connected, so a Games render never reaches for the network. */
+export const idleConnectionsApi: ConnectionsApi = {
+  get: async () => NO_CONNECTIONS,
+  saveLichessToken: async () => NO_CONNECTIONS,
+  removeLichessToken: async () => NO_CONNECTIONS,
+  saveChessComUsername: async () => NO_CONNECTIONS,
+  removeChessComUsername: async () => NO_CONNECTIONS,
 };
 
 /** Play facts that never resolve a value, so a Play render never reaches for the network. */

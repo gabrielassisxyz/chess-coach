@@ -51,13 +51,21 @@
 - **Import:** the Games screen imports Chess.com games by username and month range, or a pasted
   PGN, and grades them in the background. `CHESS_COACH_USERNAMES` (comma-separated) names the
   student's accounts so a pasted PGN finds its side; without it the form asks for the colour.
+  The API is summarised in `docs/chesscom-api.md`.
+- **Connections:** the Games screen's Connections panel saves the Lichess API token and the Chess.com
+  account in `settings` (`lichess_api_token`, `chesscom_username`), through `/api/connections`. A set
+  `LICHESS_API_TOKEN` wins over the saved token, and the saved account joins `CHESS_COACH_USERNAMES`
+  for a pasted PGN; both are read per use. The token is tried against the explorer and the account
+  against the Chess.com profile before saving. The token travels only in a REST body, never over the
+  socket, whose `ws.command` logs the whole command, and no route returns it. Writes obey the socket's
+  Origin and Host rule, so `CHESS_COACH_ALLOWED_ORIGINS` also governs them.
 - **Openings:** `POST /api/openings/generate` turns the first fifteen moves of every graded game into
   "find the best move" puzzles (`own:` ids, source `own-games`, motifs `opening-white` and
   `opening-black`); the import grader runs it after each game. Practice's openings mode drills them. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
   student's first moves with the replies most played at 400-600 on the Lichess explorer (`explorer:` ids, source
   `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
   is opt-in at the call and never runs after an import. `POST /api/openings/generate {sources: ["italian"]}` builds the White Italian drill from the 1800-2200 band against 400-600 replies (`italian:` ids, source `italian-explorer`, motif `opening-italian`). The explorer now answers 401 without a Lichess API
-  token: set `LICHESS_API_TOKEN`.
+  token: save one in Connections or set `LICHESS_API_TOKEN`.
 - **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
   adds the whole Lichess puzzle database (`lichess-db:` ids, source `lichess-db`) to the library, reading CSV from
   stdin into the usual data dir and printing rows added, skipped and failed. A row's `FEN` is shown after its first
@@ -136,7 +144,7 @@
   `coach.conversation_reset`, `coach.stream_closed`,
   `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
   `coach.permission_resolved`, `training.item_served`, `training.answer`, `srs.rated`,
-  `review.cards_created`, `import.*`, `openings.generate`, `openings.generate_failed`, `import_lichess.progress`, `import_lichess.done`,
+  `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `import_lichess.progress`, `import_lichess.done`,
   `explorer.failed`, `*.listener_failed`, and `client.*` for what
   the browser reports through `POST /api/client-log` (uncaught errors, socket drops and
   reconnects, every error frame it received).

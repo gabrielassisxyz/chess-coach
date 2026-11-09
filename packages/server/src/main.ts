@@ -6,6 +6,7 @@ import { buildApp, type Readiness } from "./app.js";
 import { systemClock } from "./clock.js";
 import { assertSubscriptionAuth } from "./coach/auth.js";
 import { CoachSession, coachNotificationSinks } from "./coach/session.js";
+import { resolveLichessToken } from "./db/connections.js";
 import { openDatabase } from "./db/open.js";
 import { bootEngines } from "./engine/boot.js";
 import { evaluatePlayerMove } from "./engine/evaluate.js";
@@ -82,7 +83,7 @@ const generateExplorerOpenings = () =>
   generateExplorerPuzzles(
     db,
     pool.evaluation,
-    httpExplorerFetcher(process.env.LICHESS_API_TOKEN),
+    httpExplorerFetcher(resolveLichessToken(db)),
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
   );
@@ -90,7 +91,7 @@ const generateItalianOpenings = () =>
   generateItalianPuzzles(
     db,
     pool.evaluation,
-    httpExplorerFetcher(process.env.LICHESS_API_TOKEN),
+    httpExplorerFetcher(resolveLichessToken(db)),
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
   );
@@ -145,6 +146,11 @@ const app = buildApp({
   generateOpenings,
   generateExplorerOpenings,
   generateItalianOpenings,
+  connections: {
+    chessCom: httpFetcher(),
+    explorerFor: (token) => httpExplorerFetcher(token),
+    allowedOrigins: allowedOriginsFrom(),
+  },
   importer: {
     source: new ChessComSource(httpFetcher()),
     grader: importGrader,

@@ -77,4 +77,4 @@ Result codes: `win`, `checkmated`, `agreed`, `repetition`, `timeout`, `resigned`
 
 ## How this app uses it
 
-Only the monthly archive, in `packages/server/src/import/chesscom.ts`, with a `User-Agent` naming the project. A `404` there is read as a month with no games. `/player/{username}` is the endpoint that could tell whether an account exists; the app does not call it.
+Two endpoints, in `packages/server/src/import/chesscom.ts`, with a `User-Agent` naming the project. The monthly archive imports games, and a `404` there is read as a month with no games. `/player/{username}` confirms an account exists before it is saved in Connections, and a `404` there refuses the save.
