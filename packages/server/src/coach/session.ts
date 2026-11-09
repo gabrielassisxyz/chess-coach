@@ -63,6 +63,8 @@ export interface CoachSessionDeps {
 const PERMISSION_TIMEOUT_MS = 60_000;
 // A Claude Code process holds a few hundred MB; a tab nobody talks to should not keep one.
 export const IDLE_STREAM_MS = 10 * 60_000;
+// Named in full: with no model the CLI follows whatever default the owner's login has.
+export const COACH_MODEL = "claude-opus-5-5";
 
 interface PendingPermission {
   resolve: (allow: boolean) => void;
@@ -417,6 +419,11 @@ export class CoachSession {
       // Without this the CLI also connects the owner's claude.ai connectors, whose tools would
       // then appear in the coach's tool list.
       strictMcpConfig: true,
+      model: COACH_MODEL,
+      // The SDK replaces the child's environment with this, so it has to carry the inherited one.
+      // Empty settingSources does not reach auto memory, which would add the owner's development
+      // notes to every turn of a coach that has no tool to use them.
+      env: { ...(this.deps.env ?? process.env), CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" },
       allowedTools: COACH_TOOL_NAMES,
       // `tools: []` is how the installed SDK disables every built-in tool; disallowedTools is
       // not needed. The probe asserts the init tool list to prove it.

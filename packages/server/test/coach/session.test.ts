@@ -130,6 +130,26 @@ describe("CoachSession", () => {
     await session.stop();
   });
 
+  it("pins the coach's model instead of inheriting the login's default", async () => {
+    const { session, sdk } = setup();
+    await session.start();
+    await session.send("hello", "play");
+    expect(sdk.calls[0]?.options.model).toBe("claude-opus-5-5");
+    await session.stop();
+  });
+
+  it("turns auto memory off without dropping the inherited environment", async () => {
+    const { session, sdk } = setup({ env: { PATH: "/fake/bin", HOME: "/fake/home" } });
+    await session.start();
+    await session.send("hello", "play");
+    expect(sdk.calls[0]?.options.env).toEqual({
+      PATH: "/fake/bin",
+      HOME: "/fake/home",
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+    });
+    await session.stop();
+  });
+
   it("resumes the stored session after a restart and keeps one open row", async () => {
     const first = setup();
     await first.session.start();
