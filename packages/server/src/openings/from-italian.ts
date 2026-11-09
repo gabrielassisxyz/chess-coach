@@ -77,7 +77,7 @@ function italianPlaySan(fen: string, san: string): { uci: string; after: string 
 }
 
 /**
- * The White move for one Italian node: the most played 1800-2200 candidate within
+ * The White move for one Italian node: the most played 1800-2499 candidate within
  * 50 cp of the engine best, with the setup move preferred on turns 1-3, else the best.
  */
 export function pickItalianWhiteUci(
@@ -205,7 +205,7 @@ class ItalianWalk {
 
 /**
  * Builds the White Italian tree from the start against the replies most played at
- * 400-600, keeping every White node whose popular 1800-2200 move stays within 50 cp.
+ * 0-1199, keeping every White node whose popular 1800-2499 move stays within 50 cp.
  */
 export async function generateItalianPuzzles(
   db: Database,

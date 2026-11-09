@@ -128,7 +128,7 @@ describe("generateExplorerPuzzles", () => {
       fen: AFTER_E4_E5,
       solution_uci: '["g1f3"]',
       solution_san: '["Nf3"]',
-      explanation: "Played by 45% of opponents at 400-600 after 1. e4 e5. Best: Nf3.",
+      explanation: "Played by 45% of opponents at 0-1199 after 1. e4 e5. Best: Nf3.",
     });
     // e6 and d5 stay out: e5 and c5 already cover 70 percent of the games.
     expect(stored.map((row) => row.fen).sort()).toEqual([AFTER_E4_C5, AFTER_E4_E5].sort());
@@ -152,12 +152,12 @@ describe("generateExplorerPuzzles", () => {
       [
         "opening-black",
         '["Qxd5"]',
-        "Played by 73% of opponents at 400-600 after 1. e4 d5 2. exd5. Best: Qxd5.",
+        "Played by 73% of opponents at 0-1199 after 1. e4 d5 2. exd5. Best: Qxd5.",
       ],
       [
         "opening-black",
         '["e6"]',
-        "Played by 64% of opponents at 400-600 after 1. d4 d5 2. c4. Best: e6.",
+        "Played by 64% of opponents at 0-1199 after 1. d4 d5 2. c4. Best: e6.",
       ],
     ]);
     expect(result.created).toBe(2);

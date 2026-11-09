@@ -4,11 +4,13 @@ import { join } from "node:path";
 import { z } from "zod";
 import { USER_AGENT } from "../import/chesscom.js";
 
-export const EXPLORER_RATINGS = "400,600";
+// The explorer maps each ratings value to the group containing it instead of refusing it,
+// so a value must be a listed boundary; a label names the span its groups cover.
+export const EXPLORER_RATINGS = "0,1000";
 export const EXPLORER_SPEEDS = "rapid,blitz";
-export const EXPLORER_BAND_LABEL = "400-600";
+export const EXPLORER_BAND_LABEL = "0-1199";
 export const ITALIAN_WHITE_RATINGS = "1800,2000,2200";
-export const ITALIAN_WHITE_BAND_LABEL = "1800-2200";
+export const ITALIAN_WHITE_BAND_LABEL = "1800-2499";
 export const MIN_REQUEST_GAP_MS = 1100;
 export const RATE_LIMIT_WAIT_MS = 30_000;
 export const CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -19,7 +21,7 @@ export const MAX_RESPONSE_BYTES = 256_000;
 const MAX_MOVES_PER_POSITION = 50;
 const MOVES_REQUESTED = 8;
 const FETCH_TIMEOUT_MS = 15_000;
-const EXPLORER_ORIGIN = "https://explorer.lichess.ovh/lichess";
+const EXPLORER_ORIGIN = "https://explorer.lichess.org/lichess";
 
 export class ExplorerError extends Error {
   constructor(

@@ -3,6 +3,8 @@ import {
   ExplorerError,
   explorerUrl,
   httpExplorerFetcher,
+  ITALIAN_WHITE_BAND_LABEL,
+  ITALIAN_WHITE_RATINGS,
   MAX_RESPONSE_BYTES,
   parsePosition,
 } from "./explorer-client.js";
@@ -20,18 +22,23 @@ function answering(
 describe("explorer client", () => {
   it("builds the query from constants and the encoded position", () => {
     const url = new URL(explorerUrl(FEN));
-    expect(url.origin).toBe("https://explorer.lichess.ovh");
-    expect(url.searchParams.get("ratings")).toBe("400,600");
+    expect(url.origin).toBe("https://explorer.lichess.org");
+    expect(url.searchParams.get("ratings")).toBe("0,1000");
     expect(url.searchParams.get("speeds")).toBe("rapid,blitz");
     expect(url.searchParams.get("fen")).toBe(FEN);
   });
 
   it("accepts a rating band per call for the Italian walk", () => {
-    const low = new URL(explorerUrl(FEN, "400,600"));
-    expect(low.searchParams.get("ratings")).toBe("400,600");
+    const low = new URL(explorerUrl(FEN, "0,1000"));
+    expect(low.searchParams.get("ratings")).toBe("0,1000");
     const high = new URL(explorerUrl(FEN, "1800,2000,2200"));
     expect(high.searchParams.get("ratings")).toBe("1800,2000,2200");
     expect(high.searchParams.get("fen")).toBe(FEN);
+  });
+
+  it("keeps the White Italian band on the groups it covers", () => {
+    expect(ITALIAN_WHITE_RATINGS).toBe("1800,2000,2200");
+    expect(ITALIAN_WHITE_BAND_LABEL).toBe("1800-2499");
   });
 
   it("requests the given band from the network", async () => {
@@ -43,7 +50,7 @@ describe("explorer client", () => {
     await httpExplorerFetcher("secret", spy).fetch(FEN, "1800,2000,2200");
     expect(new URL(seenUrl).searchParams.get("ratings")).toBe("1800,2000,2200");
     await httpExplorerFetcher("secret", spy).fetch(FEN);
-    expect(new URL(seenUrl).searchParams.get("ratings")).toBe("400,600");
+    expect(new URL(seenUrl).searchParams.get("ratings")).toBe("0,1000");
   });
 
   it("names the app and sends the token when there is one", async () => {

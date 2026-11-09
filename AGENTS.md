@@ -62,9 +62,9 @@
 - **Openings:** `POST /api/openings/generate` turns the first fifteen moves of every graded game into
   "find the best move" puzzles (`own:` ids, source `own-games`, motifs `opening-white` and
   `opening-black`); the import grader runs it after each game. Practice's openings mode drills them. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
-  student's first moves with the replies most played at 400-600 on the Lichess explorer (`explorer:` ids, source
+  student's first moves with the replies most played at 0-1199 on the Lichess explorer (`explorer:` ids, source
   `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
-  is opt-in at the call and never runs after an import. `POST /api/openings/generate {sources: ["italian"]}` builds the White Italian drill from the 1800-2200 band against 400-600 replies (`italian:` ids, source `italian-explorer`, motif `opening-italian`). The explorer now answers 401 without a Lichess API
+  is opt-in at the call and never runs after an import. `POST /api/openings/generate {sources: ["italian"]}` builds the White Italian drill from the 1800-2499 band against 0-1199 replies (`italian:` ids, source `italian-explorer`, motif `opening-italian`). The explorer now answers 401 without a Lichess API
   token: save one in Connections or set `LICHESS_API_TOKEN`.
 - **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
   adds the whole Lichess puzzle database (`lichess-db:` ids, source `lichess-db`) to the library, reading CSV from
@@ -339,6 +339,7 @@
 | `local/` links to the private notes repository, whose own sync may commit and push a new file within minutes: never write a file holding a secret there, even as an intermediate step. Clean or redact it in a scratch directory first | tripwire | none yet |
 | A verification step that writes to the live database, such as `POST /api/openings/generate`, needs the owner's go-ahead even when an acceptance criterion names it. Run it against a copy of the data directory, on another `PORT` | tripwire | none yet |
 | Biome's formatter turns a unicode escape for an em dash inside a string into the literal character, which the prose check then refuses, UI copy and test fixtures included: write copy without a dash | tripwire | `bin/ci` refuses the result, but only after every test has passed |
+| The explorer does not refuse an unlisted `ratings` value: it maps each value to the group containing it (400 means 0-999), so a value that is not a listed boundary (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500) quietly asks for another group | tripwire | none yet |
 
 **A hurdle promoted to a gate is deleted from this table, not duplicated.** The gate is the
 instruction; a line here restating it only dilutes the ones still unguarded.
