@@ -330,5 +330,43 @@ describe("POST /api/openings/generate", () => {
       await app.close();
       expect(second.statusCode).toBe(409);
     });
+
+    it("accepts all four sources in one body and runs them in order", async () => {
+      const calls: string[] = [];
+      const response = await post(calls, { sources: ["own", "explorer", "italian", "repertoire"] });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ own, explorer, italian, repertoire });
+      expect(calls).toEqual(["own", "explorer", "italian", "repertoire"]);
+    });
+
+    it.each(["explorer", "italian", "repertoire"])(
+      "refuses the %s source while a repertoire run is going",
+      async (source) => {
+        let release: () => void = () => {};
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const app = buildApp({
+          db: db(),
+          generateOpenings: async () => own,
+          generateExplorerOpenings: async () => explorer,
+          generateItalianOpenings: async () => italian,
+          generateRepertoireOpenings: async () => {
+            await gate;
+            return repertoire;
+          },
+        });
+        const run = (sources: string[]) =>
+          app.inject({ method: "POST", url: "/api/openings/generate", payload: { sources } });
+        const first = run(["repertoire"]);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const second = run([source]);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        release();
+        expect((await first).statusCode).toBe(200);
+        expect((await second).statusCode).toBe(409);
+        await app.close();
+      },
+    );
   });
 });

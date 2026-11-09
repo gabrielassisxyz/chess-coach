@@ -8,7 +8,9 @@ import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
 import {
   createRepertoireVariation,
+  findFirstRepertoireVariation,
   insertRepertoireOwnMove,
+  raiseRepertoireOwnMoveReach,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { applyUci } from "../engine/moves.js";
@@ -16,6 +18,7 @@ import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
 import { RecordingLog } from "../log.js";
 import {
   EXPLORER_RATINGS,
+  ExplorerError,
   type ExplorerFetcher,
   ITALIAN_WHITE_RATINGS,
 } from "./explorer-client.js";
@@ -47,6 +50,7 @@ class RepertoireFakeExplorer implements ExplorerFetcher {
   /** A student-band position nobody wrote answers its first legal move, so a line never stalls. */
   autoplay = false;
   private readonly answers = new Map<string, unknown>();
+  private readonly failures = new Map<string, ExplorerError>();
 
   write(line: string[], ratings: string, moves: Record<string, number>, total: number): this {
     const white = Math.round(total * 0.5);
@@ -72,9 +76,17 @@ class RepertoireFakeExplorer implements ExplorerFetcher {
     return answer ? answer.white + answer.draws + answer.black : 0;
   }
 
+  /** Throws for one position and band, as the real client does on a 401 or an upstream error. */
+  failAt(line: string[], ratings: string, failure: ExplorerError): this {
+    this.failures.set(`${ratings}|${keyOf(line)}`, failure);
+    return this;
+  }
+
   async fetch(fen: string, ratings?: string): Promise<string> {
     const key = positionKey(fen);
     this.calls.push({ key, ratings });
+    const failure = this.failures.get(`${ratings}|${key}`);
+    if (failure) throw failure;
     return JSON.stringify(this.answers.get(`${ratings}|${key}`) ?? this.unwritten(fen, ratings));
   }
 
@@ -104,6 +116,12 @@ class RepertoireFakeEngine implements Searcher {
       keyOf(line),
       scores.map(([uci, score]) => ({ moves: [uci], score })),
     );
+    return this;
+  }
+
+  /** Stockfish's answer when the side to move is mated: one line with no move and a lost score. */
+  writeMated(line: string[]): this {
+    this.scripted.set(keyOf(line), [{ moves: [], score: -10000 }]);
     return this;
   }
 
@@ -338,6 +356,148 @@ describe("the repertoire tables", () => {
     upsertRepertoireReply(db, reply("g8f6"));
     upsertRepertoireReply(db, reply("d7d6"));
     expect(rowsOf(db).map((row) => row.move_uci)).toEqual(["d7d6", "g8f6"]);
+  });
+
+  const italianVariation = (variationName: string) =>
+    createRepertoireVariation(db, { side: "white", groupName: "Italian Game", variationName });
+
+  const insertRawPosition = (
+    repertoireId: number,
+    kind: string,
+    cpLoss: number | null,
+    evalCp: number | null,
+  ) =>
+    db
+      .prepare(
+        `INSERT INTO repertoire_positions
+           (repertoire_id, kind, position_key, ply, line_san, move_uci, move_san, reach, source,
+            cp_loss, eval_cp)
+         VALUES (?, ?, 'position', 7, '[]', 'c2c3', 'c3', 0.2, 'explorer', ?, ?)`,
+      )
+      .run(repertoireId, kind, cpLoss, evalCp);
+
+  it("refuses a row whose kind is neither own nor reply", () => {
+    const { id } = italianVariation("A");
+    expect(() => insertRawPosition(id, "drill", 10, 25)).toThrow(/CHECK/);
+    insertRawPosition(id, "own", 10, 25);
+    expect(rowsOf(db).map((row) => row.kind)).toEqual(["own"]);
+  });
+
+  it("refuses a variation whose side is neither white nor black", () => {
+    const insert = db.prepare(
+      "INSERT INTO repertoires (side, group_name, variation_name) VALUES (?, 'Italian Game', 'A')",
+    );
+    expect(() => insert.run("both")).toThrow(/CHECK/);
+    insert.run("black");
+    expect(variationsOf(db)).toEqual([
+      { side: "black", group_name: "Italian Game", variation_name: "A" },
+    ]);
+  });
+
+  it.each([
+    { missing: "centipawn loss", cpLoss: null, evalCp: 25 },
+    { missing: "evaluation", cpLoss: 10, evalCp: null },
+  ])(
+    "refuses a White move without its $missing and allows a reply without either",
+    ({ cpLoss, evalCp }) => {
+      const { id } = italianVariation("A");
+      expect(() => insertRawPosition(id, "own", cpLoss, evalCp)).toThrow(/CHECK/);
+      insertRawPosition(id, "reply", null, null);
+      expect(rowsOf(db).map((row) => row.kind)).toEqual(["reply"]);
+    },
+  );
+
+  it("allows one variation of a name per side and group", () => {
+    italianVariation("Classical Variation (4.c3)");
+    expect(() => italianVariation("Classical Variation (4.c3)")).toThrow(/UNIQUE/);
+    const sameName = { variationName: "Classical Variation (4.c3)" };
+    createRepertoireVariation(db, { ...sameName, side: "black", groupName: "Italian Game" });
+    createRepertoireVariation(db, { ...sameName, side: "white", groupName: "Ruy Lopez" });
+    expect(variationsOf(db)).toHaveLength(3);
+  });
+
+  it("deletes a variation's positions with the variation", () => {
+    const kept = italianVariation("A");
+    const deleted = italianVariation("B");
+    insertRepertoireOwnMove(db, newOwnMove(kept.id, "position", "c2c3"));
+    insertRepertoireOwnMove(db, newOwnMove(deleted.id, "position", "d2d3"));
+    db.prepare("DELETE FROM repertoires WHERE id = ?").run(deleted.id);
+    expect(rowsOf(db).map((row) => row.repertoire_id)).toEqual([kept.id]);
+  });
+
+  it("finds the oldest variation of the side and group", () => {
+    createRepertoireVariation(db, {
+      side: "black",
+      groupName: "Italian Game",
+      variationName: "As Black",
+    });
+    createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Ruy Lopez",
+      variationName: "Another group",
+    });
+    const oldest = italianVariation("Oldest");
+    italianVariation("Newest");
+    expect(findFirstRepertoireVariation(db, "white", "Italian Game")).toEqual(oldest);
+  });
+
+  describe("a position stored from two lines", () => {
+    const likelier = { ply: 9, line: ["likelier"], reach: 0.24, openingName: "Likelier name" };
+    const rarer = { ply: 11, line: ["rarer"], reach: 0.1, openingName: "Rarer name" };
+    const arrivals = [
+      { order: "the likelier line first", first: likelier, second: rarer },
+      { order: "the likelier line second", first: rarer, second: likelier },
+    ];
+    const placeOf = (row: RepertoireTestRow) => ({
+      ply: row.ply,
+      line: JSON.parse(row.line_san),
+      reach: row.reach,
+      openingName: row.opening_name,
+    });
+
+    it.each(arrivals)("keeps a reply on the likelier line, $order", ({ first, second }) => {
+      const { id } = italianVariation("A");
+      const reply = (place: typeof likelier) => ({
+        repertoireId: id,
+        positionKey: "position",
+        ...place,
+        uci: "g8f6",
+        san: "Nf6",
+        share: 0.5,
+        source: "explorer" as const,
+      });
+      upsertRepertoireReply(db, reply(first));
+      upsertRepertoireReply(db, reply(second));
+      expect(rowsOf(db).map(placeOf)).toEqual([likelier]);
+    });
+
+    it.each(arrivals)(
+      "keeps a White move and its scores on the likelier line, $order",
+      ({ first, second }) => {
+        const { id } = italianVariation("A");
+        insertRepertoireOwnMove(db, {
+          ...newOwnMove(id, "position", "c2c3"),
+          ...first,
+          results: { wins: 5, draws: 1, losses: 4 },
+        });
+        const stored = rowsOf(db)[0];
+        if (!stored) throw new Error("the White move was not stored");
+        raiseRepertoireOwnMoveReach(db, stored.id, {
+          repertoireId: id,
+          positionKey: "position",
+          ...second,
+        });
+        expect(rowsOf(db).map(placeOf)).toEqual([likelier]);
+        expect(rowsOf(db)[0]).toMatchObject({
+          move_uci: "c2c3",
+          cp_loss: 10,
+          eval_cp: 25,
+          wins: 5,
+          draws: 1,
+          losses: 4,
+        });
+      },
+    );
   });
 });
 
@@ -654,6 +814,148 @@ describe("generateRepertoire", () => {
     expect(own[0]?.reach).toBeCloseTo(0.3 * 0.8);
     expect(JSON.parse(own[0]?.line_san ?? "null")).toEqual([...SETUP, "Bc5", "d3", "Nf6"]);
   });
+
+  it("labels an engine move and an explorer reply by where they came from", async () => {
+    writeItalianTree();
+    await generate();
+    // Nobody wrote the White band after 3...h6, so the engine's move is the expected one.
+    expect(ownAt([...SETUP, "h6"])).toMatchObject({ source: "engine", share: null });
+    expect(replyAt(SETUP, "Nf6")).toMatchObject({ source: "explorer" });
+    expect(replyAt(SETUP, "Nf6")?.share).toBeCloseTo(0.402);
+  });
+
+  it("clamps the loss at zero when a setup move outside the top lines scores above the best", async () => {
+    writeItalianTree();
+    engine.write(BEFORE_BC4, [["f1b5", 40]]).write(SETUP, [["g8f6", -60]]);
+    await generate();
+    expect(ownAt(BEFORE_BC4)).toMatchObject({ move_san: "Bc4", cp_loss: 0, eval_cp: 60 });
+  });
+
+  // 3...Nd4 4.Nxe5 Qg5 5.Nxf7 Qxg2 6.Rf1 Qxe4+ 7.Be2 Nf3# leaves White mated, with no move to store.
+  const MATED = [...SETUP, "Nd4", "Nxe5", "Qg5", "Nxf7", "Qxg2", "Rf1", "Qxe4+", "Be2", "Nf3#"];
+
+  function writeMatingLine(): void {
+    const lineTo = (plies: number) => MATED.slice(0, SETUP.length + plies);
+    engine
+      .write(lineTo(1), [["f3e5", 20]])
+      .write(lineTo(3), [["e5f7", 20]])
+      .write(lineTo(5), [["h1f1", 20]])
+      .write(lineTo(7), [["c4e2", 20]]);
+    explorer
+      .write(lineTo(2), EXPLORER_RATINGS, { Qg5: 3000 }, 5000)
+      .write(lineTo(4), EXPLORER_RATINGS, { Qxg2: 5000 }, 5000)
+      .write(lineTo(6), EXPLORER_RATINGS, { "Qxe4+": 5000 }, 5000)
+      .write(lineTo(8), EXPLORER_RATINGS, { "Nf3#": 5000 }, 5000);
+  }
+
+  it.each([
+    { answer: "the engine gives no line", stockfishShape: false },
+    { answer: "Stockfish gives a moveless line", stockfishShape: true },
+  ])("ends a line where White is mated with no row: $answer", async ({ stockfishShape }) => {
+    writeItalianTree();
+    writeMatingLine();
+    if (stockfishShape) engine.writeMated(MATED);
+    await generate();
+    expect(new Chess(fenOf(MATED)).isCheckmate()).toBe(true);
+    expect(replyAt(MATED.slice(0, -1), "Nf3#")).toBeDefined();
+    expect(ownAt(MATED)).toBeUndefined();
+  });
+
+  it.each([
+    ["a 401", new ExplorerError("unauthorized", "the explorer wants a Lichess API token")],
+    ["an upstream error", new ExplorerError("upstream", "the explorer answered 500")],
+  ])("rejects on %s instead of reporting a truncated run", async (_label, failure) => {
+    writeItalianTree();
+    explorer.failAt(AFTER_C3, EXPLORER_RATINGS, failure);
+    await expect(generate()).rejects.toBe(failure);
+    expect(rowsOf(db).length).toBeGreaterThan(0);
+  });
+
+  it("reports zero counts when the budget ends right after the variation is named", async () => {
+    writeItalianTree();
+    const result = await generate({ maxRequests: 1 });
+    expect(result).toMatchObject({
+      variation: "Classical Variation (4.c3)",
+      ownMoves: 0,
+      replies: 0,
+      deepestPly: 0,
+      created: 0,
+      truncated: true,
+    });
+    expect(rowsOf(db)).toEqual([]);
+  });
+
+  it("walks the oldest Italian variation when the group already holds several", async () => {
+    writeItalianTree();
+    const oldest = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Oldest",
+    });
+    createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Newest",
+    });
+    const result = await generate();
+    expect(result.variation).toBe("Oldest");
+    expect(new Set(rowsOf(db).map((row) => row.repertoire_id))).toEqual(new Set([oldest.id]));
+  });
+});
+
+describe("a position the walk reaches by two lines", () => {
+  // 3...Nf6 4.d3 Bc5 and 3...Bc5 4.d3 Nf6 meet in one position. The walk takes 3...Nf6 first, being
+  // the most played, and the shares after 4.d3 decide which line reaches the meeting likelier.
+  const VIA_NF6 = [...SETUP, "Nf6", "d3", "Bc5"];
+  const VIA_BC5 = [...SETUP, "Bc5", "d3", "Nf6"];
+
+  function writeTransposition(bc5AfterNf6: number, nf6AfterBc5: number): void {
+    writeItalianTree();
+    explorer
+      .write(SETUP, EXPLORER_RATINGS, { Nf6: 40000, Bc5: 30000 }, 100000)
+      .write(AFTER_BC5, ITALIAN_WHITE_RATINGS, { d3: 9000 }, 10000)
+      .write([...SETUP, "Nf6", "d3"], EXPLORER_RATINGS, { Bc5: bc5AfterNf6 }, 5000)
+      .write([...AFTER_BC5, "d3"], EXPLORER_RATINGS, { Nf6: nf6AfterBc5 }, 5000)
+      .write(VIA_NF6, ITALIAN_WHITE_RATINGS, { "O-O": 5000 }, 5000)
+      .write([...VIA_NF6, "O-O"], EXPLORER_RATINGS, { d6: 3000 }, 5000);
+    engine.write(AFTER_BC5, [["d2d3", 40]]).write(VIA_NF6, [["e1g1", 30]]);
+  }
+
+  it.each([
+    {
+      order: "the likelier line arriving second",
+      bc5AfterNf6: 1250,
+      nf6AfterBc5: 4000,
+      line: VIA_BC5,
+      reach: 0.3 * 0.8,
+      openingName: "Italian Game: Giuoco Piano",
+    },
+    {
+      order: "the likelier line arriving first",
+      bc5AfterNf6: 4000,
+      nf6AfterBc5: 1250,
+      line: VIA_NF6,
+      reach: 0.4 * 0.8,
+      openingName: "Italian Game: Two Knights Defense",
+    },
+  ])(
+    "moves the White move and the replies after it to the likelier line, $order",
+    async ({ bc5AfterNf6, nf6AfterBc5, line, reach, openingName }) => {
+      writeTransposition(bc5AfterNf6, nf6AfterBc5);
+      await generate();
+      const own = rowsOf(db).filter(
+        (row) => row.kind === "own" && row.position_key === keyOf(VIA_NF6),
+      );
+      expect(own).toHaveLength(1);
+      expect(own[0]).toMatchObject({ move_san: "O-O", ply: 9, opening_name: openingName });
+      expect(own[0]?.reach).toBeCloseTo(reach);
+      expect(JSON.parse(own[0]?.line_san ?? "null")).toEqual(line);
+      const reply = replyAt([...VIA_NF6, "O-O"], "d6");
+      expect(reply).toMatchObject({ ply: 10, opening_name: openingName });
+      expect(reply?.reach).toBeCloseTo(reach * 0.6);
+      expect(JSON.parse(reply?.line_san ?? "null")).toEqual([...line, "O-O"]);
+    },
+  );
 });
 
 describe("POST /api/openings/generate with the repertoire source", () => {
@@ -691,6 +993,29 @@ describe("POST /api/openings/generate with the repertoire source", () => {
         },
       },
     });
+  });
+
+  it("answers 502 when the explorer fails during the walk, never a truncated success", async () => {
+    writeItalianTree();
+    explorer.failAt(
+      AFTER_C3,
+      EXPLORER_RATINGS,
+      new ExplorerError("unauthorized", "the explorer wants a Lichess API token"),
+    );
+    const app = buildApp({
+      db,
+      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateRepertoireOpenings: () =>
+        generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES),
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/openings/generate",
+      payload: { sources: ["repertoire"] },
+    });
+    await app.close();
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({ error: "explorer_unavailable" });
   });
 });
 
