@@ -38,6 +38,9 @@ export const REPERTOIRE_GROUP_ITALIAN = "Italian Game";
 export const REPERTOIRE_MAX_PLY = 30;
 export const REPERTOIRE_MIN_REACH = 1 / 50;
 const REPERTOIRE_SEARCH_LINES = 5;
+// One timeout would end the walk at the same position on every rerun, and a batch can afford to
+// wait for a slow position where a live game cannot.
+export const REPERTOIRE_SEARCH_DEADLINE_MS = 30_000;
 
 // The opening is chosen rather than scored, so these plies are played whatever the data says, and
 // reach starts counting after them: a reply that leaves earlier is out of scope for this unit.
@@ -321,11 +324,7 @@ class RepertoireWalk {
 
   private async computeOwnChoice(step: RepertoireStep): Promise<RepertoireOwnChoice | null> {
     const position = await this.explorer.position(step.fen, ITALIAN_WHITE_RATINGS);
-    const searched = await this.engine.search({
-      fen: step.fen,
-      depth: EVALUATION_DEPTH,
-      multipv: REPERTOIRE_SEARCH_LINES,
-    });
+    const searched = await this.searchPosition(step.fen, REPERTOIRE_SEARCH_LINES);
     const setupSan = ITALIAN_SETUP_SAN[step.ply - 1];
     const uci = setupSan
       ? repertoirePlaySan(step.fen, setupSan)?.uci
@@ -337,6 +336,15 @@ class RepertoireWalk {
     const share = repertoireShareOf(position, step.fen, uci);
     const source = setupSan ? "setup" : share === null ? "engine" : "explorer";
     return { move, share, cpLoss, source };
+  }
+
+  private searchPosition(fen: string, multipv: number): Promise<SearchResult> {
+    return this.engine.search({
+      fen,
+      depth: EVALUATION_DEPTH,
+      multipv,
+      deadlineMs: REPERTOIRE_SEARCH_DEADLINE_MS,
+    });
   }
 
   private async centipawnLoss(
@@ -355,11 +363,7 @@ class RepertoireWalk {
   private async scoreOutsideLines(fen: string, uci: string, fallback: number): Promise<number> {
     const move = repertoirePlayUci(fen, uci);
     if (!move) return fallback;
-    const searched = await this.engine.search({
-      fen: move.after,
-      depth: EVALUATION_DEPTH,
-      multipv: 1,
-    });
+    const searched = await this.searchPosition(move.after, 1);
     const reply = searched.lines[0];
     return reply ? -reply.score : fallback;
   }

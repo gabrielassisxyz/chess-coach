@@ -96,7 +96,7 @@ function forwardMove(fen: string): Move | undefined {
 
 /** Scores the moves a test writes out; an unwritten position has one forward move alone. */
 class RepertoireFakeEngine implements Searcher {
-  readonly searched: string[] = [];
+  readonly requests: SearchRequest[] = [];
   private readonly scripted = new Map<string, Array<{ moves: string[]; score: number }>>();
 
   write(line: string[], scores: Array<[uci: string, score: number]>): this {
@@ -108,9 +108,10 @@ class RepertoireFakeEngine implements Searcher {
   }
 
   async search(request: SearchRequest): Promise<SearchResult> {
-    const key = positionKey(request.fen);
-    this.searched.push(key);
-    const lines = this.scripted.get(key) ?? forwardMoveLines(request.fen);
+    this.requests.push(request);
+    const written = this.scripted.get(positionKey(request.fen));
+    // Stockfish answers as many lines as MultiPV asks for, and too few would change White's pick.
+    const lines = (written ?? forwardMoveLines(request.fen)).slice(0, request.multipv ?? 1);
     return { fen: request.fen, bestmove: lines[0]?.moves[0] ?? null, lines };
   }
 }
@@ -462,6 +463,23 @@ describe("generateRepertoire", () => {
     expect(ownAt(BEFORE_BC4)?.cp_loss).toBe(55);
   });
 
+  it("searches every White position at depth 16 for five lines within 30 s", async () => {
+    writeItalianTree();
+    await generate();
+    expect(engine.requests.length).toBeGreaterThan(0);
+    for (const request of engine.requests) {
+      expect(request).toMatchObject({ depth: 16, multipv: 5, deadlineMs: 30_000 });
+    }
+  });
+
+  it("scores a setup move outside the top lines at depth 16 within 30 s as well", async () => {
+    writeItalianTree();
+    engine.write(BEFORE_BC4, [["f1b5", 40]]).write(SETUP, [["g8f6", 15]]);
+    await generate();
+    const reply = engine.requests.find((request) => positionKey(request.fen) === keyOf(SETUP));
+    expect(reply).toMatchObject({ depth: 16, multipv: 1, deadlineMs: 30_000 });
+  });
+
   it("stores result counts for every White move whose next position has games", async () => {
     writeItalianTree();
     await generate();
@@ -495,7 +513,7 @@ describe("generateRepertoire", () => {
     writeItalianTree();
     const first = await generate();
     const stored = rowsOf(db);
-    const searches = engine.searched.length;
+    const searches = engine.requests.length;
     const second = await generate();
     expect(first.created).toBe(stored.length);
     expect(second).toMatchObject({
@@ -507,7 +525,7 @@ describe("generateRepertoire", () => {
       deepestPly: first.deepestPly,
     });
     expect(second.cacheHits).toBeGreaterThan(0);
-    expect(engine.searched).toHaveLength(searches);
+    expect(engine.requests).toHaveLength(searches);
     expect(rowsOf(db)).toEqual(stored);
     expect(variationsOf(db)).toHaveLength(1);
   });
