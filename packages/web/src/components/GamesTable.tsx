@@ -1,4 +1,4 @@
-import type { GameSummary } from "@chess-coach/shared";
+import type { GameSummary, OpeningName } from "@chess-coach/shared";
 import { isPhone } from "../state/coach-panel.js";
 import {
   dateLabel,
@@ -40,6 +40,17 @@ function WorstMoment({ game }: { game: GameSummary }) {
   );
 }
 
+// The title carries the whole name: the cell cuts a long one, and the table has no room for it.
+function Opening({ opening }: { opening: OpeningName | null }) {
+  if (!opening) return <span className="games__none">–</span>;
+  return (
+    <span className="games__opening" title={`${opening.name} (${opening.eco})`}>
+      <span className="games__name">{opening.name}</span>
+      <span className="games__tag">{opening.eco}</span>
+    </span>
+  );
+}
+
 interface GamesTableProps {
   games: GameSummary[];
   totals: Totals;
@@ -55,6 +66,7 @@ export function GamesTable({ games, totals, onOpen }: GamesTableProps) {
             <th scope="col">Date</th>
             <th scope="col">Opponent</th>
             <th scope="col">You</th>
+            <th scope="col">Opening</th>
             <th scope="col">Result</th>
             <th scope="col" className="games__num">
               Moves
@@ -94,6 +106,9 @@ export function GamesTable({ games, totals, onOpen }: GamesTableProps) {
                   </span>
                 </td>
                 <td className="games__side">{capitalised(game.player_color)}</td>
+                <td>
+                  <Opening opening={game.opening ?? null} />
+                </td>
                 <td>
                   {game.result && outcome ? (
                     <span className={`games__result games__result--${outcome}`}>

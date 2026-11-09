@@ -137,6 +137,10 @@ screens were built to are in the design probe's spec (token layer and interactio
 - **Grade styling in two places.** `movelist__dot--` and `movelist__mark--` (`play.css`) and
   `games__mark--` (`games.css`) each restate the grade-to-token map; there is no shared
   `.grade--*` rule.
+- **A phone rule that counts columns.** Under 900 px the games table hides its secondary columns
+  by position (`nth-child` in `games.css`) and sizes the ones it keeps the same way, so adding,
+  removing or moving a column means renumbering those selectors, or the wrong columns show on a
+  phone.
 - **Tokens nothing references from `src`.** `--duration-fast`, `--leading-heading`,
   `--status-ready`, `--status-busy` and the four `--overlay-*` tokens have no `var()` user in
   the stylesheets or the code. They are the prototype's values, kept for the states and
