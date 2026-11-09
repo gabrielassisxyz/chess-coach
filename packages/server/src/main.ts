@@ -21,6 +21,7 @@ import { httpExplorerFetcher, systemExplorerClock } from "./openings/explorer-cl
 import { generateExplorerPuzzles } from "./openings/from-explorer.js";
 import { generateOpeningPuzzles } from "./openings/from-games.js";
 import { generateItalianPuzzles } from "./openings/from-italian.js";
+import { loadOpeningNames } from "./openings/names.js";
 import { contentDir, dataDir, resolveAppRoot } from "./paths.js";
 import { ensurePuzzleRating } from "./puzzles/rating.js";
 import { seedPuzzles } from "./puzzles/seed.js";
@@ -59,6 +60,9 @@ const db = openDatabase(dataDir());
 // A bad puzzle entry throws here, naming <file>:<index>, before anything else starts.
 const seeded = seedPuzzles(db, contentDir());
 log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
+// A missing or malformed table throws here, naming <file>:<line>, before anything else starts.
+const openingNames = loadOpeningNames(contentDir());
+log.info("openings.names_loaded", { positions: openingNames.size });
 const puzzleRating = ensurePuzzleRating(db, systemClock);
 log.info("puzzles.rating", { rating: puzzleRating.rating, replayed: puzzleRating.replayed });
 const pool = new EnginePool(() => spawnStockfish());
@@ -143,6 +147,7 @@ if (engines.ok) {
 const app = buildApp({
   readiness: () => readiness,
   db,
+  openingNames,
   generateOpenings,
   generateExplorerOpenings,
   generateItalianOpenings,

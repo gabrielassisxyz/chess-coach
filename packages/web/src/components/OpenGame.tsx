@@ -162,6 +162,11 @@ export function OpenGame({
         </div>
         <header className="games__header">
           <h2 className="games__headline">{headline(game)}</h2>
+          {game.opening ? (
+            <p className="games__meta" data-testid="game-opening">
+              {`${game.opening.name} (${game.opening.eco})`}
+            </p>
+          ) : null}
           <p className="games__meta">{subline(game, summary)}</p>
         </header>
         <div className="games__moves">

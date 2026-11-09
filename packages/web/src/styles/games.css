@@ -92,11 +92,17 @@
   color: var(--text-2);
 }
 
-.games__opponent {
+.games__opponent,
+.games__opening {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   max-width: 18rem;
+}
+
+/* Wider than this and the table no longer fits the board column at 1440 px with the coach open. */
+.games__opening {
+  max-width: 14rem;
 }
 
 .games__name {
@@ -428,7 +434,8 @@
     table-layout: fixed;
   }
 
-  .games__table :is(th, td):is(:nth-child(3), :nth-child(5), :nth-child(7), :nth-child(8)) {
+  .games__table
+    :is(th, td):is(:nth-child(3), :nth-child(4), :nth-child(6), :nth-child(8), :nth-child(9)) {
     display: none;
   }
 
@@ -436,11 +443,11 @@
     width: 5rem;
   }
 
-  .games__table th:nth-child(4) {
+  .games__table th:nth-child(5) {
     width: 3.5rem;
   }
 
-  .games__table th:nth-child(6) {
+  .games__table th:nth-child(7) {
     width: 5.5rem;
   }
 

@@ -14,6 +14,7 @@ import { registerRoutineRoutes } from "./http/routine.js";
 import { type Log, silentLog } from "./log.js";
 import type { ExplorerResult } from "./openings/from-explorer.js";
 import type { GenerationResult } from "./openings/from-games.js";
+import { NO_OPENING_NAMES, type OpeningNames } from "./openings/names.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
 
 export interface Readiness {
@@ -25,6 +26,8 @@ export interface AppOptions {
   readiness?: () => Readiness;
   hub?: HubOptions;
   db?: Database;
+  /** Names the opening of each game from its positions; without it no game carries one. */
+  openingNames?: OpeningNames;
   /** Everything the import routes need besides the database; without it they are not mounted. */
   importer?: Omit<ImportRoutesOptions, "db">;
   /** What saving a Lichess token or a Chess.com account checks against; without it the routes are not mounted. */
@@ -68,7 +71,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
 
   if (options.db) {
     registerCardRoutes(app, options.db);
-    registerGameRoutes(app, options.db);
+    registerGameRoutes(app, options.db, options.openingNames ?? NO_OPENING_NAMES);
     registerProgressRoutes(app, options.db);
     registerPuzzleRoutes(app, options.db);
     registerRoutineRoutes(app, options.db);

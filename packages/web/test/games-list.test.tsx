@@ -34,9 +34,11 @@ function game(over: Partial<GameSummary> & { id: number }): GameSummary {
 }
 
 const chesscom = { source: "chesscom", opponent: "mateus_rj", opponent_rating: 438 } as const;
+const italian = { eco: "C50", name: "Italian Game" } as const;
+const scandinavian = { eco: "B01", name: "Scandinavian Defense: Main Line" } as const;
 const LIBRARY: GameSummary[] = [
-  game({ id: 1, result: "1-0" }),
-  game({ id: 2, result: "0-1", accuracy: 0.4, ...chesscom }),
+  game({ id: 1, result: "1-0", opening: italian }),
+  game({ id: 2, result: "0-1", accuracy: 0.4, opening: scandinavian, ...chesscom }),
   game({
     id: 3,
     result: "0-1",
@@ -124,18 +126,37 @@ describe("games table", () => {
     const cells = within(blundered).getAllByRole("cell");
     expect(cells.at(-1)?.textContent).toBe("3");
     const grading = within(rows()[2] as HTMLElement).getAllByRole("cell");
-    expect(grading[5]?.textContent).toBe("grading");
-    expect(grading[6]?.textContent).toBe("–");
+    expect(grading[6]?.textContent).toBe("grading");
     expect(grading[7]?.textContent).toBe("–");
+    expect(grading[8]?.textContent).toBe("–");
   });
 
-  it("names the opponent with the source tag and no opening column", async () => {
+  it("names the opponent with the source tag", async () => {
     mount(LIBRARY);
     await screen.findByRole("table");
     expect(within(rows()[1] as HTMLElement).getByText("mateus_rj 438")).toBeTruthy();
     expect(within(rows()[1] as HTMLElement).getByText("Chess.com")).toBeTruthy();
     expect(within(rows()[0] as HTMLElement).getByText("Stockfish 1100")).toBeTruthy();
-    expect(screen.queryByRole("columnheader", { name: "Opening" })).toBeNull();
+  });
+
+  it("gives the opening a column of its own, name and ECO code, with the full name on hover", async () => {
+    mount(LIBRARY);
+    await screen.findByRole("table");
+    const headers = screen.getAllByRole("columnheader").map((header) => header.textContent);
+    expect(headers.slice(0, 5)).toEqual(["Date", "Opponent", "You", "Opening", "Result"]);
+    const cell = within(rows()[1] as HTMLElement).getAllByRole("cell")[3] as HTMLElement;
+    expect(within(cell).getByText("Scandinavian Defense: Main Line")).toBeTruthy();
+    expect(within(cell).getByText("B01")).toBeTruthy();
+    expect(cell.querySelector("[title]")?.getAttribute("title")).toBe(
+      "Scandinavian Defense: Main Line (B01)",
+    );
+  });
+
+  it("leaves the opening cell as a dash when no position was named", async () => {
+    mount(LIBRARY);
+    await screen.findByRole("table");
+    const cell = within(rows()[3] as HTMLElement).getAllByRole("cell")[3] as HTMLElement;
+    expect(cell.textContent).toBe("–");
   });
 
   it("filters to Lost and puts the totals of the shown rows in the footer", async () => {

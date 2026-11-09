@@ -1,12 +1,22 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  GameDetailResponseSchema,
+  GameListResponseSchema,
+  GameSummarySchema,
+} from "@chess-coach/shared";
+import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertGradedGame, START_FEN } from "../../test/fixture-game.js";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { insertCard } from "../db/srs.js";
 import { classifyCpLoss } from "../engine/evaluate.js";
+import { loadOpeningNames } from "../openings/names.js";
+import { contentDir } from "../paths.js";
+
+const openingNames = loadOpeningNames(contentDir());
 
 let tmp: string;
 let db: Database;
@@ -20,8 +30,8 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-async function get(url: string) {
-  const app = buildApp({ db });
+async function get(url: string, withNames = true) {
+  const app = buildApp(withNames ? { db, openingNames } : { db });
   const response = await app.inject({ method: "GET", url });
   await app.close();
   return response;
@@ -49,6 +59,7 @@ describe("GET /api/games", () => {
       worst_moment: { ply: 11, san: "e4", cp_loss: 420, classification: "blunder" },
       cards_count: 0,
       mistakes_count: 1,
+      opening: null,
       source: "coach",
       source_url: null,
       opponent: null,
@@ -207,5 +218,86 @@ describe("GET /api/games/:id", () => {
       expect(response.statusCode).toBe(404);
       expect(response.json()).toMatchObject({ error: "game_not_found" });
     }
+  });
+});
+
+// A finished game whose moves carry the real position after each ply, which is what names it.
+function insertPlayedGame(sans: string[]): number {
+  const game = db
+    .prepare(
+      `INSERT INTO games (started_at, finished_at, player_color, target_elo, initial_fen, phase, result, termination)
+       VALUES ('t', 't2', 'white', 800, ?, 'finished', '1-0', 'checkmate') RETURNING id`,
+    )
+    .get(START_FEN) as { id: number };
+  const insert = db.prepare(
+    `INSERT INTO moves (game_id, ply, san, uci, fen_before, fen_after, is_player)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const chess = new Chess();
+  sans.forEach((san, index) => {
+    const fenBefore = chess.fen();
+    const move = chess.move(san);
+    const uci = `${move.from}${move.to}${move.promotion ?? ""}`;
+    insert.run(game.id, index + 1, move.san, uci, fenBefore, chess.fen(), index % 2 === 0 ? 1 : 0);
+  });
+  return game.id;
+}
+
+const ITALIAN_BY_TRANSPOSITION = ["Nf3", "Nc6", "e4", "e5", "Bc4"];
+const SCANDINAVIAN_PAST_THEORY = ["e4", "d5", "exd5", "Qxd5", "Nc3", "Qa5", "d4", "c6", "Nf3"];
+
+describe("the opening of a game", () => {
+  it("names each listed game by the last named position of its moves", async () => {
+    const italian = insertPlayedGame(ITALIAN_BY_TRANSPOSITION);
+    const scandinavian = insertPlayedGame(SCANDINAVIAN_PAST_THEORY);
+    const { games } = (await get("/api/games")).json() as {
+      games: { id: number; opening: unknown }[];
+    };
+    expect(games.find((game) => game.id === italian)?.opening).toEqual({
+      eco: "C50",
+      name: "Italian Game",
+    });
+    expect(games.find((game) => game.id === scandinavian)?.opening).toEqual({
+      eco: "B01",
+      name: "Scandinavian Defense: Main Line",
+    });
+  });
+
+  it("is null when no position of the game is named", async () => {
+    const id = insertGradedGame(db);
+    const list = (await get("/api/games")).json() as { games: { opening: unknown }[] };
+    expect(list.games[0]?.opening).toBeNull();
+    const detail = (await get(`/api/games/${id}`)).json() as { game: { opening: unknown } };
+    expect(detail.game.opening).toBeNull();
+  });
+
+  it("names the game on the detail route as on the list", async () => {
+    const id = insertPlayedGame(ITALIAN_BY_TRANSPOSITION);
+    const { game } = (await get(`/api/games/${id}`)).json() as { game: { opening: unknown } };
+    expect(game.opening).toEqual({ eco: "C50", name: "Italian Game" });
+  });
+
+  // The browser reads both routes through these schemas, and a schema drops any key it does not
+  // name, so a field missing from the shared type would reach the screen as no opening at all.
+  it("survives the shared schemas the browser reads both routes through", async () => {
+    const id = insertPlayedGame(ITALIAN_BY_TRANSPOSITION);
+    const [listed] = GameListResponseSchema.parse((await get("/api/games")).json()).games;
+    const italian = { eco: "C50", name: "Italian Game" };
+    expect(listed?.opening).toEqual(italian);
+    const detail = GameDetailResponseSchema.parse((await get(`/api/games/${id}`)).json());
+    expect(detail.game.opening).toEqual(italian);
+    const { opening, ...sentBeforeTheField } = listed as NonNullable<typeof listed>;
+    expect(opening).not.toBeNull();
+    expect(GameSummarySchema.parse(sentBeforeTheField).opening).toBeNull();
+  });
+
+  it("leaves every game unnamed when the server holds no table", async () => {
+    const id = insertPlayedGame(ITALIAN_BY_TRANSPOSITION);
+    const list = (await get("/api/games", false)).json() as { games: { opening: unknown }[] };
+    expect(list.games[0]?.opening).toBeNull();
+    const detail = (await get(`/api/games/${id}`, false)).json() as {
+      game: { opening: unknown };
+    };
+    expect(detail.game.opening).toBeNull();
   });
 });

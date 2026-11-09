@@ -1,4 +1,9 @@
-import type { GameDetailResponse, GameListResponse, GameMove } from "@chess-coach/shared";
+import type {
+  GameDetailResponse,
+  GameListResponse,
+  GameMove,
+  OpeningName,
+} from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -10,6 +15,7 @@ import {
   type MoveRecord,
 } from "../db/games.js";
 import type { Database } from "../db/open.js";
+import type { OpeningNames } from "../openings/names.js";
 
 export const DEFAULT_GAME_LIMIT = 50;
 export const MAX_GAME_LIMIT = 500;
@@ -59,7 +65,12 @@ function sourceFields(game: GameRecord) {
   };
 }
 
-export function registerGameRoutes(app: FastifyInstance, db: Database): void {
+// The position after each ply, in the order played, is what names a game's opening.
+function openingOf(names: OpeningNames, moves: MoveRecord[]): OpeningName | null {
+  return names.ofGame(moves.map((move) => move.fenAfter));
+}
+
+export function registerGameRoutes(app: FastifyInstance, db: Database, names: OpeningNames): void {
   app.get("/api/games", async (request, reply): Promise<GameListResponse | undefined> => {
     const parsed = listQuery.safeParse(request.query);
     if (!parsed.success) {
@@ -80,6 +91,7 @@ export function registerGameRoutes(app: FastifyInstance, db: Database): void {
         accuracy:
           row.gradedStudentMoves === 0 ? null : row.accurateStudentMoves / row.gradedStudentMoves,
         ...momentFields(row),
+        opening: openingOf(names, listMoves(db, row.game.id)),
         ...sourceFields(row.game),
       })),
     };
@@ -93,6 +105,7 @@ export function registerGameRoutes(app: FastifyInstance, db: Database): void {
       return undefined;
     }
     const game = summary.game;
+    const moves = listMoves(db, game.id);
     return {
       game: {
         id: game.id,
@@ -104,8 +117,9 @@ export function registerGameRoutes(app: FastifyInstance, db: Database): void {
         termination: game.termination,
         initial_fen: game.initialFen,
         ...momentFields(summary),
+        opening: openingOf(names, moves),
         ...sourceFields(game),
-        moves: listMoves(db, game.id).map(gameMove),
+        moves: moves.map(gameMove),
       },
     };
   });

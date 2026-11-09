@@ -176,6 +176,17 @@ describe("open game header and position line", () => {
     expect(screen.getByText(/^Coached · .+ · 0–1 in 3 · accuracy 50%$/)).toBeTruthy();
   });
 
+  it("names the opening and its ECO code under the title when a position was named", async () => {
+    detail = { ...game, opening: { eco: "C50", name: "Italian Game" } };
+    await openGame();
+    expect(screen.getByTestId("game-opening").textContent).toBe("Italian Game (C50)");
+  });
+
+  it("says nothing about the opening when no position was named", async () => {
+    await openGame();
+    expect(screen.queryByTestId("game-opening")).toBeNull();
+  });
+
   it("says which move it is on above the board, three steps in", async () => {
     await openGame();
     expect(screen.getByTestId("position-line").textContent).toBe("move 0 of 6");
