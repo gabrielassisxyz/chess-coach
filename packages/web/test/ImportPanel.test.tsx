@@ -2,9 +2,10 @@ import type { ChessComListedGame } from "@chess-coach/shared";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImportPanel } from "../src/components/ImportPanel.js";
+import type { ConnectionsApi } from "../src/state/connections-api.js";
 import { summaryLabel } from "../src/state/games.js";
 import type { ImportApi } from "../src/state/import-api.js";
-import { COACH_GAME_SOURCE, idleImportApi } from "./fixtures.js";
+import { COACH_GAME_SOURCE, idleConnectionsApi, idleImportApi } from "./fixtures.js";
 
 afterEach(cleanup);
 
@@ -32,6 +33,51 @@ async function listGames(): Promise<void> {
 }
 
 describe("ImportPanel", () => {
+  const savedAccount = (name: string | null): ConnectionsApi => ({
+    ...idleConnectionsApi,
+    get: async () => ({ lichess_token_set: false, chesscom_username: name }),
+  });
+
+  it("starts with the saved account", async () => {
+    render(
+      <ImportPanel onChanged={vi.fn()} api={idleImportApi} connections={savedAccount("someone")} />,
+    );
+    await waitFor(() =>
+      expect((screen.getByLabelText("Username") as HTMLInputElement).value).toBe("someone"),
+    );
+  });
+
+  it("reads the account again on a new revision and keeps the rest of the form", async () => {
+    let saved: string | null = null;
+    const connections: ConnectionsApi = {
+      ...idleConnectionsApi,
+      get: async () => ({ lichess_token_set: false, chesscom_username: saved }),
+    };
+    const props = { onChanged: vi.fn(), api: idleImportApi, connections };
+    const { rerender } = render(<ImportPanel {...props} connectionRevision={0} />);
+    const pgn = screen.getByLabelText("Paste a PGN") as HTMLTextAreaElement;
+    fireEvent.change(pgn, { target: { value: "1. e4 *" } });
+    saved = "someone";
+    rerender(<ImportPanel {...props} connectionRevision={1} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText("Username") as HTMLInputElement).value).toBe("someone"),
+    );
+    expect((screen.getByLabelText("Paste a PGN") as HTMLTextAreaElement).value).toBe("1. e4 *");
+  });
+
+  it("stays empty with no saved account", async () => {
+    const get = vi.fn(async () => ({ lichess_token_set: false, chesscom_username: null }));
+    render(
+      <ImportPanel
+        onChanged={vi.fn()}
+        api={idleImportApi}
+        connections={{ ...idleConnectionsApi, get }}
+      />,
+    );
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    expect((screen.getByLabelText("Username") as HTMLInputElement).value).toBe("");
+  });
+
   it("lists games, imports the picked ones and reports the counts", async () => {
     const importChessCom = vi.fn(async () => ({ imported: 1, skipped: 0 }));
     const onChanged = vi.fn();

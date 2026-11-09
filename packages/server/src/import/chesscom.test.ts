@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { FakeChessCom } from "../../test/fakes/fake-chesscom.js";
 import {
@@ -11,6 +12,49 @@ import {
   parseMonth,
   USER_AGENT,
 } from "./chesscom.js";
+
+describe("the profile check", () => {
+  const PROFILE = readFileSync(
+    new URL("../../test/fixtures/chesscom/player.json", import.meta.url),
+    "utf8",
+  );
+  const answering = (status: number, body: string) => {
+    const urls: string[] = [];
+    const fetcher = httpFetcher((async (url: string) => {
+      urls.push(url);
+      return new Response(body, { status });
+    }) as typeof fetch);
+    return { fetcher, urls };
+  };
+
+  it("finds an account from a recorded profile, asking the lowercased name", async () => {
+    const { fetcher, urls } = answering(200, PROFILE);
+    await expect(fetcher.playerExists("Erik")).resolves.toBe(true);
+    expect(urls).toEqual(["https://api.chess.com/pub/player/erik"]);
+  });
+
+  it("reads a 404 as an account that does not exist", async () => {
+    const { fetcher } = answering(404, '{"code":0,"message":"User not found."}');
+    await expect(fetcher.playerExists("nobody_here")).resolves.toBe(false);
+  });
+
+  it.each([429, 500])("reports a %d as upstream, not as a missing account", async (status) => {
+    const { fetcher } = answering(status, "{}");
+    await expect(fetcher.playerExists("someone")).rejects.toMatchObject({ code: "upstream" });
+  });
+
+  it("reports a 200 with no username as upstream", async () => {
+    const { fetcher } = answering(200, "{}");
+    await expect(fetcher.playerExists("someone")).rejects.toMatchObject({ code: "upstream" });
+  });
+
+  it("reports a network failure as upstream", async () => {
+    const fetcher = httpFetcher((async () => {
+      throw new Error("offline");
+    }) as typeof fetch);
+    await expect(fetcher.playerExists("someone")).rejects.toMatchObject({ code: "upstream" });
+  });
+});
 
 describe("assertUsername", () => {
   it("accepts the Chess.com alphabet and lowercases it for the URL", () => {

@@ -12,4 +12,9 @@ describe.skipIf(process.env.CHESS_COACH_CHESSCOM !== "1")("real Chess.com", () =
       expect(typeof game.end_time).toBe("number");
     }
   }, 30_000);
+
+  it("tells an existing account from a missing one", async () => {
+    await expect(httpFetcher().playerExists("erik")).resolves.toBe(true);
+    await expect(httpFetcher().playerExists("no-such-account-x9")).resolves.toBe(false);
+  }, 30_000);
 });

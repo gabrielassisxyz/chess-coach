@@ -6,6 +6,7 @@ import type {
 } from "@chess-coach/shared";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
+import { storedChessComUsername } from "../db/connections.js";
 import { getIdsBySource } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import {
@@ -172,7 +173,9 @@ export function registerImportRoutes(app: FastifyInstance, options: ImportRoutes
     const body = pgnBody.safeParse(request.body);
     if (!body.success)
       return fail(reply, 400, "invalid_body", "pgn is required and at most 100000 bytes");
-    const color = body.data.student_color ?? colorFromHeaders(body.data.pgn, options.usernames);
+    const saved = storedChessComUsername(db);
+    const accounts = saved === null ? options.usernames : [...options.usernames, saved];
+    const color = body.data.student_color ?? colorFromHeaders(body.data.pgn, accounts);
     if (!color) {
       return fail(
         reply,

@@ -1,11 +1,13 @@
 import type { GameDetail, GameSummary } from "@chess-coach/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BoardFactory } from "../components/Board.js";
+import { ConnectionsPanel } from "../components/ConnectionsPanel.js";
 import { GamesTable } from "../components/GamesTable.js";
 import { ImportFailureCard } from "../components/ImportFailureCard.js";
 import { ImportPanel } from "../components/ImportPanel.js";
 import { OpenGame } from "../components/OpenGame.js";
 import type { ServerApi } from "../hooks/useServer.js";
+import { type ConnectionsApi, serverConnectionsApi } from "../state/connections-api.js";
 import {
   filterGames,
   gradingCount,
@@ -23,6 +25,7 @@ export interface GamesProps {
   server: ServerApi;
   api?: GamesApi;
   importApi?: ImportApi;
+  connectionsApi?: ConnectionsApi;
   createBoard?: BoardFactory | undefined;
   pollMs?: number;
   /** "Start a coached game" on the empty screen. */
@@ -106,6 +109,7 @@ export function Games({
   server,
   api = serverGamesApi,
   importApi = serverImportApi,
+  connectionsApi = serverConnectionsApi,
   createBoard,
   pollMs = STATUS_POLL_MS,
   onOpenPlay,
@@ -117,6 +121,8 @@ export function Games({
   const [source, setSource] = useState<SourceFilter>("all");
   const [result, setResult] = useState<ResultFilter>("all");
   const [importing, setImporting] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectionRevision, setConnectionRevision] = useState(0);
   const { send } = server;
 
   const grading = useGradingStatus(importApi, pollMs, reload);
@@ -160,7 +166,21 @@ export function Games({
 
   const queued = gradingCount(grading.status);
   const gradingFailures = grading.status?.failed ?? 0;
-  const panel = <ImportPanel api={importApi} onChanged={changed} onImported={card.report} />;
+  const panel = (
+    <ImportPanel
+      api={importApi}
+      connections={connectionsApi}
+      connectionRevision={connectionRevision}
+      onChanged={changed}
+      onImported={card.report}
+    />
+  );
+  const connectionsPanel = (
+    <ConnectionsPanel
+      api={connectionsApi}
+      onChanged={() => setConnectionRevision((revision) => revision + 1)}
+    />
+  );
 
   return (
     <section className="screen screen--wide games" aria-label="Games">
@@ -197,6 +217,14 @@ export function Games({
             >
               Import from Chess.com…
             </button>
+            <button
+              type="button"
+              className="button"
+              aria-expanded={connecting}
+              onClick={() => setConnecting(!connecting)}
+            >
+              Connections…
+            </button>
           </>
         ) : null}
       </div>
@@ -221,6 +249,7 @@ export function Games({
           </button>
         </div>
       ) : null}
+      {listing.status === "ready" && games.length === 0 ? connectionsPanel : null}
       {listing.status === "ready" && games.length === 0 ? (
         <div className="games__first">
           {panel}
@@ -241,6 +270,7 @@ export function Games({
       {listing.status === "ready" && games.length > 0 ? (
         <>
           {importing ? panel : null}
+          {connecting ? connectionsPanel : null}
           {shown.length === 0 ? (
             <p className="screen__note">No games match these filters.</p>
           ) : (

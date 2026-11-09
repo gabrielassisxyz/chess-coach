@@ -1,10 +1,14 @@
 import type { ChessComListedGame, ImportResult } from "@chess-coach/shared";
-import { type FormEvent, useCallback, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type ConnectionsApi, serverConnectionsApi } from "../state/connections-api.js";
 import { type TimeClass, timeClassOf } from "../state/games.js";
 import { type ImportApi, serverImportApi } from "../state/import-api.js";
 
 export interface ImportPanelProps {
   api?: ImportApi;
+  connections?: ConnectionsApi;
+  /** Changes when a connection was saved, so the account is read again without resetting the form. */
+  connectionRevision?: number;
   /** Called when games were added, so the list and the grading queue can refresh. */
   onChanged(): void;
   /** Called with the result of a Chess.com import, so a partial one can be shown and retried. */
@@ -28,7 +32,13 @@ function wanted(game: ChessComListedGame, classes: Set<TimeClass>): boolean {
   return timeClass === null || classes.has(timeClass);
 }
 
-export function ImportPanel({ api = serverImportApi, onChanged, onImported }: ImportPanelProps) {
+export function ImportPanel({
+  api = serverImportApi,
+  connections = serverConnectionsApi,
+  connectionRevision = 0,
+  onChanged,
+  onImported,
+}: ImportPanelProps) {
   const [username, setUsername] = useState("");
   const [from, setFrom] = useState(currentMonth());
   const [to, setTo] = useState(currentMonth());
@@ -38,6 +48,21 @@ export function ImportPanel({ api = serverImportApi, onChanged, onImported }: Im
   const [pgnColor, setPgnColor] = useState<"" | "white" | "black">("");
   const [message, setMessage] = useState<string | null>(null);
   const [classes, setClasses] = useState<Set<TimeClass>>(new Set(["rapid", "blitz"]));
+
+  // Only an empty field is filled: the answer can arrive after the student started typing.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the revision is what asks for a new read.
+  useEffect(() => {
+    let live = true;
+    connections.get().then(
+      ({ chesscom_username: saved }) => {
+        if (live && saved !== null) setUsername((typed) => (typed === "" ? saved : typed));
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [connections, connectionRevision]);
 
   const run = useCallback(async (work: () => Promise<string>): Promise<void> => {
     setMessage(null);

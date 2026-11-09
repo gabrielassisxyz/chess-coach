@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { Database } from "./db/open.js";
 import { registerCardRoutes } from "./http/cards.js";
 import { registerClientLogRoute } from "./http/client-log.js";
+import { type ConnectionRoutesOptions, registerConnectionRoutes } from "./http/connections.js";
 import { registerGameRoutes } from "./http/games.js";
 import { type ImportRoutesOptions, registerImportRoutes } from "./http/import.js";
 import { registerOpeningRoutes } from "./http/openings.js";
@@ -26,6 +27,8 @@ export interface AppOptions {
   db?: Database;
   /** Everything the import routes need besides the database; without it they are not mounted. */
   importer?: Omit<ImportRoutesOptions, "db">;
+  /** What saving a Lichess token or a Chess.com account checks against; without it the routes are not mounted. */
+  connections?: Omit<ConnectionRoutesOptions, "db" | "log">;
   /** Builds the opening drills from graded games; without it the route is not mounted. */
   generateOpenings?: () => Promise<GenerationResult>;
   /** Expands the drills with the Lichess explorer; only asked for by name, never after an import. */
@@ -71,6 +74,9 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     registerRoutineRoutes(app, options.db);
     if (options.importer) {
       registerImportRoutes(app, { db: options.db, log, ...options.importer });
+    }
+    if (options.connections) {
+      registerConnectionRoutes(app, { db: options.db, log, ...options.connections });
     }
     if (options.generateOpenings) {
       registerOpeningRoutes(
