@@ -361,3 +361,12 @@
     grid-column: 1;
   }
 }
+
+.line-card {
+  align-items: center;
+}
+
+.line-card__moves {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}

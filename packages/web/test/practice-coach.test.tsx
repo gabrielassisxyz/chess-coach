@@ -8,6 +8,7 @@ import {
   practiceWaitingLabel,
 } from "../src/state/practice.js";
 import { ASK_COACH_LABEL } from "../src/state/practice-item.js";
+import { lineCardsByAnchor } from "../src/state/tool-summary.js";
 import { type ChatState, chatReducer, initialChatState } from "../src/state/transcript.js";
 import { FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
@@ -261,5 +262,128 @@ describe("a puzzle solved first try", () => {
     openOnPractice(puzzle({ status: "solved", coach_comment: null }));
     expect(screen.queryByRole("button", { name: ASK_COACH_LABEL })).toBeNull();
     expect(screen.getByText(PRACTICE_WAITING_LABEL)).toBeTruthy();
+  });
+});
+
+const LINE_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+function offerCalls(): ChatItemLike[] {
+  return [
+    { type: "text", key: "q", role: "user" },
+    {
+      type: "tool",
+      key: "s1",
+      name: "mcp__chess__show_position",
+      result: { output: JSON.stringify({ offered: true, start_fen: LINE_FEN, moves: [] }) },
+    },
+    {
+      type: "tool",
+      key: "m1",
+      name: "mcp__chess__make_move",
+      result: {
+        output: JSON.stringify({ offered: true, start_fen: LINE_FEN, moves: ["e4", "e5"] }),
+      },
+    },
+    { type: "text", key: "a", role: "assistant" },
+  ];
+}
+
+type ChatItemLike = {
+  type: string;
+  key: string;
+  role?: string;
+  name?: string;
+  result?: { output: unknown; isError?: boolean };
+};
+
+describe("the coach's line card", () => {
+  it("hangs one card per show_position under the last coach message of the turn", () => {
+    const anchored = lineCardsByAnchor(offerCalls());
+    expect([...anchored.keys()]).toEqual(["a"]);
+    expect(anchored.get("a")).toEqual([{ key: "s1", fen: LINE_FEN, moves: ["e4", "e5"] }]);
+  });
+
+  it("makes no card for a demo the board showed, a refused call or another turn", () => {
+    const shown = { output: JSON.stringify({ kind: "demo", fen: LINE_FEN }) };
+    const items = offerCalls().map((item) =>
+      item.type === "tool" ? { ...item, result: shown } : item,
+    );
+    expect(lineCardsByAnchor(items).size).toBe(0);
+    const refused = offerCalls().map((item) =>
+      item.type === "tool"
+        ? { ...item, result: { ...(item.result as object), isError: true } as never }
+        : item,
+    );
+    expect(lineCardsByAnchor(refused).size).toBe(0);
+    const twoTurns = [
+      ...offerCalls(),
+      { type: "text", key: "q2", role: "user" },
+      { type: "text", key: "a2", role: "assistant" },
+    ];
+    expect([...lineCardsByAnchor(twoTurns).keys()]).toEqual(["a"]);
+  });
+
+  it("opens the line only when the student clicks the card", () => {
+    render(<App />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: {
+          play: [],
+          games: [],
+          practice: [
+            {
+              id: 1,
+              seq: 1,
+              role: "user",
+              kind: "text",
+              content: { text: "why?" },
+              created_at: "t",
+            },
+            {
+              id: 2,
+              seq: 2,
+              role: "assistant",
+              kind: "tool_use",
+              content: {
+                toolUseId: "u1",
+                name: "mcp__chess__show_position",
+                input: { fen: LINE_FEN },
+              },
+              created_at: "t",
+            },
+            {
+              id: 3,
+              seq: 3,
+              role: "user",
+              kind: "tool_result",
+              content: {
+                toolUseId: "u1",
+                output: JSON.stringify({ offered: true, start_fen: LINE_FEN, moves: [] }),
+              },
+              created_at: "t",
+            },
+            {
+              id: 4,
+              seq: 4,
+              role: "assistant",
+              kind: "text",
+              content: { text: "Abra a linha abaixo." },
+              created_at: "t",
+            },
+          ],
+        },
+        activity: puzzle({ status: "solved" }),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+    expect(FakeSocket.latest.sent.some((m) => (m as { type: string }).type === "show_line")).toBe(
+      false,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show line on board" }));
+    expect(FakeSocket.latest.sent).toContainEqual(
+      expect.objectContaining({ type: "show_line", fen: LINE_FEN, moves: [] }),
+    );
   });
 });

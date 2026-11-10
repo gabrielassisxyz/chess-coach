@@ -12,8 +12,10 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import type { ServerApi } from "../hooks/useServer.js";
 import { coachErrorHint } from "../state/coach-hint.js";
 import { coachStateWords, DEFAULT_COACH_IDLE, isConversationStale } from "../state/coach-panel.js";
+import { lineCardsByAnchor } from "../state/tool-summary.js";
 import type { ChatItem } from "../state/transcript.js";
 import { ApprovalCard } from "./ApprovalCard.js";
+import { CoachLineCards } from "./PracticeCoachActions.js";
 import { ToolCard } from "./ToolCard.js";
 
 // The coach writes Markdown; links would take the student off-site and images
@@ -185,6 +187,7 @@ export function Chat({
     submit();
   };
 
+  const lineCards = lineCardsByAnchor(items);
   const lastCoachIndex = items.findLastIndex(
     (item) => item.type === "text" && item.role === "assistant",
   );
@@ -241,6 +244,9 @@ export function Chat({
           {server.items.map((item, index) => (
             <Fragment key={item.key}>
               <ItemView item={item} />
+              {lineCards.has(item.key) ? (
+                <CoachLineCards cards={lineCards.get(item.key) ?? []} server={server} />
+              ) : null}
               {index === lastCoachIndex ? actions : null}
             </Fragment>
           ))}

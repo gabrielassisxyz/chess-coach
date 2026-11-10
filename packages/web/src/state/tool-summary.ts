@@ -52,8 +52,13 @@ function sentenceFor(base: string, input: unknown, result: Fields | null): strin
       return best ? `Analysed the position: ${best}` : "Analysed the position";
     }
     case "show_position":
-      return "Showed a position on the board";
+      return result?.offered === true
+        ? "Offered a line to open on the board"
+        : "Showed a position on the board";
     case "make_move":
+      if (result?.offered === true) {
+        return `Added ${field(input, "san") ?? "a move"} to the offered line`;
+      }
       return `Played ${field(input, "san") ?? "a move"} on the demo board`;
     case "get_game":
       return "Read the game";
@@ -112,4 +117,54 @@ export function toolSummary(
   if (refusal !== null) return `${base} refused: ${refusal}`;
   if (isError) return `${base} failed`;
   return sentenceFor(base, input, result);
+}
+
+export const SHOW_LINE_LABEL = "Show line on board";
+
+export interface LineCard {
+  key: string;
+  fen: string;
+  moves: string[];
+}
+
+type ToolLine = { type: string; key: string } & Partial<{
+  role: string;
+  name: string;
+  input: unknown;
+  result: { output: unknown; isError?: boolean };
+}>;
+
+// The coach's `show_position` and `make_move` calls that Practice answered with an offer become one
+// card per show_position, hung under the last coach message of the turn (the stretch between two
+// student messages). Built from the stored tool calls alone, so a refresh rebuilds it.
+export function lineCardsByAnchor(items: readonly ToolLine[]): Map<string, LineCard[]> {
+  const anchored = new Map<string, LineCard[]>();
+  let turn: LineCard[] = [];
+  let anchor: string | null = null;
+  const close = (): void => {
+    if (anchor !== null && turn.length > 0) anchored.set(anchor, turn);
+    turn = [];
+    anchor = null;
+  };
+  for (const item of items) {
+    if (item.type === "divider" || (item.type === "text" && item.role === "user")) {
+      close();
+      continue;
+    }
+    if (item.type === "text") anchor = item.key;
+    if (item.type !== "tool" || !item.name || !item.result || item.result.isError) continue;
+    const out = parseToolOutput(item.result.output);
+    if (out?.offered !== true) continue;
+    anchor ??= item.key;
+    const base = toolBaseName(item.name);
+    if (base === "show_position" && typeof out.start_fen === "string") {
+      turn.push({ key: item.key, fen: out.start_fen, moves: [] });
+    } else if (base === "make_move" && Array.isArray(out.moves) && turn.length > 0) {
+      (turn[turn.length - 1] as LineCard).moves = out.moves.filter(
+        (move): move is string => typeof move === "string",
+      );
+    }
+  }
+  close();
+  return anchored;
 }
