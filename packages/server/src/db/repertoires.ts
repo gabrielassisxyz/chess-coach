@@ -1,8 +1,11 @@
 import type { Database } from "./open.js";
 
 export type RepertoireSide = "white" | "black";
-/** How a move entered a variation: fixed by the opening, popular in the explorer, or the engine's. */
-export type RepertoireMoveSource = "setup" | "explorer" | "engine";
+/**
+ * How a move entered a variation: fixed by the opening, popular in the explorer, the engine's, or
+ * a reply stored past the coverage goal because it is the most played one there.
+ */
+export type RepertoireMoveSource = "setup" | "explorer" | "engine" | "mainline";
 
 export interface RepertoireRow {
   id: number;
@@ -53,9 +56,20 @@ export interface StoredRepertoireOwnMove {
   move_san: string;
 }
 
+/** A reply stored past the coverage goal, read back so a rerun follows it instead of choosing again. */
+export interface StoredRepertoireContinuation {
+  move_uci: string;
+  share: number | null;
+  source: "mainline" | "engine";
+}
+
 export interface RepertoireCounts {
   ownMoves: number;
   replies: number;
+  /** Replies stored past the coverage goal as the most played one. */
+  mainlineReplies: number;
+  /** Replies stored past the coverage goal as the engine's best, where the explorer had too few games. */
+  engineReplies: number;
   deepestPly: number;
   total: number;
 }
@@ -133,6 +147,23 @@ export function insertRepertoireOwnMove(db: Database, move: NewRepertoireOwnMove
     move.results?.draws ?? null,
     move.results?.losses ?? null,
   );
+}
+
+// The engine's answer is not repeatable and the explorer's moves with its cache, so a position that
+// already has its reply past the goal keeps it: the student has memorized it by then.
+export function findRepertoireContinuations(
+  db: Database,
+  repertoireId: number,
+  positionKey: string,
+): StoredRepertoireContinuation[] {
+  return db
+    .prepare(
+      `SELECT move_uci, share, source FROM repertoire_positions
+       WHERE repertoire_id = ? AND position_key = ? AND kind = 'reply'
+         AND source IN ('mainline', 'engine')
+       ORDER BY id`,
+    )
+    .all(repertoireId, positionKey) as StoredRepertoireContinuation[];
 }
 
 // One row per reply: a likelier line to the same position takes it over, and a rerun changes nothing.
@@ -238,6 +269,8 @@ export function repertoireCounts(db: Database, repertoireId: number): Repertoire
       `SELECT COUNT(*) AS total,
               COALESCE(SUM(kind = 'own'), 0) AS own_moves,
               COALESCE(SUM(kind = 'reply'), 0) AS replies,
+              COALESCE(SUM(kind = 'reply' AND source = 'mainline'), 0) AS mainline_replies,
+              COALESCE(SUM(kind = 'reply' AND source = 'engine'), 0) AS engine_replies,
               COALESCE(MAX(ply), 0) AS deepest_ply
        FROM repertoire_positions WHERE repertoire_id = ?`,
     )
@@ -245,11 +278,15 @@ export function repertoireCounts(db: Database, repertoireId: number): Repertoire
     total: number;
     own_moves: number;
     replies: number;
+    mainline_replies: number;
+    engine_replies: number;
     deepest_ply: number;
   };
   return {
     ownMoves: row.own_moves,
     replies: row.replies,
+    mainlineReplies: row.mainline_replies,
+    engineReplies: row.engine_replies,
     deepestPly: row.deepest_ply,
     total: row.total,
   };

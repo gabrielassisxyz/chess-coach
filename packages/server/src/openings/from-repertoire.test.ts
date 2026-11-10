@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +27,7 @@ import { positionKey } from "./from-games.js";
 import {
   generateRepertoire,
   REPERTOIRE_MAX_PLY,
+  REPERTOIRE_MIN_REACH,
   type RepertoireOptions,
   type RepertoireResult,
 } from "./from-repertoire.js";
@@ -35,6 +37,8 @@ const SETUP = ["e4", "e5", "Nf3", "Nc6", "Bc4"];
 const BEFORE_BC4 = SETUP.slice(0, 4);
 const AFTER_BC5 = [...SETUP, "Bc5"];
 const AFTER_C3 = [...AFTER_BC5, "c3"];
+const BEFORE_CXD4 = [...AFTER_C3, "Nf6", "d4", "exd4"];
+const AFTER_CXD4 = [...BEFORE_CXD4, "cxd4"];
 
 function fenOf(line: string[]): string {
   const game = new Chess();
@@ -109,6 +113,8 @@ function forwardMove(fen: string): Move | undefined {
 /** Scores the moves a test writes out; an unwritten position has one forward move alone. */
 class RepertoireFakeEngine implements Searcher {
   readonly requests: SearchRequest[] = [];
+  /** Names no move where Black is to move, as an engine that was never asked for replies would. */
+  blindToBlack = false;
   private readonly scripted = new Map<string, Array<{ moves: string[]; score: number }>>();
 
   write(line: string[], scores: Array<[uci: string, score: number]>): this {
@@ -127,6 +133,9 @@ class RepertoireFakeEngine implements Searcher {
 
   async search(request: SearchRequest): Promise<SearchResult> {
     this.requests.push(request);
+    if (this.blindToBlack && request.fen.split(" ")[1] === "b") {
+      return { fen: request.fen, bestmove: null, lines: [] };
+    }
     const written = this.scripted.get(positionKey(request.fen));
     // Stockfish answers as many lines as MultiPV asks for, and too few would change White's pick.
     const lines = (written ?? forwardMoveLines(request.fen)).slice(0, request.multipv ?? 1);
@@ -311,6 +320,78 @@ function writeItalianTree(): void {
       ],
     );
 }
+
+// 6.cxd4 is reached at 6.78% of the games and the biggest reply to it holds 7.5% of those: under
+// 1 in 50, so the branching rule ends the line there although the position has thousands of games.
+function writeSpreadAfterCxd4(): void {
+  explorer.write(
+    AFTER_CXD4,
+    EXPLORER_RATINGS,
+    { "Bb4+": 600, Nxd4: 500, Nxe4: 450, d5: 300, "O-O": 250 },
+    8000,
+  );
+}
+
+const AFTER_BE7 = [...SETUP, "Nf6", "d3", "Be7"];
+const AFTER_A3 = [...AFTER_BE7, "a3"];
+const MEETING = [...SETUP, "Nf6", "d3", "Bc5"];
+
+// 3...Nf6 4.d3 Bc5 and 3...Bc5 4.d3 Nf6 meet in one position. The first way is the likelier one and
+// is kept by the branching rule, replies included; the second has too few games to name a reply, so
+// it is a line end whose continuation, the engine's 4...Nf6, leads into the meeting position.
+function writeTranspositionIntoLineEnd(): void {
+  explorer
+    .write(SETUP, EXPLORER_RATINGS, { Nf6: 40000, Bc5: 30000 }, 100000)
+    .write(AFTER_BC5, ITALIAN_WHITE_RATINGS, { d3: 9000 }, 10000)
+    .write([...SETUP, "Nf6", "d3"], EXPLORER_RATINGS, { Bc5: 4000, Be7: 800 }, 5000)
+    .write([...AFTER_BC5, "d3"], EXPLORER_RATINGS, { Nf6: 100 }, 150)
+    .write([...MEETING, "a3"], EXPLORER_RATINGS, { a6: 1500, d6: 1000 }, 5000);
+  engine
+    .write(AFTER_BC5, [["d2d3", 40]])
+    .write([...AFTER_BC5, "d3"], [["g8f6", 10]])
+    .write(AFTER_BE7, [["a2a3", 20]])
+    .write(MEETING, [["a2a3", 20]]);
+}
+
+// 5.a3 is reached at 6.4% of the games and the biggest reply holds 7.5% of those: a line end with
+// thousands of games, where the continuation takes the most played reply.
+function writeSpreadAfterA3(): void {
+  explorer.write(
+    AFTER_A3,
+    EXPLORER_RATINGS,
+    { d6: 600, h6: 500, "O-O": 450, a6: 300, d5: 250 },
+    8000,
+  );
+}
+
+// Legal's mate: after 7.Nd5# Black has no legal reply. 7...Ke7 holds 1.6% of the games, so the
+// branching rule ends the line one move before the mate.
+const LEGAL_MATE = [...SETUP, "d6", "Nc3", "Bg4", "Nxe5", "Bxd1", "Bxf7+", "Ke7", "Nd5#"];
+
+function writeLegalMate(): void {
+  const lineTo = (plies: number) => LEGAL_MATE.slice(0, SETUP.length + plies);
+  explorer
+    .write(lineTo(2), EXPLORER_RATINGS, { Bg4: 3000 }, 5000)
+    .write(lineTo(4), EXPLORER_RATINGS, { Bxd1: 3000 }, 5000)
+    .write(lineTo(6), EXPLORER_RATINGS, { Ke7: 3000 }, 5000);
+  engine
+    .write(lineTo(1), [["b1c3", 20]])
+    .write(lineTo(3), [["f3e5", 20]])
+    .write(lineTo(5), [["c4f7", 20]])
+    .write(lineTo(7), [["c3d5", 20]]);
+}
+
+const lineOf = (row: RepertoireTestRow): string[] => JSON.parse(row.line_san) as string[];
+
+/** The rows on or below a line: the reply to it, White's answer, and everything after. */
+const rowsAfter = (line: string[]): RepertoireTestRow[] =>
+  rowsOf(db).filter((row) => line.every((san, index) => lineOf(row)[index] === san));
+
+const digestOf = (rows: RepertoireTestRow[]): string =>
+  createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+
+const repliesAt = (line: string[]): RepertoireTestRow[] =>
+  rowsOf(db).filter((row) => row.kind === "reply" && row.position_key === keyOf(line));
 
 describe("the repertoire tables", () => {
   const newOwnMove = (repertoireId: number, positionKeyText: string, uci: string) => ({
@@ -608,13 +689,30 @@ describe("generateRepertoire", () => {
 
   // Black's 15th move sits at ply 30 and White has no 16th move stored, so a reply there would be
   // a gap the coverage screen lists forever. The forward moves never repeat a position, so every
-  // line of both trees runs into the limit.
+  // line of these trees runs into the limit.
   it.each([
-    { tree: "a single line", write: () => {} },
-    { tree: "the Italian tree with every branch running on", write: writeItalianTree },
-  ])("ends every line on White's 15th move: $tree", async ({ write }) => {
+    { tree: "a single line", write: () => {}, autoplay: true },
+    {
+      tree: "the Italian tree with every branch running on",
+      write: writeItalianTree,
+      autoplay: true,
+    },
+    {
+      tree: "a line the branching rule ends, continued by the explorer",
+      write: () => {
+        writeItalianTree();
+        writeSpreadAfterCxd4();
+      },
+      autoplay: true,
+    },
+    {
+      tree: "the Italian tree with every line continued by the engine",
+      write: writeItalianTree,
+      autoplay: false,
+    },
+  ])("ends every line on White's 15th move: $tree", async ({ write, autoplay }) => {
     write();
-    explorer.autoplay = true;
+    explorer.autoplay = autoplay;
     const result = await generate();
     const stored = rowsOf(db);
     const deepestOf = (kind: RepertoireTestRow["kind"]): number =>
@@ -736,9 +834,20 @@ describe("generateRepertoire", () => {
   it("searches every White position at depth 16 for five lines within 30 s", async () => {
     writeItalianTree();
     await generate();
-    expect(engine.requests.length).toBeGreaterThan(0);
-    for (const request of engine.requests) {
+    const whiteSearches = engine.requests.filter((request) => request.fen.split(" ")[1] === "w");
+    expect(whiteSearches.length).toBeGreaterThan(0);
+    for (const request of whiteSearches) {
       expect(request).toMatchObject({ depth: 16, multipv: 5, deadlineMs: 30_000 });
+    }
+  });
+
+  it("searches every reply of its own at depth 16 for one line within 30 s", async () => {
+    writeItalianTree();
+    await generate();
+    const replySearches = engine.requests.filter((request) => request.fen.split(" ")[1] === "b");
+    expect(replySearches.length).toBeGreaterThan(0);
+    for (const request of replySearches) {
+      expect(request).toMatchObject({ depth: 16, multipv: 1, deadlineMs: 30_000 });
     }
   });
 
@@ -959,6 +1068,148 @@ describe("generateRepertoire", () => {
   });
 });
 
+describe("a line the branching rule ends", () => {
+  it("continues with the reply most played at the student's band, marked mainline", async () => {
+    writeItalianTree();
+    writeSpreadAfterCxd4();
+    // The engine would play 6...d5: the stored reply has to come from the explorer's numbers.
+    engine.write(AFTER_CXD4, [
+      ["d7d5", 50],
+      ["c5b4", 0],
+    ]);
+    await generate();
+    expect(repliesAt(AFTER_CXD4).map((row) => row.move_san)).toEqual(["Bb4+"]);
+    const reply = replyAt(AFTER_CXD4, "Bb4+");
+    expect(reply).toMatchObject({ ply: 12, source: "mainline" });
+    expect(reply?.share).toBeCloseTo(0.075, 8);
+    expect(reply?.reach).toBeCloseTo(0.226 * 0.6 * 0.5 * 0.075, 8);
+    expect(ownAt([...AFTER_CXD4, "Bb4+"])).toMatchObject({ ply: 13 });
+    const searched = engine.requests.some(
+      (request) => positionKey(request.fen) === keyOf(AFTER_CXD4),
+    );
+    expect(searched).toBe(false);
+  });
+
+  it("goes on to White's 15th move, one reply and one answer at a time, all under the goal", async () => {
+    writeItalianTree();
+    writeSpreadAfterCxd4();
+    explorer.autoplay = true;
+    await generate();
+    const chain = rowsAfter(AFTER_CXD4);
+    const replies = chain.filter((row) => row.kind === "reply");
+    const answers = chain.filter((row) => row.kind === "own");
+    expect(replies.map((row) => row.ply)).toEqual([12, 14, 16, 18, 20, 22, 24, 26, 28]);
+    expect(answers.map((row) => row.ply)).toEqual([13, 15, 17, 19, 21, 23, 25, 27, 29]);
+    expect(new Set(replies.map((row) => row.source))).toEqual(new Set(["mainline"]));
+    for (const row of chain) expect(row.reach).toBeLessThan(REPERTOIRE_MIN_REACH);
+  });
+
+  it.each([
+    { games: 200, san: "Bb4+", source: "mainline", share: 0.3 },
+    { games: 199, san: "d5", source: "engine", share: null },
+  ])(
+    "stores a $source reply for a position of $games games",
+    async ({ games, san, source, share }) => {
+      writeItalianTree();
+      // 60 games is under the floor for a reply of its own, so the branching rule keeps nothing here.
+      explorer.write(AFTER_CXD4, EXPLORER_RATINGS, { "Bb4+": 60 }, games);
+      engine.write(AFTER_CXD4, [["d7d5", 30]]);
+      await generate();
+      const replies = repliesAt(AFTER_CXD4);
+      expect(replies).toHaveLength(1);
+      expect(replies[0]).toMatchObject({ move_san: san, source });
+      expect(replies[0]?.share ?? null).toEqual(share === null ? null : expect.closeTo(share));
+    },
+  );
+
+  it("stores the engine's best reply with no share and no reach where the explorer has too few games", async () => {
+    writeItalianTree();
+    explorer.write(AFTER_CXD4, EXPLORER_RATINGS, { "Bb4+": 100 }, 150);
+    engine.write(AFTER_CXD4, [
+      ["d7d5", 30],
+      ["c5b4", 10],
+    ]);
+    await generate();
+    expect(repliesAt(AFTER_CXD4).map((row) => row.move_san)).toEqual(["d5"]);
+    expect(replyAt(AFTER_CXD4, "d5")).toMatchObject({
+      ply: 12,
+      source: "engine",
+      share: null,
+      reach: 0,
+    });
+    expect(ownAt([...AFTER_CXD4, "d5"])).toMatchObject({ ply: 13, reach: 0 });
+  });
+
+  it("stores nothing past the goal where another reply of the position passes it", async () => {
+    writeItalianTree();
+    writeSpreadAfterCxd4();
+    await generate();
+    // 4...d6 is under the goal but 4...Nf6 is not, so the line is not at its end.
+    expect(repliesAt(AFTER_C3).map((row) => row.move_san)).toEqual(["Nf6"]);
+    expect(repliesAt(AFTER_C3).map((row) => row.source)).toEqual(["explorer"]);
+  });
+
+  it("adds the continuation to rows stored without it and changes none of them", async () => {
+    writeItalianTree();
+    writeTranspositionIntoLineEnd();
+    // With no move from the engine for Black and no games at the line ends, the walk stores
+    // exactly what the branching rule alone stores.
+    engine.blindToBlack = true;
+    await generate();
+    const earlier = rowsOf(db);
+    const continued = (row: RepertoireTestRow): boolean =>
+      row.kind === "reply" && (row.source === "mainline" || row.source === "engine");
+    expect(earlier.some(continued)).toBe(false);
+    expect(Math.min(...earlier.map((row) => row.reach))).toBeGreaterThanOrEqual(
+      REPERTOIRE_MIN_REACH,
+    );
+    // Later the engine answers, and the explorer has games where it had none.
+    engine.blindToBlack = false;
+    writeSpreadAfterA3();
+    rmSync(cacheDir, { recursive: true, force: true });
+    const rerun = await generate();
+    const kept = new Set(earlier.map((row) => row.id));
+    const after = rowsOf(db);
+    expect(digestOf(after.filter((row) => kept.has(row.id)))).toBe(digestOf(earlier));
+    const added = after.filter((row) => !kept.has(row.id));
+    expect(added.length).toBeGreaterThan(0);
+    expect(rerun.created).toBe(added.length);
+    expect(new Set(added.filter(continued).map((row) => row.source))).toEqual(
+      new Set(["mainline", "engine"]),
+    );
+    expect(replyAt(AFTER_A3, "d6")).toMatchObject({ source: "mainline" });
+    expect(rerun.deepestPly).toBe(29);
+  });
+
+  it("follows the reply already stored on a second run, whatever the data now says", async () => {
+    writeItalianTree();
+    writeSpreadAfterCxd4();
+    await generate();
+    const stored = rowsOf(db);
+    const searches = engine.requests.length;
+    rmSync(cacheDir, { recursive: true, force: true });
+    explorer.write(AFTER_CXD4, EXPLORER_RATINGS, { Nxd4: 900, "Bb4+": 100 }, 8000);
+    const second = await generate();
+    expect(second.created).toBe(0);
+    expect(engine.requests).toHaveLength(searches);
+    expect(rowsOf(db)).toEqual(stored);
+  });
+
+  it.each([
+    { answer: "the engine gives no line", stockfishShape: false },
+    { answer: "Stockfish gives a moveless line", stockfishShape: true },
+  ])("ends a line where Black is mated with no reply: $answer", async ({ stockfishShape }) => {
+    writeItalianTree();
+    writeLegalMate();
+    if (stockfishShape) engine.writeMated(LEGAL_MATE);
+    await generate();
+    expect(new Chess(fenOf(LEGAL_MATE)).isCheckmate()).toBe(true);
+    expect(replyAt(LEGAL_MATE.slice(0, -2), "Ke7")).toMatchObject({ source: "mainline" });
+    expect(ownAt(LEGAL_MATE.slice(0, -1))).toMatchObject({ move_san: "Nd5#" });
+    expect(repliesAt(LEGAL_MATE)).toEqual([]);
+  });
+});
+
 describe("a position the walk reaches by two lines", () => {
   // 3...Nf6 4.d3 Bc5 and 3...Bc5 4.d3 Nf6 meet in one position. The walk takes 3...Nf6 first, being
   // the most played, and the shares after 4.d3 decide which line reaches the meeting likelier.
@@ -1170,6 +1421,45 @@ describe("POST /api/openings/generate with the repertoire source", () => {
     });
   });
 
+  it("logs how many replies came from the explorer's most played and from the engine, and the deepest ply", async () => {
+    writeItalianTree();
+    writeSpreadAfterCxd4();
+    const log = new RecordingLog();
+    const app = buildApp({
+      db,
+      log,
+      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateRepertoireOpenings: () =>
+        generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES),
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/openings/generate",
+      payload: { sources: ["repertoire"] },
+    });
+    await app.close();
+    const stored = rowsOf(db);
+    const repliesFrom = (source: string): number =>
+      stored.filter((row) => row.kind === "reply" && row.source === source).length;
+    expect(response.statusCode).toBe(200);
+    // White's engine moves carry the same source, and they must not be counted as replies.
+    expect(
+      stored.filter((row) => row.kind === "own" && row.source === "engine").length,
+    ).toBeGreaterThan(0);
+    expect(repliesFrom("mainline")).toBeGreaterThan(0);
+    expect(repliesFrom("engine")).toBeGreaterThan(0);
+    expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+      sources: ["repertoire"],
+      result: {
+        repertoire: {
+          mainlineReplies: repliesFrom("mainline"),
+          engineReplies: repliesFrom("engine"),
+          deepestPly: 29,
+        },
+      },
+    });
+  });
+
   it("answers 502 when the explorer fails during the walk, never a truncated success", async () => {
     writeItalianTree();
     explorer.failAt(
@@ -1203,6 +1493,16 @@ describe("the documentation of the repertoire source", () => {
     expect(openings).toContain('`POST /api/openings/generate {sources: ["repertoire"]}`');
     expect(openings).toContain("`EXPLORER_RATINGS`");
     expect(openings).toContain("`ITALIAN_WHITE_RATINGS`");
+  });
+
+  it("says under Openings that a line continues past the coverage goal up to White's 15th move", () => {
+    const agents = readFileSync(join(repositoryRoot, "AGENTS.md"), "utf8");
+    const openings = /- \*\*Openings:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "";
+    expect(openings).toContain(
+      "continues past the coverage goal along the most played reply, up to White's 15th move",
+    );
+    expect(openings).toContain("`mainlineReplies`");
+    expect(openings).toContain("`engineReplies`");
   });
 
   it("never names a rating group the explorer does not have", () => {
