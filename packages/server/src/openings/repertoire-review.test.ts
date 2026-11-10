@@ -948,6 +948,25 @@ describe("a game that reaches the root of another unit", () => {
     });
   });
 
+  it("answers a reply it adds with the move played most within the margin, not the Italian's 3.Bc4", async () => {
+    seedRepertoire();
+    seedScandinavian();
+    // 3.Bc4 is within 50 cp of the engine's best, as it is in the Italian, but d4 is played more.
+    explorer
+      .write(AFTER_EXD5, EXPLORER_RATINGS, { Qxd5: 6000, Nf6: 3000 }, 10000)
+      .write([...AFTER_EXD5, "Nf6"], ITALIAN_WHITE_RATINGS, { d4: 700, Bc4: 200 }, 1000);
+    engine.write(
+      [...AFTER_EXD5, "Nf6"],
+      [
+        ["d2d4", 30],
+        ["f1c4", 20],
+      ],
+    );
+    await reviewRepertoireGame(deps(), addGame([...AFTER_EXD5, "Nf6", "d4"]));
+    const answer = positionsOf().find((row) => row.kind === "own" && row.source === "game");
+    expect(answer).toMatchObject({ ply: 5, move_san: "d4" });
+  });
+
   it("is still recorded against the Italian when the student played Black", async () => {
     seedRepertoire();
     seedScandinavian();
