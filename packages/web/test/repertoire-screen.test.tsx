@@ -269,6 +269,16 @@ describe("a move that is new", () => {
     expect(moveList().textContent).not.toContain("c3");
   });
 
+  it("keeps the move blank on a later pass even if an answer is still attached", () => {
+    seen.length = 0;
+    renderDrill(
+      repertoireActivity({ drill: { first_pass: false, answer: { uci: "c2c3", san: "c3" } } }),
+    );
+    expect(arrows()).toEqual([]);
+    expect(screen.queryByTestId("answer-cell")).toBeNull();
+    expect(moveList().textContent).not.toContain("c3");
+  });
+
   it("offers the idea on a new move but never the move, which is already shown", () => {
     renderDrill(first());
     expect(screen.getByRole("button", { name: "Ask for the idea" })).toBeTruthy();
@@ -421,7 +431,8 @@ describe("a flagged try", () => {
         fetchRepertoires={listed}
       />,
     );
-    expect(screen.queryByText(/Scotch Game/)).toBeNull();
+    expect(screen.queryByText(/Scotch Game|Good move/)).toBeNull();
+    expect(stateCard().textContent).toContain("Your move");
   });
 });
 
@@ -479,6 +490,19 @@ describe("explore while a line is open", () => {
   it("gives the bar back once the line has ended and leaves puzzles alone", () => {
     renderDrill(repertoireActivity({ training: { status: "solved", input_enabled: false } }));
     expect(stage().hasAttribute("data-drill")).toBe(false);
+  });
+});
+
+describe("its stylesheet", () => {
+  const read = (path: string): string => readFileSync(join(import.meta.dirname, path), "utf8");
+
+  it("holds no colour literal, only tokens", () => {
+    const css = read("../src/styles/repertoire.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
+  });
+
+  it("is imported by the entry point, or the screen would have no styling", () => {
+    expect(read("../src/main.tsx")).toContain('import "./styles/repertoire.css";');
   });
 });
 
