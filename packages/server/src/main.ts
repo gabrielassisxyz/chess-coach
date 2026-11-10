@@ -25,6 +25,7 @@ import { generateItalianPuzzles } from "./openings/from-italian.js";
 import { generateRepertoire } from "./openings/from-repertoire.js";
 import { loadOpeningNames } from "./openings/names.js";
 import { generateRepertoireIdeas, sdkIdeaSession } from "./openings/repertoire-ideas.js";
+import { reviewRepertoireGames } from "./openings/repertoire-review.js";
 import { contentDir, dataDir, resolveAppRoot } from "./paths.js";
 import { ensurePuzzleRating } from "./puzzles/rating.js";
 import { seedPuzzles } from "./puzzles/seed.js";
@@ -119,10 +120,30 @@ const generateRepertoireOpenings = () =>
 // Each run starts its own Claude sessions, so nothing here holds a process open between runs.
 const runRepertoireIdeas = () =>
   generateRepertoireIdeas(db, sdkIdeaSession(query, { cwd: dataDir() }), log);
+// The Games conversation is the one that reads about a stored game, and the coach's own sinks do not
+// cover it. `coach` is read when a review commits, long after the constants here are initialised.
+const gamesNotifications = { sessionId: () => coach.ensureSessionId("games") };
+const reviewRepertoireAfterGrading = () =>
+  reviewRepertoireGames({
+    db,
+    engine: pool.evaluation,
+    fetcher: httpExplorerFetcher(resolveLichessToken(db)),
+    cacheDir: join(dataDir(), "explorer-cache"),
+    explorerClock: systemExplorerClock,
+    names: openingNames,
+    log,
+    notifications: gamesNotifications,
+    onNotification: () => coach.flushNotifications(),
+  });
+// The review logs a failing game itself and goes on, so it runs first: whatever the openings step
+// does, every game that was graded has been compared with the repertoire by then.
 const importGrader = new ImportGrader({
   db,
   log,
-  onGraded: generateOpenings,
+  onGraded: async () => {
+    const repertoire = await reviewRepertoireAfterGrading();
+    return { repertoire, openings: await generateOpenings() };
+  },
   evaluate: (fen, moveUci, color) => evaluatePlayerMove(pool.evaluation, fen, moveUci, color),
 });
 const coach = new CoachSession({
