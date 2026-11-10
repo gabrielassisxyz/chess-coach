@@ -39,9 +39,13 @@ function DrillStart({ color, drill, controls, busy }: DrillProps) {
 // The cell is always there, empty when the family had no attempt in the last 30 days, so the
 // buttons of the rows above and below it keep their column.
 function RateCell({ drill }: { drill: OpeningDrill }) {
+  const rate = drillRateText(drill);
   return (
-    <span className="repertoire-menu__drill-rate" title="First try, last 30 days">
-      {drillRateText(drill)}
+    <span
+      className="repertoire-menu__drill-rate"
+      title={rate === null ? undefined : "First try, last 30 days"}
+    >
+      {rate}
     </span>
   );
 }
