@@ -307,6 +307,51 @@ const code = async (run: Promise<unknown>): Promise<string> => {
 
 const label = (move: RepertoireDrillMove): string => `${move.line.at(-1) ?? "start"} ${move.san}`;
 
+// White's move in the wide fixture, by the number of moves played before it.
+const WIDE_ANSWERS: Record<number, string> = { 0: "e4", 2: "Nf3", 4: "Bc4", 6: "d3" };
+
+// Plays the open pass to its end, missing once each move `misses` names, and returns the moves the
+// student played in it, named as `label` names them.
+async function playWidePass(
+  service: ActivityService,
+  opened: TrainingActivity,
+  misses: Set<string>,
+): Promise<{ state: TrainingActivity; asked: string[] }> {
+  let state = opened;
+  for (let i = 0; i < 10 && state.input_enabled; i++) {
+    const line = lineSan(state);
+    const san = WIDE_ANSWERS[line.length] as string;
+    if (misses.delete(`${line.at(-1) ?? "start"} ${san}`)) state = await play(service, state, "h3");
+    state = await play(service, state, san);
+  }
+  const moves = state.moves ?? [];
+  const asked = moves
+    .filter((move) => move.by === "student")
+    .map((move) => `${moves[move.ply - 1]?.san ?? "start"} ${move.san}`);
+  return { state, asked };
+}
+
+interface DrillProgress {
+  pass: number[];
+  outcomes: TrainingActivity["queue_outcomes"];
+  left: number;
+  right: number;
+  wrong: number;
+}
+
+// What the page shows of a drill's progress: the pass of how many, one outcome per pass, and the
+// moves left, right first time and missed first time.
+function progressOf(state: TrainingActivity): DrillProgress {
+  const drill = drillOf(state);
+  return {
+    pass: [state.item.position_in_queue, state.item.queue_length],
+    outcomes: state.queue_outcomes,
+    left: drill.moves_left,
+    right: drill.moves_right,
+    wrong: drill.moves_wrong,
+  };
+}
+
 describe("choosing the moves of a repertoire drill", () => {
   it("serves every move for all, every due move for due and at most ten for recommended, in line order", () => {
     const id = addVariation("Wide", WIDE_ROWS);
@@ -759,5 +804,92 @@ describe("a repertoire drill", () => {
     resumed = await next(second, resumed);
     expect(drillOf(resumed).result).toEqual({ practised: 6, first_try_right: 5 });
     expect(second.pausedTraining()).toBeNull();
+  });
+});
+
+describe("the passes of a repertoire drill", () => {
+  it("asks every move of a branching variation, a line per pass in reach order, then the missed ones again", async () => {
+    const id = addVariation("Wide", WIDE_ROWS);
+    addCards(WIDE_ROWS);
+    const service = boot();
+    const misses = new Set(["Nc6 Bc4", "Nf6 d3"]);
+    let state = await start(service, id, "due");
+    const passes: string[][] = [];
+    for (let i = 0; i < 20 && drillOf(state).result === null; i++) {
+      const pass = await playWidePass(service, state, misses);
+      passes.push(pass.asked);
+      state = await next(service, pass.state);
+    }
+
+    expect(passes).toEqual([
+      ["start e4", "e5 Nf3", "Nc6 Bc4", "Bc5 d3"],
+      ...WIDE_REPLIES.slice(1).map(([reply]) => [`${reply} d3`]),
+      // Both misses lie on the line through 3...Nf6, so one pass of the next round asks them both.
+      ["Nc6 Bc4", "Nf6 d3"],
+    ]);
+    expect(drillOf(state).result).toEqual({ practised: 12, first_try_right: 10 });
+  });
+
+  it("counts the passes, one outcome per pass, and the moves right and wrong at the first try", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS);
+    const service = boot();
+    let state = await start(service, id, "due");
+    expect(progressOf(state)).toEqual({
+      pass: [1, 2],
+      outcomes: ["current", "pending"],
+      left: 6,
+      right: 0,
+      wrong: 0,
+    });
+    for (const san of ["e4", "Nf3", "Bc4", "h3", "c3", "d4"])
+      state = await play(service, state, san);
+    expect(progressOf(state)).toEqual({
+      pass: [1, 2],
+      outcomes: ["failed", "pending"],
+      left: 2,
+      right: 4,
+      wrong: 1,
+    });
+    state = await next(service, state);
+    expect(progressOf(state)).toEqual({
+      pass: [2, 2],
+      outcomes: ["failed", "current"],
+      left: 2,
+      right: 4,
+      wrong: 1,
+    });
+    state = await play(service, state, "d3");
+    expect(progressOf(state)).toEqual({
+      pass: [2, 2],
+      outcomes: ["failed", "solved"],
+      left: 1,
+      right: 5,
+      wrong: 1,
+    });
+
+    // The missed 4.c3 brings its line back, one pass more than the drill first had.
+    state = await next(service, state);
+    expect(progressOf(state)).toEqual({
+      pass: [3, 3],
+      outcomes: ["failed", "solved", "current"],
+      left: 1,
+      right: 5,
+      wrong: 1,
+    });
+    // Right on its retry, 4.c3 is done but still counts as wrong at the first try.
+    state = await play(service, state, "c3");
+    expect(progressOf(state)).toEqual({
+      pass: [3, 3],
+      outcomes: ["failed", "solved", "solved"],
+      left: 0,
+      right: 5,
+      wrong: 1,
+    });
+    state = await next(service, state);
+    expect(drillOf(state).result).toEqual({ practised: 6, first_try_right: 5 });
+    expect(db.prepare("SELECT outcomes_json FROM training_runs").get()).toEqual({
+      outcomes_json: JSON.stringify(["failed", "solved", "solved"]),
+    });
   });
 });
