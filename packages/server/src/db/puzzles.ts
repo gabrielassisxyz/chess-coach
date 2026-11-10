@@ -279,6 +279,9 @@ export function listPuzzles(
     const puzzles = sampleAroundRating(db, filter, randomSource);
     return { total: puzzles.length, puzzles };
   }
+  // Answered here and not in SQL: a condition that is false whatever the row leaves SQLite no way
+  // to use the forced index, and it refuses the query.
+  if (filter.openingNames?.length === 0) return { total: 0, puzzles: [] };
   const where: string[] = [LIBRARY_ONLY];
   const params: string[] = [];
   if (filter.motif !== undefined) {
@@ -299,7 +302,7 @@ export function listPuzzles(
       ...(named.length > 0 ? [`p.opening_name IN (${named.map(() => "?").join(", ")})`] : []),
       ...(filter.openingNames.includes(null) ? ["p.opening_name IS NULL"] : []),
     ];
-    where.push(options.length === 0 ? "0" : `(${options.join(" OR ")})`);
+    where.push(`(${options.join(" OR ")})`);
     params.push(...named);
   }
   const clause = `WHERE ${where.join(" AND ")}`;
