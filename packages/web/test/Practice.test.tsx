@@ -1,20 +1,30 @@
 import type {
   ActivityState,
   DemoActivity,
+  MetOpening,
   PausedTraining,
+  RepertoireSummary,
+  RepertoiresResponse,
   TrainingActivity,
 } from "@chess-coach/shared";
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
+import { PracticeHub, type PracticeHubProps } from "../src/components/PracticeHub.js";
 import { type ServerApi, useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
 import { formatInterval, nextBatchParts, trainingView } from "../src/state/practice.js";
+import {
+  type AddedOpening,
+  addOpeningToServer,
+  fetchRepertoireListFromServer,
+  fetchRepertoiresFromServer,
+} from "../src/state/repertoires-api.js";
 import { initialChatState } from "../src/state/transcript.js";
 import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
-import { motifCounts, progressOf } from "./practice-fixtures.js";
+import { motifCounts, progressOf, repertoireList } from "./practice-fixtures.js";
 
 afterEach(cleanup);
 
@@ -1064,5 +1074,386 @@ describe("explore mode", () => {
     (boardMove as (from: string, to: string) => void)("d2", "d4");
     expect(server.send).toHaveBeenCalledWith({ type: "try_move", uci: "d2d4", activity_id: 4 });
     expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "explore" }));
+  });
+});
+
+const noop = (): void => {};
+
+function renderHub(props: Partial<PracticeHubProps> = {}) {
+  return render(
+    <PracticeHub
+      progress={{ status: "ready", value: progressOf() }}
+      motifs={{ status: "ready", value: motifCounts }}
+      repertoires={{ status: "ready", value: repertoireList }}
+      engineMissing={false}
+      starting={null}
+      failure={null}
+      size={10}
+      onSize={noop}
+      onStart={noop}
+      onStartRepertoire={noop}
+      {...props}
+    />,
+  );
+}
+
+const scandinavian: MetOpening = {
+  root: ["e4", "d5"],
+  opening_name: "Scandinavian Defense",
+  games: 3,
+  repertoire_id: null,
+};
+const alekhine: MetOpening = {
+  root: ["e4", "Nf6"],
+  opening_name: "Alekhine Defense",
+  games: 2,
+  repertoire_id: null,
+};
+const caroKann: MetOpening = {
+  root: ["e4", "c6"],
+  opening_name: "Caro-Kann Defense",
+  games: 1,
+  repertoire_id: 5,
+};
+const unnamed: MetOpening = {
+  root: ["e4", "e5", "Nf3", "Bc5"],
+  opening_name: null,
+  games: 1,
+  repertoire_id: null,
+};
+const scandinavianDrill: RepertoireSummary = {
+  id: 7,
+  side: "white",
+  group_name: "Scandinavian Defense",
+  variation_name: "Mieses-Kotroc Variation (2.exd5)",
+  moves: { recommended: 4, due: 6, all: 12 },
+};
+
+const listing = (
+  met: MetOpening[],
+  repertoires: RepertoireSummary[] = repertoireList,
+): RepertoiresResponse => ({ repertoires, met });
+
+const whiteOpenings = (): Promise<HTMLElement> =>
+  screen.findByRole("region", { name: "White openings" });
+
+// The list is read once after mount; this waits for that read to settle, however it ended.
+const settle = (): Promise<void> => act(async () => {});
+
+describe("the openings met in games", () => {
+  it("lists under White openings each met root that has no drill, with its opening and game count", async () => {
+    renderHub({
+      fetchRepertoireList: async () => listing([scandinavian, alekhine, caroKann, unnamed]),
+    });
+    const white = await whiteOpenings();
+    const list = await within(white).findByRole("list", { name: "Openings met in your games" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    const row = (index: number): HTMLElement => rows[index] as HTMLElement;
+    expect(within(row(0)).getByText("Scandinavian Defense")).toBeTruthy();
+    expect(within(row(0)).getByText("1.e4 d5")).toBeTruthy();
+    expect(within(row(0)).getByText("3 games")).toBeTruthy();
+    expect(within(row(1)).getByText("Alekhine Defense")).toBeTruthy();
+    expect(within(row(1)).getByText("1.e4 Nf6")).toBeTruthy();
+    expect(within(row(1)).getByText("2 games")).toBeTruthy();
+    // The book has no name for it, so the line stands for the name and is not written twice.
+    expect(within(row(2)).getAllByText("1.e4 e5 2.Nf3 Bc5")).toHaveLength(1);
+    expect(within(row(2)).getByText("1 game")).toBeTruthy();
+    expect(within(list).queryByText("Caro-Kann Defense")).toBeNull();
+    expect(within(list).queryByText("1.e4 c6")).toBeNull();
+  });
+
+  it("does not list a root that already has a drill, and shows no heading when none is left", async () => {
+    const read = vi.fn(async () => listing([caroKann]));
+    renderHub({ fetchRepertoireList: read });
+    const white = await whiteOpenings();
+    await waitFor(() => expect(read).toHaveBeenCalled());
+    await settle();
+    expect(within(white).queryByText("Met in your games")).toBeNull();
+    expect(within(white).queryByRole("list", { name: "Openings met in your games" })).toBeNull();
+    expect(within(white).getByRole("heading", { name: "Italian Game" })).toBeTruthy();
+  });
+
+  it("keeps the drills it has and says what to do when the list cannot be read", async () => {
+    const read = vi.fn(async (): Promise<RepertoiresResponse> => {
+      throw new Error("down");
+    });
+    renderHub({ fetchRepertoireList: read });
+    const white = await whiteOpenings();
+    await waitFor(() => expect(read).toHaveBeenCalled());
+    await within(white).findByText(
+      "The openings met in your games could not be loaded. Reload the page to try again.",
+    );
+    expect(within(white).queryByText("Met in your games")).toBeNull();
+    expect(within(white).getByRole("heading", { name: "Italian Game" })).toBeTruthy();
+    expect(within(white).getAllByRole("button")).toHaveLength(3);
+  });
+
+  it("says to reload when the run ended but the list could not be read again", async () => {
+    const reads = [async () => listing([scandinavian])];
+    const fetchRepertoireList = vi.fn(async () => {
+      const next = reads.shift();
+      if (!next) throw new Error("down");
+      return next();
+    });
+    renderHub({ fetchRepertoireList, addOpening: async () => ({ truncated: false }) });
+    const white = await whiteOpenings();
+    fireEvent.click(
+      await within(white).findByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
+    );
+    const status = await within(white).findByText(/is built/);
+    expect(status.textContent).toBe(
+      "Scandinavian Defense is built. Reload the page to see its drill.",
+    );
+  });
+
+  it("posts the root of the row with Add and shows the new drill's menu when the run ends", async () => {
+    let finish: () => void = noop;
+    const addOpening = vi.fn(
+      (_root: readonly string[]) =>
+        new Promise<AddedOpening>((resolve) => {
+          finish = () => resolve({ truncated: false });
+        }),
+    );
+    const reads = [
+      listing([scandinavian, alekhine]),
+      listing(
+        [{ ...scandinavian, repertoire_id: 7 }, alekhine],
+        [...repertoireList, scandinavianDrill],
+      ),
+    ];
+    const fetchRepertoireList = vi.fn(async () => reads.shift() as RepertoiresResponse);
+    renderHub({ fetchRepertoireList, addOpening });
+    const white = await whiteOpenings();
+    fireEvent.click(
+      await within(white).findByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
+    );
+    expect(addOpening).toHaveBeenCalledTimes(1);
+    expect(addOpening).toHaveBeenCalledWith(["e4", "d5"]);
+
+    // While the run goes on the row says so, no other root can be added, and no drill exists yet.
+    const building = within(white).getByRole("button", {
+      name: "Building Scandinavian Defense, 1.e4 d5",
+    });
+    expect(building.textContent).toBe("Building");
+    expect((building as HTMLButtonElement).disabled).toBe(true);
+    const other = within(white).getByRole("button", { name: "Add Alekhine Defense, 1.e4 Nf6" });
+    expect((other as HTMLButtonElement).disabled).toBe(true);
+    expect(within(white).getByRole("status").textContent).toContain("Building the drill");
+    expect(within(white).queryByRole("heading", { name: "Scandinavian Defense" })).toBeNull();
+
+    await act(async () => finish());
+    await within(white).findByRole("heading", { name: "Scandinavian Defense" });
+    expect(within(white).getByText("Mieses-Kotroc Variation (2.exd5)")).toBeTruthy();
+    for (const name of ["Recommended 4", "Everything due 6", "All moves 12"]) {
+      expect((within(white).getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    }
+    // The root has its drill now, so its row is gone; the other still waits to be added.
+    expect(
+      within(white).queryByRole("button", { name: /^(Add|Building) Scandinavian Defense/ }),
+    ).toBeNull();
+    const again = within(white).getByRole("button", { name: "Add Alekhine Defense, 1.e4 Nf6" });
+    expect((again as HTMLButtonElement).disabled).toBe(false);
+    expect(within(white).getByRole("status").textContent).toBe(
+      "Scandinavian Defense is built. Its drill is listed above.",
+    );
+    expect(fetchRepertoireList).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts the drill of the new menu like any other", async () => {
+    const onStartRepertoire = vi.fn();
+    const reads = [
+      listing([scandinavian]),
+      listing([{ ...scandinavian, repertoire_id: 7 }], [...repertoireList, scandinavianDrill]),
+    ];
+    renderHub({
+      fetchRepertoireList: async () => reads.shift() as RepertoiresResponse,
+      addOpening: async () => ({ truncated: false }),
+      onStartRepertoire,
+    });
+    const white = await whiteOpenings();
+    fireEvent.click(
+      await within(white).findByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
+    );
+    fireEvent.click(await within(white).findByRole("button", { name: "All moves 12" }));
+    expect(onStartRepertoire).toHaveBeenCalledWith(7, "all");
+  });
+
+  it("adds a root the book does not name, under the line", async () => {
+    const addOpening = vi.fn(async (_root: readonly string[]) => ({ truncated: false }));
+    renderHub({ fetchRepertoireList: async () => listing([unnamed]), addOpening });
+    const white = await whiteOpenings();
+    fireEvent.click(await within(white).findByRole("button", { name: "Add 1.e4 e5 2.Nf3 Bc5" }));
+    expect(addOpening).toHaveBeenCalledWith(["e4", "e5", "Nf3", "Bc5"]);
+  });
+
+  it("says why when the drill could not be built, and offers the root again", async () => {
+    const addOpening = vi.fn(async (_root: readonly string[]) => {
+      throw new Error("the explorer wants a Lichess API token");
+    });
+    renderHub({ fetchRepertoireList: async () => listing([scandinavian]), addOpening });
+    const white = await whiteOpenings();
+    fireEvent.click(
+      await within(white).findByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
+    );
+    const alert = await within(white).findByRole("alert");
+    expect(alert.textContent).toBe("the explorer wants a Lichess API token");
+    const again = await within(white).findByRole("button", {
+      name: "Add Scandinavian Defense, 1.e4 d5",
+    });
+    expect((again as HTMLButtonElement).disabled).toBe(false);
+    expect(within(white).queryByRole("status")).toBeNull();
+  });
+
+  it("waits for a start in flight before it adds", async () => {
+    renderHub({
+      fetchRepertoireList: async () => listing([scandinavian]),
+      starting: { mode: "repertoire", motif: "due", repertoireId: 3 },
+    });
+    const white = await whiteOpenings();
+    const add = await within(white).findByRole("button", {
+      name: "Add Scandinavian Defense, 1.e4 d5",
+    });
+    expect((add as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  // The server takes a unit as the drill of its root as soon as the root is stored, which is the
+  // first seconds of a run. So after a run that stopped short, the refreshed list already names it.
+  const partlyBuilt = listing(
+    [{ ...scandinavian, repertoire_id: 7 }],
+    [...repertoireList, scandinavianDrill],
+  );
+
+  it("says so when the run stopped at its request limit, and keeps the root on offer to carry on", async () => {
+    const addOpening = vi
+      .fn<(root: readonly string[]) => Promise<AddedOpening>>()
+      .mockResolvedValueOnce({ truncated: true })
+      .mockResolvedValueOnce({ truncated: false });
+    const reads = [listing([scandinavian]), partlyBuilt, partlyBuilt];
+    renderHub({
+      fetchRepertoireList: async () => reads.shift() as RepertoiresResponse,
+      addOpening,
+    });
+    const white = await whiteOpenings();
+    const label = "Add Scandinavian Defense, 1.e4 d5";
+    fireEvent.click(await within(white).findByRole("button", { name: label }));
+    const stopped = await within(white).findByRole("alert");
+    expect(stopped.textContent).toBe(
+      "The run for Scandinavian Defense stopped at its request limit. Add it again to carry on.",
+    );
+    expect(within(white).queryByText(/is built/)).toBeNull();
+    await within(white).findByRole("heading", { name: "Scandinavian Defense" });
+    const again = within(white).getByRole("button", { name: label });
+    expect((again as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(again);
+    await within(white).findByText("Scandinavian Defense is built. Its drill is listed above.");
+    expect(addOpening).toHaveBeenCalledTimes(2);
+    expect(within(white).queryByRole("button", { name: /^Add Scandinavian Defense/ })).toBeNull();
+    expect(within(white).queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps the root on offer after a refusal even when the list already names its drill", async () => {
+    const addOpening = vi.fn(async (_root: readonly string[]): Promise<AddedOpening> => {
+      throw new Error("the explorer is still rate limiting after a wait");
+    });
+    const reads = [listing([scandinavian]), partlyBuilt];
+    renderHub({
+      fetchRepertoireList: async () => reads.shift() as RepertoiresResponse,
+      addOpening,
+    });
+    const white = await whiteOpenings();
+    const label = "Add Scandinavian Defense, 1.e4 d5";
+    fireEvent.click(await within(white).findByRole("button", { name: label }));
+    const alert = await within(white).findByRole("alert");
+    expect(alert.textContent).toBe("the explorer is still rate limiting after a wait");
+    const again = within(white).getByRole("button", { name: label });
+    expect((again as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("tells two roots that share a name apart by their lines", async () => {
+    const inherited = (root: string[]): MetOpening => ({
+      root,
+      opening_name: "King's Pawn Game",
+      games: 1,
+      repertoire_id: null,
+    });
+    renderHub({
+      fetchRepertoireList: async () => listing([inherited(["e4", "b5"]), inherited(["e4", "a5"])]),
+    });
+    const white = await whiteOpenings();
+    expect(
+      await within(white).findByRole("button", { name: "Add King's Pawn Game, 1.e4 b5" }),
+    ).toBeTruthy();
+    expect(
+      within(white).getByRole("button", { name: "Add King's Pawn Game, 1.e4 a5" }),
+    ).toBeTruthy();
+  });
+});
+
+describe("the calls behind the openings met in games", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const answering = (status: number, body: string) => {
+    const fetched = vi.fn(
+      async (_url: string, _init?: RequestInit) => new Response(body, { status }),
+    );
+    vi.stubGlobal("fetch", fetched);
+    return fetched;
+  };
+
+  it("posts the root to the repertoire source of the generator", async () => {
+    const fetched = answering(200, "{}");
+    await addOpeningToServer(["e4", "d5"]);
+    expect(fetched).toHaveBeenCalledTimes(1);
+    const [url, init] = fetched.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/openings/generate");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+    expect(JSON.parse(init.body as string)).toEqual({
+      sources: ["repertoire"],
+      root: ["e4", "d5"],
+    });
+  });
+
+  it("fails with the message the server gave when it refuses", async () => {
+    answering(400, JSON.stringify({ error: "invalid_root", message: "the root starts with 1.e4" }));
+    await expect(addOpeningToServer(["d4", "d5"])).rejects.toThrow("the root starts with 1.e4");
+  });
+
+  it("fails with the status when the answer has no message", async () => {
+    answering(502, "not json");
+    await expect(addOpeningToServer(["e4", "d5"])).rejects.toThrow("The server answered 502.");
+  });
+
+  it("reports whether the run stopped at its request limit", async () => {
+    answering(200, JSON.stringify({ repertoire: { truncated: true } }));
+    await expect(addOpeningToServer(["e4", "d5"])).resolves.toEqual({ truncated: true });
+    answering(200, JSON.stringify({ repertoire: { truncated: false } }));
+    await expect(addOpeningToServer(["e4", "d5"])).resolves.toEqual({ truncated: false });
+    answering(200, "{}");
+    await expect(addOpeningToServer(["e4", "d5"])).resolves.toEqual({ truncated: false });
+  });
+
+  it("explains a connection that ended before the run did", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    await expect(addOpeningToServer(["e4", "d5"])).rejects.toThrow(
+      "The connection ended before the run did. The server may still be building the drill.",
+    );
+  });
+
+  it("reads the drills and the met openings from one answer", async () => {
+    const body = { repertoires: [], met: [scandinavian] };
+    answering(200, JSON.stringify(body));
+    await expect(fetchRepertoireListFromServer()).resolves.toEqual(body);
+    answering(200, JSON.stringify(body));
+    await expect(fetchRepertoiresFromServer()).resolves.toEqual([]);
   });
 });

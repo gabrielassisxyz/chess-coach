@@ -23,6 +23,7 @@ import {
   percent,
   resumeLabelOf,
 } from "../state/practice.js";
+import type { AddOpening, FetchRepertoireList } from "../state/repertoires-api.js";
 import { RepertoireMenu } from "./RepertoireMenu.js";
 
 const ANY_MOTIF = "";
@@ -42,6 +43,9 @@ export interface PracticeHubProps {
   onStartRepertoire(repertoireId: number, scope: RepertoireScope): void;
   now?: Date;
   lastSession?: LastSession | null;
+  // The openings met in games and the call that builds a drill for one; the server's by default.
+  fetchRepertoireList?: FetchRepertoireList | undefined;
+  addOpening?: AddOpening | undefined;
 }
 
 interface StartProps {
@@ -189,6 +193,8 @@ export function PracticeHub(props: PracticeHubProps) {
             : null
         }
         onStart={onStartRepertoire}
+        fetchList={props.fetchRepertoireList}
+        addOpening={props.addOpening}
       />
 
       <section className="practice__card" aria-label="Openings">

@@ -311,6 +311,108 @@ describe("POST /api/openings/generate", () => {
       expect(response.json()).toMatchObject({ error: "repertoire_unavailable" });
     });
 
+    describe("with a root", () => {
+      const buildRooted = (roots: Array<readonly string[] | undefined>, log?: RecordingLog) =>
+        buildApp({
+          db: db(),
+          ...(log ? { log } : {}),
+          generateOpenings: async () => own,
+          generateRepertoireOpenings: async (root) => {
+            roots.push(root);
+            return repertoire;
+          },
+        });
+      const postRooted = async (app: ReturnType<typeof buildApp>, payload: object) => {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/openings/generate",
+          payload,
+        });
+        await app.close();
+        return response;
+      };
+
+      it("hands the generator the root, and nothing when the body has none", async () => {
+        const roots: Array<readonly string[] | undefined> = [];
+        const withRoot = await postRooted(buildRooted(roots), {
+          sources: ["repertoire"],
+          root: ["e4", "d5"],
+        });
+        const without = await postRooted(buildRooted(roots), { sources: ["repertoire"] });
+        expect(withRoot.statusCode).toBe(200);
+        expect(withRoot.json()).toEqual({ repertoire });
+        expect(without.statusCode).toBe(200);
+        expect(roots).toEqual([["e4", "d5"], undefined]);
+      });
+
+      it("hands the generator the line as the board writes it", async () => {
+        const roots: Array<readonly string[] | undefined> = [];
+        await postRooted(buildRooted(roots), { sources: ["repertoire"], root: ["e2e4", "d7d5"] });
+        expect(roots).toEqual([["e4", "d5"]]);
+      });
+
+      it("logs the root with the run", async () => {
+        const log = new RecordingLog();
+        await postRooted(buildRooted([], log), { sources: ["repertoire"], root: ["e4", "c6"] });
+        expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+          sources: ["repertoire"],
+          root: ["e4", "c6"],
+        });
+      });
+
+      it.each([
+        ["an illegal move", ["e4", "d4"]],
+        ["a root that does not start with e4", ["d4", "d5"]],
+        ["a root that ends on a White move", ["e4", "d5", "exd5"]],
+        ["more than 8 plies", ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d4", "exd4"]],
+        ["a White move other than the setup move", ["e4", "e5", "Bc4", "Nf6"]],
+        ["an empty root", []],
+        ["moves that are not text", [4, 5]],
+        ["a root that is not a list", "e4 d5"],
+      ])("refuses %s with invalid_root and starts no run", async (_label, root) => {
+        const roots: Array<readonly string[] | undefined> = [];
+        const response = await postRooted(buildRooted(roots), { sources: ["repertoire"], root });
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toMatchObject({ error: "invalid_root" });
+        expect(roots).toEqual([]);
+      });
+
+      // Every other rule accepts this root, so it is the end-on-Black rule alone that refuses it.
+      it("refuses a root that ends on White's move and says Black must end it", async () => {
+        const roots: Array<readonly string[] | undefined> = [];
+        const response = await postRooted(buildRooted(roots), {
+          sources: ["repertoire"],
+          root: ["e4"],
+        });
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toMatchObject({
+          error: "invalid_root",
+          message: "the root must end on Black's move",
+        });
+        expect(roots).toEqual([]);
+      });
+
+      it("refuses a bad root before it runs the sources that come first", async () => {
+        const calls: string[] = [];
+        const response = await postRooted(build(calls), {
+          sources: ["own", "repertoire"],
+          root: ["d4", "d5"],
+        });
+        expect(response.statusCode).toBe(400);
+        expect(calls).toEqual([]);
+      });
+
+      it("reads the root for the repertoire source only", async () => {
+        const roots: Array<readonly string[] | undefined> = [];
+        const response = await postRooted(buildRooted(roots), {
+          sources: ["own"],
+          root: ["d4", "d5"],
+        });
+        expect(response.statusCode).toBe(200);
+        expect(roots).toEqual([]);
+      });
+    });
+
     it("refuses a repertoire run while an explorer run is going", async () => {
       let release: () => void = () => {};
       const gate = new Promise<void>((resolve) => {

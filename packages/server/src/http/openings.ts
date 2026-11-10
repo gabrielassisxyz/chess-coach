@@ -6,6 +6,11 @@ import type { ExplorerResult } from "../openings/from-explorer.js";
 import type { GenerationResult } from "../openings/from-games.js";
 import type { RepertoireResult } from "../openings/from-repertoire.js";
 import { IdeaSessionError, type RepertoireIdeasResult } from "../openings/repertoire-ideas.js";
+import {
+  checkRepertoireRoot,
+  type RepertoireRootCheck,
+  RepertoireRootConflictError,
+} from "../openings/repertoire-root.js";
 
 const generateBody = z
   .object({
@@ -13,16 +18,24 @@ const generateBody = z
       .array(z.enum(["own", "explorer", "italian", "repertoire", "repertoire-ideas"]))
       .min(1)
       .max(5),
+    // Left to the root rules rather than zod, so that a malformed one answers invalid_root.
+    root: z.unknown(),
   })
   .partial()
   .nullish();
+
+// A root means something to the repertoire source only, so no other source reads it.
+function checkedRoot(sources: string[] | undefined, root: unknown): RepertoireRootCheck | null {
+  const given = root !== undefined && root !== null;
+  return given && sources?.includes("repertoire") ? checkRepertoireRoot(root) : null;
+}
 
 export function registerOpeningRoutes(
   app: FastifyInstance,
   generate: () => Promise<GenerationResult>,
   generateFromExplorer?: () => Promise<ExplorerResult>,
   generateItalian?: () => Promise<ExplorerResult>,
-  generateRepertoire?: () => Promise<RepertoireResult>,
+  generateRepertoire?: (root?: readonly string[]) => Promise<RepertoireResult>,
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>,
   log: Log = silentLog,
 ): void {
@@ -40,6 +53,12 @@ export function registerOpeningRoutes(
       });
     }
     const sources = body.data?.sources;
+    const root = checkedRoot(sources, body.data?.root);
+    if (root && !root.ok) {
+      return reply.code(400).send({ error: "invalid_root", message: root.reason });
+    }
+    // Only a root that passed is logged, and the generator is handed the line as the board wrote it.
+    const rootFields = root?.ok ? { root: root.root } : {};
     if (sources?.includes("explorer") && !generateFromExplorer) {
       return reply.code(404).send({ error: "explorer_unavailable", message: "not configured" });
     }
@@ -102,21 +121,30 @@ export function registerOpeningRoutes(
       }
       if (sources.includes("repertoire") && generateRepertoire) {
         explorerRunning = true;
-        out.repertoire = await generateRepertoire().finally(() => {
+        out.repertoire = await generateRepertoire(root?.ok ? root.root : undefined).finally(() => {
           explorerRunning = false;
         });
       }
       if (writesIdeas && generateRepertoireIdeas)
         out.repertoireIdeas = await generateRepertoireIdeas();
-      log.info("openings.generate", { sources, result: out, duration_ms: elapsed() });
+      log.info("openings.generate", {
+        sources,
+        ...rootFields,
+        result: out,
+        duration_ms: elapsed(),
+      });
       return out;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const explorer = error instanceof ExplorerError;
       log.error(explorer ? "explorer.failed" : "openings.generate_failed", error, {
         sources: sources ?? ["own"],
+        ...rootFields,
         duration_ms: elapsed(),
       });
+      if (error instanceof RepertoireRootConflictError) {
+        return reply.code(409).send({ error: "root_conflict", message });
+      }
       if (error instanceof ExplorerError) {
         return reply.code(502).send({ error: "explorer_unavailable", message });
       }

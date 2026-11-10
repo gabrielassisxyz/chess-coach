@@ -108,7 +108,7 @@ const generateItalianOpenings = () =>
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
   );
-const generateRepertoireOpenings = () =>
+const generateRepertoireOpenings = (root?: readonly string[]) =>
   generateRepertoire(
     db,
     pool.evaluation,
@@ -116,6 +116,7 @@ const generateRepertoireOpenings = () =>
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
     openingNames,
+    { root },
   );
 // Each run starts its own Claude sessions, so nothing here holds a process open between runs.
 const runRepertoireIdeas = () =>

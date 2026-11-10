@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RepertoiresResponseSchema } from "@chess-coach/shared";
-import { Chess } from "chess.js";
+import { type MetOpening, RepertoiresResponseSchema } from "@chess-coach/shared";
+import { Chess, type Move } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
@@ -11,6 +11,7 @@ import {
   insertRepertoireOwnMove,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
+import { importFinishedGame } from "../import/pgn.js";
 import { positionKey } from "../openings/from-games.js";
 
 // The route reads the system clock, so a card is due or not by a wide margin either way.
@@ -58,7 +59,8 @@ function addVariation(name: string, branches: string[][]): number {
         openingName: null,
         san,
         share: null,
-        source: "explorer" as const,
+        // As the generator stores them: the setup moves first, then what the explorer gave.
+        source: index < SETUP.length ? ("setup" as const) : ("explorer" as const),
       };
       if (index % 2 === 1) upsertRepertoireReply(db, row);
       else if (!ownMoveStored(id, row.positionKey)) {
@@ -129,6 +131,175 @@ describe("GET /api/repertoires", () => {
   it("answers an empty list before any repertoire is stored", async () => {
     const response = await getRepertoires();
     expect(response.statusCode).toBe(200);
-    expect(RepertoiresResponseSchema.parse(response.json())).toEqual({ repertoires: [] });
+    expect(RepertoiresResponseSchema.parse(response.json())).toEqual({ repertoires: [], met: [] });
+  });
+});
+
+// A game reviewed against the Italian: the student was White, and the review row holds the move that
+// took the game out of the line the way the review writes it.
+let gameCount = 0;
+function addReviewedGame(
+  line: string[],
+  review: { outcome?: string; color?: "white" | "black"; leftPly?: number; name?: string | null },
+  repertoireId: number,
+): number {
+  gameCount += 1;
+  const pgn = line
+    .map((san, index) => (index % 2 === 0 ? `${index / 2 + 1}. ${san}` : san))
+    .join(" ");
+  const id = importFinishedGame(db, {
+    pgn: `[Result "1-0"]\n\n${pgn} 1-0`,
+    playerColor: review.color ?? "white",
+    source: "pgn",
+    sourceId: `met-${gameCount}`,
+  }) as number;
+  const board = new Chess();
+  const left = review.leftPly ?? null;
+  let key: string | null = null;
+  let move: Move | null = null;
+  for (const [index, san] of line.entries()) {
+    if (index + 1 === left) key = positionKey(board.fen());
+    const played = board.move(san);
+    if (index + 1 === left) move = played;
+  }
+  db.prepare(
+    `INSERT INTO repertoire_game_reviews
+       (game_id, repertoire_id, reviewed_at, outcome, followed_plies, passed_moves, left_ply,
+        left_position_key, left_san, left_uci, opening_name)
+     VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    repertoireId,
+    LONG_AGO,
+    review.outcome ?? "not_reached",
+    left,
+    key,
+    move?.san ?? null,
+    move ? `${move.from}${move.to}` : null,
+    review.name ?? null,
+  );
+  return id;
+}
+
+// The rows the generator stores for the root of a unit: its moves as setup rows, then White's answer.
+function addRootedUnit(root: string[], groupName: string, answer: string): number {
+  const { id } = createRepertoireVariation(db, {
+    side: "white",
+    groupName,
+    variationName: `Rooted (${answer})`,
+  });
+  [...root, answer].forEach((san, index) => {
+    const line = [...root, answer].slice(0, index);
+    const row = {
+      repertoireId: id,
+      ...placeOf(line, san),
+      ply: index + 1,
+      line,
+      reach: 1,
+      openingName: null,
+      san,
+      share: null,
+      source: index < root.length ? ("setup" as const) : ("explorer" as const),
+    };
+    if (index % 2 === 1) upsertRepertoireReply(db, row);
+    else insertRepertoireOwnMove(db, { ...row, cpLoss: 0, evalCp: 25, results: null });
+  });
+  return id;
+}
+
+async function getMet(): Promise<MetOpening[]> {
+  const response = await getRepertoires();
+  expect(response.statusCode).toBe(200);
+  return RepertoiresResponseSchema.parse(response.json()).met;
+}
+
+describe("GET /api/repertoires met openings", () => {
+  let italian: number;
+
+  beforeEach(() => {
+    gameCount = 0;
+    // The Italian's own setup: White's moves and Black's replies, ending on 3.Bc4.
+    italian = addVariation("Classical Variation (4.c3)", [["Bc5", "c3", "Nf6", "d4"]]);
+  });
+
+  it("lists, for each position the games left to, the root, the opening, the games and no unit yet", async () => {
+    addReviewedGame(["e4", "d5", "exd5"], { leftPly: 2, name: "Scandinavian Defense" }, italian);
+    addReviewedGame(["e4", "d5", "Nc3"], { leftPly: 2, name: "Scandinavian Defense" }, italian);
+    addReviewedGame(["e4", "Nf6", "e5"], { leftPly: 2, name: "Alekhine Defense" }, italian);
+    addReviewedGame(
+      ["e4", "e5", "Nf3", "d6", "d4"],
+      { leftPly: 4, name: "Philidor Defense" },
+      italian,
+    );
+    expect(await getMet()).toEqual([
+      { root: ["e4", "d5"], opening_name: "Scandinavian Defense", games: 2, repertoire_id: null },
+      { root: ["e4", "Nf6"], opening_name: "Alekhine Defense", games: 1, repertoire_id: null },
+      {
+        root: ["e4", "e5", "Nf3", "d6"],
+        opening_name: "Philidor Defense",
+        games: 1,
+        repertoire_id: null,
+      },
+    ]);
+  });
+
+  it("puts the most met first and breaks a tie by the game that met it first", async () => {
+    addReviewedGame(["e4", "c6", "d4"], { leftPly: 2 }, italian);
+    addReviewedGame(["e4", "e6", "d4"], { leftPly: 2 }, italian);
+    addReviewedGame(["e4", "e6", "Nc3"], { leftPly: 2 }, italian);
+    expect((await getMet()).map((entry) => [entry.root.join(" "), entry.games])).toEqual([
+      ["e4 e6", 2],
+      ["e4 c6", 1],
+    ]);
+  });
+
+  it("leaves out a departure by White, a game as Black and a game that stayed in the line", async () => {
+    addReviewedGame(["d4", "d5"], { leftPly: 1 }, italian);
+    addReviewedGame(["e4", "e5", "d4", "exd4"], { leftPly: 3 }, italian);
+    addReviewedGame(["e4", "d5", "exd5"], { outcome: "other_side", color: "black" }, italian);
+    addReviewedGame(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"], { outcome: "in_book" }, italian);
+    addReviewedGame(["e4", "e5"], { outcome: "departed", leftPly: 2 }, italian);
+    expect(await getMet()).toEqual([]);
+  });
+
+  it("reads the root back from the moves of the game, up to the move that left", async () => {
+    addReviewedGame(["e4", "e5", "Nf3", "Bc5", "Nxe5", "Bxf2+"], { leftPly: 4 }, italian);
+    expect((await getMet()).map((entry) => entry.root)).toEqual([["e4", "e5", "Nf3", "Bc5"]]);
+  });
+
+  it("names the unit built from a root and none for a root without one", async () => {
+    addReviewedGame(["e4", "d5", "exd5"], { leftPly: 2, name: "Scandinavian Defense" }, italian);
+    addReviewedGame(["e4", "Nf6", "e5"], { leftPly: 2, name: "Alekhine Defense" }, italian);
+    addReviewedGame(["e4", "e5", "Nf3", "d6", "d4"], { leftPly: 4 }, italian);
+    const scandinavian = addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    expect((await getMet()).map((entry) => [entry.root.join(" "), entry.repertoire_id])).toEqual([
+      ["e4 d5", scandinavian],
+      ["e4 Nf6", null],
+      ["e4 e5 Nf3 d6", null],
+    ]);
+  });
+
+  it("does not take the Italian for the unit of a root that shares its first moves", async () => {
+    addReviewedGame(["e4", "e5", "Nf3", "Nf6", "Nxe5"], { leftPly: 4 }, italian);
+    const russian = addRootedUnit(["e4", "e5", "Nf3", "Nf6"], "Russian Game", "Nxe5");
+    expect((await getMet()).map((entry) => entry.repertoire_id)).toEqual([russian]);
+  });
+
+  it("does not take a unit with a longer root for the unit of a shorter one that shares its moves", async () => {
+    addReviewedGame(["e4", "e5", "Nf3", "Nf6", "Nxe5"], { leftPly: 4 }, italian);
+    // Its fixed line passes through 2...Nf6 and goes on; only a unit whose root ends there is the one.
+    const longer = addRootedUnit(["e4", "e5", "Nf3", "Nf6", "Bc4", "Nxe4"], "Two Knights", "Bxf7+");
+    expect((await getMet()).map((entry) => entry.repertoire_id)).toEqual([null]);
+    const shorter = addRootedUnit(["e4", "e5", "Nf3", "Nf6"], "Russian Game", "Nxe5");
+    expect(shorter).not.toBe(longer);
+    expect((await getMet()).map((entry) => entry.repertoire_id)).toEqual([shorter]);
+  });
+
+  it("lists a root again when its unit is deleted", async () => {
+    addReviewedGame(["e4", "d5", "exd5"], { leftPly: 2 }, italian);
+    const unit = addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    expect((await getMet())[0]?.repertoire_id).toBe(unit);
+    db.prepare("DELETE FROM repertoires WHERE id = ?").run(unit);
+    expect((await getMet())[0]).toMatchObject({ root: ["e4", "d5"], repertoire_id: null });
   });
 });

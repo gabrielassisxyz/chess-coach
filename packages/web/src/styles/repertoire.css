@@ -50,6 +50,52 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The openings the student's games met that have no drill yet, under the drills they have: a name,
+ * the line, how many games met it and an Add action. */
+.repertoire-menu__met {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: stretch;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.repertoire-menu__met-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repertoire-menu__met-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.repertoire-menu__met-name {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.repertoire-menu__met-line {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.repertoire-menu__met-games {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Above the move list of a line drill: the variation in play and the session's counts. */
 .repertoire-head {
   display: flex;
@@ -101,7 +147,17 @@
 }
 
 @media (max-width: 899px) {
-  .repertoire-menu__starts .button {
+  .repertoire-menu__starts .button,
+  .repertoire-menu__met-row .button {
     min-height: 44px;
+  }
+
+  .repertoire-menu__met-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .repertoire-menu__met-row .button {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 }
