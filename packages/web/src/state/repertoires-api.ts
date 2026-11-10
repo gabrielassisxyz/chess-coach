@@ -1,5 +1,9 @@
 import {
+  type CoverageReply,
+  type CoverageStatus,
   type MetOpening,
+  type RepertoireCoverage,
+  RepertoireCoverageSchema,
   type RepertoireScope,
   type RepertoireSummary,
   type RepertoiresResponse,
@@ -129,3 +133,44 @@ export const metLabelOf = (entry: MetOpening): string =>
     : `${entry.opening_name}, ${repertoireRootText(entry.root)}`;
 
 export const metGamesText = (games: number): string => `${games} ${games === 1 ? "game" : "games"}`;
+
+// What one variation covers, read from its stored moves when the student opens it.
+export type FetchCoverage = (repertoireId: number) => Promise<RepertoireCoverage>;
+
+export const fetchCoverageFromServer: FetchCoverage = async (repertoireId) => {
+  const response = await fetch(`/api/repertoires/${repertoireId}/coverage`);
+  if (!response.ok) throw new Error(`coverage: ${response.status}`);
+  return RepertoireCoverageSchema.parse(await response.json());
+};
+
+export const COVERAGE_STATUS_TEXT: Record<CoverageStatus, string> = {
+  covered: "Covered",
+  gap: "Gap",
+  not_required: "Not required",
+};
+
+export const NO_SCORE_TEXT = "Not enough games";
+
+// How often a game reaches a position, as "1 in N". The whole number stays on its own side of the
+// goal, so a position that needs no answer never reads as common as one that does; one no game is
+// known to have reached has no chance to state.
+export function oneInText(incidence: number, goalOneIn: number): string {
+  if (incidence <= 0) return "Too few games";
+  const oneIn = Math.round(1 / incidence);
+  const needsAnswer = incidence >= 1 / goalOneIn;
+  return `1 in ${needsAnswer ? Math.min(oneIn, goalOneIn) : Math.max(oneIn, goalOneIn + 1)}`;
+}
+
+// A reply the opening fixes is not met by chance, so it has no chance to state.
+export const replyChanceText = (reply: CoverageReply, goalOneIn: number): string =>
+  reply.source === "setup" ? "Opening move" : oneInText(reply.incidence, goalOneIn);
+
+export const percentText = (percent: number | null): string =>
+  percent === null ? NO_SCORE_TEXT : `${percent.toFixed(1)}%`;
+
+export const soundnessText = (soundness: number | null): string =>
+  soundness === null ? NO_SCORE_TEXT : String(soundness);
+
+// "3...Bc5": Black's move after a line that ends on White's, as the book writes it.
+export const replyMoveText = (line: readonly string[], san: string): string =>
+  `${Math.floor(line.length / 2) + 1}...${san}`;

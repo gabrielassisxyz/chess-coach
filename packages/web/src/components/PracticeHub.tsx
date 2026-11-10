@@ -23,7 +23,7 @@ import {
   percent,
   resumeLabelOf,
 } from "../state/practice.js";
-import type { AddOpening, FetchRepertoireList } from "../state/repertoires-api.js";
+import type { AddOpening, FetchCoverage, FetchRepertoireList } from "../state/repertoires-api.js";
 import { RepertoireMenu } from "./RepertoireMenu.js";
 
 const ANY_MOTIF = "";
@@ -46,6 +46,8 @@ export interface PracticeHubProps {
   // The openings met in games and the call that builds a drill for one; the server's by default.
   fetchRepertoireList?: FetchRepertoireList | undefined;
   addOpening?: AddOpening | undefined;
+  // Where a variation's coverage comes from when it is opened; the server's by default.
+  fetchCoverage?: FetchCoverage | undefined;
 }
 
 interface StartProps {
@@ -195,6 +197,7 @@ export function PracticeHub(props: PracticeHubProps) {
         onStart={onStartRepertoire}
         fetchList={props.fetchRepertoireList}
         addOpening={props.addOpening}
+        fetchCoverage={props.fetchCoverage}
       />
 
       <section className="practice__card" aria-label="Openings">

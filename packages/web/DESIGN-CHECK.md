@@ -77,27 +77,27 @@ Motion and focus
 
 ## The checklist
 
-| # | Rule | Shell | Play | Games | Practice | Phone |
-|---|------|-------|------|-------|----------|-------|
-| M1 | No colour literal outside `tokens.css`; every colour is a token | ok | ok | ok | ok | ok |
-| M2 | No shadows, no glow | ok | ok | ok | ok | ok |
-| 3 | One accent hue; the grades and the error tone are the only other chroma | ok | ok | ok | ok | ok |
-| 4 | Grade colour always paired with its word, glyph or label | n/a | partial | ok | ok | partial |
-| 5 | The error tone only for something that failed (plus the blunder grade) | ok | ok | ok | ok | ok |
-| 6 | Plex Sans for titles and UI, Plex Mono only for data | ok | ok | ok | ok | ok |
-| 7 | One 28/600 title per screen where the screen has one, the same face and tracking | n/a | partial | ok | ok | ok |
-| 8 | The same type scale: controls, notes and lists use the same steps on every screen | ok | ok | ok | ok | ok |
-| 9 | Radii 4 px controls, 8 px panels, hairline borders; no nested cards, no icon tile, eyebrow, hero or gradient text | ok | ok | ok | ok | ok |
-| 10 | Spacing from the 4-based scale; the same screen padding and block gap | ok | partial | ok | ok | ok |
-| 11 | Shell measurements: 48 px bar, 24 px frame padding, 16 px gap, 220 (328 on an item) / board / 360 columns, 32 px strip | ok | ok | ok | ok | n/a |
-| 12 | Running text near 65ch | ok | ok | ok | ok | ok |
-| 13 | Motion under 300 ms, ease-out, transform and opacity only, reduced motion respected | ok | ok | ok | ok | ok |
-| 14 | Focus visible on every interactive element, one ring | ok | ok | ok | ok | ok |
-| 15 | Empty, loading and error states say what to do next, in calm plain words | ok | ok | ok | ok | ok |
-| 16 | Summary before detail; one focus per glance | ok | ok | ok | ok | ok |
-| 17 | What is interactive looks interactive | ok | ok | partial | ok | ok |
-| 18 | Both themes exist and follow `prefers-color-scheme` until the button overrides them | ok | ok | ok | ok | ok |
-| 19 | Phone: under 900 px, board first, 44 px targets | n/a | ok | ok | ok | ok |
+| # | Rule | Shell | Play | Games | Practice | Coverage | Phone |
+|---|------|-------|------|-------|----------|----------|-------|
+| M1 | No colour literal outside `tokens.css`; every colour is a token | ok | ok | ok | ok | ok | ok |
+| M2 | No shadows, no glow | ok | ok | ok | ok | ok | ok |
+| 3 | One accent hue; the grades and the error tone are the only other chroma | ok | ok | ok | ok | ok | ok |
+| 4 | Grade colour always paired with its word, glyph or label | n/a | partial | ok | ok | n/a | partial |
+| 5 | The error tone only for something that failed (plus the blunder grade) | ok | ok | ok | ok | ok | ok |
+| 6 | Plex Sans for titles and UI, Plex Mono only for data | ok | ok | ok | ok | ok | ok |
+| 7 | One 28/600 title per screen where the screen has one, the same face and tracking | n/a | partial | ok | ok | n/a | ok |
+| 8 | The same type scale: controls, notes and lists use the same steps on every screen | ok | ok | ok | ok | ok | ok |
+| 9 | Radii 4 px controls, 8 px panels, hairline borders; no nested cards, no icon tile, eyebrow, hero or gradient text | ok | ok | ok | ok | ok | ok |
+| 10 | Spacing from the 4-based scale; the same screen padding and block gap | ok | partial | ok | ok | ok | ok |
+| 11 | Shell measurements: 48 px bar, 24 px frame padding, 16 px gap, 220 (328 on an item) / board / 360 columns, 32 px strip | ok | ok | ok | ok | n/a | n/a |
+| 12 | Running text near 65ch | ok | ok | ok | ok | ok | ok |
+| 13 | Motion under 300 ms, ease-out, transform and opacity only, reduced motion respected | ok | ok | ok | ok | ok | ok |
+| 14 | Focus visible on every interactive element, one ring | ok | ok | ok | ok | ok | ok |
+| 15 | Empty, loading and error states say what to do next, in calm plain words | ok | ok | ok | ok | ok | ok |
+| 16 | Summary before detail; one focus per glance | ok | ok | ok | ok | ok | ok |
+| 17 | What is interactive looks interactive | ok | ok | partial | ok | ok | ok |
+| 18 | Both themes exist and follow `prefers-color-scheme` until the button overrides them | ok | ok | ok | ok | ok | ok |
+| 19 | Phone: under 900 px, board first, 44 px targets | n/a | ok | ok | ok | ok | ok |
 
 The cells were read off the stylesheets and the markup, and the Phone column off the 899 px
 media blocks; they were not re-measured in a browser for this rewrite. The measurements the
@@ -119,8 +119,9 @@ screens were built to are in the design probe's spec (token layer and interactio
 ## Documented exceptions
 
 - The promotion glyph size is `clamp(1.5rem, 5vw, 2.75rem)`, and a few `ch`, `rem` and `px`
-  widths (evaluation label, ply column, the table's column widths, the 8 and 9 px dots) size
-  a chess glyph or align digits, not text on the scale.
+  widths (evaluation label, ply column, the table's column widths, the 8 and 9 px dots, the
+  8 rem facts and move cells and the 6 rem status cell of the coverage view) size a chess
+  glyph or align digits, not text on the scale.
 - The king-in-check highlight on the board uses the error tone, because a check is the one
   board state that must be seen at a glance.
 - The checkerboard is a `conic-gradient` of two token colours; it is a pattern, not a
@@ -160,5 +161,13 @@ screens were built to are in the design probe's spec (token layer and interactio
   Add button that is 44 px under 900 px. M1 and M2 print nothing for it, its states (reading
   failed, building, built, refused) are each a sentence that says what to do next, and a refusal
   is the only one in the error tone.
+- **The coverage view** opens under a variation of the openings menu, from its Coverage button,
+  and has a column of its own in the checklist. Its cells were read against the markup,
+  `repertoire.css` and the 899 px block: a hairline above it as each opening in the menu has,
+  no card of its own; four facts in a grid that wraps, notes capped at the measure, rows that
+  wrap with their lines breaking anywhere, buttons that are 44 px under 900 px, and the accent
+  with the word "Gap" for a reply that has no answer yet, never the error tone. M1 and M2 print
+  nothing for it. Its states (loading, not read, nothing stored, no gap) each say what to do
+  next, and only the reading failure is in the error tone.
 - **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
   and a model setting exist.

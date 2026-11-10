@@ -96,6 +96,119 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The coverage of one variation, opened under it: four facts, the replies with no answer, and Black's
+ * replies in one position. A hairline above it, like each opening in the menu, not a card of its own. */
+.repertoire-coverage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-self: stretch;
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.repertoire-coverage__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.repertoire-coverage__fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.repertoire-coverage__fact dt {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.repertoire-coverage__fact dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.repertoire-coverage__fact dd[data-empty] {
+  color: var(--text-2);
+  font-family: var(--font-ui);
+}
+
+.repertoire-coverage__note {
+  max-width: var(--measure);
+}
+
+.repertoire-coverage__block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.repertoire-coverage__heading {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.repertoire-coverage__position {
+  max-width: 100%;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.repertoire-coverage__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repertoire-coverage__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+.repertoire-coverage__move,
+.repertoire-coverage__line {
+  flex: 1 1 8rem;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.repertoire-coverage__position .repertoire-coverage__line {
+  color: var(--text-1);
+}
+
+.repertoire-coverage__chance {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.repertoire-coverage__status {
+  min-width: 6rem;
+  color: var(--text-2);
+}
+
+.repertoire-coverage__status[data-status="gap"] {
+  color: var(--accent);
+  font-weight: 500;
+}
+
 /* Above the move list of a line drill: the variation in play and the session's counts. */
 .repertoire-head {
   display: flex;
@@ -148,7 +261,8 @@
 
 @media (max-width: 899px) {
   .repertoire-menu__starts .button,
-  .repertoire-menu__met-row .button {
+  .repertoire-menu__met-row .button,
+  .repertoire-coverage .button {
     min-height: 44px;
   }
 
