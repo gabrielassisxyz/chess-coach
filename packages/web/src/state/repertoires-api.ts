@@ -36,9 +36,65 @@ export interface AddedOpening {
   truncated: boolean;
 }
 
+// How the student weighs White's choices when a line is built: whole points over the three measures
+// that add up to 6, which the server checks again and answers 400 for anything else.
+export interface StylePoints {
+  effectiveness: number;
+  soundness: number;
+  learnability: number;
+}
+
+export const STYLE_POINTS_TOTAL = 6;
+
+// What the server weighs by when a request carries no points. A menu nobody touched sends none, so
+// a change to the server's own default reaches it without a change here.
+export const DEFAULT_STYLE_POINTS: Readonly<StylePoints> = {
+  effectiveness: 2,
+  soundness: 2,
+  learnability: 2,
+};
+
+export interface StyleMeasure {
+  key: keyof StylePoints;
+  label: string;
+  hint: string;
+}
+
+export const STYLE_MEASURES: readonly StyleMeasure[] = [
+  {
+    key: "effectiveness",
+    label: "More wins",
+    hint: "Moves that score best for White at your level",
+  },
+  { key: "soundness", label: "Less risk", hint: "Moves that stay closest to the engine's best" },
+  {
+    key: "learnability",
+    label: "More intuitive moves",
+    hint: "Moves that players at your level choose most often",
+  },
+];
+
+export const stylePointsLeft = (points: StylePoints): number =>
+  STYLE_POINTS_TOTAL - points.effectiveness - points.soundness - points.learnability;
+
+export const isDefaultStylePoints = (points: StylePoints): boolean =>
+  STYLE_MEASURES.every(({ key }) => points[key] === DEFAULT_STYLE_POINTS[key]);
+
+// One point on or off a measure. A point comes off only where there is one, and goes on only
+// where one is left, so the split never holds more than 6 or less than 0 on a measure.
+export function moveStylePoint(
+  points: StylePoints,
+  key: keyof StylePoints,
+  change: 1 | -1,
+): StylePoints {
+  const next = points[key] + change;
+  if (next < 0 || (change === 1 && stylePointsLeft(points) === 0)) return points;
+  return { ...points, [key]: next };
+}
+
 // Builds the drill of a root. The server answers when the run ends, which takes minutes, and
 // refuses with a message the student can read, so a failure carries that message.
-export type AddOpening = (root: readonly string[]) => Promise<AddedOpening>;
+export type AddOpening = (root: readonly string[], points?: StylePoints) => Promise<AddedOpening>;
 
 const CONNECTION_LOST =
   "The connection ended before the run did. The server may still be building the drill. Reload the page later to see it.";
@@ -62,13 +118,16 @@ async function truncatedIn(response: Response): Promise<boolean> {
   }
 }
 
-async function runRepertoireSource(line: { root?: readonly string[]; branch?: readonly string[] }) {
+async function runRepertoireSource(
+  line: { root?: readonly string[]; branch?: readonly string[] },
+  points?: StylePoints,
+) {
   let response: Response;
   try {
     response = await fetch("/api/openings/generate", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sources: ["repertoire"], ...line }),
+      body: JSON.stringify({ sources: ["repertoire"], ...line, ...(points ? { points } : {}) }),
     });
   } catch {
     throw new Error(CONNECTION_LOST);
@@ -77,13 +136,18 @@ async function runRepertoireSource(line: { root?: readonly string[]; branch?: re
   return { truncated: await truncatedIn(response) };
 }
 
-export const addOpeningToServer: AddOpening = (root) => runRepertoireSource({ root });
+export const addOpeningToServer: AddOpening = (root, points) =>
+  runRepertoireSource({ root }, points);
 
 // Builds another variation of the Italian from a branch: the line from 1.e4 through White's move
 // at a branch point. Like a root, the server answers when the run ends.
-export type AddVariation = (branch: readonly string[]) => Promise<AddedOpening>;
+export type AddVariation = (
+  branch: readonly string[],
+  points?: StylePoints,
+) => Promise<AddedOpening>;
 
-export const addVariationToServer: AddVariation = (branch) => runRepertoireSource({ branch });
+export const addVariationToServer: AddVariation = (branch, points) =>
+  runRepertoireSource({ branch }, points);
 
 export const SCOPE_LABEL: Record<RepertoireScope, string> = {
   recommended: "Recommended",

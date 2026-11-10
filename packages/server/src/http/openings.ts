@@ -16,8 +16,11 @@ import type { ExplorerResult } from "../openings/from-explorer.js";
 import type { GenerationResult } from "../openings/from-games.js";
 import {
   checkRepertoireBranch,
+  checkRepertoirePoints,
   type RepertoireBranchCheck,
   RepertoireBranchError,
+  type RepertoirePoints,
+  type RepertoirePointsCheck,
   type RepertoireResult,
 } from "../openings/from-repertoire.js";
 import { IdeaSessionError, type RepertoireIdeasResult } from "../openings/repertoire-ideas.js";
@@ -39,6 +42,8 @@ const generateBody = z
     branch: z.unknown(),
     // And for the rebuild flag, which answers invalid_rebuild.
     rebuild: z.unknown(),
+    // And for the style points, which answer invalid_points.
+    points: z.unknown(),
   })
   .partial()
   .nullish();
@@ -72,6 +77,16 @@ function checkedRebuild(
 ): { ok: true; rebuild: boolean } | { ok: false } {
   if (!isGiven(rebuild) || !sources?.includes("repertoire")) return { ok: true, rebuild: false };
   return typeof rebuild === "boolean" ? { ok: true, rebuild } : { ok: false };
+}
+
+// Points weigh White's candidate moves, which only the repertoire source chooses. Left out they are
+// the generator's default, so only points that were given are checked here.
+function checkedPoints(
+  sources: string[] | undefined,
+  points: unknown,
+): RepertoirePointsCheck | null {
+  if (!isGiven(points) || !sources?.includes("repertoire")) return null;
+  return checkRepertoirePoints(points);
 }
 
 const DRILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -115,6 +130,7 @@ export function registerOpeningRoutes(
     root?: readonly string[],
     branch?: readonly string[],
     rebuild?: boolean,
+    points?: RepertoirePoints,
   ) => Promise<RepertoireResult>,
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>,
   log: Log = silentLog,
@@ -147,12 +163,17 @@ export function registerOpeningRoutes(
         .code(400)
         .send({ error: "invalid_rebuild", message: "rebuild is true or false" });
     }
-    // Only a root, a branch or a rebuild that passed is logged, and the generator is handed the line
-    // as the board wrote it.
+    const points = checkedPoints(sources, body.data?.points);
+    if (points && !points.ok) {
+      return reply.code(400).send({ error: "invalid_points", message: points.reason });
+    }
+    // Only a root, a branch, a rebuild or points that passed are logged, and the generator is handed
+    // the line as the board wrote it.
     const lineFields = {
       ...(root?.ok ? { root: root.root } : {}),
       ...(branch?.ok ? { branch: branch.branch } : {}),
       ...(rebuild.rebuild ? { rebuild: true } : {}),
+      ...(points?.ok ? { points: points.points } : {}),
     };
     if (sources?.includes("explorer") && !generateFromExplorer) {
       return reply.code(404).send({ error: "explorer_unavailable", message: "not configured" });
@@ -218,11 +239,15 @@ export function registerOpeningRoutes(
         explorerRunning = true;
         const rootLine = root?.ok ? root.root : undefined;
         const branchLine = branch?.ok ? branch.branch : undefined;
-        out.repertoire = await generateRepertoire(rootLine, branchLine, rebuild.rebuild).finally(
-          () => {
-            explorerRunning = false;
-          },
-        );
+        const weights = points?.ok ? points.points : undefined;
+        out.repertoire = await generateRepertoire(
+          rootLine,
+          branchLine,
+          rebuild.rebuild,
+          weights,
+        ).finally(() => {
+          explorerRunning = false;
+        });
       }
       if (writesIdeas && generateRepertoireIdeas)
         out.repertoireIdeas = await generateRepertoireIdeas();

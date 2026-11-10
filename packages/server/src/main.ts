@@ -22,7 +22,11 @@ import { httpExplorerFetcher, systemExplorerClock } from "./openings/explorer-cl
 import { generateExplorerPuzzles } from "./openings/from-explorer.js";
 import { generateOpeningPuzzles } from "./openings/from-games.js";
 import { generateItalianPuzzles } from "./openings/from-italian.js";
-import { generateRepertoire, loadRepertoireBranchBook } from "./openings/from-repertoire.js";
+import {
+  generateRepertoire,
+  loadRepertoireBranchBook,
+  type RepertoirePoints,
+} from "./openings/from-repertoire.js";
 import { loadOpeningNames } from "./openings/names.js";
 import { generateRepertoireIdeas, sdkIdeaSession } from "./openings/repertoire-ideas.js";
 import { reviewRepertoireGames } from "./openings/repertoire-review.js";
@@ -121,6 +125,7 @@ const generateRepertoireOpenings = (
   root?: readonly string[],
   branch?: readonly string[],
   rebuild?: boolean,
+  points?: RepertoirePoints,
 ) =>
   generateRepertoire(
     db,
@@ -129,7 +134,7 @@ const generateRepertoireOpenings = (
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
     openingNames,
-    { root, branch, rebuild },
+    { root, branch, rebuild, points },
   );
 // Each run starts its own Claude sessions, so nothing here holds a process open between runs.
 const runRepertoireIdeas = () =>

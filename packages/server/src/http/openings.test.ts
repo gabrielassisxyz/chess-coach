@@ -16,7 +16,7 @@ import { importFinishedGame } from "../import/pgn.js";
 import { RecordingLog } from "../log.js";
 import { ExplorerError } from "../openings/explorer-client.js";
 import { generateOpeningPuzzles } from "../openings/from-games.js";
-import { RepertoireBranchError } from "../openings/from-repertoire.js";
+import { RepertoireBranchError, type RepertoirePoints } from "../openings/from-repertoire.js";
 import { parseOpeningTable } from "../openings/names.js";
 import { IdeaSessionError } from "../openings/repertoire-ideas.js";
 import { registerOpeningDrillRoutes } from "./openings.js";
@@ -120,6 +120,7 @@ describe("POST /api/openings/generate", () => {
       positionsCutByTime: 2,
       shallowestDepth: 11,
       planChoices: 7,
+      points: { effectiveness: 2, soundness: 2, learnability: 2 },
     };
     const ideas = { considered: 40, generated: 38, rejected: 5, empty: 2 };
     const build = (calls: string[]) =>
@@ -597,6 +598,131 @@ describe("POST /api/openings/generate", () => {
         const response = await postRebuilding(buildRebuilding(handed), {
           sources: ["own"],
           rebuild: "not a flag",
+        });
+        expect(response.statusCode).toBe(200);
+        expect(handed).toEqual([]);
+      });
+    });
+
+    describe("with points", () => {
+      const EVEN = { effectiveness: 2, soundness: 2, learnability: 2 };
+      const ON_SOUNDNESS = { effectiveness: 0, soundness: 6, learnability: 0 };
+      type Handed = { points: RepertoirePoints | undefined };
+      const buildWeighing = (handed: Handed[], log?: RecordingLog) =>
+        buildApp({
+          db: db(),
+          ...(log ? { log } : {}),
+          generateOpenings: async () => own,
+          generateRepertoireOpenings: async (_root, _branch, _rebuild, points) => {
+            handed.push({ points });
+            return repertoire;
+          },
+        });
+      const postWeighing = async (app: ReturnType<typeof buildApp>, payload: object) => {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/openings/generate",
+          payload,
+        });
+        await app.close();
+        return response;
+      };
+
+      it("hands the generator the points as given, and none where the body names none", async () => {
+        const handed: Handed[] = [];
+        const given = await postWeighing(buildWeighing(handed), {
+          sources: ["repertoire"],
+          points: ON_SOUNDNESS,
+        });
+        await postWeighing(buildWeighing(handed), { sources: ["repertoire"] });
+        await postWeighing(buildWeighing(handed), { sources: ["repertoire"], points: null });
+        expect(given.statusCode).toBe(200);
+        expect(given.json()).toEqual({ repertoire });
+        expect(handed).toEqual([
+          { points: ON_SOUNDNESS },
+          { points: undefined },
+          { points: undefined },
+        ]);
+      });
+
+      it("logs the points with the run, and no points field on a run without them", async () => {
+        const log = new RecordingLog();
+        await postWeighing(buildWeighing([], log), { sources: ["repertoire"], points: EVEN });
+        await postWeighing(buildWeighing([], log), { sources: ["repertoire"] });
+        const [weighed, plain] = log.named("openings.generate");
+        expect(weighed?.fields).toMatchObject({ sources: ["repertoire"], points: EVEN });
+        expect(plain?.fields).not.toHaveProperty("points");
+      });
+
+      it.each([
+        ["text", "2,2,2", "points is an object with effectiveness, soundness and learnability"],
+        ["a list", [2, 2, 2], "points is an object with effectiveness, soundness and learnability"],
+        [
+          "a measure left out",
+          { effectiveness: 3, soundness: 3 },
+          "points hold effectiveness, soundness and learnability, and nothing else",
+        ],
+        [
+          "a measure added",
+          { ...EVEN, intuition: 0 },
+          "points hold effectiveness, soundness and learnability, and nothing else",
+        ],
+        [
+          "a number written as text",
+          { ...EVEN, effectiveness: "2" },
+          "each measure is a whole number of points, 0 or more",
+        ],
+        [
+          "a fraction",
+          { effectiveness: 2.5, soundness: 1.5, learnability: 2 },
+          "each measure is a whole number of points, 0 or more",
+        ],
+        [
+          "a negative number",
+          { effectiveness: 7, soundness: -1, learnability: 0 },
+          "each measure is a whole number of points, 0 or more",
+        ],
+        [
+          "5 points",
+          { effectiveness: 2, soundness: 2, learnability: 1 },
+          "the points add up to 6, not 5",
+        ],
+        [
+          "7 points",
+          { effectiveness: 3, soundness: 2, learnability: 2 },
+          "the points add up to 6, not 7",
+        ],
+        [
+          "no points",
+          { effectiveness: 0, soundness: 0, learnability: 0 },
+          "the points add up to 6, not 0",
+        ],
+      ])("refuses %s with invalid_points and starts no run", async (_label, points, message) => {
+        const handed: Handed[] = [];
+        const response = await postWeighing(buildWeighing(handed), {
+          sources: ["repertoire"],
+          points,
+        });
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toEqual({ error: "invalid_points", message });
+        expect(handed).toEqual([]);
+      });
+
+      it("refuses bad points before it runs the sources that come first", async () => {
+        const calls: string[] = [];
+        const response = await postWeighing(build(calls), {
+          sources: ["own", "repertoire"],
+          points: { ...EVEN, learnability: 3 },
+        });
+        expect(response.statusCode).toBe(400);
+        expect(calls).toEqual([]);
+      });
+
+      it("reads the points for the repertoire source only", async () => {
+        const handed: Handed[] = [];
+        const response = await postWeighing(buildWeighing(handed), {
+          sources: ["own"],
+          points: "not points",
         });
         expect(response.statusCode).toBe(200);
         expect(handed).toEqual([]);
