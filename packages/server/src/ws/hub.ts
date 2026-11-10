@@ -330,6 +330,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
           ...(command.size === undefined ? {} : { size: command.size }),
           ...(command.repertoire_id === undefined ? {} : { repertoireId: command.repertoire_id }),
           ...(command.scope === undefined ? {} : { scope: command.scope }),
+          ...(command.level === undefined ? {} : { level: command.level }),
         });
         divide("practice", TRAINING_LABEL[command.mode]);
         return;

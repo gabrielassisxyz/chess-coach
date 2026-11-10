@@ -3,6 +3,7 @@ import type {
   ActivityState,
   PausedTraining,
   PromotionPiece,
+  RepertoireLevel,
   RepertoireScope,
   TrainingMode,
 } from "@chess-coach/shared";
@@ -191,6 +192,7 @@ export class ActivityService {
     size?: DrillSize;
     repertoireId?: number;
     scope?: RepertoireScope;
+    level?: RepertoireLevel;
   }): Promise<ActivityState> {
     return this.enqueue("training", async () => {
       if (!this.trainingDeps) {

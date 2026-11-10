@@ -22,7 +22,7 @@ import { httpExplorerFetcher, systemExplorerClock } from "./openings/explorer-cl
 import { generateExplorerPuzzles } from "./openings/from-explorer.js";
 import { generateOpeningPuzzles } from "./openings/from-games.js";
 import { generateItalianPuzzles } from "./openings/from-italian.js";
-import { generateRepertoire } from "./openings/from-repertoire.js";
+import { generateRepertoire, loadRepertoireBranchBook } from "./openings/from-repertoire.js";
 import { loadOpeningNames } from "./openings/names.js";
 import { generateRepertoireIdeas, sdkIdeaSession } from "./openings/repertoire-ideas.js";
 import { reviewRepertoireGames } from "./openings/repertoire-review.js";
@@ -63,7 +63,12 @@ let engineFault = false;
 const db = openDatabase(dataDir());
 // A missing or malformed table throws here, naming <file>:<line>, before anything else starts.
 const openingNames = loadOpeningNames(contentDir());
-log.info("openings.names_loaded", { positions: openingNames.size });
+// The same table's lines, for the positions where the Italian can branch into another variation.
+const repertoireBranches = loadRepertoireBranchBook(contentDir());
+log.info("openings.names_loaded", {
+  positions: openingNames.size,
+  branch_points: repertoireBranches.length,
+});
 // A bad puzzle entry throws here, naming <file>:<index>, before anything else starts.
 const seeded = seedPuzzles(db, contentDir(), openingNames);
 log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
@@ -112,7 +117,7 @@ const generateItalianOpenings = () =>
     {},
     openingNames,
   );
-const generateRepertoireOpenings = (root?: readonly string[]) =>
+const generateRepertoireOpenings = (root?: readonly string[], branch?: readonly string[]) =>
   generateRepertoire(
     db,
     pool.evaluation,
@@ -120,7 +125,7 @@ const generateRepertoireOpenings = (root?: readonly string[]) =>
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
     openingNames,
-    { root },
+    { root, branch },
   );
 // Each run starts its own Claude sessions, so nothing here holds a process open between runs.
 const runRepertoireIdeas = () =>
@@ -194,6 +199,7 @@ const app = buildApp({
   readiness: () => readiness,
   db,
   openingNames,
+  repertoireBranches,
   generateOpenings,
   generateExplorerOpenings,
   generateItalianOpenings,

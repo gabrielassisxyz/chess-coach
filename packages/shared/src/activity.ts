@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { RepertoireScopeSchema } from "./repertoires.js";
+import { RepertoireLevelSchema, RepertoireScopeSchema } from "./repertoires.js";
 
 // What the board is showing right now. The server owns it and broadcasts every change; the
 // browser only renders it. Each kind has its own board and mutation rules, so a command is
@@ -118,9 +118,12 @@ export const PuzzleItemSchema = z.object({
 
 // One pass over a repertoire line: `fen` is the position it starts from, move 1. The queue
 // position counts passes, and `queue_length` grows when a missed move brings its line back.
+// `repertoire_id` and `variation_name` name the variation whose move is in play, which a drill over
+// a group or a side changes from move to move. The server always sends the name; a fixture need not.
 export const RepertoireItemSchema = z.object({
   kind: z.literal("repertoire"),
   repertoire_id: z.number().int().positive(),
+  variation_name: z.string().min(1).optional(),
   fen: z.string(),
   ...queuePosition,
 });
@@ -216,10 +219,12 @@ export type RepertoireDrillResult = z.infer<typeof RepertoireDrillResultSchema>;
 // `first_pass` is set while the current move is shown for the first time, and `answer` is its move
 // then; later passes hide it. `flagged_opening` names the other opening a good but unexpected try
 // reached, cleared on the next try. A move is left until it is played right at the first attempt
-// of a pass; right and wrong count how that first rated attempt went.
+// of a pass; right and wrong count how that first rated attempt went. `repertoire_id` is the
+// variation of the move in play, as on the item, and `level` the one the drill was started at.
 export const RepertoireDrillSchema = z.object({
   repertoire_id: z.number().int().positive(),
   scope: RepertoireScopeSchema,
+  level: RepertoireLevelSchema.optional(),
   opening_name: z.string().nullable(),
   first_pass: z.boolean(),
   answer: ExpectedMoveSchema.nullable(),
@@ -273,7 +278,7 @@ export const TrainingActivitySchema = z.object({
 // A practice queue that is open but not on the board. `position` is the 0-based index of the item
 // it stopped on and `size` the length of its queue, so the hub reads "position + 1 of size". A
 // repertoire drill counts moves instead: `size` moves served, `position` of them finished, and it
-// names its repertoire and scope.
+// names the repertoire, the scope and the level it was started with.
 export const PausedTrainingSchema = z.object({
   run_id: z.number().int().positive(),
   mode: TrainingModeSchema,
@@ -285,6 +290,7 @@ export const PausedTrainingSchema = z.object({
   failed: z.number().int().nonnegative(),
   repertoire_id: z.number().int().positive().optional(),
   scope: RepertoireScopeSchema.optional(),
+  level: RepertoireLevelSchema.optional(),
 });
 export type PausedTraining = z.infer<typeof PausedTrainingSchema>;
 

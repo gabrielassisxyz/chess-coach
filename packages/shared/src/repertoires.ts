@@ -6,6 +6,13 @@ export const REPERTOIRE_SCOPES = ["recommended", "due", "all"] as const;
 export const RepertoireScopeSchema = z.enum(REPERTOIRE_SCOPES);
 export type RepertoireScope = z.infer<typeof RepertoireScopeSchema>;
 
+// Where a line drill draws its moves from: one variation, every variation of that variation's
+// group, or every unit of its side, which the hub calls White openings. A move two variations
+// share is served once.
+export const REPERTOIRE_LEVELS = ["variation", "group", "side"] as const;
+export const RepertoireLevelSchema = z.enum(REPERTOIRE_LEVELS);
+export type RepertoireLevel = z.infer<typeof RepertoireLevelSchema>;
+
 // How many moves a drill of each scope would serve right now.
 export const RepertoireScopeCountsSchema = z.object({
   recommended: z.number().int().nonnegative(),
@@ -34,10 +41,46 @@ export const MetOpeningSchema = z.object({
 });
 export type MetOpening = z.infer<typeof MetOpeningSchema>;
 
-// The body of GET /api/repertoires.
+// What a drill of a group, or of a whole side, would serve: a move shared by two variations counts once.
+export const RepertoireGroupSummarySchema = z.object({
+  side: z.enum(["white", "black"]),
+  group_name: z.string(),
+  moves: RepertoireScopeCountsSchema,
+});
+export type RepertoireGroupSummary = z.infer<typeof RepertoireGroupSummarySchema>;
+
+export const RepertoireSideSummarySchema = z.object({
+  side: z.enum(["white", "black"]),
+  moves: RepertoireScopeCountsSchema,
+});
+export type RepertoireSideSummary = z.infer<typeof RepertoireSideSummarySchema>;
+
+// One of White's moves the book plays at a branch point. `variation_name` is the name a variation
+// built with this move gets, and `repertoire_id` the variation that already plays it there, if any.
+export const RepertoireBranchChoiceSchema = z.object({
+  san: z.string().min(1),
+  variation_name: z.string().min(1),
+  repertoire_id: z.number().int().positive().nullable(),
+});
+export type RepertoireBranchChoice = z.infer<typeof RepertoireBranchChoiceSchema>;
+
+// A position the group's first variation reaches where the book plays more than one White move.
+// `line` is the moves from move 1 to that position, which ends on Black's move.
+export const RepertoireBranchSchema = z.object({
+  group_name: z.string(),
+  line: z.array(z.string().min(1)).min(1),
+  choices: z.array(RepertoireBranchChoiceSchema).min(2),
+});
+export type RepertoireBranch = z.infer<typeof RepertoireBranchSchema>;
+
+// The body of GET /api/repertoires. The server always sends the group and side counts and the
+// branch points; a fixture need not carry them.
 export const RepertoiresResponseSchema = z.object({
   repertoires: z.array(RepertoireSummarySchema),
+  groups: z.array(RepertoireGroupSummarySchema).optional(),
+  sides: z.array(RepertoireSideSummarySchema).optional(),
   met: z.array(MetOpeningSchema),
+  branches: z.array(RepertoireBranchSchema).optional(),
 });
 export type RepertoiresResponse = z.infer<typeof RepertoiresResponseSchema>;
 

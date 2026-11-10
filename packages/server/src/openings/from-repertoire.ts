@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { repertoireRootText } from "@chess-coach/shared";
-import { Chess } from "chess.js";
+import { Chess, type Move } from "chess.js";
 import type { Database } from "../db/open.js";
 import {
   createRepertoireVariation,
@@ -7,6 +9,9 @@ import {
   findFirstRepertoireVariation,
   findRepertoireContinuations,
   findRepertoireOwnMove,
+  findRepertoireOwnPlace,
+  findRepertoireVariationByName,
+  findRepertoireVariationPlaying,
   insertRepertoireOwnMove,
   type RepertoireCounts,
   type RepertoireMoveSource,
@@ -38,7 +43,7 @@ import {
 import { MIN_POSITION_GAMES } from "./from-explorer.js";
 import { positionKey } from "./from-games.js";
 import { pickItalianWhiteUci } from "./from-italian.js";
-import type { OpeningNames } from "./names.js";
+import { OPENING_TABLE_FILE, type OpeningNames, OpeningTableError } from "./names.js";
 import {
   checkRepertoireRoot,
   ITALIAN_SETUP_SAN,
@@ -70,6 +75,12 @@ export interface RepertoireOptions {
    * out, the run builds the Italian. It is checked again here, whoever called.
    */
   root?: readonly string[] | undefined;
+  /**
+   * A line of the Italian from 1.e4 through one White move after 3.Bc4: the run builds another
+   * variation of the Italian with that move forced in that position, named after it. It takes no
+   * root, and is checked again here, whoever called.
+   */
+  branch?: readonly string[] | undefined;
   maxPly?: number;
   minGames?: number;
   minReach?: number;
@@ -215,6 +226,15 @@ function repertoireShallowerDepth(
   return first === undefined || second === undefined ? undefined : Math.min(first, second);
 }
 
+/** White's move in one position of a variation built at a branch point, whatever the data says. */
+interface RepertoireForcedMove {
+  positionKey: string;
+  uci: string;
+  san: string;
+  /** The name the move gives the variation, by which a rerun finds it. */
+  variationName: string;
+}
+
 /** What one stored unit is built around: where it starts and what it is called. */
 interface RepertoireUnit {
   groupName: string;
@@ -222,17 +242,89 @@ interface RepertoireUnit {
   fixed: readonly string[];
   /** The line after whose last move White's answer names the variation. */
   naming: readonly string[];
+  forced: RepertoireForcedMove | null;
 }
 
 const ITALIAN_UNIT: RepertoireUnit = {
   groupName: REPERTOIRE_GROUP_ITALIAN,
   fixed: ITALIAN_SETUP_SAN,
   naming: [...ITALIAN_SETUP_SAN, ITALIAN_NAMING_REPLY_SAN],
+  forced: null,
 };
+
+/** A branch the data refuses: no Italian to branch from, a position it never reaches, its own move. */
+export class RepertoireBranchError extends Error {}
+
+export type RepertoireBranchCheck = { ok: true; branch: string[] } | { ok: false; reason: string };
+
+// As for a root, the longest SAN chess.js writes is well under this; it bounds the parser's work.
+const REPERTOIRE_BRANCH_LONGEST_SAN = 12;
+// White's first move that the Italian does not fix is the 4th, the seventh ply.
+const REPERTOIRE_BRANCH_MIN_PLY = ITALIAN_SETUP_SAN.length + 2;
+
+const refusedBranch = (reason: string): RepertoireBranchCheck => ({ ok: false, reason });
+
+/**
+ * A branch is the line from 1.e4 through White's move at a branch point: the Italian setup, then
+ * legal moves of both sides, ending on a White move from the 4th to the 15th. It comes from the
+ * browser, so it is replayed on a board and every rule it fails is said in words.
+ */
+export function checkRepertoireBranch(branch: unknown): RepertoireBranchCheck {
+  if (!Array.isArray(branch) || branch.some((san) => typeof san !== "string" || san === "")) {
+    return refusedBranch("the branch is a list of SAN moves");
+  }
+  if (branch.length > REPERTOIRE_MAX_PLY - 1) {
+    return refusedBranch(`the branch is at most ${REPERTOIRE_MAX_PLY - 1} plies long`);
+  }
+  if (branch.some((san: string) => san.length > REPERTOIRE_BRANCH_LONGEST_SAN)) {
+    return refusedBranch("the branch holds a move that is not SAN");
+  }
+  const played: string[] = [];
+  const board = new Chess();
+  for (const san of branch as string[]) {
+    try {
+      played.push(board.move(san).san);
+    } catch {
+      return refusedBranch("the branch is not a legal line from the start position");
+    }
+  }
+  if (!lineStartsWith(played, ITALIAN_SETUP_SAN)) {
+    return refusedBranch(`the branch starts with ${repertoireRootText(ITALIAN_SETUP_SAN)}`);
+  }
+  if (played.length % 2 === 0) return refusedBranch("the branch must end on White's move");
+  if (played.length < REPERTOIRE_BRANCH_MIN_PLY) {
+    return refusedBranch("the branch ends on a White move after 3.Bc4");
+  }
+  return { ok: true, branch: played };
+}
+
+// The variation is named the way the first one is, after White's answer, only the answer is the
+// forced move and the reply before it can be any Black move.
+function forcedItalianUnit(branch: readonly string[], names: OpeningNames): RepertoireUnit {
+  const checked = checkRepertoireBranch(branch);
+  if (!checked.ok) throw new RepertoireBranchError(checked.reason);
+  const naming = checked.branch.slice(0, -1);
+  const step = replayRepertoireLine(naming);
+  const move = repertoirePlaySan(step.fen, checked.branch.at(-1) as string) as RepertoirePlayedMove;
+  const unit: RepertoireUnit = { ...ITALIAN_UNIT, naming };
+  const opening = names.ofGame([...step.fens, move.after])?.name ?? null;
+  const variationName = repertoireVariationName(unit, opening, move.san);
+  const forced = {
+    positionKey: positionKey(step.fen),
+    uci: move.uci,
+    san: move.san,
+    variationName,
+  };
+  return { ...unit, forced };
+}
 
 // The book's name for the root position, else the root as a line: a position the table does not
 // name still gets a group of its own.
 function repertoireUnitOf(options: RepertoireOptions, names: OpeningNames): RepertoireUnit {
+  if (options.root && options.branch) {
+    throw new RepertoireBranchError("a branch is a line of the Italian Game and takes no root");
+  }
+  if (options.branch) return forcedItalianUnit(options.branch, names);
   if (!options.root) return ITALIAN_UNIT;
   const checked = checkRepertoireRoot(options.root);
   if (!checked.ok) throw new RepertoireRootError(checked.reason);
@@ -240,7 +332,40 @@ function repertoireUnitOf(options: RepertoireOptions, names: OpeningNames): Repe
     groupName: names.ofPosition(checked.fen)?.name ?? repertoireRootText(checked.root),
     fixed: checked.root,
     naming: checked.root,
+    forced: null,
   };
+}
+
+// The first variation of a group is found as the oldest, whatever today's data would name it; one
+// built at a branch point is found by the name its forced move gives it.
+function findUnitVariation(db: Database, unit: RepertoireUnit): RepertoireRow | undefined {
+  return unit.forced
+    ? findRepertoireVariationByName(db, "white", unit.groupName, unit.forced.variationName)
+    : findFirstRepertoireVariation(db, "white", unit.groupName);
+}
+
+// A new variation plays the usual rule everywhere but the branch point, so it reaches that position
+// only if the first variation does, and forcing the first variation's own move there would only
+// store a copy of it under another name. A variation the branch already built is carried on.
+function assertBranchAddsVariation(db: Database, unit: RepertoireUnit): void {
+  const forced = unit.forced;
+  if (!forced || findUnitVariation(db, unit)) return;
+  const first = findFirstRepertoireVariation(db, "white", unit.groupName);
+  if (!first) {
+    throw new RepertoireBranchError(
+      `build the ${unit.groupName} first; its variations branch from it`,
+    );
+  }
+  const move = `${Math.ceil((unit.naming.length + 1) / 2)}.${forced.san}`;
+  const stored = findRepertoireOwnMove(db, first.id, forced.positionKey);
+  if (!stored) {
+    throw new RepertoireBranchError(
+      `${first.variation_name} does not reach the position of ${move}`,
+    );
+  }
+  if (stored.move_uci === forced.uci) {
+    throw new RepertoireBranchError(`${move} is already the move of ${first.variation_name}`);
+  }
 }
 
 const lineStartsWith = (line: readonly string[], start: readonly string[]): boolean =>
@@ -251,7 +376,6 @@ const lineStartsWith = (line: readonly string[], start: readonly string[]): bool
 // cut short at the beginning leaves. Anything else is the unit of another root that the book gave
 // the same name, and walking it would write this root's lines into that unit.
 function assertGroupHoldsRoot(db: Database, unit: RepertoireUnit): void {
-  if (unit === ITALIAN_UNIT) return;
   const stored = findFirstRepertoireVariation(db, "white", unit.groupName);
   if (!stored) return;
   const setup = repertoireSetupLine(db, stored.id);
@@ -307,12 +431,12 @@ class RepertoireWalk {
   // of being found at the limit and left, and before the first count, so `created` never goes
   // negative.
   removeRepliesAtLimit(): number {
-    const stored = findFirstRepertoireVariation(this.db, "white", this.unit.groupName);
+    const stored = findUnitVariation(this.db, this.unit);
     return stored ? deleteRepertoireRepliesAtPly(this.db, stored.id, this.maxPly) : 0;
   }
 
   async run(): Promise<void> {
-    const stored = findFirstRepertoireVariation(this.db, "white", this.unit.groupName);
+    const stored = findUnitVariation(this.db, this.unit);
     this.repertoireId = (stored ?? (await this.createVariation())).id;
     await this.visitOwn(replayRepertoireLine([]));
   }
@@ -323,6 +447,14 @@ class RepertoireWalk {
   }
 
   private async createVariation(): Promise<RepertoireRow> {
+    const forced = this.unit.forced;
+    if (forced) {
+      return createRepertoireVariation(this.db, {
+        side: "white",
+        groupName: this.unit.groupName,
+        variationName: forced.variationName,
+      });
+    }
     const step = replayRepertoireLine([...this.unit.naming]);
     const choice = await this.freshOwnChoice(step);
     if (!choice) {
@@ -511,9 +643,12 @@ class RepertoireWalk {
     const position = await this.explorer.position(step.fen, ITALIAN_WHITE_RATINGS);
     const searched = await this.searchPosition(step.fen, REPERTOIRE_SEARCH_LINES);
     const setupSan = this.unit.fixed[step.ply - 1];
+    const forced =
+      this.unit.forced?.positionKey === positionKey(step.fen) ? this.unit.forced : null;
     const uci = setupSan
       ? repertoirePlaySan(step.fen, setupSan)?.uci
-      : pickItalianWhiteUci(step.fen, position, searched.lines, NO_SETUP_PREFERENCE_TURN);
+      : (forced?.uci ??
+        pickItalianWhiteUci(step.fen, position, searched.lines, NO_SETUP_PREFERENCE_TURN));
     if (!uci) return null;
     const move = repertoirePlayUci(step.fen, uci);
     const scores = await this.scoreOwnMove(step.fen, uci, searched);
@@ -586,12 +721,13 @@ const NO_REPERTOIRE_COUNTS: RepertoireCounts = {
 };
 
 function unitVariationCounts(db: Database, unit: RepertoireUnit): RepertoireCounts {
-  const stored = findFirstRepertoireVariation(db, "white", unit.groupName);
+  const stored = findUnitVariation(db, unit);
   return stored ? repertoireCounts(db, stored.id) : NO_REPERTOIRE_COUNTS;
 }
 
 /**
- * Builds the first variation of a unit, the Italian unless `options.root` names another: one
+ * Builds the first variation of a unit, the Italian unless `options.root` names another, or with
+ * `options.branch` another variation of the Italian, whose White move is forced in one position: one
  * expected White move per position and every Black reply common at the student's rating, from
  * 1.e4 (from the root, for a unit built from one) to White's 15th move, stored row by row so that
  * a run the request budget cuts short resumes by running again. Where no reply is common enough,
@@ -610,7 +746,8 @@ export async function generateRepertoire(
   options: RepertoireOptions = {},
 ): Promise<RepertoireResult> {
   const unit = repertoireUnitOf(options, names);
-  assertGroupHoldsRoot(db, unit);
+  if (options.root) assertGroupHoldsRoot(db, unit);
+  assertBranchAddsVariation(db, unit);
   const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
   const walk = new RepertoireWalk(db, engine, explorer, names, unit, options);
   const removedReplies = walk.removeRepliesAtLimit();
@@ -624,7 +761,7 @@ export async function generateRepertoire(
   }
   const after = unitVariationCounts(db, unit);
   return {
-    variation: findFirstRepertoireVariation(db, "white", unit.groupName)?.variation_name ?? null,
+    variation: findUnitVariation(db, unit)?.variation_name ?? null,
     ownMoves: after.ownMoves,
     replies: after.replies,
     mainlineReplies: after.mainlineReplies,
@@ -637,4 +774,153 @@ export async function generateRepertoire(
     truncated,
     ...walk.searchOutcome(),
   };
+}
+
+/** One of White's moves the book plays at a branch point. */
+export interface RepertoireBookChoice {
+  san: string;
+  uci: string;
+  /** How many of the book's lines go through the move. */
+  lines: number;
+}
+
+/** A position after 3.Bc4, White to move, where the book's lines go on with more than one move. */
+export interface RepertoireBookBranch {
+  positionKey: string;
+  /** The move most of the book's lines go through first. */
+  choices: RepertoireBookChoice[];
+}
+
+export type RepertoireBranchBook = readonly RepertoireBookBranch[];
+
+/** Stands in where no table is loaded: the Italian then has no branch point to offer. */
+export const NO_REPERTOIRE_BRANCH_BOOK: RepertoireBranchBook = [];
+
+// The table writes a line with its move numbers: "1. e4 e5 2. Nf3".
+const sansOfBookLine = (pgn: string): string[] =>
+  pgn.split(/\s+/).filter((token) => token !== "" && !/^\d+\.+$/.test(token));
+
+const byBookLines = (a: RepertoireBookChoice, b: RepertoireBookChoice): number =>
+  b.lines - a.lines || a.san.localeCompare(b.san);
+
+function addBookLine(
+  byKey: Map<string, Map<string, RepertoireBookChoice>>,
+  sans: readonly string[],
+  where: string,
+): void {
+  const board = new Chess();
+  for (const [index, san] of sans.entries()) {
+    const key = positionKey(board.fen());
+    let move: Move;
+    try {
+      move = board.move(san);
+    } catch {
+      throw new OpeningTableError(`${where}: ${san} is not a legal move of the line`);
+    }
+    if (index < REPERTOIRE_BRANCH_MIN_PLY - 1 || index % 2 === 1) continue;
+    const uci = `${move.from}${move.to}${move.promotion ?? ""}`;
+    const choices = byKey.get(key) ?? new Map<string, RepertoireBookChoice>();
+    const choice = choices.get(uci) ?? { san: move.san, uci, lines: 0 };
+    choice.lines += 1;
+    choices.set(uci, choice);
+    byKey.set(key, choices);
+  }
+}
+
+/**
+ * The book's branch points after 3.Bc4, read from the line column of the openings table whose
+ * names the rest of the repertoire uses: every position where its lines go on with more than one
+ * White move. A position is matched whatever the move order, so a transposition joins its lines.
+ * A line that does not replay throws with its row, so a bad update fails at boot.
+ */
+export function parseRepertoireBranchBook(
+  table: string,
+  label: string = OPENING_TABLE_FILE,
+): RepertoireBookBranch[] {
+  const byKey = new Map<string, Map<string, RepertoireBookChoice>>();
+  table.split(/\r?\n/).forEach((row, index) => {
+    if (index === 0 || row === "") return;
+    const sans = sansOfBookLine(row.split("\t")[2] ?? "");
+    if (lineStartsWith(sans, ITALIAN_SETUP_SAN)) addBookLine(byKey, sans, `${label}:${index + 1}`);
+  });
+  return [...byKey.entries()].flatMap(([key, choices]) =>
+    choices.size < 2
+      ? []
+      : [{ positionKey: key, choices: [...choices.values()].sort(byBookLines) }],
+  );
+}
+
+export function loadRepertoireBranchBook(contentDir: string): RepertoireBookBranch[] {
+  const file = join(contentDir, OPENING_TABLE_FILE);
+  return parseRepertoireBranchBook(readFileSync(file, "utf8"), file);
+}
+
+/** A choice at a branch point: the name a variation built with it gets, and the one that holds it. */
+export interface RepertoireBranchChoiceListing {
+  san: string;
+  variationName: string;
+  repertoireId: number | null;
+}
+
+export interface RepertoireBranchListing {
+  groupName: string;
+  /** The first variation's line to the position, the likeliest of them. */
+  line: string[];
+  reach: number;
+  choices: RepertoireBranchChoiceListing[];
+}
+
+// The variation that plays the move there, else one a run cut short built with it before it got
+// that far, which adding it again carries on.
+function branchChoiceListing(
+  db: Database,
+  names: OpeningNames,
+  place: { line: string[]; positionKey: string },
+  choice: RepertoireBookChoice,
+): RepertoireBranchChoiceListing {
+  const step = replayRepertoireLine(place.line);
+  const after = repertoirePlayUci(step.fen, choice.uci);
+  const opening = after ? (names.ofGame([...step.fens, after.after])?.name ?? null) : null;
+  const unit: RepertoireUnit = { ...ITALIAN_UNIT, naming: place.line };
+  const variationName = repertoireVariationName(unit, opening, choice.san);
+  const holder =
+    findRepertoireVariationPlaying(db, "white", unit.groupName, {
+      positionKey: place.positionKey,
+      uci: choice.uci,
+    }) ?? findRepertoireVariationByName(db, "white", unit.groupName, variationName);
+  return { san: choice.san, variationName, repertoireId: holder?.id ?? null };
+}
+
+/**
+ * The book's branch points that the Italian's first variation reaches, the likeliest first. Only
+ * there can a variation forced at one position differ from it, since it plays the usual rule
+ * everywhere else; the line is the one the first variation stored, so a choice is named and built
+ * from the same moves.
+ */
+export function listRepertoireBranches(
+  db: Database,
+  book: RepertoireBranchBook,
+  names: OpeningNames,
+): RepertoireBranchListing[] {
+  const first = findFirstRepertoireVariation(db, "white", REPERTOIRE_GROUP_ITALIAN);
+  if (!first) return [];
+  const listed = book.flatMap((branch): RepertoireBranchListing[] => {
+    const place = findRepertoireOwnPlace(db, first.id, branch.positionKey);
+    if (!place) return [];
+    const at = { line: place.line, positionKey: branch.positionKey };
+    return [
+      {
+        groupName: REPERTOIRE_GROUP_ITALIAN,
+        line: place.line,
+        reach: place.reach,
+        choices: branch.choices.map((choice) => branchChoiceListing(db, names, at, choice)),
+      },
+    ];
+  });
+  return listed.sort(
+    (a, b) =>
+      b.reach - a.reach ||
+      a.line.length - b.line.length ||
+      a.line.join(" ").localeCompare(b.line.join(" ")),
+  );
 }

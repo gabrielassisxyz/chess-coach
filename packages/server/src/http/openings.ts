@@ -4,7 +4,12 @@ import { type Log, silentLog } from "../log.js";
 import { ExplorerError } from "../openings/explorer-client.js";
 import type { ExplorerResult } from "../openings/from-explorer.js";
 import type { GenerationResult } from "../openings/from-games.js";
-import type { RepertoireResult } from "../openings/from-repertoire.js";
+import {
+  checkRepertoireBranch,
+  type RepertoireBranchCheck,
+  RepertoireBranchError,
+  type RepertoireResult,
+} from "../openings/from-repertoire.js";
 import { IdeaSessionError, type RepertoireIdeasResult } from "../openings/repertoire-ideas.js";
 import {
   checkRepertoireRoot,
@@ -20,6 +25,8 @@ const generateBody = z
       .max(5),
     // Left to the root rules rather than zod, so that a malformed one answers invalid_root.
     root: z.unknown(),
+    // The same for a branch, which answers invalid_branch.
+    branch: z.unknown(),
   })
   .partial()
   .nullish();
@@ -30,12 +37,30 @@ function checkedRoot(sources: string[] | undefined, root: unknown): RepertoireRo
   return given && sources?.includes("repertoire") ? checkRepertoireRoot(root) : null;
 }
 
+const isGiven = (value: unknown): boolean => value !== undefined && value !== null;
+
+// A branch is a line of the Italian, so it takes no root, and like a root only the repertoire
+// source reads it.
+function checkedBranch(
+  sources: string[] | undefined,
+  body: { root?: unknown; branch?: unknown } | null | undefined,
+): RepertoireBranchCheck | null {
+  if (!isGiven(body?.branch) || !sources?.includes("repertoire")) return null;
+  if (isGiven(body?.root)) {
+    return { ok: false, reason: "a branch is a line of the Italian Game and takes no root" };
+  }
+  return checkRepertoireBranch(body?.branch);
+}
+
 export function registerOpeningRoutes(
   app: FastifyInstance,
   generate: () => Promise<GenerationResult>,
   generateFromExplorer?: () => Promise<ExplorerResult>,
   generateItalian?: () => Promise<ExplorerResult>,
-  generateRepertoire?: (root?: readonly string[]) => Promise<RepertoireResult>,
+  generateRepertoire?: (
+    root?: readonly string[],
+    branch?: readonly string[],
+  ) => Promise<RepertoireResult>,
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>,
   log: Log = silentLog,
 ): void {
@@ -53,12 +78,20 @@ export function registerOpeningRoutes(
       });
     }
     const sources = body.data?.sources;
+    const branch = checkedBranch(sources, body.data);
+    if (branch && !branch.ok) {
+      return reply.code(400).send({ error: "invalid_branch", message: branch.reason });
+    }
     const root = checkedRoot(sources, body.data?.root);
     if (root && !root.ok) {
       return reply.code(400).send({ error: "invalid_root", message: root.reason });
     }
-    // Only a root that passed is logged, and the generator is handed the line as the board wrote it.
-    const rootFields = root?.ok ? { root: root.root } : {};
+    // Only a root or a branch that passed is logged, and the generator is handed the line as the
+    // board wrote it.
+    const lineFields = {
+      ...(root?.ok ? { root: root.root } : {}),
+      ...(branch?.ok ? { branch: branch.branch } : {}),
+    };
     if (sources?.includes("explorer") && !generateFromExplorer) {
       return reply.code(404).send({ error: "explorer_unavailable", message: "not configured" });
     }
@@ -121,7 +154,9 @@ export function registerOpeningRoutes(
       }
       if (sources.includes("repertoire") && generateRepertoire) {
         explorerRunning = true;
-        out.repertoire = await generateRepertoire(root?.ok ? root.root : undefined).finally(() => {
+        const rootLine = root?.ok ? root.root : undefined;
+        const branchLine = branch?.ok ? branch.branch : undefined;
+        out.repertoire = await generateRepertoire(rootLine, branchLine).finally(() => {
           explorerRunning = false;
         });
       }
@@ -129,7 +164,7 @@ export function registerOpeningRoutes(
         out.repertoireIdeas = await generateRepertoireIdeas();
       log.info("openings.generate", {
         sources,
-        ...rootFields,
+        ...lineFields,
         result: out,
         duration_ms: elapsed(),
       });
@@ -139,11 +174,14 @@ export function registerOpeningRoutes(
       const explorer = error instanceof ExplorerError;
       log.error(explorer ? "explorer.failed" : "openings.generate_failed", error, {
         sources: sources ?? ["own"],
-        ...rootFields,
+        ...lineFields,
         duration_ms: elapsed(),
       });
       if (error instanceof RepertoireRootConflictError) {
         return reply.code(409).send({ error: "root_conflict", message });
+      }
+      if (error instanceof RepertoireBranchError) {
+        return reply.code(409).send({ error: "branch_refused", message });
       }
       if (error instanceof ExplorerError) {
         return reply.code(502).send({ error: "explorer_unavailable", message });

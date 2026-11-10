@@ -10,7 +10,9 @@ import { type Database, openDatabase } from "../db/open.js";
 import {
   createRepertoireVariation,
   findFirstRepertoireVariation,
+  findRepertoireVariationByName,
   insertRepertoireOwnMove,
+  type RepertoireRow,
   raiseRepertoireOwnMoveReach,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
@@ -25,9 +27,13 @@ import {
 } from "./explorer-client.js";
 import { positionKey } from "./from-games.js";
 import {
+  checkRepertoireBranch,
   generateRepertoire,
+  loadRepertoireBranchBook,
+  parseRepertoireBranchBook,
   REPERTOIRE_MAX_PLY,
   REPERTOIRE_MIN_REACH,
+  RepertoireBranchError,
   type RepertoireOptions,
   type RepertoireResult,
 } from "./from-repertoire.js";
@@ -2145,5 +2151,290 @@ describe("the documentation of the repertoire source", () => {
       forbidden.some((text) => readFileSync(file, "utf8").includes(text)),
     );
     expect(offenders).toEqual([]);
+  });
+});
+
+const D3_BRANCH = [...AFTER_BC5, "d3"];
+const REPOSITORY_CONTENT = join(import.meta.dirname, "../../../../content");
+
+// The book names the position after 4.d3, as the real one does, so a variation forced there is
+// named after the opening the move reaches.
+const BRANCH_FIXTURE_NAMES: OpeningNames = parseOpeningTable(
+  [
+    "eco\tname\tpgn\tuci\tepd",
+    `C50\tItalian Game\t-\t-\t${keyOf(SETUP)}`,
+    `C50\tItalian Game: Giuoco Piano\t-\t-\t${keyOf(AFTER_BC5)}`,
+    `C53\tItalian Game: Classical Variation\t-\t-\t${keyOf(AFTER_C3)}`,
+    `C50\tItalian Game: Giuoco Pianissimo\t-\t-\t${keyOf(D3_BRANCH)}`,
+    `C55\tItalian Game: Two Knights Defense\t-\t-\t${keyOf([...SETUP, "Nf6"])}`,
+  ].join("\n"),
+);
+
+const rowsOfVariation = (repertoireId: number): RepertoireTestRow[] =>
+  rowsOf(db).filter((row) => row.repertoire_id === repertoireId);
+
+const ownOf = (repertoireId: number, line: string[]): RepertoireTestRow | undefined =>
+  rowsOfVariation(repertoireId).find(
+    (row) => row.kind === "own" && row.position_key === keyOf(line),
+  );
+
+const variationNamed = (name: string): RepertoireRow => {
+  const found = findRepertoireVariationByName(db, "white", "Italian Game", name);
+  if (!found) throw new Error(`no variation is named ${name}`);
+  return found;
+};
+
+const generateBranch = (branch: string[], options: RepertoireOptions = {}) =>
+  generate({ ...options, branch }, BRANCH_FIXTURE_NAMES);
+
+describe("a variation built at a branch point", () => {
+  it("forces White's move there, keeps the usual rule elsewhere and leaves the first variation unchanged", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    const first = variationNamed("Classical Variation (4.c3)");
+    const before = rowsOfVariation(first.id);
+
+    const result = await generateBranch(D3_BRANCH);
+
+    expect(result.variation).toBe("Giuoco Pianissimo (4.d3)");
+    expect(variationsOf(db)).toEqual([
+      { side: "white", group_name: "Italian Game", variation_name: "Classical Variation (4.c3)" },
+      { side: "white", group_name: "Italian Game", variation_name: "Giuoco Pianissimo (4.d3)" },
+    ]);
+    expect(rowsOfVariation(first.id)).toEqual(before);
+    const second = variationNamed("Giuoco Pianissimo (4.d3)");
+    // 4.d3 is the third most played move of the White band and the engine's third line.
+    expect(ownOf(second.id, AFTER_BC5)).toMatchObject({
+      move_san: "d3",
+      source: "explorer",
+      cp_loss: 20,
+      eval_cp: 20,
+    });
+    expect(ownOf(second.id, AFTER_BC5)?.share).toBeCloseTo(0.138);
+    for (const line of [[], SETUP.slice(0, 2), BEFORE_BC4, [...SETUP, "Nf6"]]) {
+      expect(ownOf(second.id, line)?.move_san).toBe(ownOf(first.id, line)?.move_san);
+    }
+    expect(rowsOfVariation(second.id).some((row) => lineOf(row)[6] === "c3")).toBe(false);
+    // The explorer knows no game after 4.d3, so the line goes on with the engine's reply.
+    const afterD3 = rowsOfVariation(second.id).filter(
+      (row) => row.kind === "reply" && row.position_key === keyOf(D3_BRANCH),
+    );
+    expect(afterD3.map((row) => row.source)).toEqual(["engine"]);
+  });
+
+  it("adds no row and asks neither the network nor the engine when run again", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    const built = await generateBranch(D3_BRANCH);
+    const stored = rowsOf(db);
+    const searches = engine.requests.length;
+
+    const again = await generateBranch(D3_BRANCH);
+
+    expect(built.created).toBe(rowsOfVariation(variationNamed(built.variation ?? "").id).length);
+    expect(again).toMatchObject({
+      variation: "Giuoco Pianissimo (4.d3)",
+      created: 0,
+      requests: 0,
+      truncated: false,
+      ownMoves: built.ownMoves,
+      replies: built.replies,
+    });
+    expect(rowsOf(db)).toEqual(stored);
+    expect(engine.requests).toHaveLength(searches);
+    expect(variationsOf(db)).toHaveLength(2);
+  });
+
+  it("carries on a branch run the request budget cut short, in the variation it named", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    const cut = await generateBranch(D3_BRANCH, { maxRequests: 1 });
+    expect(cut).toMatchObject({ variation: "Giuoco Pianissimo (4.d3)", truncated: true });
+    const partial = rowsOfVariation(variationNamed("Giuoco Pianissimo (4.d3)").id).length;
+
+    const resumed = await generateBranch(D3_BRANCH);
+
+    expect(resumed.truncated).toBe(false);
+    expect(resumed.created).toBeGreaterThan(0);
+    expect(rowsOfVariation(variationNamed("Giuoco Pianissimo (4.d3)").id).length).toBe(
+      partial + resumed.created,
+    );
+    expect(variationsOf(db)).toHaveLength(2);
+  });
+
+  it("finds the first variation when the branch is that variation's own answer to 3...Bc5", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    const stored = rowsOf(db);
+    const result = await generateBranch(AFTER_C3);
+    expect(result).toMatchObject({ variation: "Classical Variation (4.c3)", created: 0 });
+    expect(rowsOf(db)).toEqual(stored);
+  });
+
+  it("refuses a branch before the Italian is built, and stores nothing", async () => {
+    writeItalianTree();
+    await expect(generateBranch(D3_BRANCH)).rejects.toThrow(
+      new RepertoireBranchError("build the Italian Game first; its variations branch from it"),
+    );
+    expect(variationsOf(db)).toEqual([]);
+    expect(rowsOf(db)).toEqual([]);
+  });
+
+  it("refuses a position the first variation never reaches, where the forced move would never be played", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    const stored = rowsOf(db);
+    // 3...a6 holds 1.7% of the replies to 3.Bc4, under 1 in 50, so the first variation stops short of it.
+    await expect(generateBranch([...SETUP, "a6", "d3"])).rejects.toThrow(
+      new RepertoireBranchError("Classical Variation (4.c3) does not reach the position of 4.d3"),
+    );
+    expect(rowsOf(db)).toEqual(stored);
+    expect(variationsOf(db)).toHaveLength(1);
+  });
+
+  it("refuses the first variation's own move elsewhere, which would only copy that variation", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    const stored = rowsOf(db);
+    await expect(generateBranch([...SETUP, "Nf6", "d3"])).rejects.toThrow(
+      new RepertoireBranchError("4.d3 is already the move of Classical Variation (4.c3)"),
+    );
+    expect(rowsOf(db)).toEqual(stored);
+    expect(variationsOf(db)).toHaveLength(1);
+  });
+
+  it("refuses a branch that comes with a root", async () => {
+    writeItalianTree();
+    await expect(generate({ branch: D3_BRANCH, root: ["e4", "d5"] })).rejects.toThrow(
+      RepertoireBranchError,
+    );
+    expect(variationsOf(db)).toEqual([]);
+  });
+
+  it("builds a branch posted to the generate route once, logs it, and answers 409 for one refused", async () => {
+    writeItalianTree();
+    const log = new RecordingLog();
+    const app = buildApp({
+      db,
+      log,
+      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateRepertoireOpenings: (root, branch) =>
+        generateRepertoire(db, engine, explorer, cacheDir, clock, BRANCH_FIXTURE_NAMES, {
+          root,
+          branch,
+        }),
+    });
+    const post = (payload: object) =>
+      app.inject({ method: "POST", url: "/api/openings/generate", payload });
+    const early = await post({ sources: ["repertoire"], branch: D3_BRANCH });
+    await post({ sources: ["repertoire"] });
+    const built = await post({ sources: ["repertoire"], branch: D3_BRANCH });
+    const stored = rowsOf(db);
+    const again = await post({ sources: ["repertoire"], branch: D3_BRANCH });
+    await app.close();
+
+    expect(early.statusCode).toBe(409);
+    expect(early.json()).toEqual({
+      error: "branch_refused",
+      message: "build the Italian Game first; its variations branch from it",
+    });
+    expect(built.statusCode).toBe(200);
+    expect(built.json().repertoire).toMatchObject({ variation: "Giuoco Pianissimo (4.d3)" });
+    expect(again.json().repertoire).toMatchObject({ created: 0 });
+    expect(rowsOf(db)).toEqual(stored);
+    expect(variationsOf(db)).toHaveLength(2);
+    expect(log.named("openings.generate").at(-1)?.fields).toMatchObject({
+      sources: ["repertoire"],
+      branch: D3_BRANCH,
+    });
+  });
+});
+
+describe("checking a branch", () => {
+  it("writes the line the way the board writes it", () => {
+    expect(checkRepertoireBranch(["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "f8c5", "d2d3"])).toEqual(
+      { ok: true, branch: D3_BRANCH },
+    );
+  });
+
+  it.each([
+    ["a branch that is not a list", "e4 e5", "the branch is a list of SAN moves"],
+    ["moves that are not text", [4, 5], "the branch is a list of SAN moves"],
+    [
+      "an illegal move",
+      [...AFTER_BC5, "Ke3"],
+      "the branch is not a legal line from the start position",
+    ],
+    [
+      "a line that leaves the Italian setup",
+      ["e4", "e5", "Nf3", "Nf6", "Bc4", "Nc6", "d3"],
+      "the branch starts with 1.e4 e5 2.Nf3 Nc6 3.Bc4",
+    ],
+    [
+      "a line that ends on Black's move",
+      [...D3_BRANCH, "Nf6"],
+      "the branch must end on White's move",
+    ],
+    ["a move of the setup", SETUP, "the branch ends on a White move after 3.Bc4"],
+    [
+      "a line longer than White's 15th move",
+      Array.from({ length: REPERTOIRE_MAX_PLY }, () => "e4"),
+      "the branch is at most 29 plies long",
+    ],
+    [
+      "a move longer than any SAN",
+      [...AFTER_BC5, "d3".repeat(7)],
+      "the branch holds a move that is not SAN",
+    ],
+  ])("refuses %s, and says why", (_label, branch, reason) => {
+    expect(checkRepertoireBranch(branch)).toEqual({ ok: false, reason });
+  });
+});
+
+describe("the book's branch points", () => {
+  it("finds the 32 positions after 3.Bc4 where the book's lines play more than one White move", () => {
+    const book = loadRepertoireBranchBook(REPOSITORY_CONTENT);
+    expect(book).toHaveLength(32);
+    const afterBc5 = book.find((branch) => branch.positionKey === keyOf(AFTER_BC5));
+    expect(afterBc5?.choices.map((choice) => choice.san)).toEqual(
+      expect.arrayContaining(["c3", "d3", "b4", "O-O"]),
+    );
+  });
+
+  it("counts the lines through each move, joins a transposition and leaves out a line outside the Italian", () => {
+    const table = [
+      "eco\tname\tpgn\tuci\tepd",
+      "C50\tA\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. d3\t-\t-",
+      "C50\tB\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6\t-\t-",
+      "C50\tC\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6 5. d4\t-\t-",
+      "C50\tD\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 4. d3 Bc5 5. c3\t-\t-",
+      "C50\tE\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. d3 Nf6 5. Nc3\t-\t-",
+      "C60\tF\t1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4\t-\t-",
+      "C60\tG\t1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6\t-\t-",
+    ].join("\n");
+    expect(parseRepertoireBranchBook(table)).toEqual([
+      {
+        positionKey: keyOf(AFTER_BC5),
+        choices: [
+          { san: "c3", uci: "c2c3", lines: 2 },
+          { san: "d3", uci: "d2d3", lines: 2 },
+        ],
+      },
+      {
+        positionKey: keyOf(MEETING),
+        choices: [
+          { san: "c3", uci: "c2c3", lines: 1 },
+          { san: "Nc3", uci: "b1c3", lines: 1 },
+        ],
+      },
+    ]);
+  });
+
+  it("throws with the row of a line that does not replay", () => {
+    const table = [
+      "eco\tname\tpgn\tuci\tepd",
+      "C50\tA\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. Ke3\t-\t-",
+    ];
+    expect(() => parseRepertoireBranchBook(table.join("\n"), "book.tsv")).toThrow(/^book\.tsv:2: /);
   });
 });

@@ -101,6 +101,35 @@ export function findFirstRepertoireVariation(
     .get(side, groupName) as RepertoireRow | undefined;
 }
 
+/** The variation of a group with this name: a variation built at a branch point is found by it. */
+export function findRepertoireVariationByName(
+  db: Database,
+  side: RepertoireSide,
+  groupName: string,
+  variationName: string,
+): RepertoireRow | undefined {
+  return db
+    .prepare("SELECT * FROM repertoires WHERE side = ? AND group_name = ? AND variation_name = ?")
+    .get(side, groupName, variationName) as RepertoireRow | undefined;
+}
+
+/** The oldest variation of a group that expects this move in this position, if any does. */
+export function findRepertoireVariationPlaying(
+  db: Database,
+  side: RepertoireSide,
+  groupName: string,
+  move: { positionKey: string; uci: string },
+): RepertoireRow | undefined {
+  return db
+    .prepare(
+      `SELECT r.* FROM repertoires r JOIN repertoire_positions p ON p.repertoire_id = r.id
+       WHERE r.side = ? AND r.group_name = ? AND p.kind = 'own' AND p.position_key = ?
+         AND p.move_uci = ?
+       ORDER BY r.id LIMIT 1`,
+    )
+    .get(side, groupName, move.positionKey, move.uci) as RepertoireRow | undefined;
+}
+
 export function createRepertoireVariation(db: Database, repertoire: NewRepertoire): RepertoireRow {
   const inserted = db
     .prepare("INSERT INTO repertoires (side, group_name, variation_name) VALUES (?, ?, ?)")
@@ -124,6 +153,30 @@ export function findRepertoireOwnMove(
        WHERE repertoire_id = ? AND position_key = ? AND kind = 'own'`,
     )
     .get(repertoireId, positionKey) as StoredRepertoireOwnMove | undefined;
+}
+
+/** Where a variation expects its move in a position: the likeliest line there and its reach. */
+export interface StoredRepertoireOwnPlace {
+  line: string[];
+  reach: number;
+  uci: string;
+}
+
+export function findRepertoireOwnPlace(
+  db: Database,
+  repertoireId: number,
+  positionKey: string,
+): StoredRepertoireOwnPlace | undefined {
+  const row = db
+    .prepare(
+      `SELECT line_san, reach, move_uci FROM repertoire_positions
+       WHERE repertoire_id = ? AND position_key = ? AND kind = 'own'`,
+    )
+    .get(repertoireId, positionKey) as
+    | { line_san: string; reach: number; move_uci: string }
+    | undefined;
+  if (!row) return undefined;
+  return { line: JSON.parse(row.line_san) as string[], reach: row.reach, uci: row.move_uci };
 }
 
 export function insertRepertoireOwnMove(db: Database, move: NewRepertoireOwnMove): void {
