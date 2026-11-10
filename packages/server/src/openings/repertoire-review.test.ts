@@ -28,6 +28,7 @@ import {
   createRepertoireVariation,
   findRepertoireOwnMove,
   insertRepertoireOwnMove,
+  listMetOpenings,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { classifyCpLoss, type PlayerMoveEvaluation } from "../engine/evaluate.js";
@@ -52,7 +53,9 @@ import {
 import {
   type GameReviewStoredMove,
   type RepertoireLookup,
+  type RootedUnit,
   walkGameAgainstRepertoire,
+  walkLongestFollowedUnit,
 } from "./repertoire-review-walk.js";
 
 const SETUP = ["e4", "e5", "Nf3", "Nc6", "Bc4"];
@@ -62,6 +65,11 @@ const AFTER_NF6 = [...AFTER_C3, "Nf6"];
 // The line the repertoire teaches against 3...Bc5 and the one it teaches against 3...Nf6.
 const MAIN_LINE = [...AFTER_NF6, "d4", "exd4", "cxd4"];
 const NF6_LINE = [...SETUP, "Nf6", "d3", "Be7", "O-O"];
+// A unit rooted at 1.e4 d5, and a second Italian variation that answers 3...Bc5 with 4.d3.
+const SCANDINAVIAN = ["e4", "d5"];
+const AFTER_EXD5 = [...SCANDINAVIAN, "exd5"];
+const SCANDINAVIAN_LINE = [...AFTER_EXD5, "Qxd5", "Nc3", "Qa5"];
+const PIANISSIMO_LINE = [...AFTER_BC5, "d3", "Nf6", "O-O", "d6"];
 // A trap that ends with Black mating White on ply 14.
 const BLACKBURNE = [...SETUP, "Nd4", "Nxe5", "Qg5", "Nxf7", "Qxg2", "Rf1", "Qxe4+", "Be2", "Nf3#"];
 
@@ -116,6 +124,7 @@ const NAMES = parseOpeningTable(
     "eco\tname\tpgn\tuci\tepd",
     `B00\tKing's Pawn Game\t-\t-\t${keyOf(["e4"])}`,
     `B20\tSicilian Defense\t-\t-\t${keyOf(["e4", "c5"])}`,
+    `B01\tScandinavian Defense\t-\t-\t${keyOf(SCANDINAVIAN)}`,
     `C42\tRussian Game\t-\t-\t${keyOf(["e4", "e5", "Nf3", "Nf6"])}`,
     `C60\tRuy Lopez\t-\t-\t${keyOf(["e4", "e5", "Nf3", "Nc6", "Bb5"])}`,
     `C50\tItalian Game\t-\t-\t${keyOf(SETUP)}`,
@@ -232,6 +241,7 @@ class ScriptedRepertoireLookup implements RepertoireLookup {
 
 interface PositionRow {
   id: number;
+  repertoire_id: number;
   kind: "own" | "reply";
   position_key: string;
   ply: number;
@@ -321,17 +331,29 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-// The rows the generator stores: White's fixed moves and Black's setup replies come first, and every
-// row from the 6th ply on carries the reach given. `lastPly` cuts the line short, as the depth does.
-function seedLine(line: string[], reach: number, lastPly = line.length): void {
+interface SeedTarget {
+  id: number;
+  /** How many plies from the first are the unit's fixed root, stored as setup at reach 1. */
+  rootPlies: number;
+}
+
+// The rows the generator stores: the fixed root comes first, White's moves and Black's replies, and
+// every row after it carries the reach given. `lastPly` cuts the line short, as the depth does.
+function seedLine(
+  line: string[],
+  reach: number,
+  lastPly = line.length,
+  target: SeedTarget = { id: repertoireId, rootPlies: 5 },
+): void {
   for (const step of stepsOf(line)) {
     if (step.ply > lastPly) break;
+    const inRoot = step.ply <= target.rootPlies;
     const place = {
-      repertoireId,
+      repertoireId: target.id,
       positionKey: step.keyBefore,
       ply: step.ply,
       line: step.before,
-      reach: step.ply <= 5 ? 1 : reach,
+      reach: inRoot ? 1 : reach,
       openingName: null,
       uci: step.uci,
       san: step.san,
@@ -340,19 +362,35 @@ function seedLine(line: string[], reach: number, lastPly = line.length): void {
       upsertRepertoireReply(db, {
         ...place,
         share: 0.5,
-        source: step.ply <= 4 ? "setup" : "explorer",
+        source: inRoot ? "setup" : "explorer",
       });
-    } else if (!findRepertoireOwnMove(db, repertoireId, step.keyBefore)) {
+    } else if (!findRepertoireOwnMove(db, target.id, step.keyBefore)) {
       insertRepertoireOwnMove(db, {
         ...place,
         share: null,
-        source: step.ply <= 5 ? "setup" : "explorer",
+        source: inRoot ? "setup" : "explorer",
         cpLoss: 0,
         evalCp: 30,
         results: null,
       });
     }
   }
+}
+
+function createUnit(groupName: string, variationName: string): number {
+  return createRepertoireVariation(db, { side: "white", groupName, variationName }).id;
+}
+
+function seedScandinavian(): number {
+  const id = createUnit("Scandinavian Defense", "Mieses-Kotroc Variation (2.exd5)");
+  seedLine(SCANDINAVIAN_LINE, 0.4, SCANDINAVIAN_LINE.length, { id, rootPlies: 2 });
+  return id;
+}
+
+function seedPianissimo(): number {
+  const id = createUnit("Italian Game", "Giuoco Pianissimo (4.d3)");
+  seedLine(PIANISSIMO_LINE, 0.3, PIANISSIMO_LINE.length, { id, rootPlies: 5 });
+  return id;
 }
 
 function seedRepertoire(): void {
@@ -811,6 +849,411 @@ describe("a game played as Black", () => {
       not_reached: 0,
       reached_start: 0,
     });
+  });
+});
+
+describe("a game that reaches the root of another unit", () => {
+  it("is compared with that unit, rates its moves and stores that unit's id", async () => {
+    seedRepertoire();
+    const scandinavianId = seedScandinavian();
+    const id = addGame(AFTER_EXD5);
+    const result = await reviewRepertoireGame(deps(), id);
+    expect(result).toMatchObject({
+      gameId: id,
+      repertoireId: scandinavianId,
+      outcome: "in_book",
+      passed: 2,
+      failed: 0,
+      added: 0,
+    });
+    expect(reviewOf(id)).toMatchObject({
+      repertoire_id: scandinavianId,
+      outcome: "in_book",
+      followed_plies: 3,
+      passed_moves: 2,
+      opening_name: "Scandinavian Defense",
+    });
+    expect(cardsOf()).toHaveLength(2);
+    expect(cardAt([], "e4")).toMatchObject({ reviews: 1, repetitions: 1 });
+    expect(cardAt(SCANDINAVIAN, "exd5")).toMatchObject({ reviews: 1, repetitions: 1 });
+  });
+
+  it("fails the move that unit expected where the student left it", async () => {
+    seedRepertoire();
+    const scandinavianId = seedScandinavian();
+    const id = addGame([...AFTER_EXD5, "Qxd5", "Bc4"]);
+    const result = await reviewRepertoireGame(deps(), id);
+    expect(result).toMatchObject({ repertoireId: scandinavianId, outcome: "departed", failed: 1 });
+    expect(reviewOf(id)).toMatchObject({
+      repertoire_id: scandinavianId,
+      outcome: "departed",
+      followed_plies: 4,
+      left_san: "Bc4",
+      expected_san: "Nc3",
+    });
+    expect(cardAt([...AFTER_EXD5, "Qxd5"], "Nc3")).toMatchObject({ reviews: 1, repetitions: 0 });
+  });
+
+  it("tells the coach which unit it was compared with", async () => {
+    seedRepertoire();
+    seedScandinavian();
+    await reviewRepertoireGame(deps(), addGame(AFTER_EXD5));
+    expect(noticesOf()).toEqual([
+      expect.objectContaining({
+        outcome: "in_book",
+        group: "Scandinavian Defense",
+        variation: "Mieses-Kotroc Variation (2.exd5)",
+        followed_to: { ply: 3, san: "exd5" },
+      }),
+    ]);
+  });
+
+  it("adds a reply the unit lacks, with White's answer, to that unit and no other", async () => {
+    seedRepertoire();
+    const scandinavianId = seedScandinavian();
+    const italianBefore = positionsOf().filter((row) => row.repertoire_id === repertoireId);
+    explorer
+      .write(AFTER_EXD5, EXPLORER_RATINGS, { Qxd5: 6000, Nf6: 3000, c6: 100 }, 10000)
+      .write([...AFTER_EXD5, "Nf6"], ITALIAN_WHITE_RATINGS, { d4: 700, c4: 50 }, 1000);
+    engine.write(
+      [...AFTER_EXD5, "Nf6"],
+      [
+        ["d2d4", 30],
+        ["c2c4", 10],
+      ],
+    );
+    const id = addGame([...AFTER_EXD5, "Nf6", "d4"]);
+    const result = await reviewRepertoireGame(deps(), id);
+    expect(result).toMatchObject({
+      repertoireId: scandinavianId,
+      outcome: "reply_added",
+      passed: 2,
+      added: 2,
+    });
+    const added = positionsOf().filter((row) => row.source === "game");
+    expect(added.map((row) => [row.repertoire_id, row.kind, row.ply, row.move_san])).toEqual([
+      [scandinavianId, "reply", 4, "Nf6"],
+      [scandinavianId, "own", 5, "d4"],
+    ]);
+    // 3.exd5 is stored at 0.4 and Nf6 is 3000 games of 10000.
+    expect(added[0]?.reach).toBeCloseTo(0.4 * 0.3, 10);
+    expect(positionsOf().filter((row) => row.repertoire_id === repertoireId)).toEqual(
+      italianBefore,
+    );
+    expect(reviewOf(id)).toMatchObject({
+      repertoire_id: scandinavianId,
+      outcome: "reply_added",
+      added_reply_id: added[0]?.id,
+      added_answer_id: added[1]?.id,
+    });
+  });
+
+  it("answers a reply it adds with the move played most within the margin, not the Italian's 3.Bc4", async () => {
+    seedRepertoire();
+    seedScandinavian();
+    // 3.Bc4 is within 50 cp of the engine's best, as it is in the Italian, but d4 is played more.
+    explorer
+      .write(AFTER_EXD5, EXPLORER_RATINGS, { Qxd5: 6000, Nf6: 3000 }, 10000)
+      .write([...AFTER_EXD5, "Nf6"], ITALIAN_WHITE_RATINGS, { d4: 700, Bc4: 200 }, 1000);
+    engine.write(
+      [...AFTER_EXD5, "Nf6"],
+      [
+        ["d2d4", 30],
+        ["f1c4", 20],
+      ],
+    );
+    await reviewRepertoireGame(deps(), addGame([...AFTER_EXD5, "Nf6", "d4"]));
+    const answer = positionsOf().find((row) => row.kind === "own" && row.source === "game");
+    expect(answer).toMatchObject({ ply: 5, move_san: "d4" });
+  });
+
+  it("is still recorded against the Italian when the student played Black", async () => {
+    seedRepertoire();
+    seedScandinavian();
+    const id = addGame(AFTER_EXD5, { color: "black" });
+    const result = await reviewRepertoireGame(deps(), id);
+    expect(result).toMatchObject({ outcome: "other_side", repertoireId });
+    expect(reviewOf(id)).toMatchObject({ repertoire_id: repertoireId, outcome: "other_side" });
+    expect(cardsOf()).toEqual([]);
+  });
+
+  it("names the unit in the log of each review", async () => {
+    seedRepertoire();
+    const scandinavianId = seedScandinavian();
+    const italian = addGame(MAIN_LINE);
+    const scandinavian = addGame(AFTER_EXD5);
+    await reviewRepertoireGames(deps());
+    expect(
+      logs
+        .named("repertoire.game_reviewed")
+        .map((event) => [event.fields.game_id, event.fields.repertoire_id]),
+    ).toEqual([
+      [italian, repertoireId],
+      [scandinavian, scandinavianId],
+    ]);
+  });
+});
+
+describe("two variations that share a root", () => {
+  it("reviews the game against the one it followed for more plies", async () => {
+    seedRepertoire();
+    const pianissimoId = seedPianissimo();
+    const id = addGame(PIANISSIMO_LINE);
+    const result = await reviewRepertoireGame(deps(), id);
+    expect(result).toMatchObject({
+      repertoireId: pianissimoId,
+      outcome: "in_book",
+      passed: 5,
+      failed: 0,
+    });
+    expect(reviewOf(id)).toMatchObject({
+      repertoire_id: pianissimoId,
+      outcome: "in_book",
+      followed_plies: 10,
+      passed_moves: 5,
+    });
+    // The first three moves are stored by both variations and share their cards, so each is rated
+    // once, and the move the Classical variation expected there is not rated at all.
+    expect(cardsOf().map((card) => card.reviews)).toEqual([1, 1, 1, 1, 1]);
+    expect(cardAt(AFTER_BC5, "c3")).toBeUndefined();
+    expect(explorer.calls).toEqual([]);
+    expect(engine.requests).toEqual([]);
+  });
+
+  it("keeps the lower id when both followed the game for as many plies", async () => {
+    seedRepertoire();
+    seedPianissimo();
+    const id = addGame([...AFTER_BC5, "b4", "Bxb4"], { cpLoss: { 7: 25 } });
+    const result = await reviewRepertoireGame(deps(), id);
+    expect(result).toMatchObject({ repertoireId, outcome: "departed", passed: 3, failed: 1 });
+    expect(reviewOf(id)).toMatchObject({
+      repertoire_id: repertoireId,
+      followed_plies: 6,
+      left_san: "b4",
+      expected_san: "c3",
+    });
+    expect(cardAt(AFTER_BC5, "c3")).toMatchObject({ reviews: 1, repetitions: 0 });
+    expect(cardAt(AFTER_BC5, "d3")).toBeUndefined();
+  });
+
+  it("asks the explorer and the engine for the variation it chose only", async () => {
+    seedRepertoire();
+    // The Classical variation stops at 6.cxd4 and lacks the reply 6...Bb4+ that the game plays, so
+    // planning it would ask for an answer; this variation holds the reply and is the one chosen.
+    const longer = [...MAIN_LINE, "Bb4+", "Bd2"];
+    const longerId = createUnit("Italian Game", "Giuoco Piano (6...Bb4+)");
+    seedLine(longer, 0.2, longer.length, { id: longerId, rootPlies: 5 });
+    const result = await reviewRepertoireGame(deps(), addGame(longer));
+    expect(result).toMatchObject({ repertoireId: longerId, outcome: "in_book", added: 0 });
+    expect(reviewOf(result?.gameId as number)).toMatchObject({ followed_plies: 13 });
+    expect(explorer.calls).toEqual([]);
+    expect(engine.requests).toEqual([]);
+  });
+
+  it("lets the first variation keep a game that stays in its own line", async () => {
+    seedRepertoire();
+    seedPianissimo();
+    const id = addGame(MAIN_LINE);
+    await reviewRepertoireGame(deps(), id);
+    expect(reviewOf(id)).toMatchObject({ repertoire_id: repertoireId, outcome: "in_book" });
+  });
+});
+
+describe("a game that reaches no unit's root", () => {
+  it("stays not reached against the Italian", async () => {
+    seedRepertoire();
+    seedScandinavian();
+    const before = positionsOf();
+    const id = addGame(["e4", "c5", "Nf3", "d6"]);
+    const result = await reviewRepertoireGame(deps(), id);
+    expect(result).toMatchObject({ outcome: "not_reached", repertoireId });
+    expect(reviewOf(id)).toMatchObject({
+      repertoire_id: repertoireId,
+      outcome: "not_reached",
+      followed_plies: 1,
+      left_ply: 2,
+      left_san: "c5",
+      opening_name: "Sicilian Defense",
+    });
+    expect(cardsOf()).toEqual([]);
+    expect(positionsOf()).toEqual(before);
+  });
+
+  it("is not claimed by a unit stored before the Italian that it never reached", async () => {
+    // A tie on the plies followed goes to the lowest id, and 1.e4 c5 follows the first move of
+    // this unit as far as it follows the Italian's, so only its root keeps it out.
+    db.prepare("DELETE FROM repertoires").run();
+    seedScandinavian();
+    repertoireId = createUnit("Italian Game", "Classical Variation (4.c3)");
+    seedRepertoire();
+    const before = positionsOf();
+    const result = await reviewRepertoireGame(deps(), addGame(["e4", "c5", "Nf3", "d6"]));
+    expect(result).toMatchObject({ outcome: "not_reached", repertoireId });
+    expect(positionsOf()).toEqual(before);
+    expect(explorer.calls).toEqual([]);
+  });
+
+  it("is still listed as an opening met", async () => {
+    seedRepertoire();
+    seedScandinavian();
+    await reviewRepertoireGame(deps(), addGame(["e4", "c5", "Nf3", "d6"]));
+    expect(listMetOpenings(db)).toEqual([
+      { root: ["e4", "c5"], openingName: "Sicilian Defense", games: 1, repertoireId: null },
+    ]);
+  });
+
+  it("is not listed for an opening whose unit the game reached", async () => {
+    seedRepertoire();
+    seedScandinavian();
+    addGame(AFTER_EXD5);
+    addGame(["e4", "c5"]);
+    await reviewRepertoireGames(deps());
+    expect(listMetOpenings(db).map((met) => met.root)).toEqual([["e4", "c5"]]);
+  });
+
+  it.each([
+    {
+      why: "a run stopped with only the first move of its root",
+      rows: (id: number) =>
+        insertRepertoireOwnMove(db, {
+          repertoireId: id,
+          positionKey: keyOf([]),
+          ply: 1,
+          line: [],
+          reach: 1,
+          openingName: null,
+          uci: "e2e4",
+          san: "e4",
+          share: null,
+          source: "setup",
+          cpLoss: 0,
+          evalCp: 30,
+          results: null,
+        }),
+    },
+    { why: "a run stopped before it stored a move", rows: () => undefined },
+    {
+      why: "its rows say nothing of a root",
+      rows: (id: number) =>
+        insertRepertoireOwnMove(db, {
+          repertoireId: id,
+          positionKey: keyOf([]),
+          ply: 1,
+          line: [],
+          reach: 1,
+          openingName: null,
+          uci: "e2e4",
+          san: "e4",
+          share: null,
+          source: "explorer",
+          cpLoss: 0,
+          evalCp: 30,
+          results: null,
+        }),
+    },
+  ])("is not compared with a unit left unfinished: $why", async ({ rows }) => {
+    seedRepertoire();
+    rows(createUnit("Scandinavian Defense", "Mieses-Kotroc Variation (2.exd5)"));
+    const before = positionsOf();
+    const id = addGame(["e4", "c5", "Nf3"]);
+    const result = await reviewRepertoireGame(deps(), id);
+    expect(result).toMatchObject({ outcome: "not_reached", repertoireId });
+    expect(positionsOf()).toEqual(before);
+    expect(explorer.calls).toEqual([]);
+    expect(engine.requests).toEqual([]);
+  });
+});
+
+describe("a game graded before its unit existed", () => {
+  it("keeps its review and changes nothing when the unit is stored later", async () => {
+    seedRepertoire();
+    const early = addGame(AFTER_EXD5);
+    await reviewRepertoireGames(deps());
+    const reviewed = reviewOf(early);
+    expect(reviewed).toMatchObject({
+      repertoire_id: repertoireId,
+      outcome: "not_reached",
+      left_san: "d5",
+    });
+    const scandinavianId = seedScandinavian();
+    const after = snapshot();
+    const messages = noticesOf();
+    expect((await reviewRepertoireGames(deps())).reviewed).toBe(0);
+    expect(await reviewRepertoireGame(deps(), early)).toBeNull();
+    expect(reviewOf(early)).toEqual(reviewed);
+    expect(snapshot()).toEqual(after);
+    expect(cardsOf()).toEqual([]);
+    expect(noticesOf()).toEqual(messages);
+    // The next game of that opening is compared with the unit, and the old one keeps counting.
+    const late = addGame(AFTER_EXD5);
+    await reviewRepertoireGames(deps());
+    expect(reviewOf(late)).toMatchObject({ repertoire_id: scandinavianId, outcome: "in_book" });
+    expect(reviewOf(early)).toEqual(reviewed);
+    expect(listMetOpenings(db)).toEqual([
+      {
+        root: SCANDINAVIAN,
+        openingName: "Scandinavian Defense",
+        games: 1,
+        repertoireId: scandinavianId,
+      },
+    ]);
+  });
+});
+
+describe("choosing the unit a game followed", () => {
+  const unitOf = (id: number, line: string[], rootPlies: number): RootedUnit => ({
+    id,
+    root: stepsOf(line)
+      .slice(0, rootPlies)
+      .map((step) => step.uci),
+    lookup: new ScriptedRepertoireLookup(line),
+  });
+  const movesOf = (line: string[]) => listMoves(db, addGame(line));
+
+  it("ignores a unit whose root the game does not play, however long the unit follows it", () => {
+    const italian = unitOf(1, MAIN_LINE, 5);
+    const scandinavian = unitOf(2, SCANDINAVIAN_LINE, 2);
+    const chosen = walkLongestFollowedUnit(movesOf(AFTER_EXD5), [italian, scandinavian]);
+    expect(chosen?.unit.id).toBe(2);
+    expect(chosen?.walk.followed).toBe(3);
+    expect(
+      walkLongestFollowedUnit(movesOf(["e4", "c5", "Nf3"]), [italian, scandinavian]),
+    ).toBeNull();
+  });
+
+  it("does not take a unit for a game that ends before the unit's root does", () => {
+    expect(
+      walkLongestFollowedUnit(movesOf(["e4", "e5", "Nf3"]), [unitOf(1, MAIN_LINE, 5)]),
+    ).toBeNull();
+    expect(walkLongestFollowedUnit(movesOf(MAIN_LINE), [])).toBeNull();
+  });
+
+  it("takes the unit that matched more plies wherever it sits in the list", () => {
+    const classical = unitOf(1, MAIN_LINE, 5);
+    const pianissimo = unitOf(2, PIANISSIMO_LINE, 5);
+    const moves = movesOf(PIANISSIMO_LINE);
+    for (const units of [
+      [classical, pianissimo],
+      [pianissimo, classical],
+    ]) {
+      const chosen = walkLongestFollowedUnit(moves, units);
+      expect(chosen?.unit.id).toBe(2);
+      expect(chosen?.walk.followed).toBe(10);
+    }
+  });
+
+  it("takes the lowest id on a tie wherever it sits in the list", () => {
+    const classical = unitOf(1, MAIN_LINE, 5);
+    const pianissimo = unitOf(2, PIANISSIMO_LINE, 5);
+    const moves = movesOf([...AFTER_BC5, "b4"]);
+    for (const units of [
+      [classical, pianissimo],
+      [pianissimo, classical],
+    ]) {
+      const chosen = walkLongestFollowedUnit(moves, units);
+      expect(chosen?.unit.id).toBe(1);
+      expect(chosen?.walk.followed).toBe(6);
+    }
   });
 });
 

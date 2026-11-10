@@ -19,6 +19,10 @@ import type { GameReviewStoredMove, RepertoireLookup } from "./repertoire-review
 
 // White's answer to a reply a game brought is chosen from the same five lines the generator reads.
 const GAME_ANSWER_SEARCH_LINES = 5;
+// The generator's turn for an answer past a root: no turn has a setup move to prefer. The Italian
+// stores a reply from its 6th ply, past every setup move, but a unit rooted at 1.e4 d5 stores one at
+// its 4th, where the real turn would prefer 3.Bc4 to the move played most.
+const NO_SETUP_PREFERENCE_TURN = 0;
 
 export interface AddedMove {
   positionKey: string;
@@ -104,7 +108,7 @@ async function chooseWhiteAnswer(
     multipv: GAME_ANSWER_SEARCH_LINES,
     capMs: REPERTOIRE_SEARCH_CAP_MS,
   });
-  const uci = pickItalianWhiteUci(fen, position, searched.lines, Math.ceil((move.ply + 1) / 2));
+  const uci = pickItalianWhiteUci(fen, position, searched.lines, NO_SETUP_PREFERENCE_TURN);
   const best = searched.lines[0];
   const scored = searched.lines.find((line) => line.moves[0] === uci);
   const played = uci ? playUciAt(fen, uci) : null;
