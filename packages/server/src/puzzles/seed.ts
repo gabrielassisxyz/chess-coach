@@ -4,6 +4,7 @@ import { z } from "zod";
 import { loadPuzzleFiles } from "../content/puzzles.js";
 import type { Database } from "../db/open.js";
 import { applyUci } from "../engine/moves.js";
+import { NO_OPENING_NAMES, type OpeningNames } from "../openings/names.js";
 
 const entrySchema = z.object({
   fen: z.string().min(1),
@@ -34,6 +35,7 @@ interface PuzzleRow {
   explanation: string;
   lichess_id: string | null;
   difficulty_rating: number | null;
+  opening_name: string | null;
 }
 
 export class PuzzleSeedError extends Error {}
@@ -50,7 +52,7 @@ function assertLineIsPlayable(fen: string, line: readonly string[]): void {
   for (const uci of line) applyUci(board, uci);
 }
 
-function toRow(id: string, entry: z.infer<typeof entrySchema>): PuzzleRow {
+function toRow(id: string, entry: z.infer<typeof entrySchema>, names: OpeningNames): PuzzleRow {
   return {
     id,
     source: entry.source,
@@ -62,11 +64,13 @@ function toRow(id: string, entry: z.infer<typeof entrySchema>): PuzzleRow {
     explanation: entry.explanation,
     lichess_id: entry.lichess_id ?? null,
     difficulty_rating: entry.difficulty_rating ?? null,
+    opening_name:
+      entry.source === "opening_db" ? (names.ofPosition(entry.fen)?.name ?? null) : null,
   };
 }
 
 // Every entry is checked before the first write, so one bad entry leaves the table untouched.
-function validatedRows(contentRoot: string): PuzzleRow[] {
+function validatedRows(contentRoot: string, names: OpeningNames): PuzzleRow[] {
   const rows: PuzzleRow[] = [];
   for (const [file, entries] of loadPuzzleFiles(join(contentRoot, "puzzles"))) {
     const stem = file.replace(/\.json$/, "");
@@ -74,7 +78,7 @@ function validatedRows(contentRoot: string): PuzzleRow[] {
       try {
         const entry = entrySchema.parse(raw);
         assertLineIsPlayable(entry.fen, entry.solution_moves);
-        rows.push(toRow(`${stem}:${index}`, entry));
+        rows.push(toRow(`${stem}:${index}`, entry, names));
       } catch (error) {
         throw new PuzzleSeedError(`${file}:${index}: ${describeIssue(error)}`);
       }
@@ -93,6 +97,7 @@ const COLUMNS = [
   "explanation",
   "lichess_id",
   "difficulty_rating",
+  "opening_name",
 ] as const;
 
 const THEMED_MOTIFS: ReadonlySet<string> = new Set(["fork", "pin", "skewer"]);
@@ -102,8 +107,12 @@ function isThemed(row: Pick<PuzzleRow, "motif" | "difficulty_rating">): boolean 
 }
 
 // Counts come from comparing with the stored row, so a reboot over unchanged files reports zero writes.
-export function seedPuzzles(db: Database, contentRoot: string): SeedResult {
-  const rows = validatedRows(contentRoot);
+export function seedPuzzles(
+  db: Database,
+  contentRoot: string,
+  openingNames: OpeningNames = NO_OPENING_NAMES,
+): SeedResult {
+  const rows = validatedRows(contentRoot, openingNames);
   const find = db.prepare("SELECT * FROM puzzles WHERE id = ?");
   const upsert = db.prepare(
     `INSERT INTO puzzles (id, ${COLUMNS.join(", ")})

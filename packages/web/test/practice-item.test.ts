@@ -1,5 +1,8 @@
 import type { TrainingActivity } from "@chess-coach/shared";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { PracticeColumn } from "../src/components/PracticeColumn.js";
 import { trainingView } from "../src/state/practice.js";
 import {
   headingOf,
@@ -74,16 +77,59 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
 
 describe("headingOf", () => {
   it("counts the item and names only what the student already knows", () => {
-    expect(headingOf(puzzle(), null)).toEqual({ title: "Puzzle 3 of 10", tag: null });
+    expect(headingOf(puzzle(), null)).toEqual({
+      title: "Puzzle 3 of 10",
+      tag: null,
+      openingName: null,
+    });
     expect(headingOf(puzzle({ status: "solved" }), null)).toEqual({
       title: "Puzzle 3 of 10",
       tag: "Fork",
+      openingName: null,
     });
-    expect(headingOf(puzzle(), "fork")).toEqual({ title: "Puzzle 3 of 10", tag: "Fork" });
+    expect(headingOf(puzzle(), "fork")).toEqual({
+      title: "Puzzle 3 of 10",
+      tag: "Fork",
+      openingName: null,
+    });
     expect(headingOf(puzzle(), "opening-italian").tag).toBe("Italian Opening");
     expect(headingOf(puzzle({ mode: "openings", orientation: "black" }), null).tag).toBe(
       "As Black",
     );
+  });
+
+  it("shows an opening drill's name when present and no name when null", () => {
+    const renderColumn = (openingName: string | null) => {
+      const training = puzzle({
+        mode: "openings",
+        item: { ...puzzle().item, opening_name: openingName } as TrainingActivity["item"],
+      });
+      return renderToStaticMarkup(
+        createElement(PracticeColumn, {
+          training,
+          view: trainingView(training),
+          actions: {
+            showSolution() {},
+            rate() {},
+            next() {},
+            end() {},
+            hint() {},
+            toggleScratch() {},
+            takeBack() {},
+            resetLine() {},
+          },
+          card: stateCardOf(training, trainingView(training), null, 0),
+          elapsedMs: 0,
+          scratchLine: null,
+          shownPly: 0,
+          engineStrip: null,
+        }),
+      );
+    };
+    expect(renderColumn("Italian Game")).toContain(
+      'class="practice-item__opening-name">Italian Game</p>',
+    );
+    expect(renderColumn(null)).not.toContain("practice-item__opening-name");
   });
 });
 

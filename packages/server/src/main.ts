@@ -61,12 +61,12 @@ let readiness: Readiness = { ready: false, reason: "coach is starting" };
 // Once a turn has failed for good the server stays not-ready until a restart finishes it.
 let engineFault = false;
 const db = openDatabase(dataDir());
-// A bad puzzle entry throws here, naming <file>:<index>, before anything else starts.
-const seeded = seedPuzzles(db, contentDir());
-log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
 // A missing or malformed table throws here, naming <file>:<line>, before anything else starts.
 const openingNames = loadOpeningNames(contentDir());
 log.info("openings.names_loaded", { positions: openingNames.size });
+// A bad puzzle entry throws here, naming <file>:<index>, before anything else starts.
+const seeded = seedPuzzles(db, contentDir(), openingNames);
+log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
 const puzzleRating = ensurePuzzleRating(db, systemClock);
 log.info("puzzles.rating", { rating: puzzleRating.rating, replayed: puzzleRating.replayed });
 const pool = new EnginePool(() => spawnStockfish());
@@ -91,7 +91,7 @@ const activity = new ActivityService({
   },
   log,
 });
-const generateOpenings = () => generateOpeningPuzzles(db, pool.evaluation);
+const generateOpenings = () => generateOpeningPuzzles(db, pool.evaluation, openingNames);
 const generateExplorerOpenings = () =>
   generateExplorerPuzzles(
     db,
@@ -99,6 +99,8 @@ const generateExplorerOpenings = () =>
     httpExplorerFetcher(resolveLichessToken(db)),
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
+    {},
+    openingNames,
   );
 const generateItalianOpenings = () =>
   generateItalianPuzzles(
@@ -107,6 +109,8 @@ const generateItalianOpenings = () =>
     httpExplorerFetcher(resolveLichessToken(db)),
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
+    {},
+    openingNames,
   );
 const generateRepertoireOpenings = (root?: readonly string[]) =>
   generateRepertoire(

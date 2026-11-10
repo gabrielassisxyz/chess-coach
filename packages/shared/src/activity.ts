@@ -112,6 +112,7 @@ export const PuzzleItemSchema = z.object({
   cursor: z.number().int().nonnegative(),
   reply_uci: z.string().nullable(),
   rating: z.number().int().nullable().optional(),
+  opening_name: z.string().nullable().optional(),
   ...queuePosition,
 });
 
