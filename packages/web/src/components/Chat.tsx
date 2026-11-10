@@ -126,8 +126,8 @@ function useFreshStartOffer(server: ServerApi, open: boolean) {
 function Icon({ children }: { children: ReactNode }) {
   return (
     <svg
-      width="16"
-      height="16"
+      width="20"
+      height="20"
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -227,6 +227,7 @@ export function Chat({
           type="button"
           className="icon-button"
           aria-label="Collapse coach panel"
+          title="Collapse coach panel"
           onClick={onToggle}
         >
           <Icon>
@@ -279,7 +280,7 @@ export function Chat({
               type="button"
               className="icon-button icon-button--quiet composer__tool composer__dictate"
               aria-label="Dictate"
-              title="Soon"
+              title="Dictate"
               disabled
             >
               <Icon>
@@ -305,7 +306,7 @@ export function Chat({
                 type="button"
                 className="icon-button icon-button--quiet composer__tool"
                 aria-label="Voice conversation"
-                title="Soon"
+                title="Voice conversation"
                 disabled
               >
                 <Icon>
@@ -317,6 +318,7 @@ export function Chat({
                 type="button"
                 className="icon-button icon-button--primary composer__tool"
                 aria-label="Send"
+                title="Send"
                 onClick={submit}
               >
                 <Icon>

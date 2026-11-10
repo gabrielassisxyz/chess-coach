@@ -5,8 +5,8 @@ import type { EngineView } from "../hooks/useEngineAnalysis.js";
 function Icon({ children }: { children: ReactNode }) {
   return (
     <svg
-      width="16"
-      height="16"
+      width="20"
+      height="20"
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -62,6 +62,7 @@ export function EngineStrip({
           type="button"
           className="icon-button icon-button--quiet"
           aria-label="Engine settings"
+          title="Engine settings"
           aria-expanded={settingsOpen}
           onClick={onToggleSettings}
         >
@@ -140,6 +141,7 @@ function EnginePopover({ engine, onClose }: { engine: EngineView; onClose(): voi
           type="button"
           className="icon-button icon-button--quiet"
           aria-label="Close"
+          title="Close"
           onClick={onClose}
         >
           <Icon>
