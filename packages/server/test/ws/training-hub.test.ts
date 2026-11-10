@@ -91,6 +91,7 @@ describe("training over the socket", () => {
       { type: "start_training", mode: "srs" },
       { type: "start_training", mode: "puzzles", size: 5 },
       { type: "start_training", mode: "openings", color: "white", size: 20 },
+      { type: "start_training", mode: "openings", color: "white", opening: "Italian Game" },
       { type: "rate_card", exposure_id: "x", quality: 5 },
       { type: "next_training_item" },
       { type: "end_training", activity_id: 3 },
@@ -112,6 +113,9 @@ describe("training over the socket", () => {
       { type: "start_training", mode: "nope" },
       { type: "start_training", mode: "puzzles", size: 7 },
       { type: "start_training", mode: "puzzles", size: "5" },
+      { type: "start_training", mode: "openings", color: "white", opening: "" },
+      { type: "start_training", mode: "openings", color: "white", opening: "x".repeat(101) },
+      { type: "start_training", mode: "openings", color: "white", opening: 7 },
       { type: "rate_card", exposure_id: "x", quality: 6 },
       { type: "rate_card", quality: 3 },
       { type: "explore", kind: "jump" },
@@ -211,6 +215,48 @@ describe("training over the socket", () => {
       status: "prompt",
       item: { queue_length: 5 },
     });
+    socket.close();
+  });
+
+  it("routes the opening family to the drill and refuses an unknown one with unknown_opening", async () => {
+    const db = seededDatabase();
+    for (const [id, name] of [
+      ["o1", "Italian Game"],
+      ["o2", "Italian Game: Giuoco Piano"],
+      ["o3", "Sicilian Defense"],
+    ] as const) {
+      db.prepare(
+        `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, opening_name)
+         VALUES (?, 'own-games', 'opening-white', 'beginner', ?, '["a1a8"]', '["Ra8#"]', 'why', ?)`,
+      ).run(id, BACK_RANK, name);
+    }
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c1",
+        mode: "openings",
+        color: "white",
+        opening: "Italian Game",
+      }),
+    );
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      mode: "openings",
+      status: "prompt",
+      item: { queue_length: 2 },
+    });
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c2",
+        mode: "openings",
+        color: "white",
+        opening: "Vienna Game",
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "unknown_opening", command_id: "c2" });
     socket.close();
   });
 

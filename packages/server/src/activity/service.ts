@@ -189,6 +189,7 @@ export class ActivityService {
     mode: TrainingMode;
     motif?: string;
     color?: PlayerColor;
+    opening?: string;
     size?: DrillSize;
     repertoireId?: number;
     scope?: RepertoireScope;

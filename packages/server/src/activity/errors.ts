@@ -20,7 +20,8 @@ export type ActivityErrorCode =
   | "training_active"
   | "puzzle_not_found"
   | "card_not_found"
-  | "no_paused_training";
+  | "no_paused_training"
+  | "unknown_opening";
 
 export class ActivityError extends Error {
   constructor(

@@ -11,7 +11,7 @@ import type {
   TrainingSummary,
   WrongTry,
 } from "@chess-coach/shared";
-import { isFixedPracticeMotif } from "@chess-coach/shared";
+import { isFixedPracticeMotif, UNNAMED_OPENING } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { type Clock, systemClock } from "../clock.js";
 import type {
@@ -28,6 +28,7 @@ import {
   getPuzzle,
   getPuzzleHeader,
   listPuzzles,
+  openingNamesOfFamily,
   type PuzzleFilter,
   type PuzzleSummary,
   type RatingSampleFilter,
@@ -114,6 +115,11 @@ export interface TrainingInput {
   mode: TrainingMode;
   motif?: string | undefined;
   color?: PlayerColor | undefined;
+  /**
+   * One opening family of the colour's drill, or UNNAMED_OPENING for its positions with no name;
+   * without it the drill serves every position of the colour. Other modes ignore it.
+   */
+  opening?: string | undefined;
   /** How many positions a puzzle or opening drill holds; a review queue ignores it. */
   size?: DrillSize | undefined;
 }
@@ -242,6 +248,21 @@ function fenAfter(fen: string, ucis: readonly string[]): string {
   const board = new Chess(fen);
   for (const uci of ucis) applyUci(board, uci);
   return board.fen();
+}
+
+// The stored opening names of the family a start names, or undefined for the colour's whole drill.
+// A family the colour does not have is refused here, before any run is written or replaced, and the
+// text the browser sent goes no further than the comparison against what the database holds.
+function openingNamesOfStart(
+  db: Database,
+  { color, opening }: TrainingInput,
+): (string | null)[] | undefined {
+  if (color === undefined || opening === undefined) return undefined;
+  const names = openingNamesOfFamily(db, color, opening === UNNAMED_OPENING ? null : opening);
+  if (names.length === 0) {
+    throw new ActivityError("unknown_opening", `no ${color} opening drill is named ${opening}`);
+  }
+  return names;
 }
 
 function isLegalUci(fen: string, uci: string): boolean {
@@ -382,7 +403,8 @@ export class TrainingRun implements PracticeRunPort {
       listPuzzles(deps.db, filter, random).puzzles;
     let puzzles: PuzzleSummary[];
     if (input.mode === "openings") {
-      puzzles = listed({ motif: `opening-${input.color}`, limit });
+      const openingNames = openingNamesOfStart(deps.db, input);
+      puzzles = listed({ motif: `opening-${input.color}`, openingNames, limit });
     } else {
       if (input.motif !== undefined && !isFixedPracticeMotif(input.motif)) {
         const stored = deps.db
