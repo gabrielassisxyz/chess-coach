@@ -213,6 +213,49 @@ const replyAt = (line: string[], san: string): RepertoireTestRow | undefined =>
 const variationsOf = (database: Database) =>
   database.prepare("SELECT side, group_name, variation_name FROM repertoires").all();
 
+/** The key of the position a stored move leads to, which is where the next move is stored. */
+function keyAfterStoredMove(row: RepertoireTestRow): string {
+  const game = new Chess(`${row.position_key} 0 1`);
+  applyUci(game, row.move_uci);
+  return positionKey(game.fen());
+}
+
+/** The replies the coverage screen would list as gaps no run can fill: none has a White move after it. */
+function repliesWithoutWhiteAnswer(rows: RepertoireTestRow[]): string[] {
+  const answered = new Set(rows.filter((row) => row.kind === "own").map((row) => row.position_key));
+  return rows
+    .filter((row) => row.kind === "reply" && !answered.has(keyAfterStoredMove(row)))
+    .map((row) => `${row.move_san} at ply ${row.ply}`);
+}
+
+/**
+ * The reply an earlier run stored after every White move at ply 29: Black's 15th move, with no
+ * White move after it. Returns how many it stored.
+ */
+function storeRepliesAtOldLimit(): number {
+  const variation = findFirstRepertoireVariation(db, "white", "Italian Game");
+  if (!variation) throw new Error("no variation is stored");
+  const lineEnds = rowsOf(db).filter((row) => row.kind === "own" && row.ply === 29);
+  for (const end of lineEnds) {
+    const key = keyAfterStoredMove(end);
+    const reply = forwardMove(`${key} 0 1`);
+    if (!reply) throw new Error(`Black has no reply after ${end.move_san}`);
+    upsertRepertoireReply(db, {
+      repertoireId: variation.id,
+      positionKey: key,
+      ply: 30,
+      line: [...(JSON.parse(end.line_san) as string[]), end.move_san],
+      reach: end.reach,
+      openingName: end.opening_name,
+      uci: `${reply.from}${reply.to}${reply.promotion ?? ""}`,
+      san: reply.san,
+      share: 1,
+      source: "explorer",
+    });
+  }
+  return lineEnds.length;
+}
+
 /** The shares of 3.Bc4 and of 3...Bc5 at 1800 to 2499 are the ones measured on 2026-11-09. */
 function writeItalianTree(): void {
   explorer
@@ -563,13 +606,24 @@ describe("generateRepertoire", () => {
     expect(replyAt([...AFTER_C3, "Nf6", "d4"], "exd4")?.reach).toBeCloseTo(0.226 * 0.6 * 0.5);
   });
 
-  it("walks to ply 30 and no further", async () => {
+  // Black's 15th move sits at ply 30 and White has no 16th move stored, so a reply there would be
+  // a gap the coverage screen lists forever. The forward moves never repeat a position, so every
+  // line of both trees runs into the limit.
+  it.each([
+    { tree: "a single line", write: () => {} },
+    { tree: "the Italian tree with every branch running on", write: writeItalianTree },
+  ])("ends every line on White's 15th move: $tree", async ({ write }) => {
+    write();
     explorer.autoplay = true;
     const result = await generate();
+    const stored = rowsOf(db);
+    const deepestOf = (kind: RepertoireTestRow["kind"]): number =>
+      Math.max(...stored.filter((row) => row.kind === kind).map((row) => row.ply));
     expect(REPERTOIRE_MAX_PLY).toBe(30);
-    expect(result.deepestPly).toBe(30);
-    expect(Math.max(...rowsOf(db).map((row) => row.ply))).toBe(30);
-    expect(rowsOf(db).filter((row) => row.kind === "own" && row.ply === 29)).toHaveLength(1);
+    expect(deepestOf("reply")).toBe(28);
+    expect(deepestOf("own")).toBe(29);
+    expect(result.deepestPly).toBe(29);
+    expect(repliesWithoutWhiteAnswer(stored)).toEqual([]);
   });
 
   it("reads Black's replies in the student's band and White's moves in the White band", async () => {
@@ -732,8 +786,10 @@ describe("generateRepertoire", () => {
     const searches = engine.requests.length;
     const second = await generate();
     expect(first.created).toBe(stored.length);
+    expect(first.removedReplies).toBe(0);
     expect(second).toMatchObject({
       created: 0,
+      removedReplies: 0,
       requests: 0,
       truncated: false,
       ownMoves: first.ownMoves,
@@ -958,7 +1014,126 @@ describe("a position the walk reaches by two lines", () => {
   );
 });
 
+describe("reply rows an earlier run left at ply 30", () => {
+  async function walkAndLeaveRepliesAtOldLimit(): Promise<{
+    walked: RepertoireTestRow[];
+    left: number;
+  }> {
+    writeItalianTree();
+    explorer.autoplay = true;
+    await generate();
+    const walked = rowsOf(db);
+    const left = storeRepliesAtOldLimit();
+    expect(left).toBeGreaterThan(1);
+    expect(rowsOf(db)).toHaveLength(walked.length + left);
+    return { walked, left };
+  }
+
+  it("deletes them, leaves every other row and reports how many", async () => {
+    const { walked, left } = await walkAndLeaveRepliesAtOldLimit();
+    const result = await generate();
+    expect(result).toMatchObject({ removedReplies: left, created: 0, deepestPly: 29 });
+    expect(rowsOf(db)).toEqual(walked);
+  });
+
+  it("deletes nothing and adds nothing on the run after the one that deleted them", async () => {
+    await walkAndLeaveRepliesAtOldLimit();
+    await generate();
+    const cleaned = rowsOf(db);
+    const searches = engine.requests.length;
+    const again = await generate();
+    expect(again).toMatchObject({ removedReplies: 0, created: 0, requests: 0 });
+    expect(rowsOf(db)).toEqual(cleaned);
+    expect(engine.requests).toHaveLength(searches);
+  });
+
+  it("leaves the rows of a variation the walk does not own", async () => {
+    await walkAndLeaveRepliesAtOldLimit();
+    const other = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Newest",
+    });
+    upsertRepertoireReply(db, {
+      repertoireId: other.id,
+      positionKey: "position",
+      ply: 30,
+      line: [],
+      reach: 0.1,
+      openingName: null,
+      uci: "g8f6",
+      san: "Nf6",
+      share: 0.5,
+      source: "explorer",
+    });
+    await generate();
+    expect(rowsOf(db).filter((row) => row.repertoire_id === other.id)).toHaveLength(1);
+  });
+
+  // With an odd limit the last row is a White move at the limit itself, where the deletion looks.
+  it("never deletes a White move, even one that sits at the limit", async () => {
+    writeItalianTree();
+    await generate({ maxPly: 5 });
+    const stored = rowsOf(db);
+    expect(stored.at(-1)).toMatchObject({ kind: "own", ply: 5 });
+    const again = await generate({ maxPly: 5 });
+    expect(again).toMatchObject({ removedReplies: 0, created: 0 });
+    expect(rowsOf(db)).toEqual(stored);
+  });
+
+  // The walk would otherwise find the row already stored, at a reach it cannot beat, and leave it
+  // there for the deletion to take: the position would be missing until the run after.
+  it("stores a position again at its shorter line when an earlier run left it at the limit", async () => {
+    writeItalianTree();
+    explorer.autoplay = true;
+    await generate();
+    const walked = rowsOf(db);
+    const shorter = walked.find((row) => row.kind === "reply" && row.ply === 28);
+    if (!shorter) throw new Error("no reply is stored at ply 28");
+    db.prepare("UPDATE repertoire_positions SET ply = 30, reach = 1 WHERE id = ?").run(shorter.id);
+    const result = await generate();
+    const comparable = (rows: RepertoireTestRow[]) => rows.map(({ id: _id, ...row }) => row);
+    expect(result).toMatchObject({ removedReplies: 1, created: 1 });
+    expect(comparable(rowsOf(db))).toEqual(comparable(walked));
+  });
+
+  it("deletes them even when the request budget cuts the run short", async () => {
+    const { walked, left } = await walkAndLeaveRepliesAtOldLimit();
+    rmSync(cacheDir, { recursive: true, force: true });
+    const result = await generate({ maxRequests: 0 });
+    expect(result).toMatchObject({ removedReplies: left, created: 0, truncated: true });
+    expect(rowsOf(db)).toEqual(walked);
+  });
+});
+
 describe("POST /api/openings/generate with the repertoire source", () => {
+  it("logs how many reply rows the run deleted at the depth limit", async () => {
+    writeItalianTree();
+    explorer.autoplay = true;
+    await generate();
+    const left = storeRepliesAtOldLimit();
+    const log = new RecordingLog();
+    const app = buildApp({
+      db,
+      log,
+      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateRepertoireOpenings: () =>
+        generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES),
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/openings/generate",
+      payload: { sources: ["repertoire"] },
+    });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+    expect(left).toBeGreaterThan(1);
+    expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+      sources: ["repertoire"],
+      result: { repertoire: { removedReplies: left } },
+    });
+  });
+
   it("builds the variation, adds no row on a second run and logs the counts", async () => {
     writeItalianTree();
     const log = new RecordingLog();
