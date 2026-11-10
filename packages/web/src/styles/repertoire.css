@@ -102,6 +102,60 @@
   border-top: 1px solid var(--border);
 }
 
+/* The style points the next opening or variation added from the menu is built with: a quiet toggle
+ * with a summary when the split is not the default, and opened, a row per measure with its name, what
+ * it favours and a stepper to move a point on or off it. */
+.repertoire-menu__points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: stretch;
+  min-width: 0;
+}
+
+.repertoire-menu__points-summary {
+  align-self: center;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.repertoire-menu__points-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.repertoire-menu__points-name {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.repertoire-menu__points-hint {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.repertoire-menu__points-stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.repertoire-menu__points-stepper .button {
+  min-width: 2rem;
+}
+
+.repertoire-menu__points-value {
+  min-width: 1.5rem;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 /* The openings the student's games met that have no drill yet, under the drills they have: a name,
  * the line, how many games met it and an Add action. */
 .repertoire-menu__met {
@@ -396,11 +450,16 @@
 
 @media (max-width: 899px) {
   .repertoire-menu__starts .button,
+  .repertoire-menu__points-stepper .button,
   .repertoire-menu__met-row .button,
   .repertoire-menu__drill-row .button,
   .repertoire-menu__drill-line .button,
   .repertoire-coverage .button {
     min-height: 44px;
+  }
+
+  .repertoire-menu__points-stepper .button {
+    min-width: 44px;
   }
 
   .repertoire-menu__met-row {

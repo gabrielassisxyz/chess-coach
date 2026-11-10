@@ -2211,6 +2211,8 @@ describe("the documentation of the repertoire source", () => {
       "Learnability, the plain measure, is the share of the position's games at 0-1199",
       "A tie in the score goes to the usual rule",
       "a unit stored under other points is rebuilt with `rebuild: true`",
+      "The openings menu holds a Style points control",
+      "An Add waits until all 6 points are placed",
     ]) {
       expect(openings).toContain(documented);
     }

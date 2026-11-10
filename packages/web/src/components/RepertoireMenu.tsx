@@ -22,10 +22,12 @@ import {
   addVariationToServer,
   branchesOf,
   branchKey,
+  DEFAULT_STYLE_POINTS,
   type FetchCoverage,
   type FetchRepertoireList,
   fetchRepertoireListFromServer,
   foundIdsOf,
+  isDefaultStylePoints,
   levelAnchorOf,
   menuOf,
   metGamesText,
@@ -33,6 +35,7 @@ import {
   metNameOf,
   metRootKey,
   metToAdd,
+  moveStylePoint,
   type OpeningMenu,
   offersFoundStarts,
   offersGroupStarts,
@@ -40,6 +43,10 @@ import {
   replyMoveText,
   SCOPE_LABEL,
   type SideMenu,
+  STYLE_MEASURES,
+  STYLE_POINTS_TOTAL,
+  type StylePoints,
+  stylePointsLeft,
 } from "../state/repertoires-api.js";
 import { DrillRows, type DrillSlots, drillSlotsOf } from "./OpeningDrills.js";
 import { RepertoireCoverage } from "./RepertoireCoverage.js";
@@ -428,10 +435,98 @@ function Branches({
   );
 }
 
+// What a collapsed control says of a split that is not the default, or not complete yet.
+function stylePointsSummary(points: StylePoints): string | null {
+  const left = stylePointsLeft(points);
+  if (left !== 0) return `${left} ${left === 1 ? "point" : "points"} left to place`;
+  if (isDefaultStylePoints(points)) return null;
+  return STYLE_MEASURES.map(({ key, label }) => `${label} ${points[key]}`).join(", ");
+}
+
+// Where White has more than one good move, an opening or a variation added from this menu chooses
+// by these points. They are the student's to place, so an add waits until all of them are.
+function StylePointsControl({
+  points,
+  onChange,
+}: {
+  points: StylePoints;
+  onChange(points: StylePoints): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  const left = stylePointsLeft(points);
+  const summary = stylePointsSummary(points);
+  return (
+    <div className="repertoire-menu__points">
+      <div className="repertoire-menu__starts">
+        <button
+          type="button"
+          className="button button--quiet"
+          aria-expanded={open}
+          aria-controls={open ? panelId : undefined}
+          onClick={() => setOpen(!open)}
+        >
+          Style points
+        </button>
+        <span className="repertoire-menu__points-summary" aria-live="polite">
+          {summary}
+        </span>
+      </div>
+      {open ? (
+        <div id={panelId}>
+          <p className="practice__card-note">
+            Place {STYLE_POINTS_TOTAL} points. Where White has more than one good move, the openings
+            and variations you add choose by them. Each gets 2 until you change it.
+          </p>
+          {STYLE_MEASURES.map(({ key, label, hint }) => (
+            <div key={key} className="repertoire-menu__points-row">
+              <span className="repertoire-menu__points-name">
+                <span>{label}</span>
+                <span className="repertoire-menu__points-hint">{hint}</span>
+              </span>
+              <span className="repertoire-menu__points-stepper">
+                <button
+                  type="button"
+                  className="button"
+                  aria-label={`Fewer points for ${label.toLowerCase()}`}
+                  disabled={points[key] === 0}
+                  onClick={() => onChange(moveStylePoint(points, key, -1))}
+                >
+                  −
+                </button>
+                <span className="repertoire-menu__points-value">{points[key]}</span>
+                <button
+                  type="button"
+                  className="button"
+                  aria-label={`More points for ${label.toLowerCase()}`}
+                  disabled={left === 0}
+                  onClick={() => onChange(moveStylePoint(points, key, 1))}
+                >
+                  +
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type AddLine = (line: readonly string[], points?: StylePoints) => Promise<AddedOpening>;
+
+// The split goes with an add only once the student has moved it off the default, which the server
+// applies by itself: a menu nobody touched makes the same call as before.
+const withStylePoints =
+  (add: AddLine, points: StylePoints) =>
+  (line: readonly string[]): Promise<AddedOpening> =>
+    isDefaultStylePoints(points) ? add(line) : add(line, points);
+
 function Opening({
   opening,
   adds,
   addVariation,
+  addsHeld,
   fetchCoverage,
   variationName,
   drillLine,
@@ -440,6 +535,8 @@ function Opening({
   opening: OpeningMenu;
   adds: OpeningAdds;
   addVariation: AddVariation;
+  // The style points are not all placed yet, so no variation can be added.
+  addsHeld: boolean;
   fetchCoverage: FetchCoverage | undefined;
   variationName(id: number): string | null;
   drillLine: ReactNode;
@@ -474,7 +571,7 @@ function Opening({
       <Branches
         branches={branchesOf(adds.listing?.branches, opening.name)}
         adds={adds}
-        busy={actions.busy}
+        busy={actions.busy || addsHeld}
         addVariation={addVariation}
         variationName={variationName}
       />
@@ -704,6 +801,8 @@ function Side({
   addVariation,
   fetchCoverage,
   openingDrills,
+  stylePoints,
+  onStylePoints,
   ...actions
 }: {
   side: SideMenu;
@@ -712,9 +811,18 @@ function Side({
   addVariation: AddVariation;
   fetchCoverage: FetchCoverage | undefined;
   openingDrills: OpeningDrillControls | undefined;
+  stylePoints: StylePoints;
+  onStylePoints(points: StylePoints): void;
 } & MenuActions) {
   const slots = drillSlotsOfSide(side, adds, actions.busy, openingDrills);
-  const variations = [...side.openings, ...side.found].flatMap((opening) => opening.variations);
+  const built = [...side.openings, ...side.found];
+  // The points matter only where an add is on offer, and all of them must be placed before one runs.
+  const offersAdds =
+    side.side === "white" &&
+    (metToAdd(adds.met ?? [], adds.unfinished).length > 0 ||
+      built.some((opening) => branchesOf(adds.listing?.branches, opening.name).length > 0));
+  const addsHeld = offersAdds && stylePointsLeft(stylePoints) !== 0;
+  const variations = built.flatMap((opening) => opening.variations);
   const anchor = levelAnchorOf(variations);
   const variationName = (id: number): string | null =>
     variations.find((variation) => variation.id === id)?.variation_name ?? null;
@@ -725,6 +833,7 @@ function Side({
       opening={opening}
       adds={adds}
       addVariation={addVariation}
+      addsHeld={addsHeld}
       fetchCoverage={fetchCoverage}
       variationName={variationName}
       drillLine={slots?.menuLine(opening.name) ?? null}
@@ -735,6 +844,7 @@ function Side({
     <section className="practice__card" aria-label={side.heading}>
       <h3 className="practice__card-title">{side.heading}</h3>
       <p className="practice__card-note">Lines played from move 1, each move on its own schedule</p>
+      {offersAdds ? <StylePointsControl points={stylePoints} onChange={onStylePoints} /> : null}
       {offersSideStarts(side) && side.moves && anchor !== null ? (
         <LevelStarts
           label="Every opening"
@@ -747,7 +857,7 @@ function Side({
       {side.side === "white" ? (
         <FoundInGames
           adds={adds}
-          busy={actions.busy}
+          busy={actions.busy || addsHeld}
           addOpening={addOpening}
           metLine={slots?.metLine ?? (() => null)}
           openings={side.found.map(openingMenu)}
@@ -775,6 +885,7 @@ export function RepertoireMenu({
   openingDrills,
 }: RepertoireMenuProps) {
   const adds = useOpeningAdds(fetchList);
+  const [stylePoints, setStylePoints] = useState<StylePoints>({ ...DEFAULT_STYLE_POINTS });
   if (repertoires.status === "loading") return <Note text="Loading openings." />;
   if (repertoires.status === "failed") {
     return <Note text="The openings could not be loaded. Reload the page to try again." />;
@@ -809,10 +920,12 @@ export function RepertoireMenu({
           key={side.side}
           side={side}
           adds={adds}
-          addOpening={addOpening}
-          addVariation={addVariation}
+          addOpening={withStylePoints(addOpening, stylePoints)}
+          addVariation={withStylePoints(addVariation, stylePoints)}
           fetchCoverage={fetchCoverage}
           openingDrills={openingDrills}
+          stylePoints={stylePoints}
+          onStylePoints={setStylePoints}
           busy={busy}
           starting={starting}
           onStart={onStart}
