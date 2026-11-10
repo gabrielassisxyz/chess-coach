@@ -18,6 +18,7 @@ import type { GenerationResult } from "./openings/from-games.js";
 import {
   NO_REPERTOIRE_BRANCH_BOOK,
   type RepertoireBranchBook,
+  type RepertoirePoints,
   type RepertoireResult,
 } from "./openings/from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames } from "./openings/names.js";
@@ -50,12 +51,14 @@ export interface AppOptions {
   /**
    * Builds the first stored variation of the Italian, or of the unit rooted at a line, or another
    * variation of the Italian forced at a branch point, and with `rebuild` replaces the stored one
-   * under the current rule; only asked for by name, never after an import.
+   * under the current rule; `points` weigh White's candidate moves, the default where left out.
+   * Only asked for by name, never after an import.
    */
   generateRepertoireOpenings?: (
     root?: readonly string[],
     branch?: readonly string[],
     rebuild?: boolean,
+    points?: RepertoirePoints,
   ) => Promise<RepertoireResult>;
   /** Writes the idea of each stored White move through the model; only asked for by name, never at boot. */
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>;

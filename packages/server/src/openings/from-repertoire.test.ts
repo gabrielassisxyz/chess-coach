@@ -33,13 +33,17 @@ import {
 import { positionKey } from "./from-games.js";
 import {
   checkRepertoireBranch,
+  checkRepertoirePoints,
   generateRepertoire,
   loadRepertoireBranchBook,
   parseRepertoireBranchBook,
+  REPERTOIRE_DEFAULT_POINTS,
   REPERTOIRE_MAX_PLY,
   REPERTOIRE_MIN_REACH,
   RepertoireBranchError,
   type RepertoireOptions,
+  type RepertoirePoints,
+  RepertoirePointsError,
   type RepertoireResult,
 } from "./from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames, parseOpeningTable } from "./names.js";
@@ -86,6 +90,32 @@ class RepertoireFakeExplorer implements ExplorerFetcher {
         draws: 0,
         black: 0,
       })),
+    });
+    return this;
+  }
+
+  /**
+   * Like `write`, with each move's results written out as [white, draws, black]; the position holds
+   * exactly the games of the moves listed, so the shares add up to 1.
+   */
+  writeResults(
+    line: string[],
+    ratings: string,
+    moves: Record<string, [white: number, draws: number, black: number]>,
+  ): this {
+    const listed = Object.entries(moves).map(([san, [white, draws, black]]) => ({
+      san,
+      white,
+      draws,
+      black,
+    }));
+    const sum = (field: "white" | "draws" | "black"): number =>
+      listed.reduce((total, move) => total + move[field], 0);
+    this.answers.set(`${ratings}|${keyOf(line)}`, {
+      white: sum("white"),
+      draws: sum("draws"),
+      black: sum("black"),
+      moves: listed,
     });
     return this;
   }
@@ -326,7 +356,8 @@ function writeItalianTree(): void {
       100000,
     )
     .write(AFTER_BC5, ITALIAN_WHITE_RATINGS, { c3: 3410, "O-O": 2650, d3: 1380, b4: 1130 }, 10000)
-    // Read by nobody: if the student's band chose White's move, the answer would be 4.d3.
+    // Read for the points: the student's band plays 4.d3 most, but it is 55 cp under 4.O-O, outside
+    // the margin, so no weight can make it White's answer.
     .write(AFTER_BC5, EXPLORER_RATINGS, { d3: 9000, c3: 100 }, 10000)
     .write(AFTER_C3, EXPLORER_RATINGS, { Nf6: 3000, d6: 250 }, 5000)
     .write([...AFTER_C3, "Nf6"], ITALIAN_WHITE_RATINGS, { d4: 6000 }, 8000)
@@ -778,7 +809,7 @@ describe("generateRepertoire", () => {
     expect(repliesWithoutWhiteAnswer(stored)).toEqual([]);
   });
 
-  it("reads Black's replies in the student's band and White's moves in the White band", async () => {
+  it("reads Black's replies in the student's band and White's moves in the White band, and the student's band again where White has a choice", async () => {
     writeItalianTree();
     await generate();
     const bandsAt = (line: string[]) =>
@@ -786,7 +817,10 @@ describe("generateRepertoire", () => {
         explorer.calls.filter((call) => call.key === keyOf(line)).map((call) => call.ratings),
       );
     expect(bandsAt(SETUP)).toEqual(new Set([EXPLORER_RATINGS]));
-    expect(bandsAt(AFTER_BC5)).toEqual(new Set([ITALIAN_WHITE_RATINGS]));
+    // Three of the engine's lines are inside the margin here, so the points have something to weigh.
+    expect(bandsAt(AFTER_BC5)).toEqual(new Set([ITALIAN_WHITE_RATINGS, EXPLORER_RATINGS]));
+    // One line is left here: there is nothing to weigh, so the student's band is not asked.
+    expect(bandsAt([...AFTER_C3, "Nf6"])).toEqual(new Set([ITALIAN_WHITE_RATINGS]));
   });
 
   it("stores the group name and the variation named after White's answer to 3...Bc5", async () => {
@@ -1092,7 +1126,9 @@ describe("generateRepertoire", () => {
 
   it("reports zero counts when the budget ends right after the variation is named", async () => {
     writeItalianTree();
-    const result = await generate({ maxRequests: 1 });
+    // Naming reads 3...Bc5 in the White band, and in the student's band too: three lines are inside
+    // the margin there, so the points have a choice to weigh.
+    const result = await generate({ maxRequests: 2 });
     expect(result).toMatchObject({
       variation: "Classical Variation (4.c3)",
       ownMoves: 0,
@@ -2162,6 +2198,24 @@ describe("the documentation of the repertoire source", () => {
     }
   });
 
+  it("says under Openings how the style points weigh White's move, their default and when they are refused", () => {
+    const agents = readFileSync(join(repositoryRoot, "AGENTS.md"), "utf8");
+    const openings = /- \*\*Openings:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "";
+    for (const documented of [
+      "style points",
+      '`POST /api/openings/generate {sources: ["repertoire"], points: {effectiveness: 2, soundness: 2, learnability: 2}}`',
+      "the default of 2, 2 and 2",
+      "`REPERTOIRE_DEFAULT_POINTS`",
+      "`invalid_points`",
+      "A move outside that margin is never chosen, whatever the points",
+      "Learnability, the plain measure, is the share of the position's games at 0-1199",
+      "A tie in the score goes to the usual rule",
+      "a unit stored under other points is rebuilt with `rebuild: true`",
+    ]) {
+      expect(openings).toContain(documented);
+    }
+  });
+
   it("never names a rating group the explorer does not have", () => {
     const filesUnder = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -2430,8 +2484,13 @@ const postRepertoireRun = async (payload: object, log: RecordingLog, names: Open
     db,
     log,
     generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
-    generateRepertoireOpenings: (root, branch, rebuild) =>
-      generateRepertoire(db, engine, explorer, cacheDir, clock, names, { root, branch, rebuild }),
+    generateRepertoireOpenings: (root, branch, rebuild, points) =>
+      generateRepertoire(db, engine, explorer, cacheDir, clock, names, {
+        root,
+        branch,
+        rebuild,
+        points,
+      }),
   });
   const response = await app.inject({ method: "POST", url: "/api/openings/generate", payload });
   await app.close();
@@ -2873,6 +2932,377 @@ describe("rebuilding a unit", () => {
       result: {
         repertoire: { cardsKept: 1, cardsDeleted: 1, planChoices: answered.planChoices },
       },
+    });
+  });
+});
+
+const POINTS_ON = {
+  effectiveness: { effectiveness: 6, soundness: 0, learnability: 0 },
+  soundness: { effectiveness: 0, soundness: 6, learnability: 0 },
+  learnability: { effectiveness: 0, soundness: 0, learnability: 6 },
+} satisfies Record<string, RepertoirePoints>;
+
+const EVEN_POINTS: RepertoirePoints = { effectiveness: 2, soundness: 2, learnability: 2 };
+
+// Every way to place 6 points on the three measures: 28 of them.
+const EVERY_SPLIT: RepertoirePoints[] = Array.from({ length: 7 }, (_, effectiveness) =>
+  Array.from({ length: 7 - effectiveness }, (_, soundness) => ({
+    effectiveness,
+    soundness,
+    learnability: 6 - effectiveness - soundness,
+  })),
+).flat();
+
+/**
+ * White's 4th move against 3...Bc5, with every measure telling a different story. The engine's best
+ * is 4.O-O. Of the moves inside the margin, students play 4.d3 most, 4.b4 scores best for White
+ * among them, and 4.c3 is second on all three, so it is what the blend of 2, 2 and 2 picks. 4.a4
+ * is what students play most of all and score best with, but it is `a4Score` against the engine's
+ * 40 for 4.O-O: 60 cp under by default, outside the margin. The White band plays 4.c3 most, which
+ * is what the usual rule picks where the points leave a tie.
+ */
+function writeStyleChoice(a4Score = -20): void {
+  writeItalianTree();
+  explorer
+    .write(SETUP, EXPLORER_RATINGS, { Bc5: 60000 }, 100000)
+    .write(AFTER_BC5, ITALIAN_WHITE_RATINGS, { c3: 4000, "O-O": 3000, d3: 2000, b4: 1000 }, 10000)
+    .writeResults(AFTER_BC5, EXPLORER_RATINGS, {
+      a4: [2800, 0, 700],
+      d3: [1200, 300, 1500],
+      c3: [1500, 240, 960],
+      b4: [320, 60, 120],
+      "O-O": [130, 40, 130],
+    });
+  engine.write(AFTER_BC5, [
+    ["e1g1", 40],
+    ["c2c3", 35],
+    ["d2d3", 10],
+    ["b2b4", 0],
+    ["a2a4", a4Score],
+  ]);
+}
+
+// Only White's 4th move is reached: the walk stops at ply 7.
+const styled = (points: RepertoirePoints, options: RepertoireOptions = {}) =>
+  generate({ maxPly: 7, ...options, points });
+
+/** White's answer to 3...Bc5 from a first run of its own, so that runs never see each other's rows. */
+async function answerAgainstBc5(
+  points: RepertoirePoints,
+  options: RepertoireOptions = {},
+): Promise<string | undefined> {
+  const rows = await rowsOfFirstRun({ maxPly: 7, ...options, points }, ITALIAN_FIXTURE_NAMES);
+  return rows.find((row) => row.kind === "own" && row.position_key === keyOf(AFTER_BC5))?.move_san;
+}
+
+const bandsAskedAt = (line: string[]): Set<string | undefined> =>
+  new Set(explorer.calls.filter((call) => call.key === keyOf(line)).map((call) => call.ratings));
+
+describe("checking the points", () => {
+  it.each([
+    EVEN_POINTS,
+    POINTS_ON.soundness,
+    POINTS_ON.effectiveness,
+    POINTS_ON.learnability,
+    { effectiveness: 1, soundness: 2, learnability: 3 },
+  ])("accepts %j, three whole numbers that add up to 6", (points) => {
+    expect(checkRepertoirePoints(points)).toEqual({ ok: true, points });
+  });
+
+  it("accepts every split of 6 points over the three measures, and only those", () => {
+    expect(EVERY_SPLIT).toHaveLength(28);
+    expect(EVERY_SPLIT.every((points) => checkRepertoirePoints(points).ok)).toBe(true);
+  });
+
+  it.each([
+    ["text", "2,2,2"],
+    ["a list", [2, 2, 2]],
+    ["null", null],
+    ["a measure left out", { effectiveness: 3, soundness: 3 }],
+    ["a measure added", { ...EVEN_POINTS, intuition: 0 }],
+    ["another name for a measure", { winning: 2, soundness: 2, learnability: 2 }],
+    ["a number written as text", { ...EVEN_POINTS, effectiveness: "2" }],
+    ["a fraction", { effectiveness: 2.5, soundness: 1.5, learnability: 2 }],
+    ["a negative number", { effectiveness: 7, soundness: -1, learnability: 0 }],
+    ["a number that is not finite", { ...EVEN_POINTS, soundness: Number.POSITIVE_INFINITY }],
+    ["5 points", { effectiveness: 2, soundness: 2, learnability: 1 }],
+    ["7 points", { effectiveness: 3, soundness: 2, learnability: 2 }],
+    ["no points", { effectiveness: 0, soundness: 0, learnability: 0 }],
+  ])("refuses %s", (_label, points) => {
+    expect(checkRepertoirePoints(points)).toMatchObject({ ok: false });
+  });
+
+  it("says how many points were spent when they do not add up to 6", () => {
+    expect(checkRepertoirePoints({ effectiveness: 3, soundness: 2, learnability: 2 })).toEqual({
+      ok: false,
+      reason: "the points add up to 6, not 7",
+    });
+  });
+
+  it("refuses points before it asks the network or stores anything", async () => {
+    writeStyleChoice();
+    await expect(
+      generate({ points: { effectiveness: 2, soundness: 2, learnability: 1 } }),
+    ).rejects.toThrow(RepertoirePointsError);
+    expect(explorer.calls).toEqual([]);
+    expect(engine.requests).toEqual([]);
+    expect(variationsOf(db)).toEqual([]);
+  });
+});
+
+describe("the style points", () => {
+  it("plays the engine's best with 6 points on soundness", async () => {
+    writeStyleChoice();
+    await styled(POINTS_ON.soundness);
+    expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "O-O", cp_loss: 0 });
+  });
+
+  it("plays the move students play most with 6 points on learnability", async () => {
+    // 4.a4 is the most played of all and, at exactly 50 cp under the engine's best, still inside.
+    writeStyleChoice(-10);
+    await styled(POINTS_ON.learnability);
+    expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "a4", cp_loss: 50 });
+  });
+
+  it("plays the move that scores best for White among students with 6 points on effectiveness", async () => {
+    writeStyleChoice();
+    await styled(POINTS_ON.effectiveness);
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("b4");
+  });
+
+  it("plays the move students play most of those inside the margin when the most played is outside it", async () => {
+    writeStyleChoice();
+    await styled(POINTS_ON.learnability);
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("d3");
+  });
+
+  it("blends 2, 2 and 2 into the move that is second on every measure, none of the three single picks", async () => {
+    writeStyleChoice();
+    await styled(EVEN_POINTS);
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("c3");
+  });
+
+  it("weighs 2, 2 and 2 where no points are given, and says so in the result", async () => {
+    writeStyleChoice();
+    const result = await generate({ maxPly: 7 });
+    expect(REPERTOIRE_DEFAULT_POINTS).toEqual(EVEN_POINTS);
+    expect(result.points).toEqual(EVEN_POINTS);
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("c3");
+    const asked = await rowsOfFirstRun({ maxPly: 7, points: EVEN_POINTS }, ITALIAN_FIXTURE_NAMES);
+    expect(comparableRows(rowsOf(db))).toEqual(asked);
+  });
+
+  it("answers the points it weighed by", async () => {
+    writeStyleChoice();
+    const result = await styled({ effectiveness: 1, soundness: 4, learnability: 1 });
+    expect(result.points).toEqual({ effectiveness: 1, soundness: 4, learnability: 1 });
+  });
+
+  describe("the margin", () => {
+    it.each([
+      { a4Score: -10, under: 50, learnability: "a4", effectiveness: "a4" },
+      { a4Score: -11, under: 51, learnability: "d3", effectiveness: "b4" },
+    ])(
+      "counts 4.a4 as a candidate at $under cp under the engine's best only up to 50: learnability gives $learnability, effectiveness $effectiveness",
+      async ({ a4Score, learnability, effectiveness }) => {
+        writeStyleChoice(a4Score);
+        expect(await answerAgainstBc5(POINTS_ON.learnability)).toBe(learnability);
+        expect(await answerAgainstBc5(POINTS_ON.effectiveness)).toBe(effectiveness);
+      },
+    );
+
+    it("never plays a move more than 50 cp under the engine's best, whatever the points", async () => {
+      // 4.a4 is 60 cp under, and first for students on how often they play it and how well it scores.
+      writeStyleChoice();
+      const answers = await Promise.all(EVERY_SPLIT.map((points) => answerAgainstBc5(points)));
+      expect(answers).toHaveLength(28);
+      expect(answers).not.toContain("a4");
+      expect(new Set(answers)).toEqual(new Set(["O-O", "c3", "d3", "b4"]));
+    });
+  });
+
+  describe("the opening and the stored moves", () => {
+    it.each(Object.entries(POINTS_ON))(
+      "keeps the setup moves of moves 1 to 3 whatever the points: all on %s",
+      async (_measure, points) => {
+        writeStyleChoice();
+        await styled(points);
+        // 3.Bb5 is the engine's best at 3.Bc4's position, so soundness alone would move it.
+        const setup = rowsOf(db).filter((row) => row.kind === "own" && row.ply <= 5);
+        expect(setup.map((row) => row.move_san)).toEqual(["e4", "Nf3", "Bc4"]);
+        expect(setup.map((row) => row.source)).toEqual(["setup", "setup", "setup"]);
+      },
+    );
+
+    it("leaves a stored position as it was when it is run again under other points", async () => {
+      writeStyleChoice();
+      await styled(POINTS_ON.soundness);
+      const stored = digestOf(rowsOf(db));
+      const again = await styled(POINTS_ON.learnability);
+      expect(again.created).toBe(0);
+      expect(digestOf(rowsOf(db))).toBe(stored);
+      expect(ownAt(AFTER_BC5)?.move_san).toBe("O-O");
+    });
+
+    it("walks the unit again under new points only on a rebuild", async () => {
+      writeStyleChoice();
+      await styled(POINTS_ON.soundness);
+      await styled(POINTS_ON.learnability, { rebuild: true });
+      expect(ownAt(AFTER_BC5)?.move_san).toBe("d3");
+      expect(ownAt(BEFORE_BC4)).toMatchObject({ move_san: "Bc4", source: "setup" });
+    });
+
+    it("asks the student's band where White has a choice, and not where the points leave it nothing to say", async () => {
+      writeStyleChoice();
+      await answerAgainstBc5(POINTS_ON.soundness);
+      expect(bandsAskedAt(AFTER_BC5)).toEqual(new Set([ITALIAN_WHITE_RATINGS]));
+      explorer.calls.length = 0;
+      await answerAgainstBc5(EVEN_POINTS);
+      expect(bandsAskedAt(AFTER_BC5)).toEqual(new Set([ITALIAN_WHITE_RATINGS, EXPLORER_RATINGS]));
+    });
+  });
+
+  describe("beside the plan rule", () => {
+    it("leaves the move to the plan rule where the unit already plays one candidate, whatever the points", async () => {
+      writeStyleChoice();
+      // The unit plays 4.d3 once, and it is inside the margin: soundness alone would say 4.O-O.
+      seedPlayedSans(["d3"]);
+      const result = await styled(POINTS_ON.soundness);
+      expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "d3", cp_loss: 30 });
+      expect(result.planChoices).toBe(1);
+    });
+
+    it.each([
+      { measure: "soundness", answer: "O-O" },
+      { measure: "learnability", answer: "c3" },
+      { measure: "effectiveness", answer: "c3" },
+    ] as const)(
+      "weighs only the candidates the unit plays equally often: all on $measure gives $answer, never the 4.d3 or 4.b4 it does not play",
+      async ({ measure, answer }) => {
+        writeStyleChoice();
+        // Students play 4.d3 most of the candidates and score best with 4.b4; neither is in the plan.
+        seedPlayedSans(["O-O", "c3"]);
+        await styled(POINTS_ON[measure]);
+        expect(ownAt(AFTER_BC5)?.move_san).toBe(answer);
+      },
+    );
+
+    it("weighs every candidate inside the margin where the unit plays none of them, and one outside it does not count", async () => {
+      writeStyleChoice();
+      // 4.a4 is 60 cp under: the unit playing it is no plan, since it is not a candidate.
+      seedPlayedSans(["a4"]);
+      const result = await styled(POINTS_ON.learnability);
+      expect(ownAt(AFTER_BC5)?.move_san).toBe("d3");
+      expect(result.planChoices).toBe(0);
+    });
+
+    it("plays a forced move whatever the points say", async () => {
+      writeStyleChoice();
+      const first = await styled(POINTS_ON.soundness);
+      expect(first.variation).not.toBeNull();
+      const forced = await generateBranch([...AFTER_BC5, "b4"], {
+        maxPly: 7,
+        points: POINTS_ON.soundness,
+      });
+      const branched = variationNamed(forced.variation ?? "");
+      expect(ownOf(branched.id, AFTER_BC5)?.move_san).toBe("b4");
+    });
+  });
+
+  describe("where the student's band has little to say", () => {
+    it("ignores a position with fewer than 200 games, leaving the tie to the usual rule", async () => {
+      writeStyleChoice();
+      // 190 games: under the floor the walk trusts for a reply, so they do not say what students play.
+      explorer.writeResults(AFTER_BC5, EXPLORER_RATINGS, { d3: [60, 10, 30], b4: [50, 10, 30] });
+      await styled(POINTS_ON.learnability);
+      // The White band plays 4.c3 most of the candidates, neither the engine's first nor 4.d3.
+      expect(ownAt(AFTER_BC5)?.move_san).toBe("c3");
+    });
+
+    it("still plays a move where the student's band has no games and no floor is asked", async () => {
+      writeStyleChoice();
+      explorer.writeResults(AFTER_BC5, EXPLORER_RATINGS, {});
+      await styled(POINTS_ON.learnability, { minGames: 0 });
+      expect(ownAt(AFTER_BC5)?.move_san).toBe("c3");
+    });
+
+    it("scores a move seen in fewer than 200 games at the position's average, not at its own results", async () => {
+      writeStyleChoice();
+      // 4.O-O won all of its 150 games, under the floor: it is worth what the position averages.
+      explorer.writeResults(AFTER_BC5, EXPLORER_RATINGS, {
+        a4: [2800, 0, 700],
+        d3: [1200, 300, 1500],
+        c3: [1500, 240, 960],
+        b4: [320, 60, 120],
+        "O-O": [150, 0, 0],
+      });
+      await styled(POINTS_ON.effectiveness);
+      expect(ownAt(AFTER_BC5)?.move_san).toBe("b4");
+    });
+
+    it("plays a listed move over candidates the student's band does not list at all", async () => {
+      writeStyleChoice();
+      explorer.writeResults(AFTER_BC5, EXPLORER_RATINGS, { d3: [1200, 300, 1500], c3: [10, 0, 0] });
+      await styled(POINTS_ON.learnability);
+      expect(ownAt(AFTER_BC5)?.move_san).toBe("d3");
+    });
+  });
+
+  describe("POST /api/openings/generate with points", () => {
+    const postPoints = async (payload: object, log: RecordingLog = new RecordingLog()) => {
+      const app = buildApp({
+        db,
+        log,
+        generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+        generateRepertoireOpenings: (root, branch, rebuild, points) =>
+          generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES, {
+            root,
+            branch,
+            rebuild,
+            points,
+            maxPly: 7,
+          }),
+      });
+      const response = await app.inject({ method: "POST", url: "/api/openings/generate", payload });
+      await app.close();
+      return { response, log };
+    };
+
+    it("builds under the points posted, answers them and logs them", async () => {
+      writeStyleChoice();
+      const { response, log } = await postPoints({
+        sources: ["repertoire"],
+        points: POINTS_ON.soundness,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().repertoire).toMatchObject({ points: POINTS_ON.soundness });
+      expect(ownAt(AFTER_BC5)?.move_san).toBe("O-O");
+      expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+        points: POINTS_ON.soundness,
+        result: { repertoire: { points: POINTS_ON.soundness } },
+      });
+    });
+
+    it("builds under 2, 2 and 2 when the request names no points", async () => {
+      writeStyleChoice();
+      const { response } = await postPoints({ sources: ["repertoire"] });
+      expect(response.json().repertoire).toMatchObject({ points: EVEN_POINTS });
+      expect(ownAt(AFTER_BC5)?.move_san).toBe("c3");
+    });
+
+    it("answers 400 invalid_points for points that do not add up to 6, and starts no run", async () => {
+      writeStyleChoice();
+      const { response } = await postPoints({
+        sources: ["repertoire"],
+        points: { effectiveness: 2, soundness: 2, learnability: 1 },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({
+        error: "invalid_points",
+        message: "the points add up to 6, not 5",
+      });
+      expect(explorer.calls).toEqual([]);
+      expect(variationsOf(db)).toEqual([]);
     });
   });
 });

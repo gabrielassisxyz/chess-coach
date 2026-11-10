@@ -80,6 +80,81 @@ const NO_SETUP_PREFERENCE_TURN = 0;
 // A rebuild stores its rows under this group until its walk ends, apart from the unit it replaces.
 const REPERTOIRE_REBUILD_GROUP_SUFFIX = " (rebuilding)";
 
+/**
+ * How the student weighs White's candidate moves, in whole points that add up to
+ * `REPERTOIRE_POINTS_TOTAL`. Effectiveness is the move's expected score among players at the
+ * student's rating, soundness how close it stays to the engine's best, and learnability how often
+ * those players choose it.
+ */
+export interface RepertoirePoints {
+  effectiveness: number;
+  soundness: number;
+  learnability: number;
+}
+
+export const REPERTOIRE_POINTS_TOTAL = 6;
+
+export const REPERTOIRE_DEFAULT_POINTS: Readonly<RepertoirePoints> = Object.freeze({
+  effectiveness: 2,
+  soundness: 2,
+  learnability: 2,
+});
+
+const REPERTOIRE_POINT_MEASURES = ["effectiveness", "soundness", "learnability"] as const;
+
+export type RepertoirePointsCheck =
+  | { ok: true; points: RepertoirePoints }
+  | { ok: false; reason: string };
+
+/** Points the data refuses; the route checks them first, so only a direct caller can reach this. */
+export class RepertoirePointsError extends Error {}
+
+const refusedPoints = (reason: string): RepertoirePointsCheck => ({ ok: false, reason });
+
+/**
+ * Points come from the browser, so every rule they fail is said in words: exactly the three
+ * measures, each a whole number, adding up to 6. Nothing is filled in for a measure left out, since
+ * the points it would take are the student's to place.
+ */
+export function checkRepertoirePoints(points: unknown): RepertoirePointsCheck {
+  if (typeof points !== "object" || points === null || Array.isArray(points)) {
+    return refusedPoints("points is an object with effectiveness, soundness and learnability");
+  }
+  const given = points as Record<string, unknown>;
+  const names = Object.keys(given);
+  const holdsOnlyTheMeasures =
+    names.length === REPERTOIRE_POINT_MEASURES.length &&
+    REPERTOIRE_POINT_MEASURES.every((measure) => names.includes(measure));
+  if (!holdsOnlyTheMeasures) {
+    return refusedPoints("points hold effectiveness, soundness and learnability, and nothing else");
+  }
+  const wholeNumbers = REPERTOIRE_POINT_MEASURES.every((measure) => {
+    const value = given[measure];
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+  });
+  if (!wholeNumbers) return refusedPoints("each measure is a whole number of points, 0 or more");
+  const checked = given as unknown as RepertoirePoints;
+  const spent = REPERTOIRE_POINT_MEASURES.reduce((sum, measure) => sum + checked[measure], 0);
+  if (spent !== REPERTOIRE_POINTS_TOTAL) {
+    return refusedPoints(`the points add up to ${REPERTOIRE_POINTS_TOTAL}, not ${spent}`);
+  }
+  return {
+    ok: true,
+    points: {
+      effectiveness: checked.effectiveness,
+      soundness: checked.soundness,
+      learnability: checked.learnability,
+    },
+  };
+}
+
+function resolveRepertoirePoints(points: RepertoirePoints | undefined): RepertoirePoints {
+  if (points === undefined) return { ...REPERTOIRE_DEFAULT_POINTS };
+  const checked = checkRepertoirePoints(points);
+  if (!checked.ok) throw new RepertoirePointsError(checked.reason);
+  return checked.points;
+}
+
 export interface RepertoireOptions {
   /**
    * The line to build a unit from, 1.e4 through the Black move that leaves the Italian setup; left
@@ -98,6 +173,11 @@ export interface RepertoireOptions {
    * cuts short leaves it as it was.
    */
   rebuild?: boolean | undefined;
+  /**
+   * What decides White's move among the candidates the plan rule leaves; left out, the default of
+   * 2, 2 and 2. A stored move never changes under other points, only a rebuild walks the unit again.
+   */
+  points?: RepertoirePoints | undefined;
   maxPly?: number;
   minGames?: number;
   minReach?: number;
@@ -129,6 +209,8 @@ export interface RepertoireResult {
   shallowestDepth: number | null;
   /** White moves this run stored where the unit already played a candidate, so the plan rule chose. */
   planChoices: number;
+  /** The points the run weighed White's candidates by, the default where none were given. */
+  points: RepertoirePoints;
   /** On a rebuild that replaced the unit: the cards of its old White moves that some unit still stores. */
   cardsKept?: number;
   /** On a rebuild that replaced the unit: the cards of its old White moves that no unit stores now. */
@@ -279,6 +361,96 @@ function repertoirePlanLines(
   const most = Math.max(0, ...candidates.map((candidate) => candidate.uses));
   if (most === 0) return [];
   return candidates.filter((candidate) => candidate.uses === most).map(({ line }) => line);
+}
+
+// What the points choose among where the unit plays none of the candidates: every line within the
+// same margin, in the engine's order.
+function repertoireMarginLines(fen: string, lines: SearchResult["lines"]): SearchResult["lines"] {
+  const best = lines[0];
+  if (!best) return [];
+  return lines.filter((line) => {
+    const uci = line.moves[0];
+    if (uci === undefined || repertoirePlayUci(fen, uci) === null) return false;
+    return best.score - line.score <= ITALIAN_CP_MARGIN;
+  });
+}
+
+// Floating-point sums of blends that are equal on paper must still tie.
+const REPERTOIRE_STYLE_TIE = 1e-9;
+// What a move is worth where the student's band has no score to give it.
+const REPERTOIRE_NEUTRAL_SCORE = 0.5;
+
+// Each measure is stretched over the candidates at one choice, so that the best of them scores 1 and
+// the worst 0: a point then buys the same swing on every measure, whatever scale its own numbers
+// come in. A measure that does not tell the candidates apart scores them all 0.
+function rescaleRepertoireMeasure(values: readonly number[]): number[] {
+  const low = Math.min(...values);
+  const span = Math.max(...values) - low;
+  return values.map((value) => (span === 0 ? 0 : (value - low) / span));
+}
+
+const repertoireScoreOf = (stats: { white: number; draws: number; black: number }): number =>
+  gamesOf(stats) === 0
+    ? REPERTOIRE_NEUTRAL_SCORE
+    : (stats.white + stats.draws / 2) / gamesOf(stats);
+
+// The student's band is read only for the moves it lists, and only on a count the walk would trust
+// for a reply: below the floor no candidate is more natural than another, and none has a score of
+// its own. A move with a count of its own below the floor is worth what the position averages.
+function repertoireStudentMeasures(
+  fen: string,
+  lines: SearchResult["lines"],
+  student: ExplorerPosition | null,
+  minGames: number,
+): { learnability: number[]; effectiveness: number[] } {
+  const total = student ? gamesOf(student) : 0;
+  if (!student || total === 0 || total < minGames) {
+    return {
+      learnability: lines.map(() => 0),
+      effectiveness: lines.map(() => REPERTOIRE_NEUTRAL_SCORE),
+    };
+  }
+  const average = repertoireScoreOf(student);
+  const listed = lines.map((line) =>
+    student.moves.find((move) => repertoirePlaySan(fen, move.san)?.uci === line.moves[0]),
+  );
+  return {
+    learnability: listed.map((move) => (move ? gamesOf(move) / total : 0)),
+    effectiveness: listed.map((move) =>
+      move && gamesOf(move) >= minGames ? repertoireScoreOf(move) : average,
+    ),
+  };
+}
+
+/**
+ * The candidates the points rate highest, several only where their blends tie, which the usual rule
+ * then settles. A blend is each measure's rescaled value times its points: soundness is the
+ * engine's score of the line, learnability the share of the student's band that plays the move,
+ * effectiveness its expected score there. The candidates are already inside the margin, so no
+ * weight can reach a move outside it.
+ */
+function repertoireStyleLines(
+  fen: string,
+  candidates: SearchResult["lines"],
+  student: ExplorerPosition | null,
+  minGames: number,
+  points: RepertoirePoints,
+): SearchResult["lines"] {
+  if (candidates.length < 2) return candidates;
+  const band = repertoireStudentMeasures(fen, candidates, student, minGames);
+  const rescaled: Record<(typeof REPERTOIRE_POINT_MEASURES)[number], number[]> = {
+    effectiveness: rescaleRepertoireMeasure(band.effectiveness),
+    soundness: rescaleRepertoireMeasure(candidates.map((line) => line.score)),
+    learnability: rescaleRepertoireMeasure(band.learnability),
+  };
+  const blended = candidates.map((_, index) =>
+    REPERTOIRE_POINT_MEASURES.reduce(
+      (sum, measure) => sum + points[measure] * (rescaled[measure][index] ?? 0),
+      0,
+    ),
+  );
+  const top = Math.max(...blended);
+  return candidates.filter((_, index) => (blended[index] ?? 0) >= top - REPERTOIRE_STYLE_TIE);
 }
 
 /** White's move in one position of a variation built at a branch point, whatever the data says. */
@@ -498,6 +670,7 @@ class RepertoireWalk {
     private readonly names: OpeningNames,
     private readonly unit: RepertoireUnit,
     options: RepertoireOptions,
+    private readonly points: RepertoirePoints,
   ) {
     this.maxPly = options.maxPly ?? REPERTOIRE_MAX_PLY;
     this.minGames = options.minGames ?? MIN_POSITION_GAMES;
@@ -747,7 +920,7 @@ class RepertoireWalk {
     const setupSan = this.unit.fixed[step.ply - 1];
     const picked = setupSan
       ? this.setupOwnPick(step, setupSan)
-      : this.ruledOwnPick(step, position, searched);
+      : await this.ruledOwnPick(step, position, searched);
     if (!picked) return null;
     const move = repertoirePlayUci(step.fen, picked.uci);
     const scores = await this.scoreOwnMove(step.fen, picked.uci, searched);
@@ -762,22 +935,35 @@ class RepertoireWalk {
     return uci ? { uci, byPlan: false } : null;
   }
 
-  // A forced move is played whatever the data says. Elsewhere the candidate the unit already plays
-  // most often wins, ties going to the move the usual rule picks, which pickItalianWhiteUci gives
-  // when it is handed the tied lines alone; with no candidate played, the usual rule decides.
-  private ruledOwnPick(
+  // A forced move is played whatever the data says. Elsewhere the plan rule narrows the candidates
+  // first, to the ones the unit already plays most often, and the points choose among what is left:
+  // every candidate inside the margin where the unit plays none. A tie in the points goes to the
+  // move the usual rule picks, which pickItalianWhiteUci gives when it is handed the tied lines alone.
+  private async ruledOwnPick(
     step: RepertoireStep,
     position: ExplorerPosition,
     searched: SearchResult,
-  ): { uci: string; byPlan: boolean } | null {
+  ): Promise<{ uci: string; byPlan: boolean } | null> {
     const forced = this.unit.forced;
     if (forced?.positionKey === positionKey(step.fen)) return { uci: forced.uci, byPlan: false };
     const uses = countRepertoireOwnMovesBySan(this.db, this.repertoireId);
     const planned = repertoirePlanLines(step.fen, searched.lines, uses);
     const byPlan = planned.length > 0;
-    const lines = byPlan ? planned : searched.lines;
+    const candidates = byPlan ? planned : repertoireMarginLines(step.fen, searched.lines);
+    const student = await this.studentBandAt(step, candidates.length);
+    const lines = repertoireStyleLines(step.fen, candidates, student, this.minGames, this.points);
     const uci = pickItalianWhiteUci(step.fen, position, lines, NO_SETUP_PREFERENCE_TURN);
     return uci ? { uci, byPlan } : null;
+  }
+
+  // One more request for a position with a real choice in it, and none where a single candidate or
+  // the points leave the student's band with nothing to say.
+  private async studentBandAt(
+    step: RepertoireStep,
+    candidates: number,
+  ): Promise<ExplorerPosition | null> {
+    if (candidates < 2 || this.points.effectiveness + this.points.learnability === 0) return null;
+    return this.explorer.position(step.fen, EXPLORER_RATINGS);
   }
 
   private async searchPosition(fen: string, multipv: number): Promise<SearchResult> {
@@ -854,6 +1040,7 @@ interface RepertoireRunDeps {
   explorer: CachedExplorer;
   names: OpeningNames;
   options: RepertoireOptions;
+  points: RepertoirePoints;
 }
 
 interface RepertoireWalkOutcome {
@@ -875,6 +1062,7 @@ async function walkRepertoireUnit(
     deps.names,
     unit,
     deps.options,
+    deps.points,
   );
   const removedReplies = walk.removeRepliesAtLimit();
   const before = unitVariationCounts(deps.db, unit);
@@ -907,6 +1095,7 @@ function repertoireRunResult(
     cacheHits: deps.explorer.cacheHits,
     truncated: outcome.truncated,
     planChoices: outcome.walk.planChoices,
+    points: { ...deps.points },
     ...outcome.walk.searchOutcome(),
   };
 }
@@ -969,8 +1158,10 @@ async function rebuildRepertoireUnit(
  * A search that is slow stops at the cap and keeps its best line, so a run never fails on one: the
  * depth reached is stored beside each White move's evaluation, and the result counts the cut searches.
  * White's move follows the plan rule: among the engine's lines within the margin, the move the unit
- * already plays most often. With `options.rebuild` a stored unit is walked again from scratch and
- * replaced, keeping the review cards of every White move some unit still stores.
+ * already plays most often. The student's points choose among the candidates that rule leaves, and
+ * among every line inside the margin where the unit plays none; the default is 2, 2 and 2. With
+ * `options.rebuild` a stored unit is walked again from scratch and replaced, keeping the review
+ * cards of every White move some unit still stores.
  */
 export async function generateRepertoire(
   db: Database,
@@ -982,10 +1173,11 @@ export async function generateRepertoire(
   options: RepertoireOptions = {},
 ): Promise<RepertoireResult> {
   const unit = repertoireUnitOf(options, names);
+  const points = resolveRepertoirePoints(options.points);
   if (options.root) assertGroupHoldsRoot(db, unit);
   assertBranchAddsVariation(db, unit);
   const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
-  const deps: RepertoireRunDeps = { db, engine, explorer, names, options };
+  const deps: RepertoireRunDeps = { db, engine, explorer, names, options, points };
   const stored = options.rebuild ? findUnitVariation(db, unit) : undefined;
   if (stored) return rebuildRepertoireUnit(deps, unit, stored);
   return repertoireRunResult(deps, unit, await walkRepertoireUnit(deps, unit));
