@@ -13,7 +13,7 @@ import {
 } from "./explorer-client.js";
 import { positionKey } from "./from-games.js";
 import { pickItalianWhiteUci } from "./from-italian.js";
-import { REPERTOIRE_SEARCH_DEADLINE_MS } from "./from-repertoire.js";
+import { REPERTOIRE_SEARCH_CAP_MS } from "./from-repertoire.js";
 import type { OpeningNames } from "./names.js";
 import type { GameReviewStoredMove, RepertoireLookup } from "./repertoire-review-walk.js";
 
@@ -35,6 +35,8 @@ export interface AddedAnswer extends AddedMove {
   cpLoss: number;
   /** The position after the move, in centipawns from White's side. */
   evalCp: number;
+  /** How deep the engine looked for `evalCp` and `cpLoss`; null when the engine did not say. */
+  evalDepth: number | null;
   results: RepertoireResultCounts | null;
 }
 
@@ -100,7 +102,7 @@ async function chooseWhiteAnswer(
     fen,
     depth: EVALUATION_DEPTH,
     multipv: GAME_ANSWER_SEARCH_LINES,
-    deadlineMs: REPERTOIRE_SEARCH_DEADLINE_MS,
+    capMs: REPERTOIRE_SEARCH_CAP_MS,
   });
   const uci = pickItalianWhiteUci(fen, position, searched.lines, Math.ceil((move.ply + 1) / 2));
   const best = searched.lines[0];
@@ -119,6 +121,7 @@ async function chooseWhiteAnswer(
     openingName: openingNameAfter(sources.names, moves, move.ply),
     cpLoss: Math.max(0, best.score - scored.score),
     evalCp: scored.score,
+    evalDepth: searched.depth ?? null,
     results:
       gamesOf(after) > 0 ? { wins: after.white, draws: after.draws, losses: after.black } : null,
   };

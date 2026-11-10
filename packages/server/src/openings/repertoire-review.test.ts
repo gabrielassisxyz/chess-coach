@@ -42,6 +42,7 @@ import {
   ITALIAN_WHITE_RATINGS,
 } from "./explorer-client.js";
 import { positionKey } from "./from-games.js";
+import { REPERTOIRE_SEARCH_CAP_MS } from "./from-repertoire.js";
 import { parseOpeningTable } from "./names.js";
 import {
   type GameReviewDeps,
@@ -168,6 +169,8 @@ class ReviewFakeExplorer implements ExplorerFetcher {
 /** Scores the moves a test writes out; a position nobody wrote has one forward move alone. */
 class ReviewFakeEngine implements Searcher {
   readonly requests: SearchRequest[] = [];
+  /** The depth every answer reports; a real engine states it, so most tests leave it unset. */
+  reachedDepth: number | undefined = undefined;
   private readonly scripted = new Map<string, Array<{ moves: string[]; score: number }>>();
 
   write(line: string[], scores: Array<[uci: string, score: number]>): this {
@@ -182,7 +185,12 @@ class ReviewFakeEngine implements Searcher {
     this.requests.push(request);
     const written = this.scripted.get(positionKey(request.fen));
     const lines = (written ?? forwardLines(request.fen)).slice(0, request.multipv ?? 1);
-    return { fen: request.fen, bestmove: lines[0]?.moves[0] ?? null, lines };
+    return {
+      fen: request.fen,
+      bestmove: lines[0]?.moves[0] ?? null,
+      lines,
+      depth: this.reachedDepth,
+    };
   }
 }
 
@@ -236,6 +244,7 @@ interface PositionRow {
   source: string;
   cp_loss: number | null;
   eval_cp: number | null;
+  eval_depth: number | null;
   wins: number | null;
   draws: number | null;
   losses: number | null;
@@ -595,6 +604,7 @@ describe("a Black reply the repertoire lacks", () => {
       share: 0.5,
       cp_loss: 10,
       eval_cp: 30,
+      eval_depth: null,
       wins: 100,
       draws: 8,
       losses: 92,
@@ -610,6 +620,19 @@ describe("a Black reply the repertoire lacks", () => {
       added_reply_id: added[0]?.id,
       added_answer_id: added[1]?.id,
     });
+  });
+
+  it("searches White's answer under the generator's cap and stores the depth it reached", async () => {
+    seedRepertoire();
+    writeH6Answers();
+    engine.reachedDepth = 9;
+    await reviewRepertoireGame(deps(), addGame([...SETUP, "h6", "c3", "Nf6", "d4"]));
+    expect(engine.requests.map((request) => request.capMs)).toEqual([REPERTOIRE_SEARCH_CAP_MS]);
+    const answer = positionsOf().find((row) => row.kind === "own" && row.source === "game");
+    expect(answer?.eval_depth).toBe(9);
+    // A Black reply has no engine score, so no depth either.
+    const reply = positionsOf().find((row) => row.kind === "reply" && row.source === "game");
+    expect(reply?.eval_depth).toBeNull();
   });
 
   it("takes the reach of the move before it times its own share", async () => {

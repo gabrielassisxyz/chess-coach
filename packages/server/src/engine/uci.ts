@@ -9,14 +9,22 @@ export interface SearchRequest {
   depth?: number;
   movetime?: number;
   multipv?: number;
-  /** How long the answer may take; without it, movetime plus the engine's search slack. */
-  deadlineMs?: number;
+  /**
+   * Stops the search once this long has passed and answers with the best line it had reached, a
+   * shallower one than `depth`. Without it the search runs to its depth or movetime, and fails when
+   * the answer is more than the engine's search slack late.
+   */
+  capMs?: number;
 }
 
 export interface SearchResult {
   fen: string;
   bestmove: string | null;
   lines: Array<{ moves: string[]; score: number }>;
+  /** The depth every line reached, the shallowest of them; unset when the searcher does not say. */
+  depth?: number | undefined;
+  /** True when `capMs` passed before the engine finished, so the search was stopped at what it had. */
+  cutByTime?: boolean;
 }
 
 export interface Searcher {
@@ -40,6 +48,36 @@ export const DEFAULT_TIMEOUTS: EngineTimeouts = {
 interface Exchange {
   onLine(line: string): void;
   onExit(): void;
+}
+
+interface ReachedLine extends InfoLine {
+  /** The depth the engine printed with the line; null when it printed none. */
+  depth: number | null;
+}
+
+interface ReachedSearch {
+  bestmoveLine: string;
+  /** The engine's last line for each MultiPV rank, best first. */
+  reached: ReachedLine[];
+  cutByTime: boolean;
+}
+
+// parseInfoLine keeps a line's moves and score; the depth printed beside them is read here.
+function infoDepth(line: string): number | null {
+  const tokens = line.split(/\s+/);
+  const at = tokens.indexOf("depth");
+  const depth = at < 0 ? Number.NaN : Number(tokens[at + 1]);
+  return Number.isInteger(depth) ? depth : null;
+}
+
+// A stop can leave MultiPV lines a layer apart, the first ones finished in the layer it cut and the
+// rest still in the one before, so the depth every line reached is the shallowest of them.
+function shallowestDepth(lines: ReachedLine[]): number | undefined {
+  const depths = lines.map((line) => line.depth);
+  if (depths.length === 0 || !depths.every((depth): depth is number => depth !== null)) {
+    return undefined;
+  }
+  return Math.min(...depths);
 }
 
 export class UciEngine implements Searcher {
@@ -118,28 +156,46 @@ export class UciEngine implements Searcher {
         ),
       );
     }
-    const infos = new Map<number, InfoLine>();
+    const { bestmoveLine, reached, cutByTime } = await this.searchUntilBestmove(request);
+    return {
+      fen: request.fen,
+      bestmove: this.validatedBestmove(bestmoveLine, position),
+      lines: reached.map(({ moves, score }) => ({ moves, score })),
+      depth: shallowestDepth(reached),
+      cutByTime,
+    };
+  }
+
+  private async searchUntilBestmove(request: SearchRequest): Promise<ReachedSearch> {
+    const infos = new Map<number, ReachedLine>();
     const limit =
       request.movetime !== undefined
         ? `movetime ${request.movetime}`
         : `depth ${request.depth ?? 16}`;
-    const deadline = request.deadlineMs ?? (request.movetime ?? 0) + this.timeouts.searchSlackMs;
+    let cutByTime = false;
+    const stopAtCap =
+      request.capMs === undefined
+        ? undefined
+        : {
+            afterMs: request.capMs,
+            onStop: () => {
+              cutByTime = true;
+            },
+          };
     const bestmoveLine = await this.guarded(
       this.ask(
         [`position fen ${request.fen}`, `go ${limit}`],
         (line) => {
           const info = parseInfoLine(line);
-          if (info) infos.set(info.multipv, info);
+          if (info) infos.set(info.multipv, { ...info, depth: infoDepth(line) });
           return line.startsWith("bestmove");
         },
-        deadline,
+        (request.capMs ?? request.movetime ?? 0) + this.timeouts.searchSlackMs,
+        stopAtCap,
       ),
     );
-    const bestmove = this.validatedBestmove(bestmoveLine, position);
-    const lines = [...infos.values()]
-      .sort((a, b) => a.multipv - b.multipv)
-      .map(({ moves, score }) => ({ moves, score }));
-    return { fen: request.fen, bestmove, lines };
+    const reached = [...infos.values()].sort((a, b) => a.multipv - b.multipv);
+    return { bestmoveLine, reached, cutByTime };
   }
 
   private validatedBestmove(line: string, position: Chess): string | null {
@@ -213,16 +269,20 @@ export class UciEngine implements Searcher {
     proc?.kill();
   }
 
+  // With `stopAfter`, the engine is told to stop when that long has passed and its answer is then
+  // waited for under the same timeout, which the caller sets to leave room for it.
   private ask(
     commands: string[],
     isDone: (line: string) => boolean,
     timeoutMs: number,
+    stopAfter?: { afterMs: number; onStop: () => void },
   ): Promise<string> {
     const proc = this.process;
     if (!proc) return Promise.reject(new EngineFault("exited", "engine is not running"));
     return new Promise<string>((resolve, reject) => {
       const finish = (settle: () => void): void => {
         clearTimeout(timer);
+        clearTimeout(stopTimer);
         this.exchange = null;
         settle();
       };
@@ -230,6 +290,12 @@ export class UciEngine implements Searcher {
         () => finish(() => reject(new EngineFault("timeout", `no answer within ${timeoutMs} ms`))),
         timeoutMs,
       );
+      const stopTimer = stopAfter
+        ? setTimeout(() => {
+            stopAfter.onStop();
+            proc.send("stop");
+          }, stopAfter.afterMs)
+        : undefined;
       this.exchange = {
         onLine: (line) => {
           if (isDone(line)) finish(() => resolve(line));

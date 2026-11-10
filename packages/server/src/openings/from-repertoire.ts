@@ -43,9 +43,10 @@ export const REPERTOIRE_GROUP_ITALIAN = "Italian Game";
 export const REPERTOIRE_MAX_PLY = 30;
 export const REPERTOIRE_MIN_REACH = 1 / 50;
 const REPERTOIRE_SEARCH_LINES = 5;
-// One timeout would end the walk at the same position on every rerun, and a batch can afford to
-// wait for a slow position where a live game cannot.
-export const REPERTOIRE_SEARCH_DEADLINE_MS = 30_000;
+// A search still short of its depth at the cap is stopped and keeps its best line so far. Failing
+// would end the walk at the same position on every rerun, and a batch can afford to wait for a slow
+// position where a live game cannot.
+export const REPERTOIRE_SEARCH_CAP_MS = 30_000;
 
 // The opening is chosen rather than scored, so these plies are played whatever the data says, and
 // reach starts counting after them: a reply that leaves earlier is out of scope for this unit.
@@ -79,6 +80,10 @@ export interface RepertoireResult {
   cacheHits: number;
   /** True when the request budget ended the run early; running again resumes from the cache. */
   truncated: boolean;
+  /** Searches the cap stopped short of their depth, each keeping the best line it had reached. */
+  positionsCutByTime: number;
+  /** The shallowest depth a search the cap stopped had reached; null when it stopped none. */
+  shallowestDepth: number | null;
 }
 
 interface RepertoirePlayedMove {
@@ -102,6 +107,8 @@ interface RepertoireOwnScores {
   cpLoss: number;
   /** The position after the move, in centipawns from White's side; a mate is 10000. */
   evalCp: number;
+  /** The depth the engine reached for both numbers, the shallowest of the searches behind them. */
+  evalDepth: number | null;
 }
 
 interface RepertoireOwnChoice extends RepertoireOwnScores {
@@ -185,6 +192,14 @@ const repertoireResultsOf = (position: ExplorerPosition): RepertoireResultCounts
     ? { wins: position.white, draws: position.draws, losses: position.black }
     : null;
 
+// Unknown when either is: the number then rests on a search whose depth nobody can state.
+function repertoireShallowerDepth(
+  first: number | undefined,
+  second: number | undefined,
+): number | undefined {
+  return first === undefined || second === undefined ? undefined : Math.min(first, second);
+}
+
 function repertoireVariationName(openingName: string | null, san: string): string {
   const afterColon = openingName?.split(":")[1]?.trim();
   return `${afterColon || openingName || REPERTOIRE_GROUP_ITALIAN} (4.${san})`;
@@ -196,6 +211,8 @@ class RepertoireWalk {
   private readonly maxPly: number;
   private readonly minGames: number;
   private readonly minReach: number;
+  private cutSearches = 0;
+  private shallowestCut: number | null = null;
 
   constructor(
     private readonly db: Database,
@@ -221,6 +238,11 @@ class RepertoireWalk {
     const stored = findFirstRepertoireVariation(this.db, "white", REPERTOIRE_GROUP_ITALIAN);
     this.repertoireId = (stored ?? (await this.createVariation())).id;
     await this.visitOwn(replayRepertoireLine([]));
+  }
+
+  // What the cap did to this walk's searches, which a rerun over stored moves never starts.
+  searchOutcome(): Pick<RepertoireResult, "positionsCutByTime" | "shallowestDepth"> {
+    return { positionsCutByTime: this.cutSearches, shallowestDepth: this.shallowestCut };
   }
 
   private async createVariation(): Promise<RepertoireRow> {
@@ -271,6 +293,7 @@ class RepertoireWalk {
       source: choice.source,
       cpLoss: choice.cpLoss,
       evalCp: choice.evalCp,
+      evalDepth: choice.evalDepth,
       results: repertoireResultsOf(after),
     });
     return { move: choice.move, after };
@@ -413,20 +436,27 @@ class RepertoireWalk {
       : pickItalianWhiteUci(step.fen, position, searched.lines, Math.ceil(step.ply / 2));
     if (!uci) return null;
     const move = repertoirePlayUci(step.fen, uci);
-    const scores = await this.scoreOwnMove(step.fen, uci, searched.lines);
+    const scores = await this.scoreOwnMove(step.fen, uci, searched);
     if (!move || !scores) return null;
     const share = repertoireShareOf(position, step.fen, uci);
     const source = setupSan ? "setup" : share === null ? "engine" : "explorer";
     return { move, share, ...scores, source };
   }
 
-  private searchPosition(fen: string, multipv: number): Promise<SearchResult> {
-    return this.engine.search({
+  private async searchPosition(fen: string, multipv: number): Promise<SearchResult> {
+    const searched = await this.engine.search({
       fen,
       depth: EVALUATION_DEPTH,
       multipv,
-      deadlineMs: REPERTOIRE_SEARCH_DEADLINE_MS,
+      capMs: REPERTOIRE_SEARCH_CAP_MS,
     });
+    if (searched.cutByTime) this.noteCutSearch(searched.depth);
+    return searched;
+  }
+
+  private noteCutSearch(depth: number | undefined): void {
+    this.cutSearches += 1;
+    if (depth !== undefined) this.shallowestCut = Math.min(this.shallowestCut ?? depth, depth);
   }
 
   // The lines are scored from the side to move, White here, so the chosen move's line already
@@ -434,23 +464,35 @@ class RepertoireWalk {
   private async scoreOwnMove(
     fen: string,
     uci: string,
-    lines: SearchResult["lines"],
+    searched: SearchResult,
   ): Promise<RepertoireOwnScores | null> {
-    const best = lines[0];
+    const best = searched.lines[0];
     if (!best) return null;
-    const scored = lines.find((line) => line.moves[0] === uci);
-    const evalCp = scored ? scored.score : await this.scoreOutsideLines(fen, uci, best.score);
-    return { cpLoss: Math.max(0, best.score - evalCp), evalCp };
+    const scored = searched.lines.find((line) => line.moves[0] === uci);
+    if (scored) {
+      const cpLoss = Math.max(0, best.score - scored.score);
+      return { cpLoss, evalCp: scored.score, evalDepth: searched.depth ?? null };
+    }
+    const outside = await this.scoreOutsideLines(fen, uci);
+    const evalCp = outside?.evalCp ?? best.score;
+    const depth = outside
+      ? repertoireShallowerDepth(searched.depth, outside.depth)
+      : searched.depth;
+    return { cpLoss: Math.max(0, best.score - evalCp), evalCp, evalDepth: depth ?? null };
   }
 
   // A setup move is played whatever the engine thinks, so it can miss the engine's top lines. The
-  // search after it has Black to move, so its score is negated to read from White's side.
-  private async scoreOutsideLines(fen: string, uci: string, fallback: number): Promise<number> {
+  // search after it has Black to move, so its score is negated to read from White's side. Null where
+  // the move or the engine's answer is missing, which leaves the best line's score to stand in.
+  private async scoreOutsideLines(
+    fen: string,
+    uci: string,
+  ): Promise<{ evalCp: number; depth: number | undefined } | null> {
     const move = repertoirePlayUci(fen, uci);
-    if (!move) return fallback;
+    if (!move) return null;
     const searched = await this.searchPosition(move.after, 1);
     const reply = searched.lines[0];
-    return reply ? -reply.score : fallback;
+    return reply ? { evalCp: -reply.score, depth: searched.depth } : null;
   }
 }
 
@@ -474,6 +516,8 @@ function italianVariationCounts(db: Database): RepertoireCounts {
  * the request budget cuts short resumes by running again. Where no reply is common enough, the line
  * continues with a single one, the most played or else the engine's. A reply is stored only where
  * White's answer can be, and the replies an earlier run left at ply 30 without one are deleted first.
+ * A search that is slow stops at the cap and keeps its best line, so a run never fails on one: the
+ * depth reached is stored beside each White move's evaluation, and the result counts the cut searches.
  */
 export async function generateRepertoire(
   db: Database,
@@ -509,5 +553,6 @@ export async function generateRepertoire(
     requests: explorer.requests,
     cacheHits: explorer.cacheHits,
     truncated,
+    ...walk.searchOutcome(),
   };
 }

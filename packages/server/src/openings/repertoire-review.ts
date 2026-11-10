@@ -210,14 +210,14 @@ function insertAddedMove(
   db: Database,
   repertoireId: number,
   move: AddedMove,
-  scores: Pick<AddedAnswer, "cpLoss" | "evalCp" | "results"> | null,
+  scores: Pick<AddedAnswer, "cpLoss" | "evalCp" | "evalDepth" | "results"> | null,
 ): number {
   const inserted = db
     .prepare(
       `INSERT INTO repertoire_positions
          (repertoire_id, kind, position_key, ply, line_san, move_uci, move_san, share, reach,
-          opening_name, source, cp_loss, eval_cp, wins, draws, losses)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+          opening_name, source, cp_loss, eval_cp, eval_depth, wins, draws, losses)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .get(
       repertoireId,
@@ -233,6 +233,7 @@ function insertAddedMove(
       REPERTOIRE_GAME_SOURCE,
       scores?.cpLoss ?? null,
       scores?.evalCp ?? null,
+      scores?.evalDepth ?? null,
       scores?.results?.wins ?? null,
       scores?.results?.draws ?? null,
       scores?.results?.losses ?? null,
