@@ -1,5 +1,15 @@
+import {
+  type OpeningDrill,
+  type OpeningDrillColor,
+  type OpeningDrillsResponse,
+  UNNAMED_OPENING,
+} from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { type Clock, systemClock } from "../clock.js";
+import type { Database } from "../db/open.js";
+import { listOpeningFamilies } from "../db/puzzles.js";
+import { listDrillRepertoires } from "../db/repertoire-cards.js";
 import { type Log, silentLog } from "../log.js";
 import { ExplorerError } from "../openings/explorer-client.js";
 import type { ExplorerResult } from "../openings/from-explorer.js";
@@ -50,6 +60,38 @@ function checkedBranch(
     return { ok: false, reason: "a branch is a line of the Italian Game and takes no root" };
   }
   return checkRepertoireBranch(body?.branch);
+}
+
+const DRILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+// The drills from the student's games, a colour at a time and grouped by opening family. The
+// attempts are those of the last 30 days, so a family never tried in that time reports none and the
+// hub shows it without a rate. `repertoire_id` is the first variation stored under the family's name
+// on the same side: that opening already has a menu in the hub, and the drill joins it there.
+export function registerOpeningDrillRoutes(
+  app: FastifyInstance,
+  db: Database,
+  clock: Clock = systemClock,
+): void {
+  app.get("/api/openings/drills", async (): Promise<OpeningDrillsResponse> => {
+    const now = clock.now();
+    const window = {
+      from: new Date(now.getTime() - DRILL_WINDOW_MS).toISOString(),
+      to: now.toISOString(),
+    };
+    const stored = listDrillRepertoires(db);
+    const drillsOf = (color: OpeningDrillColor): OpeningDrill[] =>
+      listOpeningFamilies(db, color, window).map((tally) => ({
+        opening: tally.family ?? UNNAMED_OPENING,
+        positions: tally.positions,
+        attempts_30d: tally.attempts,
+        first_try_30d: tally.firstTry,
+        repertoire_id:
+          stored.find((entry) => entry.side === color && entry.group_name === tally.family)?.id ??
+          null,
+      }));
+    return { white: drillsOf("white"), black: drillsOf("black") };
+  });
 }
 
 export function registerOpeningRoutes(

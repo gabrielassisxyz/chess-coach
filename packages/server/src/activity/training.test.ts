@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ActivityState, TrainingActivity } from "@chess-coach/shared";
+import { type ActivityState, type TrainingActivity, UNNAMED_OPENING } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
 import { START_FEN } from "../../test/fixture-game.js";
@@ -1261,5 +1261,177 @@ describe("the puzzles a queue draws from", () => {
     addThemed("w2", "opening-white", 2500);
     await setup().activity.startTraining({ mode: "openings", color: "white" });
     expect(queueIds()).toEqual(["w1", "w2"]);
+  });
+});
+
+describe("an opening drill of one family", () => {
+  function addOpeningPuzzle(
+    id: string,
+    color: "white" | "black",
+    openingName: string | null,
+  ): void {
+    addPuzzle(id, `opening-${color}`, BACK_RANK, ["a1a8"]);
+    db.prepare("UPDATE puzzles SET opening_name = ? WHERE id = ?").run(openingName, id);
+  }
+
+  const queueIds = (): string[] =>
+    (findOpenTrainingRun(db)?.items ?? []).map((item) => (item as { id: string }).id).sort();
+
+  function fillDrills(): void {
+    addOpeningPuzzle("it1", "white", "Italian Game");
+    addOpeningPuzzle("it2", "white", "Italian Game: Giuoco Piano");
+    addOpeningPuzzle("it3", "white", "Italian Game: Two Knights Defense");
+    addOpeningPuzzle("sic1", "white", "Sicilian Defense: Najdorf Variation");
+    addOpeningPuzzle("none1", "white", null);
+    addOpeningPuzzle("none2", "white", "");
+    addOpeningPuzzle("blk-sic", "black", "Sicilian Defense");
+    addOpeningPuzzle("blk-it", "black", "Italian Game");
+  }
+
+  it("serves only the positions of the family, whichever name of it they carry", async () => {
+    fillDrills();
+    const { activity } = setup();
+    const state = training(
+      await activity.startTraining({ mode: "openings", color: "white", opening: "Italian Game" }),
+    );
+    expect(state).toMatchObject({ mode: "openings", item: { queue_length: 3 } });
+    expect(queueIds()).toEqual(["it1", "it2", "it3"]);
+  });
+
+  it("serves the positions with no name for the unnamed entry, and no named one", async () => {
+    fillDrills();
+    const { activity } = setup();
+    await activity.startTraining({ mode: "openings", color: "white", opening: UNNAMED_OPENING });
+    expect(queueIds()).toEqual(["none1", "none2"]);
+  });
+
+  it("keeps the colours apart, serving a family of the colour it is asked for", async () => {
+    fillDrills();
+    const { activity } = setup();
+    await activity.startTraining({ mode: "openings", color: "black", opening: "Sicilian Defense" });
+    expect(queueIds()).toEqual(["blk-sic"]);
+  });
+
+  it("serves every position of the colour, named or not, when no opening is named", async () => {
+    fillDrills();
+    const { activity } = setup();
+    await activity.startTraining({ mode: "openings", color: "white" });
+    expect(queueIds()).toEqual(["it1", "it2", "it3", "none1", "none2", "sic1"]);
+  });
+
+  it("holds the family to the size asked for", async () => {
+    for (let i = 0; i < 8; i++) addOpeningPuzzle(`sic${i}`, "white", "Sicilian Defense");
+    addOpeningPuzzle("it1", "white", "Italian Game");
+    const { activity } = setup();
+    const state = training(
+      await activity.startTraining({
+        mode: "openings",
+        color: "white",
+        opening: "Sicilian Defense",
+        size: 5,
+      }),
+    );
+    expect(state.item.queue_length).toBe(5);
+    expect(queueIds().every((id) => id.startsWith("sic"))).toBe(true);
+  });
+
+  it("ignores the opening in a mode that has none", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7"]);
+    const { activity } = setup();
+    const state = training(
+      await activity.startTraining({ mode: "puzzles", motif: "fork", opening: "Nowhere" }),
+    );
+    expect(state.item.queue_length).toBe(1);
+  });
+
+  it.each([
+    ["a family of the other colour", "black", "Italian Game"],
+    ["a full opening name, which is no family", "white", "Italian Game: Giuoco Piano"],
+    ["a family written in another case", "white", "italian game"],
+    ["a family with spaces around it", "white", " Italian Game "],
+    ["text meant for the query", "white", "Italian Game' OR '1'='1"],
+    ["a family nothing was stored for", "white", "Vienna Game"],
+  ] as const)("refuses %s as unknown_opening", async (_name, color, opening) => {
+    for (const id of ["w1", "w2"]) addOpeningPuzzle(id, "white", "Italian Game: Giuoco Piano");
+    addOpeningPuzzle("w3", "white", "Italian Game");
+    addOpeningPuzzle("b1", "black", "Sicilian Defense");
+    const { activity } = setup();
+    expect(await code(activity.startTraining({ mode: "openings", color, opening }))).toBe(
+      "unknown_opening",
+    );
+    expect(activity.current()).toBeNull();
+    expect(findOpenTrainingRun(db)).toBeNull();
+  });
+
+  it("refuses the unnamed entry for a colour whose positions all have a name", async () => {
+    addOpeningPuzzle("w1", "white", "Italian Game");
+    const { activity } = setup();
+    expect(
+      await code(
+        activity.startTraining({ mode: "openings", color: "white", opening: UNNAMED_OPENING }),
+      ),
+    ).toBe("unknown_opening");
+  });
+
+  it("leaves the run on the board untouched when the family is refused", async () => {
+    fillDrills();
+    const { activity } = setup();
+    const running = training(
+      await activity.startTraining({ mode: "openings", color: "white", opening: "Italian Game" }),
+    );
+    const runBefore = findOpenTrainingRun(db);
+    expect(
+      await code(
+        activity.startTraining({ mode: "openings", color: "white", opening: "Vienna Game" }),
+      ),
+    ).toBe("unknown_opening");
+    expect(activity.current()).toMatchObject({
+      kind: "training",
+      activity_id: running.activity_id,
+    });
+    expect(findOpenTrainingRun(db)).toEqual(runBefore);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 1 });
+  });
+
+  it("resumes a paused family run with the items it started with, without storing the family", async () => {
+    fillDrills();
+    const started = training(
+      await setup().activity.startTraining({
+        mode: "openings",
+        color: "white",
+        opening: "Italian Game",
+      }),
+    );
+    const stored = findOpenTrainingRun(db);
+    const order = (stored?.items ?? []).map((item) => (item as { id: string }).id);
+    expect(order.toSorted()).toEqual(["it1", "it2", "it3"]);
+    expect(stored).toMatchObject({ mode: "openings", color: "white", motif: null });
+
+    // The drill grows and another family arrives while the run is paused: neither joins it.
+    addOpeningPuzzle("it4", "white", "Italian Game: Evans Gambit");
+    addOpeningPuzzle("sic2", "white", "Sicilian Defense");
+    const restarted = setup().activity;
+    expect(restarted.pausedTraining()).toMatchObject({
+      mode: "openings",
+      color: "white",
+      position: 0,
+      size: 3,
+    });
+    const resumed = training(await restarted.resumeTraining());
+    expect(resumed.item).toMatchObject({
+      puzzle_id: started.item.kind === "puzzle" ? started.item.puzzle_id : "",
+      position_in_queue: 1,
+      queue_length: 3,
+    });
+    expect(findOpenTrainingRun(db)?.items).toEqual(stored?.items);
+
+    const served: string[] = [];
+    let state = resumed;
+    for (let step = 0; step < order.length; step++) {
+      if (state.item.kind === "puzzle") served.push(state.item.puzzle_id);
+      await restarted.trainingTry("a1a8", state.activity_id);
+      state = training(await restarted.nextTrainingItem(state.activity_id));
+    }
+    expect(served).toEqual(order);
   });
 });
