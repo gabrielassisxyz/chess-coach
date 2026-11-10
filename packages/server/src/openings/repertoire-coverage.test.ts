@@ -518,6 +518,118 @@ function lineThatThins(counts: { c3?: Counts } = {}): StoredVariation {
     .own([...AFTER_C3, "Nf6"], "d4", { reach: 0.25, cp: 80, games: [90, 10, 20] });
 }
 
+type Step = readonly [
+  san: string,
+  reach: number,
+  source: RepertoireMoveSource,
+  games?: Counts | null,
+  cp?: number,
+];
+
+// Stores `steps` one move after another below `line`: a reply follows an odd number of moves and a
+// White move an even one, and only White's carry counts and centipawns.
+function storeSteps(
+  stored: StoredVariation,
+  line: readonly string[],
+  steps: readonly Step[],
+): StoredVariation {
+  const played = [...line];
+  for (const [san, reach, source, games = MANY, cp = 0] of steps) {
+    if (played.length % 2 === 1) stored.reply(played, san, { reach, source });
+    else stored.own(played, san, { reach, source, games, cp });
+    played.push(san);
+  }
+  return stored;
+}
+
+// 3...Nf6 to White's 15th move, as a generator run stores it: Black's replies fall from the
+// explorer's to the most played one (mainline) and then to the engine's, which no game played
+// (reach 0, no share); White's counts thin out to none, and 10.Bc2 is the last move with 200 games.
+const KNIGHT_LINE: readonly Step[] = [
+  ["Nf6", 0.4, "explorer"],
+  ["d3", 0.4, "explorer", MANY, 50],
+  ["Bc5", 0.2, "explorer"],
+  ["O-O", 0.2, "explorer"],
+  ["O-O", 0.1, "explorer"],
+  ["c3", 0.1, "explorer"],
+  ["d6", 0.04, "explorer"],
+  ["h3", 0.04, "explorer", MANY, 3],
+  ["Be6", 0.008, "mainline"],
+  ["Bb5", 0.008, "explorer", [547, 32, 392], 40],
+  ["a6", 0.004, "mainline"],
+  ["Ba4", 0.004, "explorer", [251, 14, 165]],
+  ["b5", 0.003, "mainline"],
+  ["Bc2", 0.003, "explorer", [284, 12, 222], 25],
+  ["d5", 0.001, "mainline"],
+  ["exd5", 0.001, "explorer", [27, 2, 32]],
+  ["Bxd5", 0, "engine"],
+  ["Re1", 0, "explorer", [13, 0, 9], 17],
+  ["Re8", 0, "engine"],
+  ["Bg5", 0, "engine", null],
+  ["h6", 0, "engine"],
+  ["Bh4", 0, "engine", null],
+  ["g5", 0, "engine"],
+  ["Bg3", 0, "engine", null],
+];
+
+// 3...Nd4, where 10.Bxd5 has 178 games and the engine's reply to it leads to 11.Qxe7, which has 223:
+// that move ends the line although nothing reaches it, so it counts with no weight.
+const ENGINE_REPLY_LINE: readonly Step[] = [
+  ["Nd4", 0.04, "explorer"],
+  ["Nxd4", 0.04, "explorer"],
+  ["exd4", 0.04, "explorer"],
+  ["O-O", 0.04, "explorer"],
+  ["Nf6", 0.011, "mainline"],
+  ["d3", 0.011, "explorer", MANY, 1],
+  ["d5", 0.003, "mainline"],
+  ["exd5", 0.003, "explorer"],
+  ["Nxd5", 0.002, "mainline"],
+  ["Re1+", 0.002, "explorer", [2621, 157, 1918], 32],
+  ["Be7", 0.001, "mainline"],
+  ["Qe2", 0.001, "explorer", [204, 15, 134], 23],
+  ["O-O", 0.0008, "mainline"],
+  ["Bxd5", 0.0008, "explorer", [113, 10, 55]],
+  ["Qxd5", 0, "engine"],
+  ["Qxe7", 0, "explorer", [139, 8, 76]],
+];
+
+// 3...Bc5 4.d3 Nf6 reaches the position of 3...Nf6 4.d3 Bc5, which 5.O-O answers once. 4...d6 is a
+// line of its own and ends at once.
+function generatedItalian(): StoredVariation {
+  const stored = new StoredVariation().setup();
+  storeSteps(stored, SETUP, KNIGHT_LINE);
+  storeSteps(stored, SETUP, ENGINE_REPLY_LINE);
+  storeSteps(stored, SETUP, [
+    ["Bc5", 0.3, "explorer"],
+    ["d3", 0.3, "explorer"],
+    ["Nf6", 0.15, "explorer"],
+  ]);
+  return storeSteps(
+    stored,
+    [...SETUP, "Bc5", "d3"],
+    [
+      ["d6", 0.05, "explorer"],
+      ["c3", 0.05, "explorer", [200, 100, 100], 40],
+    ],
+  );
+}
+
+describe("the tree a generator run stores for the Italian", () => {
+  it("scores the line ends of mainline and engine replies, thin and empty counts and a transposition", () => {
+    const coverage = generatedItalian().coverage();
+    expect(coverage.positions).toHaveLength(25);
+    expect(coverage.gaps).toEqual([]);
+    expect(coverage.covered_percent).toBe(100);
+    // Three lines end. 10.Bc2 (reach 0.003) scores (284 + 12 / 2) / 518 = 0.560 and concedes 40 for
+    // 4.d3 on the way, 30 for 8.Bb5 and 15 for 10.Bc2 itself: 85. 5.c3 against 4...d6 (0.05) scores
+    // (200 + 100 / 2) / 400 = 0.625 and concedes 30. 11.Qxe7 has reach 0 and weighs nothing, though it
+    // is counted, and scores 0.641 and concedes 35. The weights sum to 0.053:
+    // (0.003 * 0.560 + 0.05 * 0.625) / 0.053 = 0.621, and (0.003 * 85 + 0.05 * 30) / 0.053 = 33.1
+    // centipawns, which is 99 - 98 * 33.1 / 200 = 82.8 on the scale.
+    expect(coverage.scores).toEqual({ line_ends: 3, expected_score: 62.1, soundness: 83 });
+  });
+});
+
 describe("what the scores read", () => {
   it("asks neither the network, the explorer nor the engine for the coverage or either score", () => {
     const refuse = (asked: string) => (): never => {
