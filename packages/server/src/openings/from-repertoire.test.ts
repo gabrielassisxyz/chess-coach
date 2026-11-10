@@ -1959,8 +1959,8 @@ describe("the root of a unit", () => {
     ["a list that is not a list", "e4 d5", "list of SAN moves"],
     ["an empty root", [], "starts with 1.e4"],
     ["a root that starts with another move", ["d4", "d5"], "starts with 1.e4"],
-    ["a root that ends on a White move", ["e4", "d5", "exd5"], "ends on Black's move"],
-    ["a single White move", ["e4"], "ends on Black's move"],
+    ["a root that ends on a White move", ["e4", "d5", "exd5"], "must end on Black's move"],
+    ["a single White move", ["e4"], "must end on Black's move"],
     ["a White move other than the setup move at ply 3", ["e4", "e5", "Bc4", "Nf6"], "setup moves"],
     [
       "a White move other than the setup move at ply 5",

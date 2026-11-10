@@ -377,6 +377,21 @@ describe("POST /api/openings/generate", () => {
         expect(roots).toEqual([]);
       });
 
+      // Every other rule accepts this root, so it is the end-on-Black rule alone that refuses it.
+      it("refuses a root that ends on White's move and says Black must end it", async () => {
+        const roots: Array<readonly string[] | undefined> = [];
+        const response = await postRooted(buildRooted(roots), {
+          sources: ["repertoire"],
+          root: ["e4"],
+        });
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toMatchObject({
+          error: "invalid_root",
+          message: "the root must end on Black's move",
+        });
+        expect(roots).toEqual([]);
+      });
+
       it("refuses a bad root before it runs the sources that come first", async () => {
         const calls: string[] = [];
         const response = await postRooted(build(calls), {

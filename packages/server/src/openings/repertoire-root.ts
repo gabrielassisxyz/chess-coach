@@ -67,7 +67,7 @@ export function checkRepertoireRoot(root: unknown): RepertoireRootCheck {
   const played = playRoot(root as string[]);
   if (!played) return refused("the root is not a legal line from the start position");
   if (played.sans[0] !== ITALIAN_SETUP_SAN[0]) return refused("the root starts with 1.e4");
-  if (played.sans.length % 2 === 1) return refused("the root ends on Black's move");
+  if (played.sans.length % 2 === 1) return refused("the root must end on Black's move");
   if (departsFromSetup(played.sans)) {
     return refused(`White plays the setup moves ${WHITE_SETUP_SAN.join(", ")} in the root`);
   }
