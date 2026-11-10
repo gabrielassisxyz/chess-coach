@@ -273,6 +273,9 @@ export const TrainingActivitySchema = z.object({
   queue_outcomes: z.array(QueueOutcomeSchema).optional(),
   student_rating: z.number().int().nullable().optional(),
   rating_change: z.number().int().nullable().optional(),
+  // Set on a puzzle solved first try without a hint, which the coach does not comment on unprompted:
+  // `offered` until the student asks for the comment, `requested` after.
+  coach_comment: z.enum(["offered", "requested"]).nullable().optional(),
   // Present on a repertoire drill only.
   repertoire: RepertoireDrillSchema.optional(),
 });

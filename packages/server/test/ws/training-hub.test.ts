@@ -101,6 +101,7 @@ describe("training over the socket", () => {
       { type: "try_move", uci: "a1a8", activity_id: 3 },
       { type: "show_solution" },
       { type: "show_solution", activity_id: 3 },
+      { type: "ask_coach_about_item", activity_id: 3 },
       { type: "resume_training" },
       { type: "discard_training" },
       { type: "analyse", fen: BACK_RANK, lines: 3, depth: 12 },
@@ -510,6 +511,38 @@ describe("analysis over the socket", () => {
     );
     expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "c3" });
     expect(asked).toEqual([]);
+  });
+
+  it("refuses a coach comment on a stale item, none ended and a second ask", async () => {
+    const { app: server } = await startWithEngine();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    const id = served.state.activity_id;
+    const ask = (commandId: string, activityId: number) =>
+      socket.send(
+        JSON.stringify({
+          type: "ask_coach_about_item",
+          command_id: commandId,
+          activity_id: activityId,
+        }),
+      );
+    ask("c2", id);
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c2" });
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c3", uci: "a1a8", activity_id: id }),
+    );
+    await next("activity");
+    ask("c4", id + 1);
+    expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "c4" });
+    ask("c5", id);
+    expect(await next("activity")).toMatchObject({ state: { coach_comment: "requested" } });
+    ask("c6", id);
+    expect(await next("error")).toMatchObject({ code: "already_requested", command_id: "c6" });
   });
 
   it("reports the score from White's side and refuses a position that is not one", async () => {

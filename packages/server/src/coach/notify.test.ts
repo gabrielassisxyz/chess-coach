@@ -412,6 +412,18 @@ describe("practice notification pointer", () => {
     expect(text.endsWith("\nPractice notification: follow During Practice.")).toBe(true);
   });
 
+  it("hands the coach the position and the solution of a first-try solve it was asked about", () => {
+    const text = renderPuzzleResult({
+      ...puzzle,
+      requested: true,
+      solution_san: ["Nxc7+", "Kf8", "Rc1"],
+    });
+    expect(text).toContain(`Position (FEN): ${FEN}`);
+    expect(text).toContain("Solution: Nxc7+ Kf8 Rc1");
+    expect(text).toContain("asked for your comment");
+    expect(renderPuzzleResult(puzzle)).not.toContain(FEN);
+  });
+
   it("words each queue kind in the summary, openings as opening positions", () => {
     const summary = (mode: TrainingSummaryNotification["mode"]): string =>
       renderTrainingSummary({ type: "training_summary", mode, solved: 4, failed: 1 });

@@ -106,6 +106,7 @@ export interface PracticeRunPort {
   tryMove(uci: string): void | Promise<void>;
   showSolution(): void;
   hint(): void;
+  askCoach(): void;
   rate(exposureId: string, quality: number): void;
   next(): void;
   end(): void;
@@ -157,6 +158,9 @@ interface Served {
   hinted: boolean;
   // How this item moved the student's puzzle rating; null until a rated puzzle ends.
   ratingChange: number | null;
+  // A puzzle solved first try without a hint writes no coach notification; `coachAsk` says whether
+  // the item is one of those and whether the student has since asked for the comment.
+  coachAsk: "none" | "offered" | "requested";
 }
 
 // UCI's null move: a card given up before any try has no move of the student's to record.
@@ -186,6 +190,8 @@ interface StoredCurrent {
   hinted?: boolean | undefined;
   hint_square?: string | null | undefined;
   rating_change?: number | null | undefined;
+  // Absent from a step stored before a first-try solve went quiet.
+  coach_ask?: Served["coachAsk"] | undefined;
 }
 
 interface ResumePoint {
@@ -472,6 +478,7 @@ export class TrainingRun implements PracticeRunPort {
       ),
       student_rating: currentPuzzleRating(this.deps.db),
       rating_change: s.ratingChange,
+      coach_comment: s.coachAsk === "none" ? null : s.coachAsk,
     };
   }
 
@@ -588,6 +595,26 @@ export class TrainingRun implements PracticeRunPort {
     });
   }
 
+  /** Writes the notification a first-try solve held back, once, and wakes the coach. */
+  askCoach(): void {
+    const s = this.served;
+    if (this.isOpen() || this.summary !== null || s.coachAsk === "none") {
+      throw new ActivityError("not_in_training", "no solved item is waiting for a coach comment");
+    }
+    if (s.coachAsk === "requested") {
+      throw new ActivityError("already_requested", "the coach was already asked about this item");
+    }
+    const item = s.item;
+    const state = s.attempt as AttemptState;
+    if (item.kind !== "puzzle") {
+      throw new ActivityError("not_in_training", "only a puzzle can be asked about");
+    }
+    this.transition(() => {
+      s.coachAsk = "requested";
+      this.notify(this.puzzleResultOf(s, item, state, true, true));
+    });
+  }
+
   rate(exposureId: string, quality: number): void {
     const s = this.served;
     if (this.summary !== null) {
@@ -680,6 +707,7 @@ export class TrainingRun implements PracticeRunPort {
       hinted: s.hinted,
       hint_square: s.hintSquare,
       rating_change: s.ratingChange,
+      coach_ask: s.coachAsk,
     };
     saveTrainingRun(this.deps.db, this.runId, {
       position: this.position,
@@ -807,13 +835,29 @@ export class TrainingRun implements PracticeRunPort {
     s.ratingChange = this.movePuzzleRating(item.rating ?? null, firstTry);
     this.tally(solved);
     if (!firstTry) this.cardFromMiss(item, state, s.tries.find((t) => !t.correct)?.uci ?? null);
-    this.notify({
+    // Nothing needed explaining, so the coach hears of it only when the student asks: a row written
+    // now would still be flushed with the next wake or at the next start and draw the same reply.
+    if (firstTry) {
+      s.coachAsk = "offered";
+      return;
+    }
+    this.notify(this.puzzleResultOf(s, item, state, firstTry, false));
+  }
+
+  private puzzleResultOf(
+    s: Served,
+    item: TrainingItem & { kind: "puzzle" },
+    state: AttemptState,
+    firstTry: boolean,
+    requested: boolean,
+  ): PuzzleResultNotification {
+    return {
       type: "puzzle_result",
       puzzle_id: item.puzzle_id,
       motif: item.motif,
       difficulty: item.difficulty,
       fen: s.gaveUp ? state.fen : item.fen,
-      solved,
+      solved: state.status === "solved",
       answered_uci: [...state.answered],
       expected_uci: s.expected?.uci ?? null,
       expected_san: s.expected?.san ?? null,
@@ -821,7 +865,12 @@ export class TrainingRun implements PracticeRunPort {
       tries: state.wrongTries,
       gave_up: s.gaveUp,
       reasoning: this.reasoning(s),
-    });
+      ...(requested ? { requested: true, solution_san: this.solutionSan(item, state) } : {}),
+    };
+  }
+
+  private solutionSan(item: TrainingItem & { kind: "puzzle" }, state: AttemptState): string[] {
+    return lineFrom(item.fen, state.solution).map((move) => move.san);
   }
 
   // A puzzle not solved on the first try comes back as a review card, found after a miss or given
@@ -882,6 +931,7 @@ export class TrainingRun implements PracticeRunPort {
       shown: [] as ShownEvent[],
       tries: [] as Served["tries"],
       gaveUp: false,
+      coachAsk: "none" as const,
       solutionLine: null,
       suggestedQuality: null,
       hintSquare: null,
@@ -1019,6 +1069,7 @@ export class TrainingRun implements PracticeRunPort {
       hintSquare: current.hint_square ?? null,
       hinted: current.hinted ?? false,
       ratingChange: current.rating_change ?? null,
+      coachAsk: current.coach_ask ?? "none",
     };
   }
 

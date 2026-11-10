@@ -7,6 +7,7 @@ import {
   practiceIdleLabel,
   practiceWaitingLabel,
 } from "../src/state/practice.js";
+import { ASK_COACH_LABEL } from "../src/state/practice-item.js";
 import { type ChatState, chatReducer, initialChatState } from "../src/state/transcript.js";
 import { FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
@@ -215,5 +216,50 @@ describe("the waiting phrase in the panel header", () => {
     );
     expect(screen.getByText("puzzle solved")).toBeTruthy();
     expect(screen.queryByText(PRACTICE_WAITING_LABEL)).toBeNull();
+  });
+});
+
+describe("a puzzle solved first try", () => {
+  const quiet = (comment: "offered" | "requested") =>
+    puzzle({ status: "solved", coach_comment: comment });
+
+  function openOnPractice(state: TrainingActivity): void {
+    render(<App />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: puzzle(),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+    act(() => FakeSocket.latest.receive({ type: "activity", state }));
+  }
+
+  it("owes no reply until the student asks, and owes one after", () => {
+    expect(reduce(activityOf(quiet("offered"))).practiceReplyPending).toBe(false);
+    expect(reduce(activityOf(quiet("offered")), activityOf(quiet("requested")))).toMatchObject({
+      practiceReplyPending: true,
+    });
+  });
+
+  it("shows the button and no waiting label, and asks the server for the comment", () => {
+    openOnPractice(quiet("offered"));
+    expect(screen.queryByText(PRACTICE_WAITING_LABEL)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: ASK_COACH_LABEL }));
+    expect(FakeSocket.latest.sent).toContainEqual(
+      expect.objectContaining({ type: "ask_coach_about_item", activity_id: 4 }),
+    );
+    expect(screen.queryByRole("button", { name: ASK_COACH_LABEL })).toBeNull();
+    act(() => FakeSocket.latest.receive({ type: "activity", state: quiet("requested") }));
+    expect(screen.getByText(PRACTICE_WAITING_LABEL)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: ASK_COACH_LABEL })).toBeNull();
+  });
+
+  it("offers no button on a solve the coach already answers", () => {
+    openOnPractice(puzzle({ status: "solved", coach_comment: null }));
+    expect(screen.queryByRole("button", { name: ASK_COACH_LABEL })).toBeNull();
+    expect(screen.getByText(PRACTICE_WAITING_LABEL)).toBeTruthy();
   });
 });
