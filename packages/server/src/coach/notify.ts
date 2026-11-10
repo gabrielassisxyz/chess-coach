@@ -93,7 +93,7 @@ export function renderNotifications(items: CoachNotification[]): string {
   for (const end of ends) parts.push(renderEnd(end));
   for (const item of items) if (isTrainingRow(item)) parts.push(renderOne(item));
   for (const item of items) if (item.type === "difficulty_change") parts.push(renderOne(item));
-  for (const item of items) if (item.type === "repertoire_review") parts.push(renderOne(item));
+  parts.push(...renderRepertoireReviews(items));
   for (const question of questions) parts.push(renderPlyQuestion(question));
   return parts.join("\n\n");
 }
@@ -379,6 +379,26 @@ export function renderRepertoireReview(review: RepertoireReviewNotification): st
     ...reviewFinding(review),
     "Tell the student this briefly, in two sentences at most.",
   ].join("\n");
+}
+
+// The games graded before the review existed are compared in one go, so a folded message can hold
+// dozens. The coach reads the latest few in full and is told how many came before, so the message
+// does not grow with the backlog and the coach does not narrate every old game.
+const MAX_REVIEWS_SHOWN = 5;
+
+function renderRepertoireReviews(items: CoachNotification[]): string[] {
+  const reviews = items.filter(
+    (item): item is RepertoireReviewNotification => item.type === "repertoire_review",
+  );
+  const shown = reviews.slice(-MAX_REVIEWS_SHOWN);
+  const older = reviews.length - shown.length;
+  const earlier =
+    older > 0
+      ? [
+          `${older} earlier ${older === 1 ? "game was" : "games were"} compared with the repertoire as well; mention only that.`,
+        ]
+      : [];
+  return [...earlier, ...shown.map(renderRepertoireReview)];
 }
 
 function renderOne(item: CoachNotification): string {

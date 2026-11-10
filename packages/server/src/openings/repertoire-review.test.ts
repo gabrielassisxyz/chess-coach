@@ -1158,6 +1158,32 @@ describe("what the coach is told about a game", () => {
     );
   });
 
+  it.each([
+    { games: 5, earlier: null },
+    { games: 6, earlier: "1 earlier game was compared with the repertoire as well" },
+    { games: 12, earlier: "7 earlier games were compared with the repertoire as well" },
+  ])(
+    "shows the coach only the latest five of $games games folded together",
+    ({ games, earlier }) => {
+      const notices = Array.from(
+        { length: games },
+        (_, index): RepertoireReviewNotification => ({
+          type: "repertoire_review",
+          game_id: index + 1,
+          group: "Italian Game",
+          variation: "Classical Variation (4.c3)",
+          followed_to: null,
+          outcome: "in_book",
+        }),
+      );
+      const text = renderNotifications(notices);
+      const shown = (text.match(/Game \d+ was compared/g) ?? []).map((line) => line.split(" ")[1]);
+      expect(shown).toEqual(Array.from({ length: 5 }, (_, index) => String(games - 4 + index)));
+      if (earlier) expect(text).toContain(earlier);
+      else expect(text).not.toContain("earlier");
+    },
+  );
+
   it("writes no message for a game played as Black or when nobody is listening", async () => {
     seedRepertoire();
     addGame(MAIN_LINE, { color: "black" });
