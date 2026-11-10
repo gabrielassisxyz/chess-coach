@@ -1,9 +1,11 @@
 import type { ActivityState } from "@chess-coach/shared";
-import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useServer } from "../src/hooks/useServer.js";
+import { Practice } from "../src/screens/Practice.js";
 import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, liveGame, move, START_FEN } from "./fixtures.js";
+import { repertoireActivity, repertoireList } from "./practice-fixtures.js";
 
 const board = {
   activity_id: 9,
@@ -52,6 +54,7 @@ function refreshInto(activity: ActivityState | null) {
 }
 
 beforeEach(() => FakeSocket.reset());
+afterEach(cleanup);
 
 describe("browser refresh", () => {
   it("restores a live game with its moves and the chat history", () => {
@@ -135,6 +138,57 @@ describe("browser refresh", () => {
       summary: null,
     });
     expect(server.activity).toMatchObject({ kind: "training", item: { cursor: 2 } });
+  });
+
+  it("restores a repertoire drill mid-pass with its variation, line, hint and wrong tries", async () => {
+    const idea = "Prepare d4 and keep the bishop on the a2 g8 diagonal.";
+    const server = refreshInto(
+      repertoireActivity({
+        training: {
+          tries: 2,
+          last_try: { uci: "d2d3", san: "d3", correct: false },
+          wrong_tries: [
+            { ply: 6, uci: "d2d3", san: "d3" },
+            { ply: 6, uci: "b1c3", san: "Nc3" },
+          ],
+        },
+        drill: { hint: { kind: "idea", text: idea }, moves_left: 5, moves_right: 3 },
+      }),
+    );
+    expect(server.activity).toMatchObject({
+      kind: "training",
+      mode: "repertoire",
+      tries: 2,
+      repertoire: { hint: { kind: "idea", text: idea } },
+    });
+
+    render(<Practice server={server} fetchRepertoires={async () => repertoireList} />);
+    expect(screen.getByTestId("variation-name").textContent).toBe("Italian Game: Giuoco Piano");
+    expect(screen.getByRole("list", { name: "Moves" }).textContent).toContain("Bc4");
+    expect(screen.getByTestId("fact-tries").querySelector("dd")?.textContent).toBe("2");
+    expect(screen.getByTestId("fact-left").querySelector("dd")?.textContent).toBe("5");
+    expect(document.querySelector(".state-card")?.textContent).toContain(idea);
+    expect(screen.getByRole("button", { name: "Ask for the move" })).toBeTruthy();
+  });
+
+  it("restores a finished drill's result and a new move's answer from the bootstrap alone", () => {
+    const first = refreshInto(
+      repertoireActivity({
+        drill: { first_pass: true, answer: { uci: "c2c3", san: "c3" } },
+      }),
+    );
+    expect(first.activity).toMatchObject({
+      repertoire: { first_pass: true, answer: { san: "c3" } },
+    });
+    cleanup();
+
+    const done = refreshInto(
+      repertoireActivity({
+        training: { status: "solved", input_enabled: false, legal_moves: [] },
+        drill: { moves_left: 0, result: { practised: 12, first_try_right: 9 } },
+      }),
+    );
+    expect(done.activity).toMatchObject({ repertoire: { result: { practised: 12 } } });
   });
 
   it("restores a demo with the activity it returns to", () => {

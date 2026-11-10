@@ -1,0 +1,107 @@
+/* The openings menu on the Practice hub: a side, the openings under it, each opening's variations,
+ * and one start per scope of the line drill with the number of moves it would serve. */
+.repertoire-menu__opening {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: stretch;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.repertoire-menu__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.repertoire-menu__name {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.repertoire-menu__due {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.repertoire-menu__variation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.repertoire-menu__variation-name {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.repertoire-menu__starts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.repertoire-menu__count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Above the move list of a line drill: the variation in play and the session's counts. */
+.repertoire-head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.repertoire-head__name {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: var(--leading-body);
+  overflow-wrap: anywhere;
+}
+
+.repertoire-head__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.repertoire-head__fact {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.repertoire-head__fact dd {
+  margin: 0;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The move a drill shows in the empty cell of the ply the student is on. */
+.moves-list__cell[data-by="answer"] {
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+/* The server refuses free moves on an open line drill, so the bar offers no Explore until it ends. */
+.puzzle-stage[data-drill="open"] .board-bar__scratch {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  .repertoire-menu__starts .button {
+    min-height: 44px;
+  }
+}

@@ -17,6 +17,7 @@ import "./styles/focus.css";
 import "./styles/board.css";
 import "./styles/layout.css";
 import "./styles/practice.css";
+import "./styles/repertoire.css";
 import "./styles/games.css";
 import "./styles/play.css";
 
