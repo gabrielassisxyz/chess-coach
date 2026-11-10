@@ -61,7 +61,8 @@ Shell
   ratings, engine strip, move list, state card), a 40 px bar under the board, popovers for the
   board and the engine settings anchored to their icons; coordinates inside the squares in
   10 px mono by default. A repertoire line drill swaps the ratings for the variation in play
-  and three counts, and its open state hides the bar's Explore button.
+  and three counts, names the variation of the move asked on a hairline row under them, and its
+  open state hides the bar's Explore button.
 
 Phone (under 900 px)
 
@@ -160,7 +161,15 @@ screens were built to are in the design probe's spec (token layer and interactio
   hairline top border like each opening above it, rows of a name, a mono line and a count, and an
   Add button that is 44 px under 900 px. M1 and M2 print nothing for it, its states (reading
   failed, building, built, refused) are each a sentence that says what to do next, and a refusal
-  is the only one in the error tone.
+  is the only one in the error tone. The cells were read again for the levels and the branch
+  points: a side with more than one opening and an opening with more than one variation carry a
+  row of starts under a plain label, above what they cover, with the same buttons as a
+  variation's; the book's other White moves open from an Add a variation button under the
+  opening, each position as a heading line with its mono line, then rows built like the met
+  openings, a held move saying where it is in place of the button. Every button is 44 px under
+  900 px, M1 and M2 print nothing, and the building, built and refused states read as the met
+  openings' do. The variation row under the drill's head is text on the type scale in the two
+  text tokens, with a hairline below it like the head's.
 - **The coverage view** opens under a variation of the openings menu, from its Coverage button,
   and has a column of its own in the checklist. Its cells were read against the markup,
   `repertoire.css` and the 899 px block: a hairline above it as each opening in the menu has,

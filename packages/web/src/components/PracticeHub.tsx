@@ -1,6 +1,7 @@
 import type {
   PausedTraining,
   ProgressResponse,
+  RepertoireLevel,
   RepertoireScope,
   RepertoireSummary,
   TrainingMode,
@@ -23,7 +24,12 @@ import {
   percent,
   resumeLabelOf,
 } from "../state/practice.js";
-import type { AddOpening, FetchCoverage, FetchRepertoireList } from "../state/repertoires-api.js";
+import type {
+  AddOpening,
+  AddVariation,
+  FetchCoverage,
+  FetchRepertoireList,
+} from "../state/repertoires-api.js";
 import { RepertoireMenu } from "./RepertoireMenu.js";
 
 const ANY_MOTIF = "";
@@ -34,18 +40,26 @@ export interface PracticeHubProps {
   motifs: Loaded<MotifCount[]>;
   repertoires: Loaded<RepertoireSummary[]>;
   engineMissing: boolean;
-  // A repertoire start carries its scope in `motif` and names its repertoire.
-  starting: { mode: TrainingMode; motif: string; repertoireId?: number } | null;
+  // A repertoire start carries its scope in `motif`, names its repertoire and, above one
+  // variation, its level.
+  starting: {
+    mode: TrainingMode;
+    motif: string;
+    repertoireId?: number;
+    level?: RepertoireLevel | undefined;
+  } | null;
   failure: string | null;
   size: DrillSize;
   onSize(size: DrillSize): void;
   onStart(mode: TrainingMode, motif: string): void;
-  onStartRepertoire(repertoireId: number, scope: RepertoireScope): void;
+  onStartRepertoire(repertoireId: number, scope: RepertoireScope, level?: RepertoireLevel): void;
   now?: Date;
   lastSession?: LastSession | null;
   // The openings met in games and the call that builds a drill for one; the server's by default.
   fetchRepertoireList?: FetchRepertoireList | undefined;
   addOpening?: AddOpening | undefined;
+  // What builds a variation at a branch point; the server's by default.
+  addVariation?: AddVariation | undefined;
   // Where a variation's coverage comes from when it is opened; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
 }
@@ -191,12 +205,17 @@ export function PracticeHub(props: PracticeHubProps) {
         busy={busy}
         starting={
           starting?.mode === "repertoire" && starting.repertoireId !== undefined
-            ? { repertoireId: starting.repertoireId, scope: starting.motif as RepertoireScope }
+            ? {
+                repertoireId: starting.repertoireId,
+                scope: starting.motif as RepertoireScope,
+                level: starting.level,
+              }
             : null
         }
         onStart={onStartRepertoire}
         fetchList={props.fetchRepertoireList}
         addOpening={props.addOpening}
+        addVariation={props.addVariation}
         fetchCoverage={props.fetchCoverage}
       />
 

@@ -24,6 +24,13 @@ export function variationNameOf(
   return listed?.find((entry) => entry.id === drill.repertoire_id)?.variation_name ?? null;
 }
 
+// The variation whose move is in play. A drill of a group or a side changes it from move to move,
+// and one position can expect another move under another variation, so the name is what says
+// which move is asked. Null where the item names none.
+export function itemVariationOf(training: TrainingActivity): string | null {
+  return training.item.kind === "repertoire" ? (training.item.variation_name ?? null) : null;
+}
+
 // The move the board and the move list show on the current pass: the answer while a move is new,
 // the move once the second hint asked for it, and nothing otherwise.
 export function shownMoveOf(drill: RepertoireDrill): ExpectedMove | null {

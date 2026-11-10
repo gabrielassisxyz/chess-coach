@@ -18,13 +18,20 @@ import { formatInterval, nextBatchParts, trainingView } from "../src/state/pract
 import {
   type AddedOpening,
   addOpeningToServer,
+  addVariationToServer,
   fetchRepertoireListFromServer,
   fetchRepertoiresFromServer,
 } from "../src/state/repertoires-api.js";
 import { initialChatState } from "../src/state/transcript.js";
 import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
-import { motifCounts, progressOf, repertoireList } from "./practice-fixtures.js";
+import {
+  CLASSICAL_VARIATION,
+  motifCounts,
+  progressOf,
+  repertoireActivity,
+  repertoireList,
+} from "./practice-fixtures.js";
 
 afterEach(cleanup);
 
@@ -1456,5 +1463,325 @@ describe("the calls behind the openings met in games", () => {
     await expect(fetchRepertoireListFromServer()).resolves.toEqual(body);
     answering(200, JSON.stringify(body));
     await expect(fetchRepertoiresFromServer()).resolves.toEqual([]);
+  });
+});
+
+const ITALIAN_LINE = ["e4", "e5", "Nf3", "Nc6", "Bc4"];
+const PIANISSIMO = "Giuoco Pianissimo (4.d3)";
+const pianissimoDrill: RepertoireSummary = {
+  id: 4,
+  side: "white",
+  group_name: "Italian Game",
+  variation_name: PIANISSIMO,
+  moves: { recommended: 6, due: 9, all: 20 },
+};
+const levelDrills = [...repertoireList, pianissimoDrill, scandinavianDrill];
+
+// The answer for two Italian variations and a Scandinavian one: the levels count a move their
+// variations share once, so their numbers are not the sums of the rows under them.
+const levelListing = (overrides: Partial<RepertoiresResponse> = {}): RepertoiresResponse => ({
+  repertoires: levelDrills,
+  groups: [
+    { side: "white", group_name: "Italian Game", moves: { recommended: 10, due: 18, all: 45 } },
+    {
+      side: "white",
+      group_name: "Scandinavian Defense",
+      moves: { recommended: 4, due: 6, all: 12 },
+    },
+  ],
+  sides: [{ side: "white", moves: { recommended: 10, due: 22, all: 55 } }],
+  met: [],
+  branches: [],
+  ...overrides,
+});
+
+const renderLevels = (props: Partial<PracticeHubProps> = {}) =>
+  renderHub({
+    repertoires: { status: "ready", value: levelDrills },
+    fetchRepertoireList: async () => levelListing(),
+    ...props,
+  });
+
+describe("the openings menu at each level", () => {
+  it("starts every White opening, every Italian variation or one variation, each with its counts", async () => {
+    const onStartRepertoire = vi.fn();
+    renderLevels({ onStartRepertoire });
+    const white = await whiteOpenings();
+    fireEvent.click(
+      await within(white).findByRole("button", { name: "Recommended 10, every White opening" }),
+    );
+    fireEvent.click(
+      within(white).getByRole("button", {
+        name: "Everything due 18, every variation of Italian Game",
+      }),
+    );
+    fireEvent.click(within(white).getByRole("button", { name: "All moves 20" }));
+    expect(onStartRepertoire.mock.calls).toEqual([
+      [3, "recommended", "side"],
+      [3, "due", "group"],
+      [4, "all"],
+    ]);
+    expect(within(white).getByText("Every opening")).toBeTruthy();
+    expect(within(white).getByText("Every variation")).toBeTruthy();
+  });
+
+  it("offers no group starts for an opening with one variation", async () => {
+    renderLevels();
+    const white = await whiteOpenings();
+    await within(white).findByText("Every variation");
+    expect(within(white).getAllByText("Every variation")).toHaveLength(1);
+    expect(
+      within(white).queryByRole("button", { name: /every variation of Scandinavian Defense/ }),
+    ).toBeNull();
+  });
+
+  it("offers no level starts before the server has counted the levels", async () => {
+    const read = vi.fn(async () => levelListing({ groups: undefined, sides: undefined }));
+    renderLevels({ fetchRepertoireList: read });
+    const white = await whiteOpenings();
+    await waitFor(() => expect(read).toHaveBeenCalled());
+    await settle();
+    expect(within(white).queryByText("Every variation")).toBeNull();
+    expect(within(white).queryByText("Every opening")).toBeNull();
+    expect(within(white).getByRole("button", { name: "All moves 20" })).toBeTruthy();
+  });
+
+  it("marks the pressed level start as starting and not the same scope of its variation", async () => {
+    renderLevels({
+      starting: { mode: "repertoire", motif: "due", repertoireId: 3, level: "group" },
+    });
+    const white = await whiteOpenings();
+    expect(
+      await within(white).findByRole("button", {
+        name: "Starting, every variation of Italian Game",
+      }),
+    ).toBeTruthy();
+    expect(within(white).getByRole("button", { name: "Everything due 14" })).toBeTruthy();
+    expect(within(white).queryByRole("button", { name: "Starting" })).toBeNull();
+  });
+
+  it("sends the level with the start of a group", async () => {
+    const server = api(null);
+    render(
+      <Practice
+        server={server}
+        {...hubProps}
+        fetchRepertoires={async () => levelDrills}
+        fetchRepertoireList={async () => levelListing()}
+      />,
+    );
+    // The loading card is replaced once the list has loaded, so it is found by what the list holds.
+    await screen.findByRole("heading", { name: "Italian Game" });
+    const white = screen.getByRole("region", { name: "White openings" });
+    fireEvent.click(
+      await within(white).findByRole("button", {
+        name: "Everything due 18, every variation of Italian Game",
+      }),
+    );
+    expect(server.send).toHaveBeenCalledTimes(1);
+    expect(server.send).toHaveBeenCalledWith({
+      type: "start_training",
+      mode: "repertoire",
+      repertoire_id: 3,
+      scope: "due",
+      level: "group",
+    });
+  });
+});
+
+const EVANS = "Evans Gambit (4.b4)";
+const KNIGHT_ATTACK = "Two Knights Defense, Knight Attack (4.Ng5)";
+
+// The Italian's first variation stored alone, and the book's other White moves where it goes.
+const branchListing = (heldD3: number | null = null): RepertoiresResponse =>
+  levelListing({
+    repertoires:
+      heldD3 === null
+        ? [...repertoireList, scandinavianDrill]
+        : [...repertoireList, { ...pianissimoDrill, id: heldD3 }, scandinavianDrill],
+    branches: [
+      {
+        group_name: "Italian Game",
+        line: [...ITALIAN_LINE, "Bc5"],
+        choices: [
+          { san: "c3", variation_name: CLASSICAL_VARIATION, repertoire_id: 3 },
+          { san: "d3", variation_name: PIANISSIMO, repertoire_id: heldD3 },
+          { san: "b4", variation_name: EVANS, repertoire_id: null },
+        ],
+      },
+      {
+        group_name: "Italian Game",
+        line: [...ITALIAN_LINE, "Nf6"],
+        choices: [
+          {
+            san: "d3",
+            variation_name: "Two Knights Defense, Modern Bishop's Opening (4.d3)",
+            repertoire_id: 3,
+          },
+          { san: "Ng5", variation_name: KNIGHT_ATTACK, repertoire_id: null },
+        ],
+      },
+    ],
+  });
+
+describe("adding a variation at a branch point", () => {
+  it("lists the book's White moves at each branch point of the Italian, with their names, once opened", async () => {
+    renderHub({ fetchRepertoireList: async () => branchListing() });
+    const white = await whiteOpenings();
+    const toggle = await within(white).findByRole("button", { name: "Add a variation" });
+    expect(within(white).getAllByRole("button", { name: "Add a variation" })).toHaveLength(1);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(within(white).queryByText(EVANS)).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const afterBc5 = within(white).getByRole("list", { name: "White's moves after 3...Bc5" });
+    expect(
+      within(afterBc5)
+        .getAllByRole("listitem")
+        .map((row) => row.textContent),
+    ).toEqual([`${CLASSICAL_VARIATION}In your repertoire`, `${PIANISSIMO}Add`, `${EVANS}Add`]);
+    expect(within(white).getByText("1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5")).toBeTruthy();
+    const afterNf6 = within(white).getByRole("list", { name: "White's moves after 3...Nf6" });
+    // 4.d3 is the first variation's own move against 3...Nf6, under another name than its own.
+    expect(within(afterNf6).getByText(`Played in ${CLASSICAL_VARIATION}`)).toBeTruthy();
+    expect(within(afterNf6).getByRole("button", { name: `Add ${KNIGHT_ATTACK}` })).toBeTruthy();
+  });
+
+  it("posts the branch of a choice with Add and shows the new variation when the run ends", async () => {
+    let finish: () => void = noop;
+    const addVariation = vi.fn(
+      (_branch: readonly string[]) =>
+        new Promise<AddedOpening>((resolve) => {
+          finish = () => resolve({ truncated: false });
+        }),
+    );
+    const reads = [branchListing(), branchListing(9)];
+    const fetchRepertoireList = vi.fn(async () => reads.shift() as RepertoiresResponse);
+    renderHub({ fetchRepertoireList, addVariation });
+    const white = await whiteOpenings();
+    fireEvent.click(await within(white).findByRole("button", { name: "Add a variation" }));
+    fireEvent.click(within(white).getByRole("button", { name: `Add ${PIANISSIMO}` }));
+    expect(addVariation).toHaveBeenCalledTimes(1);
+    expect(addVariation).toHaveBeenCalledWith([...ITALIAN_LINE, "Bc5", "d3"]);
+
+    // While the run goes on no other move can be added and the list says so.
+    const building = within(white).getByRole("button", { name: `Building ${PIANISSIMO}` });
+    expect((building as HTMLButtonElement).disabled).toBe(true);
+    const other = within(white).getByRole("button", { name: `Add ${EVANS}` });
+    expect((other as HTMLButtonElement).disabled).toBe(true);
+    expect(within(white).getByRole("status").textContent).toContain("Building the drill");
+
+    await act(async () => finish());
+    expect(
+      await within(white).findByText(`${PIANISSIMO} is built. Its drill is listed above.`),
+    ).toBeTruthy();
+    // The new variation has its own starts, and its move is held now.
+    expect(within(white).getByRole("button", { name: "All moves 20" })).toBeTruthy();
+    expect(within(white).queryByRole("button", { name: `Add ${PIANISSIMO}` })).toBeNull();
+    expect(
+      (within(white).getByRole("button", { name: `Add ${EVANS}` }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(fetchRepertoireList).toHaveBeenCalledTimes(2);
+  });
+
+  it("says why when the server refuses the branch, and offers the move again", async () => {
+    const addVariation = vi.fn(async (_branch: readonly string[]) => {
+      throw new Error("Classical Variation (4.c3) does not reach the position of 4.b4");
+    });
+    renderHub({ fetchRepertoireList: async () => branchListing(), addVariation });
+    const white = await whiteOpenings();
+    fireEvent.click(await within(white).findByRole("button", { name: "Add a variation" }));
+    fireEvent.click(within(white).getByRole("button", { name: `Add ${EVANS}` }));
+    expect((await within(white).findByRole("alert")).textContent).toBe(
+      "Classical Variation (4.c3) does not reach the position of 4.b4",
+    );
+    expect(within(white).getByRole("button", { name: `Add ${EVANS}` })).toBeTruthy();
+  });
+});
+
+describe("the call behind a new variation", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const answering = (status: number, body: string) => {
+    const fetched = vi.fn(
+      async (_url: string, _init?: RequestInit) => new Response(body, { status }),
+    );
+    vi.stubGlobal("fetch", fetched);
+    return fetched;
+  };
+
+  it("posts the branch to the repertoire source of the generator", async () => {
+    const fetched = answering(200, JSON.stringify({ repertoire: { truncated: true } }));
+    await expect(addVariationToServer([...ITALIAN_LINE, "Bc5", "d3"])).resolves.toEqual({
+      truncated: true,
+    });
+    const [url, init] = fetched.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/openings/generate");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      sources: ["repertoire"],
+      branch: [...ITALIAN_LINE, "Bc5", "d3"],
+    });
+  });
+
+  it("fails with the message the server gave when it refuses the branch", async () => {
+    answering(
+      409,
+      JSON.stringify({ error: "branch_refused", message: "4.c3 is already the move" }),
+    );
+    await expect(addVariationToServer([...ITALIAN_LINE, "Bc5", "c3"])).rejects.toThrow(
+      "4.c3 is already the move",
+    );
+  });
+});
+
+describe("the variation of the move in play", () => {
+  const drillOf = (name: string, id: number): TrainingActivity =>
+    repertoireActivity({
+      training: {
+        item: {
+          kind: "repertoire",
+          repertoire_id: id,
+          variation_name: name,
+          fen: START_FEN,
+          position_in_queue: 1,
+          queue_length: 3,
+        },
+      },
+      drill: { repertoire_id: id, level: "group" },
+    });
+
+  it("names the variation whose move is asked, and follows it from move to move", () => {
+    const listed = async () => levelDrills;
+    const view = render(
+      <Practice
+        server={api(drillOf(CLASSICAL_VARIATION, 3))}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    expect(
+      within(screen.getByTestId("item-variation")).getByText(CLASSICAL_VARIATION),
+    ).toBeTruthy();
+    view.rerender(
+      <Practice
+        server={api(drillOf(PIANISSIMO, 4))}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    expect(within(screen.getByTestId("item-variation")).getByText(PIANISSIMO)).toBeTruthy();
+  });
+
+  it("shows no variation line for an item that names none", () => {
+    render(
+      <Practice
+        server={api(repertoireActivity())}
+        createBoard={spyBoard}
+        fetchRepertoires={async () => levelDrills}
+      />,
+    );
+    expect(screen.queryByTestId("item-variation")).toBeNull();
   });
 });
