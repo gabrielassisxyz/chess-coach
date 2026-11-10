@@ -179,9 +179,6 @@ describe("generateOpeningPuzzles", () => {
     addGame(WHITE_TWO, "white", "italian");
     await generateOpeningPuzzles(db, new FakeEngine(), italianNames);
     expect(rows().find((row) => row.fen === new Chess().fen())?.opening_name).toBeNull();
-    expect(rows().find((row) => row.fen === fenAfter("e4", "e5"))?.opening_name).toBe(
-      "King's Pawn Game",
-    );
     expect(
       rows().find((row) => row.fen === fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"))
         ?.opening_name,
@@ -191,6 +188,9 @@ describe("generateOpeningPuzzles", () => {
         (row) => row.fen === fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"),
       )?.opening_name,
     ).toBe("Italian Game");
+    expect(rows().find((row) => row.fen === fenAfter("e4", "e5"))?.opening_name).toBe(
+      "King's Pawn Game",
+    );
   });
 
   it("fills names on existing own-games rows without changing their ids or searching", async () => {
