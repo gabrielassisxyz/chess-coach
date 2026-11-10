@@ -167,28 +167,35 @@ function api(activity: TrainingActivity | null): ServerApi {
 }
 
 const boards: { movableColor: unknown; fen: unknown; hint: unknown }[] = [];
+const boardOrientations: unknown[] = [];
 let boardMove: ((from: string, to: string) => void) | undefined;
 const spyBoard: BoardFactory = (_element, config) => {
+  let fen = String(config.fen);
   const custom = config.highlight?.custom as Map<string, string> | undefined;
   boards.push({
     movableColor: config.movable?.color,
     fen: config.fen,
     hint: custom ? Object.fromEntries(custom) : undefined,
   });
+  boardOrientations.push(config.orientation);
   boardMove = config.events?.move as typeof boardMove;
   return {
     set: (next: {
       movable?: { color?: unknown };
       fen?: unknown;
       highlight?: { custom?: Map<string, string> };
+      orientation?: unknown;
     }) => {
+      if (next.fen) fen = String(next.fen);
       const nextCustom = next.highlight?.custom as Map<string, string> | undefined;
       boards.push({
         movableColor: next.movable?.color,
         fen: next.fen,
         hint: nextCustom ? Object.fromEntries(nextCustom) : undefined,
       });
+      boardOrientations.push(next.orientation);
     },
+    getFen: () => fen.split(" ")[0],
     destroy: vi.fn(),
   } as never;
 };
@@ -565,6 +572,43 @@ describe("the end of the queue", () => {
 
 const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
 const AFTER_E5 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
+const AFTER_NC6 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+const AFTER_BC4 = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3";
+const AFTER_BC5 = "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+const AFTER_D4 = "r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3";
+
+const playedE4E5: NonNullable<TrainingActivity["moves"]> = [
+  { ply: 0, uci: "e2e4", san: "e4", by: "student" },
+  { ply: 1, uci: "e7e5", san: "e5", by: "reply" },
+];
+
+function puzzleAfterE5(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
+  return puzzle({
+    status: "in_progress",
+    fen: AFTER_E5,
+    turn: "white",
+    last_move: { from: "e7", to: "e5" },
+    legal_moves: legalMovesOf(AFTER_E5),
+    moves: playedE4E5,
+    exploring: { fen: AFTER_E5, line_san: [], trail: [] },
+    ...overrides,
+  });
+}
+
+function exploredPuzzle(
+  line: string[] = ["Nf3", "Nc6", "Bc4", "Bc5"],
+  fen = AFTER_BC5,
+): TrainingActivity {
+  return puzzleAfterE5({
+    turn: fen.split(" ")[1] === "b" ? "black" : "white",
+    legal_moves: legalMovesOf(fen),
+    exploring: { fen, line_san: line, trail: [] },
+  });
+}
+
+function dropOnPracticeBoard(from: string, to: string): void {
+  act(() => (boardMove as (from: string, to: string) => void)(from, to));
+}
 
 describe("grading on drop", () => {
   it("sends a drop as try_move, and never as exploration", () => {
@@ -1029,6 +1073,149 @@ describe("hint", () => {
 });
 
 describe("explore mode", () => {
+  const stepButton = (name: string): HTMLButtonElement =>
+    screen.getByRole("button", { name }) as HTMLButtonElement;
+
+  it("steps across item and explored moves with arrows and all four buttons", () => {
+    boards.length = 0;
+    render(
+      <Practice server={api(exploredPuzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    fireEvent.click(stepButton("Explore"));
+    expect(stepButton("Next move").disabled).toBe(true);
+    expect(stepButton("Last move").disabled).toBe(true);
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(boards.at(-1)?.fen).toBe(AFTER_BC4);
+    expect(stepButton("Next move").disabled).toBe(false);
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(boards.at(-1)?.fen).toBe(AFTER_BC5);
+
+    fireEvent.click(stepButton("Previous move"));
+    expect(boards.at(-1)?.fen).toBe(AFTER_BC4);
+    fireEvent.click(stepButton("First move"));
+    expect(boards.at(-1)?.fen).toBe(START_FEN);
+    expect(stepButton("First move").disabled).toBe(true);
+    expect(stepButton("Previous move").disabled).toBe(true);
+    fireEvent.click(stepButton("Next move"));
+    expect(boards.at(-1)?.fen).toBe(AFTER_E4);
+    fireEvent.click(stepButton("Last move"));
+    expect(boards.at(-1)?.fen).toBe(AFTER_BC5);
+    expect(stepButton("Next move").disabled).toBe(true);
+  });
+
+  it("flips the board with f while exploring", () => {
+    boardOrientations.length = 0;
+    render(
+      <Practice server={api(puzzleAfterE5())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    fireEvent.click(stepButton("Explore"));
+    expect(boardOrientations.at(-1)).toBe("white");
+    fireEvent.keyDown(window, { key: "f" });
+    expect(boardOrientations.at(-1)).toBe("black");
+  });
+
+  it("undoes the open explored suffix before sending a new branch move", () => {
+    boards.length = 0;
+    const server = api(exploredPuzzle());
+    const { rerender } = render(
+      <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    fireEvent.click(stepButton("Explore"));
+    fireEvent.click(stepButton("Previous move"));
+    fireEvent.click(stepButton("Previous move"));
+    expect(boards.at(-1)?.fen).toBe(AFTER_NC6);
+
+    vi.mocked(server.send).mockClear();
+    dropOnPracticeBoard("d2", "d4");
+    expect(vi.mocked(server.send).mock.calls.map(([command]) => command)).toEqual([
+      { type: "explore", kind: "undo", activity_id: 4 },
+      { type: "explore", kind: "undo", activity_id: 4 },
+      { type: "explore", kind: "move", uci: "d2d4", activity_id: 4 },
+    ]);
+    rerender(
+      <Practice
+        server={api(exploredPuzzle(["Nf3", "Nc6", "d4"], AFTER_D4))}
+        createBoard={spyBoard}
+        fetchMotifs={noMotifs}
+      />,
+    );
+    expect(boards.at(-1)?.fen).toBe(AFTER_D4);
+    expect(screen.getByText("Nf3 Nc6 d4")).toBeTruthy();
+    expect(stepButton("Next move").disabled).toBe(true);
+  });
+
+  it("replaces the ended item's local suffix without sending a command", () => {
+    boards.length = 0;
+    const server = api(puzzleAfterE5({ status: "solved", input_enabled: false, legal_moves: [] }));
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(stepButton("Explore"));
+    for (const [from, to] of [
+      ["g1", "f3"],
+      ["b8", "c6"],
+      ["f1", "c4"],
+      ["f8", "c5"],
+    ] as const) {
+      dropOnPracticeBoard(from, to);
+    }
+    expect(screen.getByText("Nf3 Nc6 Bc4 Bc5")).toBeTruthy();
+    fireEvent.click(stepButton("Previous move"));
+    fireEvent.click(stepButton("Previous move"));
+    expect(boards.at(-1)?.fen).toBe(AFTER_NC6);
+
+    vi.mocked(server.send).mockClear();
+    dropOnPracticeBoard("d2", "d4");
+    expect(server.send).not.toHaveBeenCalled();
+    expect(screen.getByText("Nf3 Nc6 d4")).toBeTruthy();
+    expect(boards.at(-1)?.fen).toBe(AFTER_D4);
+    expect(stepButton("Next move").disabled).toBe(true);
+    fireEvent.click(stepButton("First move"));
+    dropOnPracticeBoard("e2", "e4");
+    expect(server.send).not.toHaveBeenCalled();
+    expect(screen.getByText("Nf3 Nc6 d4")).toBeTruthy();
+  });
+
+  it("keeps the item's earlier positions read-only in Explore", () => {
+    boards.length = 0;
+    const server = api(exploredPuzzle());
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(stepButton("Explore"));
+    fireEvent.click(stepButton("First move"));
+    expect(boards.at(-1)?.movableColor).toBeUndefined();
+    vi.mocked(server.send).mockClear();
+    dropOnPracticeBoard("e2", "e4");
+    expect(server.send).not.toHaveBeenCalled();
+    fireEvent.click(stepButton("Next move"));
+    dropOnPracticeBoard("e7", "e5");
+    expect(server.send).not.toHaveBeenCalled();
+    fireEvent.click(stepButton("Next move"));
+    expect(boards.at(-1)?.fen).toBe(AFTER_E5);
+    expect(boards.at(-1)?.movableColor).toBe("both");
+    dropOnPracticeBoard("g1", "f3");
+    expect(vi.mocked(server.send).mock.calls.map(([command]) => command)).toEqual([
+      { type: "explore", kind: "undo", activity_id: 4 },
+      { type: "explore", kind: "undo", activity_id: 4 },
+      { type: "explore", kind: "undo", activity_id: 4 },
+      { type: "explore", kind: "undo", activity_id: 4 },
+      { type: "explore", kind: "move", uci: "g1f3", activity_id: 4 },
+    ]);
+  });
+
+  it("still steps and blocks drops through the item outside Explore", () => {
+    boards.length = 0;
+    const server = api(puzzleAfterE5());
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(stepButton("Previous move"));
+    expect(boards.at(-1)?.fen).toBe(AFTER_E4);
+    expect(boards.at(-1)?.movableColor).toBeUndefined();
+    dropOnPracticeBoard("e7", "e5");
+    expect(server.send).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(boards.at(-1)?.fen).toBe(AFTER_E5);
+    dropOnPracticeBoard("g1", "f3");
+    expect(server.send).toHaveBeenCalledWith({ type: "try_move", uci: "g1f3", activity_id: 4 });
+  });
+
   it("routes drops to explore while exploring and never to try_move", () => {
     const server = api(card());
     render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
