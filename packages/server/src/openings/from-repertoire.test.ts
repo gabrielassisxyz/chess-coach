@@ -1844,19 +1844,25 @@ describe("the root of a unit", () => {
   });
 
   it.each([
-    ["an illegal move", ["e4", "d4"]],
-    ["a move that is not text", ["e4", 5]],
-    ["text that is not a move", ["e4", "x".repeat(40)]],
-    ["a list that is not a list", "e4 d5"],
-    ["an empty root", []],
-    ["a root that starts with another move", ["d4", "d5"]],
-    ["a root that ends on a White move", ["e4", "d5", "exd5"]],
-    ["a single White move", ["e4"]],
-    ["a White move other than the setup move at ply 3", ["e4", "e5", "Bc4", "Nf6"]],
-    ["a White move other than the setup move at ply 5", [...BEFORE_BC4, "Bb5", "a6"]],
-    ["more than 8 plies", LONG_LINE],
-  ])("refuses %s", (_label, root) => {
-    expect(checkRepertoireRoot(root)).toMatchObject({ ok: false, reason: expect.any(String) });
+    ["an illegal move", ["e4", "d4"], "not a legal line"],
+    ["a move that is not text", ["e4", 5], "list of SAN moves"],
+    ["text that is not a move", ["e4", "x".repeat(40)], "not SAN"],
+    ["a list that is not a list", "e4 d5", "list of SAN moves"],
+    ["an empty root", [], "starts with 1.e4"],
+    ["a root that starts with another move", ["d4", "d5"], "starts with 1.e4"],
+    ["a root that ends on a White move", ["e4", "d5", "exd5"], "ends on Black's move"],
+    ["a single White move", ["e4"], "ends on Black's move"],
+    ["a White move other than the setup move at ply 3", ["e4", "e5", "Bc4", "Nf6"], "setup moves"],
+    [
+      "a White move other than the setup move at ply 5",
+      [...BEFORE_BC4, "Bb5", "a6"],
+      "setup moves",
+    ],
+    ["more than 8 plies", LONG_LINE, "at most 8 plies"],
+  ])("refuses %s and says why", (_label, root, reason) => {
+    const checked = checkRepertoireRoot(root);
+    expect(checked.ok).toBe(false);
+    expect(checked.ok ? "" : checked.reason).toContain(reason);
   });
 
   it("allows the longest root and refuses one ply more", () => {
