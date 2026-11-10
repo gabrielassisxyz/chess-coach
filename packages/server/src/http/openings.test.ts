@@ -1,13 +1,25 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OpeningDrillsResponseSchema, UNNAMED_OPENING } from "@chess-coach/shared";
+import { Chess } from "chess.js";
+import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
-import { openDatabase } from "../db/open.js";
+import type { Clock } from "../clock.js";
+import { setGrading } from "../db/games.js";
+import { type Database, openDatabase } from "../db/open.js";
+import { recordPuzzleAttempt } from "../db/puzzles.js";
+import { createRepertoireVariation } from "../db/repertoires.js";
+import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
+import { importFinishedGame } from "../import/pgn.js";
 import { RecordingLog } from "../log.js";
 import { ExplorerError } from "../openings/explorer-client.js";
+import { generateOpeningPuzzles } from "../openings/from-games.js";
 import { RepertoireBranchError } from "../openings/from-repertoire.js";
+import { parseOpeningTable } from "../openings/names.js";
 import { IdeaSessionError } from "../openings/repertoire-ideas.js";
+import { registerOpeningDrillRoutes } from "./openings.js";
 
 const db = () => openDatabase(mkdtempSync(join(tmpdir(), "opening-route-")));
 
@@ -735,5 +747,309 @@ describe("POST /api/openings/generate", () => {
         await app.close();
       },
     );
+  });
+});
+
+describe("GET /api/openings/drills", () => {
+  const NOW = new Date("2026-11-10T12:00:00.000Z");
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const clock: Clock = { now: () => NOW };
+  const daysAgo = (days: number): string => new Date(NOW.getTime() - days * DAY_MS).toISOString();
+  const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+  let stored = 0;
+  function addDrill(
+    store: Database,
+    color: "white" | "black",
+    openingName: string | null,
+    motif = `opening-${color}`,
+  ): string {
+    stored += 1;
+    const id = `own:fixture-${stored}`;
+    store
+      .prepare(
+        `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, opening_name)
+         VALUES (?, 'own-games', ?, 'beginner', ?, '["e2e4"]', '["e4"]', 'why', ?)`,
+      )
+      .run(id, motif, START, openingName);
+    return id;
+  }
+
+  function attempt(store: Database, puzzleId: string, attemptedAt: string, firstTry: boolean) {
+    recordPuzzleAttempt(store, {
+      puzzleId,
+      attemptedAt,
+      solved: firstTry,
+      answered: ["e2e4"],
+      failedPly: firstTry ? null : 0,
+      firstTry,
+      tries: firstTry ? 0 : 1,
+      gaveUp: false,
+    });
+  }
+
+  async function drills(store: Database) {
+    const app = Fastify();
+    registerOpeningDrillRoutes(app, store, clock);
+    const response = await app.inject({ method: "GET", url: "/api/openings/drills" });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+    return OpeningDrillsResponseSchema.parse(response.json());
+  }
+
+  // Ten White positions per game, the first three shared, and the names the table gives them.
+  const ITALIAN_GAME =
+    '[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6 5. d3 d6 6. O-O O-O 7. Bb3 a6 8. Nbd2 Ba7 9. h3 h6 10. Re1 Re8 1-0';
+  const RUY_LOPEZ =
+    '[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O 9. h3 Nb8 10. d4 Nbd7 1-0';
+
+  const keyAfter = (...sans: string[]): string => {
+    const board = new Chess();
+    for (const san of sans) board.move(san);
+    return board.fen().split(" ").slice(0, 4).join(" ");
+  };
+  const MAIN = ["e4", "e5", "Nf3", "Nc6"];
+  const names = parseOpeningTable(
+    [
+      "eco\tname\tpgn\tuci\tepd",
+      `C50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${keyAfter(...MAIN, "Bc4")}`,
+      `C50\tItalian Game: Giuoco Piano\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5\te2e4\t${keyAfter(...MAIN, "Bc4", "Bc5")}`,
+      `C60\tRuy Lopez\t1. e4 e5 2. Nf3 Nc6 3. Bb5\te2e4\t${keyAfter(...MAIN, "Bb5")}`,
+      `C60\tRuy Lopez: Morphy Defense\t1. e4 e5 2. Nf3 Nc6 3. Bb5 a6\te2e4\t${keyAfter(...MAIN, "Bb5", "a6")}`,
+      "",
+    ].join("\n"),
+  );
+
+  /** Answers every position with its first two legal moves, far enough apart to count as clear. */
+  class FirstTwoMovesSearcher implements Searcher {
+    async search(request: SearchRequest): Promise<SearchResult> {
+      const [first, second] = new Chess(request.fen).moves({ verbose: true });
+      if (!first || !second) throw new Error("fixture position has fewer than two moves");
+      const uci = (move: { from: string; to: string }): string => `${move.from}${move.to}`;
+      return {
+        fen: request.fen,
+        bestmove: uci(first),
+        lines: [
+          { moves: [uci(first)], score: 100 },
+          { moves: [uci(second)], score: 20 },
+        ],
+      };
+    }
+  }
+
+  it("answers an empty drill with no families", async () => {
+    expect(await drills(db())).toEqual({ white: [], black: [] });
+  });
+
+  it("gets two families from positions stored from two games in different openings", async () => {
+    const store = db();
+    for (const [pgn, id] of [
+      [ITALIAN_GAME, "italian"],
+      [RUY_LOPEZ, "ruy"],
+    ] as const) {
+      const gameId = importFinishedGame(store, {
+        pgn,
+        playerColor: "white",
+        source: "pgn",
+        sourceId: id,
+      });
+      if (gameId === null) throw new Error("fixture game was not imported");
+      setGrading(store, gameId, "done");
+    }
+    await generateOpeningPuzzles(store, new FirstTwoMovesSearcher(), names);
+    const italian = store
+      .prepare("SELECT id FROM puzzles WHERE opening_name LIKE 'Italian Game%' ORDER BY id")
+      .all() as { id: string }[];
+    const [first, second] = italian.map((row) => row.id) as [string, string];
+    attempt(store, first, daysAgo(5), true);
+    attempt(store, first, daysAgo(2), false);
+    attempt(store, second, daysAgo(29), true);
+    // Older than the window, so it counts for nothing.
+    attempt(store, second, daysAgo(31), true);
+
+    expect(await drills(store)).toEqual({
+      white: [
+        {
+          opening: "Italian Game",
+          positions: 7,
+          attempts_30d: 3,
+          first_try_30d: 2,
+          repertoire_id: null,
+        },
+        {
+          opening: "Ruy Lopez",
+          positions: 7,
+          attempts_30d: 0,
+          first_try_30d: 0,
+          repertoire_id: null,
+        },
+        // The start and the two moves shared by both games are named by neither opening.
+        {
+          opening: UNNAMED_OPENING,
+          positions: 3,
+          attempts_30d: 0,
+          first_try_30d: 0,
+          repertoire_id: null,
+        },
+      ],
+      black: [],
+    });
+  });
+
+  it("folds every name that shares a family into one entry", async () => {
+    const store = db();
+    addDrill(store, "white", "Italian Game");
+    addDrill(store, "white", "Italian Game: Two Knights Defense");
+    addDrill(store, "white", "Italian Game: Giuoco Piano");
+    addDrill(store, "white", "Italian Game: Giuoco Piano");
+    addDrill(store, "white", "Sicilian Defense: Najdorf Variation, English Attack");
+    const { white } = await drills(store);
+    expect(white.map(({ opening, positions }) => [opening, positions])).toEqual([
+      ["Italian Game", 4],
+      ["Sicilian Defense", 1],
+    ]);
+  });
+
+  it("lists the positions with no name as one entry per colour, last whatever their number", async () => {
+    const store = db();
+    for (const name of [null, null, "", "   ", ": Variation"]) addDrill(store, "white", name);
+    addDrill(store, "white", "Scandinavian Defense");
+    addDrill(store, "black", null);
+    const { white, black } = await drills(store);
+    expect(white.map(({ opening, positions }) => [opening, positions])).toEqual([
+      ["Scandinavian Defense", 1],
+      [UNNAMED_OPENING, 5],
+    ]);
+    expect(black.map(({ opening, positions }) => [opening, positions])).toEqual([
+      [UNNAMED_OPENING, 1],
+    ]);
+  });
+
+  it("keeps the colours apart and reads only the drill of the student's games", async () => {
+    const store = db();
+    addDrill(store, "white", "Sicilian Defense");
+    addDrill(store, "black", "Sicilian Defense");
+    addDrill(store, "black", "Sicilian Defense");
+    addDrill(store, "white", "Italian Game", "opening-italian");
+    addDrill(store, "white", "Fork Opening", "fork");
+    const { white, black } = await drills(store);
+    expect(white.map(({ opening, positions }) => [opening, positions])).toEqual([
+      ["Sicilian Defense", 1],
+    ]);
+    expect(black.map(({ opening, positions }) => [opening, positions])).toEqual([
+      ["Sicilian Defense", 2],
+    ]);
+  });
+
+  it("orders families by their positions, then by name", async () => {
+    const store = db();
+    for (const name of ["Vienna Game", "Scotch Game", "Scotch Game", "Alekhine Defense"]) {
+      addDrill(store, "white", name);
+    }
+    const { white } = await drills(store);
+    expect(white.map(({ opening }) => opening)).toEqual([
+      "Scotch Game",
+      "Alekhine Defense",
+      "Vienna Game",
+    ]);
+  });
+
+  it("counts the attempts of the last 30 days, both ends of the window included", async () => {
+    const store = db();
+    const id = addDrill(store, "white", "Italian Game");
+    attempt(store, id, daysAgo(30), true);
+    attempt(store, id, new Date(NOW.getTime() - 30 * DAY_MS - 1).toISOString(), true);
+    attempt(store, id, NOW.toISOString(), false);
+    attempt(store, id, new Date(NOW.getTime() + 1).toISOString(), true);
+    const { white } = await drills(store);
+    expect(white).toEqual([
+      {
+        opening: "Italian Game",
+        positions: 1,
+        attempts_30d: 2,
+        first_try_30d: 1,
+        repertoire_id: null,
+      },
+    ]);
+  });
+
+  it("counts the attempts of every position of a family together, and each position once", async () => {
+    const store = db();
+    const one = addDrill(store, "white", "Italian Game");
+    const two = addDrill(store, "white", "Italian Game: Giuoco Piano");
+    attempt(store, one, daysAgo(1), true);
+    attempt(store, one, daysAgo(2), true);
+    attempt(store, two, daysAgo(3), false);
+    const { white } = await drills(store);
+    expect(white).toEqual([
+      {
+        opening: "Italian Game",
+        positions: 2,
+        attempts_30d: 3,
+        first_try_30d: 2,
+        repertoire_id: null,
+      },
+    ]);
+  });
+
+  it("shows a family with no attempt in the window with its positions and no attempts", async () => {
+    const store = db();
+    const id = addDrill(store, "white", "Scandinavian Defense");
+    addDrill(store, "white", "Scandinavian Defense");
+    attempt(store, id, daysAgo(60), true);
+    const { white } = await drills(store);
+    expect(white).toEqual([
+      {
+        opening: "Scandinavian Defense",
+        positions: 2,
+        attempts_30d: 0,
+        first_try_30d: 0,
+        repertoire_id: null,
+      },
+    ]);
+  });
+
+  it("names the first variation stored under the family on the same side", async () => {
+    const store = db();
+    const stores = (side: "white" | "black", groupName: string, variationName: string): number =>
+      createRepertoireVariation(store, { side, groupName, variationName }).id;
+    const italian = stores("white", "Italian Game", "Classical Variation (4.c3)");
+    stores("white", "Italian Game", "Giuoco Pianissimo (4.d3)");
+    const scandinavian = stores(
+      "white",
+      "Scandinavian Defense",
+      "Mieses-Kotroc Variation (2.exd5)",
+    );
+    const blackSicilian = stores("black", "Sicilian Defense", "Open Sicilian");
+    // A group named by the full name is another opening, so it does not claim the family.
+    stores("white", "Caro-Kann Defense: Advance Variation", "Short Variation");
+    for (const name of [
+      "Italian Game",
+      "Scandinavian Defense",
+      "Sicilian Defense",
+      "Caro-Kann Defense",
+    ]) {
+      addDrill(store, "white", name);
+    }
+    addDrill(store, "black", "Sicilian Defense");
+    addDrill(store, "black", "Italian Game");
+    const { white, black } = await drills(store);
+    const ids = (entries: typeof white) =>
+      Object.fromEntries(entries.map((entry) => [entry.opening, entry.repertoire_id]));
+    expect(ids(white)).toEqual({
+      "Italian Game": italian,
+      "Scandinavian Defense": scandinavian,
+      "Sicilian Defense": null,
+      "Caro-Kann Defense": null,
+    });
+    expect(ids(black)).toEqual({ "Sicilian Defense": blackSicilian, "Italian Game": null });
+  });
+
+  it("is mounted with the database, whether or not a generator is configured", async () => {
+    const app = buildApp({ db: db() });
+    const response = await app.inject({ method: "GET", url: "/api/openings/drills" });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ white: [], black: [] });
   });
 });
