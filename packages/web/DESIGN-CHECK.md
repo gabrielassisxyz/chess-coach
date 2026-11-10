@@ -60,7 +60,8 @@ Shell
 - Practice item: one column stacked by reading frequency (header with progress segments,
   ratings, engine strip, move list, state card), a 40 px bar under the board, popovers for the
   board and the engine settings anchored to their icons; coordinates inside the squares in
-  10 px mono by default.
+  10 px mono by default. A repertoire line drill swaps the ratings for the variation in play
+  and three counts, and its open state hides the bar's Explore button.
 
 Phone (under 900 px)
 
@@ -151,6 +152,8 @@ screens were built to are in the design probe's spec (token layer and interactio
 - **Play's board settings.** Play still opens the older settings card in its column with the
   theme radios alone; the popover with coordinates, animation and highlights exists on Practice
   only, though every board honours the stored preferences.
-- **The Practice hub** was not part of the puzzle redesign and keeps its three cards.
+- **The Practice hub** was not part of the puzzle redesign and keeps its three older cards.
+  The openings menu for the repertoire line drill is a fourth, built on the same card rules;
+  its Practice cells were re-read against the markup and `repertoire.css` and hold.
 - **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
   and a model setting exist.

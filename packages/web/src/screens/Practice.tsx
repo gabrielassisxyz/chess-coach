@@ -1,10 +1,11 @@
 import type {
   ActivityState,
   DemoActivity,
+  RepertoireScope,
   TrainingActivity,
   TrainingMode,
 } from "@chess-coach/shared";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Board, type BoardFactory } from "../components/Board.js";
 import { BoardDisplayPopover } from "../components/BoardDisplayPopover.js";
 import { CoachLoginCard } from "../components/CoachLoginCard.js";
@@ -40,12 +41,15 @@ import {
 } from "../state/practice.js";
 import { stateCardOf } from "../state/practice-item.js";
 import { type FetchProgress, fetchProgressFromServer } from "../state/progress-api.js";
+import { repertoireCardOf } from "../state/repertoire-drill.js";
+import { type FetchRepertoires, fetchRepertoiresFromServer } from "../state/repertoires-api.js";
 
 export interface PracticeProps {
   server: ServerApi;
   createBoard?: BoardFactory | undefined;
   fetchMotifs?: FetchMotifs;
   fetchProgress?: FetchProgress;
+  fetchRepertoires?: FetchRepertoires;
   fetchHealth?: FetchHealth | undefined;
 }
 
@@ -53,7 +57,9 @@ const ANY_MOTIF = "";
 
 interface Starting {
   mode: TrainingMode;
+  // A repertoire start puts its scope here, where a puzzle start puts its motif.
   motif: string;
+  repertoireId?: number;
   errorsBefore: number;
 }
 
@@ -90,7 +96,27 @@ function useStartOutcome(server: ServerApi, size: DrillSize) {
       setFailure(OFFLINE_START_TEXT);
     }
   };
-  return { starting, failure, begin };
+  // The scope of a line drill decides what it serves, so no drill size goes with it.
+  const beginRepertoire = (repertoireId: number, scope: RepertoireScope): void => {
+    setFailure(null);
+    const sent = server.send({
+      type: "start_training",
+      mode: "repertoire",
+      repertoire_id: repertoireId,
+      scope,
+    });
+    if (sent) {
+      setStarting({
+        mode: "repertoire",
+        motif: scope,
+        repertoireId,
+        errorsBefore: server.errorCount,
+      });
+    } else {
+      setFailure(OFFLINE_START_TEXT);
+    }
+  };
+  return { starting, failure, begin, beginRepertoire };
 }
 
 // The login card clears once the student has checked again, and returns on the next auth failure.
@@ -108,17 +134,19 @@ function Hub({
   server,
   fetchMotifs,
   fetchProgress,
+  fetchRepertoires,
   fetchHealth,
   lastSession,
-}: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress">> &
+}: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress" | "fetchRepertoires">> &
   Pick<PracticeProps, "fetchHealth"> & { lastSession: LastSession | null }) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
+  const repertoires = useLoaded(fetchRepertoires);
   const [size, setSize] = useState<DrillSize>(DEFAULT_DRILL_SIZE);
   const [retries, setRetries] = useState(0);
   const notice = serviceNotice(useHealth(retries, fetchHealth ? { fetchHealth } : {}));
   const login = useCoachLogin(server);
-  const { starting, failure, begin } = useStartOutcome(server, size);
+  const { starting, failure, begin, beginRepertoire } = useStartOutcome(server, size);
   const engineMissing = notice?.reason === "stockfish_missing";
 
   return (
@@ -140,12 +168,14 @@ function Hub({
       <PracticeHub
         progress={progress}
         motifs={motifs}
+        repertoires={repertoires}
         engineMissing={engineMissing}
         starting={starting}
         failure={failure}
         size={size}
         onSize={setSize}
         onStart={begin}
+        onStartRepertoire={beginRepertoire}
         lastSession={lastSession}
       />
     </div>
@@ -221,9 +251,11 @@ function demoOverTraining(activity: ActivityState | null): DemoActivity | null {
 function Item({
   server,
   createBoard,
+  fetchRepertoires,
 }: {
   server: ServerApi;
   createBoard: BoardFactory | undefined;
+  fetchRepertoires: FetchRepertoires;
 }) {
   const training = trainingOf(server.activity) as NonNullable<ReturnType<typeof trainingOf>>;
   const view = trainingView(training);
@@ -238,7 +270,11 @@ function Item({
   const engine = useEngineAnalysis(training, view, board.activity.fen, server);
   const activityId = training.activity_id;
   const exposureId = training.exposure_id;
-  const card = stateCardOf(training, view, board.scratchLine, elapsedMs);
+  const drill = training.repertoire ?? null;
+  const card =
+    drill && board.scratchLine === null
+      ? repertoireCardOf(training, drill, view)
+      : stateCardOf(training, view, board.scratchLine, elapsedMs);
   const actions: PracticeColumnActions = {
     showSolution: () => server.send({ type: "show_solution", activity_id: activityId }),
     rate: (quality) => {
@@ -261,6 +297,12 @@ function Item({
   useItemShortcuts(view, actions);
   const busyWithItem = board.scratchLine !== null || board.shownPly < board.tip || engine.on;
   useAutoNext(training, view, prefs.autoNext, busyWithItem, actions.next);
+  // The engine's arrows and the arrow of the move a repertoire drill shows, drawn together.
+  const shapes = useMemo(
+    () =>
+      board.answerShapes.length === 0 ? engine.shapes : [...engine.shapes, ...board.answerShapes],
+    [engine.shapes, board.answerShapes],
+  );
 
   return (
     <>
@@ -272,6 +314,7 @@ function Item({
         elapsedMs={elapsedMs}
         scratchLine={board.scratchLine}
         shownPly={board.shownPly}
+        fetchRepertoires={fetchRepertoires}
         engineStrip={
           <EngineStrip
             engine={engine}
@@ -282,7 +325,8 @@ function Item({
         }
       />
       <div className="stage">
-        <div className="puzzle-stage">
+        {/* The server refuses free moves on an open line drill, so the bar hides its Explore button. */}
+        <div className="puzzle-stage" data-drill={drill && view.open ? "open" : undefined}>
           <Board
             activity={board.activity}
             onMove={board.move}
@@ -293,7 +337,7 @@ function Item({
             orientation={board.orientation}
             badge={board.badge}
             prefs={prefs}
-            shapes={engine.shapes}
+            shapes={shapes}
             createBoard={createBoard}
           />
           <PuzzleBoardBar
@@ -329,6 +373,7 @@ export function Practice({
   createBoard,
   fetchMotifs = fetchMotifsFromServer,
   fetchProgress = fetchProgressFromServer,
+  fetchRepertoires = fetchRepertoiresFromServer,
   fetchHealth,
 }: PracticeProps) {
   const sessionTraining = trainingOf(server.activity);
@@ -340,10 +385,13 @@ export function Practice({
   // A finished queue lands on the hub: keep the tally, then end the run.
   useEffect(() => {
     if (!sessionTraining || !summary || summaryActivityId === null) return;
+    const unit: LastSession["unit"] = sessionTraining.repertoire ? "moves" : undefined;
     setLastSession((prev) => {
-      if (prev && prev.solved === summary.solved && prev.failed === summary.failed) return prev;
-      saveLastSession(summary);
-      return { solved: summary.solved, failed: summary.failed };
+      const same = prev?.solved === summary.solved && prev.failed === summary.failed;
+      if (prev && same && prev.unit === unit) return prev;
+      const next: LastSession = { solved: summary.solved, failed: summary.failed, unit };
+      saveLastSession(next);
+      return next;
     });
     if (endedFor.current !== summaryActivityId) {
       endedFor.current = summaryActivityId;
@@ -399,6 +447,7 @@ export function Practice({
           server={server}
           fetchMotifs={fetchMotifs}
           fetchProgress={fetchProgress}
+          fetchRepertoires={fetchRepertoires}
           fetchHealth={fetchHealth}
           lastSession={lastSession}
         />
@@ -406,5 +455,5 @@ export function Practice({
     );
   }
 
-  return <Item server={server} createBoard={createBoard} />;
+  return <Item server={server} createBoard={createBoard} fetchRepertoires={fetchRepertoires} />;
 }

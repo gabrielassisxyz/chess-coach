@@ -204,6 +204,7 @@ export function practiceIdleLabel(activity: ActivityState | null): string | unde
   if (training.status === "prompt" || training.status === "in_progress") {
     return "waiting for your answer";
   }
+  if (training.item.kind === "repertoire") return "line finished";
   const card = training.item.kind === "card";
   if (training.status === "rated") return "card rated";
   if (training.status === "failed") return "solution shown";
@@ -237,7 +238,11 @@ const MODE_LABEL: Record<TrainingMode, string> = {
   repertoire: "Repertoire",
 };
 
+// A repertoire drill counts moves, not items: `position` of its `size` moves are finished.
 export function resumeLabelOf(paused: PausedTraining): string {
+  if (paused.mode === "repertoire") {
+    return `Resume: ${MODE_LABEL.repertoire} · ${paused.position} of ${paused.size} moves done`;
+  }
   return `Resume: ${MODE_LABEL[paused.mode]} · ${paused.position + 1} of ${paused.size}`;
 }
 
@@ -345,6 +350,12 @@ export function startFailureText(
   code: ErrorCode | null,
   message: string | null,
 ): string {
+  // A repertoire start carries its scope where a puzzle start carries its motif.
+  if (code === "empty_queue" && mode === "repertoire") {
+    return motif === "all"
+      ? "This opening holds no move yet."
+      : "No move of this opening is due right now. Choose All moves to practise it anyway.";
+  }
   if (code === "empty_queue" && mode === "srs") {
     return "Nothing is due right now. Cards come from the mistakes in a finished game: open one in Games and choose Create cards, or drill puzzles instead.";
   }
@@ -366,6 +377,17 @@ export const OFFLINE_START_TEXT =
 export interface LastSession {
   solved: number;
   failed: number;
+  // A repertoire drill counts moves, and its "solved" is a move right at the first try.
+  unit?: "moves" | undefined;
+}
+
+export function lastSessionText(last: LastSession): string {
+  if (last.unit === "moves") {
+    const practised = last.solved + last.failed;
+    const moves = practised === 1 ? "move" : "moves";
+    return `Last session: ${practised} ${moves} practised, ${last.solved} right first try`;
+  }
+  return `Last session: ${last.solved} solved, ${last.failed} failed`;
 }
 
 const LAST_SESSION_KEY = "chess-coach:last-session";
@@ -387,7 +409,8 @@ export function loadLastSession(): LastSession | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<LastSession>;
     if (typeof parsed.solved !== "number" || typeof parsed.failed !== "number") return null;
-    return { solved: parsed.solved, failed: parsed.failed };
+    const unit = parsed.unit === "moves" ? { unit: "moves" as const } : {};
+    return { solved: parsed.solved, failed: parsed.failed, ...unit };
   } catch {
     return null;
   }
