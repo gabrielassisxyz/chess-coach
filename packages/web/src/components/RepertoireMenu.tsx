@@ -11,6 +11,7 @@ import { type Loaded, useLoaded } from "../hooks/useLoaded.js";
 import {
   type AddOpening,
   addOpeningToServer,
+  type FetchCoverage,
   type FetchRepertoireList,
   fetchRepertoireListFromServer,
   menuOf,
@@ -22,6 +23,7 @@ import {
   type OpeningMenu,
   SCOPE_LABEL,
 } from "../state/repertoires-api.js";
+import { RepertoireCoverage } from "./RepertoireCoverage.js";
 
 export interface RepertoireMenuProps {
   repertoires: Loaded<RepertoireSummary[]>;
@@ -33,6 +35,8 @@ export interface RepertoireMenuProps {
   // Where the openings met in games come from, and what builds a drill for one; the server's by default.
   fetchList?: FetchRepertoireList | undefined;
   addOpening?: AddOpening | undefined;
+  // Where a variation's coverage comes from when it is opened; the server's by default.
+  fetchCoverage?: FetchCoverage | undefined;
 }
 
 type MenuActions = Pick<RepertoireMenuProps, "busy" | "starting" | "onStart">;
@@ -159,7 +163,53 @@ function Starts({
   );
 }
 
-function Opening({ opening, busy, starting, onStart }: { opening: OpeningMenu } & MenuActions) {
+// The coverage is read when the student opens it, not with the menu: it walks every stored move.
+function Variation({
+  variation,
+  busy,
+  starting,
+  onStart,
+  fetchCoverage,
+}: { variation: RepertoireSummary; fetchCoverage: FetchCoverage | undefined } & MenuActions) {
+  const [showingCoverage, setShowingCoverage] = useState(false);
+  return (
+    <div className="repertoire-menu__variation">
+      <p className="repertoire-menu__variation-name">{variation.variation_name}</p>
+      <Starts variation={variation} busy={busy} starting={starting} onStart={onStart} />
+      {variation.moves.due === 0 ? (
+        <p className="practice__card-note">
+          Nothing is due. Choose All moves to practise every move anyway.
+        </p>
+      ) : null}
+      <div className="repertoire-menu__starts">
+        <button
+          type="button"
+          className="button button--quiet"
+          aria-expanded={showingCoverage}
+          aria-label={`Coverage of ${variation.variation_name}`}
+          onClick={() => setShowingCoverage(!showingCoverage)}
+        >
+          Coverage
+        </button>
+      </div>
+      {showingCoverage ? (
+        <RepertoireCoverage
+          repertoireId={variation.id}
+          name={variation.variation_name}
+          fetchCoverage={fetchCoverage}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function Opening({
+  opening,
+  busy,
+  starting,
+  onStart,
+  fetchCoverage,
+}: { opening: OpeningMenu; fetchCoverage: FetchCoverage | undefined } & MenuActions) {
   return (
     <div className="repertoire-menu__opening">
       <div className="repertoire-menu__head">
@@ -167,15 +217,14 @@ function Opening({ opening, busy, starting, onStart }: { opening: OpeningMenu } 
         <span className="repertoire-menu__due">{opening.due} due</span>
       </div>
       {opening.variations.map((variation) => (
-        <div key={variation.id} className="repertoire-menu__variation">
-          <p className="repertoire-menu__variation-name">{variation.variation_name}</p>
-          <Starts variation={variation} busy={busy} starting={starting} onStart={onStart} />
-          {variation.moves.due === 0 ? (
-            <p className="practice__card-note">
-              Nothing is due. Choose All moves to practise every move anyway.
-            </p>
-          ) : null}
-        </div>
+        <Variation
+          key={variation.id}
+          variation={variation}
+          busy={busy}
+          starting={starting}
+          onStart={onStart}
+          fetchCoverage={fetchCoverage}
+        />
       ))}
     </div>
   );
@@ -284,6 +333,7 @@ export function RepertoireMenu({
   onStart,
   fetchList = fetchRepertoireListFromServer,
   addOpening = addOpeningToServer,
+  fetchCoverage,
 }: RepertoireMenuProps) {
   const adds = useOpeningAdds(fetchList, addOpening);
   if (repertoires.status === "loading") return <Note text="Loading openings." />;
@@ -308,6 +358,7 @@ export function RepertoireMenu({
               busy={busy}
               starting={starting}
               onStart={onStart}
+              fetchCoverage={fetchCoverage}
             />
           ))}
           {side.side === "white" ? <MetOpenings adds={adds} busy={busy} /> : null}

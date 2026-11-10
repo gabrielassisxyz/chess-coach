@@ -1,9 +1,13 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type MetOpening, RepertoiresResponseSchema } from "@chess-coach/shared";
+import {
+  type MetOpening,
+  RepertoireCoverageSchema,
+  RepertoiresResponseSchema,
+} from "@chess-coach/shared";
 import { Chess, type Move } from "chess.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
 import {
@@ -11,7 +15,9 @@ import {
   insertRepertoireOwnMove,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
+import { UciEngine } from "../engine/uci.js";
 import { importFinishedGame } from "../import/pgn.js";
+import { CachedExplorer } from "../openings/explorer-client.js";
 import { positionKey } from "../openings/from-games.js";
 
 // The route reads the system clock, so a card is due or not by a wide margin either way.
@@ -27,6 +33,8 @@ beforeEach(() => {
   db = openDatabase(tmp);
 });
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   db.close();
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -301,5 +309,107 @@ describe("GET /api/repertoires met openings", () => {
     expect((await getMet())[0]?.repertoire_id).toBe(unit);
     db.prepare("DELETE FROM repertoires WHERE id = ?").run(unit);
     expect((await getMet())[0]).toMatchObject({ root: ["e4", "d5"], repertoire_id: null });
+  });
+});
+
+async function getCoverage(app: ReturnType<typeof buildApp>, id: number | string) {
+  const response = await app.inject({ method: "GET", url: `/api/repertoires/${id}/coverage` });
+  await app.close();
+  return response;
+}
+
+function addReplyWithoutAnswer(id: number, line: string[], san: string, reach: number): void {
+  upsertRepertoireReply(db, {
+    repertoireId: id,
+    ...placeOf(line, san),
+    ply: line.length + 1,
+    line,
+    reach,
+    openingName: null,
+    san,
+    share: reach,
+    source: "explorer",
+  });
+}
+
+// The classical line and a second branch, with Black's 4...d6 stored and no White move after it.
+function addVariationWithGap(): number {
+  const id = addVariation("Classical Variation (4.c3)", [
+    ["Bc5", "c3", "Nf6", "d4"],
+    ["Nf6", "d3"],
+  ]);
+  addReplyWithoutAnswer(id, [...SETUP, "Bc5", "c3"], "d6", 0.3);
+  return id;
+}
+
+// A second gap, likelier than the first and in the branch the walk meets after it, so that only
+// sorting the gaps puts the likelier one first.
+function addVariationWithTwoGaps(): number {
+  const id = addVariationWithGap();
+  addReplyWithoutAnswer(id, [...SETUP, "Nf6", "d3"], "d5", 0.45);
+  return id;
+}
+
+describe("GET /api/repertoires/:id/coverage", () => {
+  it("returns the covered share, the gaps with their lines and the largest gap", async () => {
+    const id = addVariationWithGap();
+    const response = await getCoverage(buildApp({ db }), id);
+    expect(response.statusCode).toBe(200);
+    const body = RepertoireCoverageSchema.parse(response.json());
+    const gap = { line: [...SETUP, "Bc5", "c3", "d6"], incidence: 0.3, position: 3 };
+    expect(body).toMatchObject({
+      repertoire_id: id,
+      goal_one_in: 50,
+      rating_band: "0-1199",
+      gaps: [gap],
+      largest_gap: gap,
+      start: 2,
+    });
+    // The lines end after 5.d4 (reach 1) and after 3...Nf6 4.d3 (0.5); the gap holds 0.3: 1.5 / 1.8.
+    expect(body.covered_percent).toBe(83.3);
+    expect(body.positions[body.start]?.line).toEqual(SETUP);
+  });
+
+  it("names the likeliest of two gaps the largest, though the walk meets the rarer one first", async () => {
+    const id = addVariationWithTwoGaps();
+    const body = RepertoireCoverageSchema.parse((await getCoverage(buildApp({ db }), id)).json());
+    const likelier = { line: [...SETUP, "Nf6", "d3", "d5"], incidence: 0.45, position: 5 };
+    const rarer = { line: [...SETUP, "Bc5", "c3", "d6"], incidence: 0.3, position: 3 };
+    expect(body.gaps).toEqual([likelier, rarer]);
+    expect(body.largest_gap).toEqual(likelier);
+  });
+
+  it("answers no scores for a variation whose moves carry no counts", async () => {
+    const id = addVariationWithGap();
+    const body = RepertoireCoverageSchema.parse((await getCoverage(buildApp({ db }), id)).json());
+    expect(body.scores).toEqual({ line_ends: 0, expected_score: null, soundness: null });
+  });
+
+  it("answers 404 for a variation that does not exist and for an id that is no positive integer", async () => {
+    addVariationWithGap();
+    for (const id of ["999", "0", "-3", "1.5", "abc"]) {
+      const response = await getCoverage(buildApp({ db }), id);
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({
+        error: "repertoire_not_found",
+        message: "no such repertoire",
+      });
+    }
+  });
+
+  it("serves the coverage without asking the network, the explorer or the engine", async () => {
+    const id = addVariationWithGap();
+    const refuse = (asked: string) => (): never => {
+      throw new Error(`the coverage asked ${asked}`);
+    };
+    const network = vi.fn(refuse("the network"));
+    vi.stubGlobal("fetch", network);
+    const explorer = vi
+      .spyOn(CachedExplorer.prototype, "position")
+      .mockImplementation(refuse("the explorer"));
+    const engine = vi.spyOn(UciEngine.prototype, "search").mockImplementation(refuse("the engine"));
+    const response = await getCoverage(buildApp({ db }), id);
+    expect(response.statusCode).toBe(200);
+    expect([network, explorer, engine].map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0]);
   });
 });

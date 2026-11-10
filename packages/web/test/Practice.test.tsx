@@ -1186,7 +1186,8 @@ describe("the openings met in games", () => {
     );
     expect(within(white).queryByText("Met in your games")).toBeNull();
     expect(within(white).getByRole("heading", { name: "Italian Game" })).toBeTruthy();
-    expect(within(white).getAllByRole("button")).toHaveLength(3);
+    // The three starts of the one drill, and its Coverage; no Add for an opening that could not be read.
+    expect(within(white).getAllByRole("button")).toHaveLength(4);
   });
 
   it("says to reload when the run ended but the list could not be read again", async () => {

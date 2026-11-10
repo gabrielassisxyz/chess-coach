@@ -41,6 +41,78 @@ export const RepertoiresResponseSchema = z.object({
 });
 export type RepertoiresResponse = z.infer<typeof RepertoiresResponseSchema>;
 
+// What the repertoire holds for one of Black's replies: an answer (covered), no answer where the
+// reply is common enough to need one (gap), or no answer where it is too rare to matter.
+export const COVERAGE_STATUSES = ["covered", "gap", "not_required"] as const;
+export const CoverageStatusSchema = z.enum(COVERAGE_STATUSES);
+export type CoverageStatus = z.infer<typeof CoverageStatusSchema>;
+
+// How a stored reply entered the variation: fixed by the opening, popular in the explorer, past the
+// goal as the most played or as the engine's, or added by a game the student played.
+export const CoverageSourceSchema = z.enum(["setup", "explorer", "mainline", "engine", "game"]);
+export type CoverageSource = z.infer<typeof CoverageSourceSchema>;
+
+// One of Black's replies in a position. `incidence` is the chance a game reaches the position the
+// reply makes, counted from where the variation starts; 0 where no game is known to have played it.
+// `next` is the index in `positions` of the position White answers from, null with no answer.
+export const CoverageReplySchema = z.object({
+  san: z.string().min(1),
+  incidence: z.number().min(0).max(1),
+  status: CoverageStatusSchema,
+  source: CoverageSourceSchema,
+  next: z.number().int().nonnegative().nullable(),
+});
+export type CoverageReply = z.infer<typeof CoverageReplySchema>;
+
+// A position with Black to move, reached by White's move of the repertoire. `line` is the moves
+// from move 1 through that White move, `parent` the position before it on that line.
+export const CoveragePositionSchema = z.object({
+  line: z.array(z.string().min(1)).min(1),
+  parent: z.number().int().nonnegative().nullable(),
+  replies: z.array(CoverageReplySchema),
+});
+export type CoveragePosition = z.infer<typeof CoveragePositionSchema>;
+
+// A reply with no answer where one is needed. `line` runs through the reply, and `position` is the
+// index in `positions` of the position Black replied in.
+export const CoverageGapSchema = z.object({
+  line: z.array(z.string().min(1)).min(1),
+  incidence: z.number().min(0).max(1),
+  position: z.number().int().nonnegative(),
+});
+export type CoverageGap = z.infer<typeof CoverageGapSchema>;
+
+// Both scores read what the generator stored. Each is null when no line reaches a position with
+// enough games to say anything.
+export const CoverageScoresSchema = z.object({
+  line_ends: z.number().int().nonnegative(),
+  // Percent with one decimal: the weighted result White scores at the student's rating.
+  expected_score: z.number().min(0).max(100).nullable(),
+  // 1 to 99: how little the engine says the lines give up beyond a small allowance per move.
+  soundness: z.number().min(1).max(99).nullable(),
+});
+export type CoverageScores = z.infer<typeof CoverageScoresSchema>;
+
+// The body of GET /api/repertoires/:id/coverage.
+export const RepertoireCoverageSchema = z.object({
+  repertoire_id: z.number().int().positive(),
+  // A reply needs an answer when it arises in at least 1 game in this many.
+  goal_one_in: z.number().int().positive(),
+  // The rating band the results and the incidences come from.
+  rating_band: z.string().min(1),
+  // Percent with one decimal of the games that stay above the goal and end in a prepared line
+  // instead of a gap; null when nothing is stored.
+  covered_percent: z.number().min(0).max(100).nullable(),
+  // Most likely first.
+  gaps: z.array(CoverageGapSchema),
+  largest_gap: CoverageGapSchema.nullable(),
+  scores: CoverageScoresSchema,
+  // The position to open first: where the variation starts choosing among Black's replies.
+  start: z.number().int().nonnegative(),
+  positions: z.array(CoveragePositionSchema),
+});
+export type RepertoireCoverage = z.infer<typeof RepertoireCoverageSchema>;
+
 // "1.e4 e5 2.Nf3 Bc5": a line written the way the book writes it, which is also the name of a unit
 // whose root the opening table does not name.
 export function repertoireRootText(root: readonly string[]): string {
