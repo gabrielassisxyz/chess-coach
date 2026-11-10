@@ -14,6 +14,7 @@ import {
 } from "../state/practice-item.js";
 import {
   hintLabelOf,
+  itemOpeningOf,
   itemVariationOf,
   nextEndsDrill,
   shownMoveOf,
@@ -199,13 +200,29 @@ function MovesList({
   );
 }
 
+function VariationPair({ label, name, testId }: { label: string; name: string; testId?: string }) {
+  return (
+    <span className="repertoire-variation__pair">
+      <span className="repertoire-variation__label">{label}</span>
+      <span className="repertoire-variation__name" data-testid={testId}>
+        {name}
+      </span>
+    </span>
+  );
+}
+
+// The opening and the variation of the move in play: in a drill over several units they say which
+// unit the move asked belongs to.
 function ItemVariation({ training }: { training: TrainingActivity }) {
+  const opening = itemOpeningOf(training);
   const name = itemVariationOf(training);
-  if (name === null) return null;
+  if (opening === null && name === null) return null;
   return (
     <p className="repertoire-variation" data-testid="item-variation">
-      <span className="repertoire-variation__label">Variation</span>
-      <span className="repertoire-variation__name">{name}</span>
+      {opening === null ? null : (
+        <VariationPair label="Opening" name={opening} testId="item-opening" />
+      )}
+      {name === null ? null : <VariationPair label="Variation" name={name} />}
     </p>
   );
 }

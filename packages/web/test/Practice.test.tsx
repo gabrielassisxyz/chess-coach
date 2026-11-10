@@ -30,6 +30,7 @@ import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
 import {
   CLASSICAL_VARIATION,
+  italianRepertoire,
   motifCounts,
   progressOf,
   repertoireActivity,
@@ -1721,21 +1722,306 @@ describe("the call behind a new variation", () => {
   });
 });
 
+const alekhineDrill: RepertoireSummary = {
+  id: 8,
+  side: "white",
+  group_name: "Alekhine Defense",
+  variation_name: "Modern Variation (2.e5)",
+  moves: { recommended: 3, due: 4, all: 9 },
+};
+const foundDrills = [...repertoireList, scandinavianDrill, alekhineDrill];
+const NOTHING_TO_DRILL = { moves: { recommended: 0, due: 0, all: 0 } };
+const FOUND_START = "every added opening found in your games";
+
+// The Italian the student chose, two units built from openings the games met, and two openings met
+// that have no unit yet. The mixed drill of the two units counts a move they share once.
+const foundListing = (overrides: Partial<RepertoiresResponse> = {}): RepertoiresResponse => ({
+  repertoires: foundDrills,
+  groups: [
+    { side: "white", group_name: "Italian Game", moves: italianRepertoire.moves },
+    { side: "white", group_name: "Scandinavian Defense", moves: scandinavianDrill.moves },
+    { side: "white", group_name: "Alekhine Defense", moves: alekhineDrill.moves },
+  ],
+  sides: [{ side: "white", moves: { recommended: 10, due: 24, all: 59 } }],
+  found: { moves: { recommended: 7, due: 9, all: 20 } },
+  met: [
+    { ...scandinavian, repertoire_id: 7 },
+    { ...alekhine, repertoire_id: 8 },
+    { ...caroKann, repertoire_id: null },
+    unnamed,
+  ],
+  branches: [],
+  ...overrides,
+});
+
+const renderFound = (props: Partial<PracticeHubProps> = {}) =>
+  renderHub({
+    repertoires: { status: "ready", value: foundDrills },
+    fetchRepertoireList: async () => foundListing(),
+    ...props,
+  });
+
+const foundSection = (white: HTMLElement): Promise<HTMLElement> =>
+  within(white).findByRole("region", { name: "Found in your games" });
+
+// Whether the second node follows the first in the document, which is the order the student reads.
+const follows = (first: Element, second: Element): boolean =>
+  (first.compareDocumentPosition(second) & 4) !== 0;
+
+describe("the openings found in your games", () => {
+  it("lists the added units, then the openings still to add, then the mixed starts with their counts", async () => {
+    renderFound();
+    const white = await whiteOpenings();
+    const found = await foundSection(white);
+    expect(
+      within(found)
+        .getAllByRole("heading")
+        .map((heading) => heading.textContent),
+    ).toEqual(["Found in your games", "Scandinavian Defense", "Alekhine Defense"]);
+
+    const toAdd = within(found).getByRole("list", { name: "Openings met in your games" });
+    expect(
+      within(toAdd)
+        .getAllByRole("listitem")
+        .map((row) => row.textContent),
+    ).toEqual(["Caro-Kann Defense1.e4 c61 gameAdd", "1.e4 e5 2.Nf3 Bc51 gameAdd"]);
+    const alekhineMenu = within(found).getByRole("heading", { name: "Alekhine Defense" });
+    const starts = within(found).getByRole("button", { name: `Recommended 7, ${FOUND_START}` });
+    expect(follows(alekhineMenu, toAdd)).toBe(true);
+    expect(follows(toAdd, starts)).toBe(true);
+    expect(within(found).getByText("Every added opening, mixed")).toBeTruthy();
+    for (const name of [`Everything due 9, ${FOUND_START}`, `All moves 20, ${FOUND_START}`]) {
+      expect((within(found).getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    }
+  });
+
+  it("gives each added unit the menu of any opening, with its own starts", async () => {
+    renderFound();
+    const found = await foundSection(await whiteOpenings());
+    expect(within(found).getByText("Mieses-Kotroc Variation (2.exd5)")).toBeTruthy();
+    expect(within(found).getByText("Modern Variation (2.e5)")).toBeTruthy();
+    for (const name of ["Recommended 4", "Everything due 6", "Recommended 3", "All moves 9"]) {
+      expect(within(found).getByRole("button", { name })).toBeTruthy();
+    }
+    expect(within(found).getAllByRole("button", { name: /^Coverage of / })).toHaveLength(2);
+  });
+
+  it("keeps the Italian out of the section, in the menu of chosen openings above it", async () => {
+    renderFound();
+    const white = await whiteOpenings();
+    const found = await foundSection(white);
+    expect(within(found).queryByRole("heading", { name: "Italian Game" })).toBeNull();
+    expect(within(found).queryByText(CLASSICAL_VARIATION)).toBeNull();
+    const italian = within(white).getByRole("heading", { name: "Italian Game" });
+    expect(follows(italian, found)).toBe(true);
+  });
+
+  it("starts every added opening mixed from the first of them, whichever scope is pressed", async () => {
+    const onStartRepertoire = vi.fn();
+    renderFound({ onStartRepertoire });
+    const found = await foundSection(await whiteOpenings());
+    for (const name of ["Recommended 7", "Everything due 9", "All moves 20"]) {
+      fireEvent.click(within(found).getByRole("button", { name: `${name}, ${FOUND_START}` }));
+    }
+    expect(onStartRepertoire.mock.calls).toEqual([
+      [7, "recommended", "found"],
+      [7, "due", "found"],
+      [7, "all", "found"],
+    ]);
+  });
+
+  it("marks the pressed mixed start as starting and not the same scope of an opening in it", async () => {
+    renderFound({
+      starting: { mode: "repertoire", motif: "due", repertoireId: 7, level: "found" },
+    });
+    const found = await foundSection(await whiteOpenings());
+    expect(
+      await within(found).findByRole("button", { name: `Starting, ${FOUND_START}` }),
+    ).toBeTruthy();
+    expect(within(found).getByRole("button", { name: "Everything due 6" })).toBeTruthy();
+    expect(within(found).queryByRole("button", { name: "Starting" })).toBeNull();
+  });
+
+  it("shows only the openings to add, and no starts, while no unit was built from one", async () => {
+    renderFound({
+      repertoires: { status: "ready", value: repertoireList },
+      fetchRepertoireList: async () =>
+        foundListing({
+          repertoires: repertoireList,
+          found: NOTHING_TO_DRILL,
+          met: [scandinavian, alekhine],
+        }),
+    });
+    const white = await whiteOpenings();
+    const found = await foundSection(white);
+    expect(
+      within(found)
+        .getAllByRole("heading")
+        .map((heading) => heading.textContent),
+    ).toEqual(["Found in your games"]);
+    expect(
+      within(found)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Add", "Add"]);
+    expect(within(found).queryByText("Every added opening, mixed")).toBeNull();
+    expect(within(white).queryByRole("button", { name: new RegExp(FOUND_START) })).toBeNull();
+  });
+
+  it("offers no mixed starts before the server has counted them, and no section with nothing met", async () => {
+    const read = vi.fn(async () => foundListing({ found: undefined }));
+    renderFound({ fetchRepertoireList: read });
+    const found = await foundSection(await whiteOpenings());
+    expect(within(found).getByRole("heading", { name: "Scandinavian Defense" })).toBeTruthy();
+    expect(within(found).queryByText("Every added opening, mixed")).toBeNull();
+    cleanup();
+
+    const none = vi.fn(async () => foundListing({ repertoires: repertoireList, met: [] }));
+    renderFound({
+      repertoires: { status: "ready", value: repertoireList },
+      fetchRepertoireList: none,
+    });
+    const white = await whiteOpenings();
+    await waitFor(() => expect(none).toHaveBeenCalled());
+    await settle();
+    expect(within(white).queryByRole("region", { name: "Found in your games" })).toBeNull();
+    expect(within(white).queryByText("Found in your games")).toBeNull();
+  });
+
+  it("moves a root into the section with its menu when its run ends, ahead of the roots still to add", async () => {
+    let finish: () => void = noop;
+    const addOpening = vi.fn(
+      (_root: readonly string[]) =>
+        new Promise<AddedOpening>((resolve) => {
+          finish = () => resolve({ truncated: false });
+        }),
+    );
+    const reads = [
+      foundListing({
+        repertoires: repertoireList,
+        found: NOTHING_TO_DRILL,
+        met: [scandinavian, alekhine],
+      }),
+      foundListing({
+        repertoires: [...repertoireList, scandinavianDrill],
+        found: { moves: scandinavianDrill.moves },
+        met: [{ ...scandinavian, repertoire_id: 7 }, alekhine],
+      }),
+    ];
+    const fetchRepertoireList = vi.fn(async () => reads.shift() as RepertoiresResponse);
+    renderFound({
+      repertoires: { status: "ready", value: repertoireList },
+      fetchRepertoireList,
+      addOpening,
+    });
+    const white = await whiteOpenings();
+    const found = await foundSection(white);
+    fireEvent.click(
+      await within(found).findByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
+    );
+    expect(within(found).queryByRole("heading", { name: "Scandinavian Defense" })).toBeNull();
+
+    await act(async () => finish());
+    const menu = await within(found).findByRole("heading", { name: "Scandinavian Defense" });
+    const toAdd = within(found).getByRole("list", { name: "Openings met in your games" });
+    expect(within(toAdd).getAllByRole("listitem")).toHaveLength(1);
+    expect(follows(menu, toAdd)).toBe(true);
+    // One added opening is enough for the mixed starts, and they close the section.
+    const starts = within(found).getByRole("button", { name: `Recommended 4, ${FOUND_START}` });
+    expect(follows(toAdd, starts)).toBe(true);
+    expect(within(found).getAllByRole("heading")).toHaveLength(2);
+  });
+
+  it("sends the found level with the start, from the first added opening", async () => {
+    const server = api(null);
+    render(
+      <Practice
+        server={server}
+        {...hubProps}
+        fetchRepertoires={async () => foundDrills}
+        fetchRepertoireList={async () => foundListing()}
+      />,
+    );
+    // The loading card is replaced once the list has loaded, so it is found by what the list holds.
+    await screen.findByRole("heading", { name: "Scandinavian Defense" });
+    const white = screen.getByRole("region", { name: "White openings" });
+    fireEvent.click(
+      await within(white).findByRole("button", { name: `Everything due 9, ${FOUND_START}` }),
+    );
+    expect(server.send).toHaveBeenCalledTimes(1);
+    expect(server.send).toHaveBeenCalledWith({
+      type: "start_training",
+      mode: "repertoire",
+      repertoire_id: 7,
+      scope: "due",
+      level: "found",
+    });
+  });
+});
+
 describe("the variation of the move in play", () => {
-  const drillOf = (name: string, id: number): TrainingActivity =>
+  const drillOf = (name: string, id: number, group?: string): TrainingActivity =>
     repertoireActivity({
       training: {
         item: {
           kind: "repertoire",
           repertoire_id: id,
           variation_name: name,
+          ...(group === undefined ? {} : { group_name: group }),
           fen: START_FEN,
           position_in_queue: 1,
           queue_length: 3,
         },
       },
-      drill: { repertoire_id: id, level: "group" },
+      drill: { repertoire_id: id, level: group === undefined ? "group" : "found" },
     });
+
+  it("names the opening beside the variation, and follows both from one unit to the next", () => {
+    const listed = async () => foundDrills;
+    const view = render(
+      <Practice
+        server={api(drillOf(scandinavianDrill.variation_name, 7, "Scandinavian Defense"))}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    const line = screen.getByTestId("item-variation");
+    expect(within(line).getByTestId("item-opening").textContent).toBe("Scandinavian Defense");
+    expect(within(line).getByText("Mieses-Kotroc Variation (2.exd5)")).toBeTruthy();
+    expect(line.textContent).toBe(
+      "OpeningScandinavian DefenseVariationMieses-Kotroc Variation (2.exd5)",
+    );
+
+    view.rerender(
+      <Practice
+        server={api(drillOf(alekhineDrill.variation_name, 8, "Alekhine Defense"))}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    expect(
+      within(screen.getByTestId("item-variation")).getByTestId("item-opening").textContent,
+    ).toBe("Alekhine Defense");
+    expect(
+      within(screen.getByTestId("item-variation")).getByText("Modern Variation (2.e5)"),
+    ).toBeTruthy();
+  });
+
+  it("names only the variation for an item that carries no opening", () => {
+    render(
+      <Practice
+        server={api(drillOf(CLASSICAL_VARIATION, 3))}
+        createBoard={spyBoard}
+        fetchRepertoires={async () => levelDrills}
+      />,
+    );
+    expect(screen.queryByTestId("item-opening")).toBeNull();
+    expect(screen.getByTestId("item-variation").textContent).toBe(
+      `Variation${CLASSICAL_VARIATION}`,
+    );
+  });
 
   it("names the variation whose move is asked, and follows it from move to move", () => {
     const listed = async () => levelDrills;

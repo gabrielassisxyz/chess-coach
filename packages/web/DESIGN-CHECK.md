@@ -61,8 +61,8 @@ Shell
   ratings, engine strip, move list, state card), a 40 px bar under the board, popovers for the
   board and the engine settings anchored to their icons; coordinates inside the squares in
   10 px mono by default. A repertoire line drill swaps the ratings for the variation in play
-  and three counts, names the variation of the move asked on a hairline row under them, and its
-  open state hides the bar's Explore button.
+  and three counts, names the opening and the variation of the move asked on a hairline row
+  under them, and its open state hides the bar's Explore button.
 
 Phone (under 900 px)
 
@@ -178,7 +178,19 @@ screens were built to are in the design probe's spec (token layer and interactio
   button that is 44 px under 900 px. M1 and M2 print nothing for it, the rows wait for the openings
   met in games so none moves onto a met row after it has shown, a start refused because the
   family is gone says to reload, in the error tone like every refusal, and a list that could not
-  be read is one plain sentence in the Openings card that says to reload.
+  be read is one plain sentence in the Openings card that says to reload. The Practice cells were
+  read a last time for the Found in your games section, which holds the openings met in games
+  that the openings menu used to list apart from the chosen ones: a block under the chosen
+  openings with a hairline above it like each opening has, a heading in the type of an opening's
+  name, the menu of each added opening as any opening has it, the rows still to add built like
+  the met openings' with the same 44 px Add button, and last one row of starts under a plain
+  label with a hairline above it, the same buttons as a variation's. With no added opening it
+  holds the rows to add and no starts, and with nothing met and nothing built it is not drawn.
+  The section is a labelled region, not a card, so no card sits inside another. M1 and M2 print
+  nothing for it, and its states (building, built, refused, list unreadable) read as the met
+  openings' do. The row under the drill's head now names the opening beside the variation, each
+  a label and a name in the two text tokens that wrap together as a pair, so a long name never
+  pushes the row past the column on a phone.
 - **The coverage view** opens under a variation of the openings menu, from its Coverage button,
   and has a column of its own in the checklist. Its cells were read against the markup,
   `repertoire.css` and the 899 px block: a hairline above it as each opening in the menu has,
