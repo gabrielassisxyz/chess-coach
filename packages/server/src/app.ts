@@ -49,11 +49,13 @@ export interface AppOptions {
   generateItalianOpenings?: () => Promise<ExplorerResult>;
   /**
    * Builds the first stored variation of the Italian, or of the unit rooted at a line, or another
-   * variation of the Italian forced at a branch point; only asked for by name, never after an import.
+   * variation of the Italian forced at a branch point, and with `rebuild` replaces the stored one
+   * under the current rule; only asked for by name, never after an import.
    */
   generateRepertoireOpenings?: (
     root?: readonly string[],
     branch?: readonly string[],
+    rebuild?: boolean,
   ) => Promise<RepertoireResult>;
   /** Writes the idea of each stored White move through the model; only asked for by name, never at boot. */
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>;

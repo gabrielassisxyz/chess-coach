@@ -142,6 +142,15 @@ export function createRepertoireVariation(db: Database, repertoire: NewRepertoir
   };
 }
 
+/** Every variation of a group goes, with its positions: a rebuild's rows are kept under one apart. */
+export function deleteRepertoireGroupVariations(
+  db: Database,
+  side: RepertoireSide,
+  groupName: string,
+): void {
+  db.prepare("DELETE FROM repertoires WHERE side = ? AND group_name = ?").run(side, groupName);
+}
+
 export function renameRepertoireVariation(
   db: Database,
   repertoireId: number,
@@ -151,6 +160,36 @@ export function renameRepertoireVariation(
     variationName,
     repertoireId,
   );
+}
+
+/**
+ * Puts the positions of one variation in place of another's, which go, and deletes the variation
+ * they came from. Row ids stay, so whatever points at a moved row keeps pointing at it.
+ */
+export function moveRepertoirePositionsOnto(
+  db: Database,
+  targetId: number,
+  sourceId: number,
+): void {
+  db.prepare("DELETE FROM repertoire_positions WHERE repertoire_id = ?").run(targetId);
+  db.prepare("UPDATE repertoire_positions SET repertoire_id = ? WHERE repertoire_id = ?").run(
+    targetId,
+    sourceId,
+  );
+  db.prepare("DELETE FROM repertoires WHERE id = ?").run(sourceId);
+}
+
+/** The position and move of each White move of a variation, which is what a review card is keyed by. */
+export function listRepertoireOwnMoveKeys(
+  db: Database,
+  repertoireId: number,
+): Array<{ positionKey: string; uci: string }> {
+  return db
+    .prepare(
+      `SELECT position_key AS positionKey, move_uci AS uci FROM repertoire_positions
+       WHERE repertoire_id = ? AND kind = 'own' ORDER BY id`,
+    )
+    .all(repertoireId) as Array<{ positionKey: string; uci: string }>;
 }
 
 /** How many of a variation's White moves are written with each SAN. */

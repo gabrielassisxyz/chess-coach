@@ -8,6 +8,11 @@ import { FakeClock } from "../../test/fakes/fake-explorer.js";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
 import {
+  findRepertoireCard,
+  introduceRepertoireCard,
+  saveRepertoireCardReview,
+} from "../db/repertoire-cards.js";
+import {
   createRepertoireVariation,
   findFirstRepertoireVariation,
   findRepertoireVariationByName,
@@ -2141,13 +2146,17 @@ describe("the documentation of the repertoire source", () => {
     expect(openings).not.toContain("`deadlineMs`");
   });
 
-  it("says under Openings how the plan rule chooses White's move", () => {
+  it("says under Openings how the plan rule chooses White's move and how a unit is rebuilt under it", () => {
     const agents = readFileSync(join(repositoryRoot, "AGENTS.md"), "utf8");
     const openings = /- \*\*Openings:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "";
     for (const documented of [
       "the plan rule",
       "within 50 cp of its best, the move whose SAN the unit already plays most often is chosen",
+      '`POST /api/openings/generate {sources: ["repertoire"], rebuild: true}`',
+      "`invalid_rebuild`",
       "`planChoices`",
+      "`cardsKept`",
+      "`cardsDeleted`",
     ]) {
       expect(openings).toContain(documented);
     }
@@ -2416,6 +2425,19 @@ function seedPlayedSans(sans: string[]): RepertoireRow {
   return seeded;
 }
 
+const postRepertoireRun = async (payload: object, log: RecordingLog, names: OpeningNames) => {
+  const app = buildApp({
+    db,
+    log,
+    generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+    generateRepertoireOpenings: (root, branch, rebuild) =>
+      generateRepertoire(db, engine, explorer, cacheDir, clock, names, { root, branch, rebuild }),
+  });
+  const response = await app.inject({ method: "POST", url: "/api/openings/generate", payload });
+  await app.close();
+  return response;
+};
+
 describe("the plan rule", () => {
   it("answers the next reply with the move the most common line stored, inside 50 cp, over a more played one", async () => {
     writeItalianTree();
@@ -2534,6 +2556,325 @@ describe("the plan rule", () => {
       });
     },
   );
+});
+
+const ON_NF6 = { line: [...SETUP, "Nf6"], uci: "d2d3" };
+const ON_BC5 = { line: AFTER_BC5, uci: "c2c3" };
+const ON_SETUP = { line: BEFORE_BC4, uci: "f1c4" };
+
+interface RepertoireTestCard {
+  id: number;
+  position_key: string;
+  move_uci: string;
+  introduced_at: string;
+  next_review_at: string;
+  interval_hours: number;
+  ease_factor: number;
+  repetitions: number;
+  reviews: number;
+  last_reviewed_at: string | null;
+}
+
+const cardsOf = (database: Database): RepertoireTestCard[] =>
+  database.prepare("SELECT * FROM repertoire_cards ORDER BY id").all() as RepertoireTestCard[];
+
+/** A card with a schedule of its own, reviewed `reviews` times, so that a kept one is told apart. */
+function scheduleCard(
+  move: { line: string[]; uci: string },
+  schedule: { interval_hours: number; ease_factor: number; repetitions: number },
+  reviews: number,
+): RepertoireTestCard {
+  const key = { positionKey: keyOf(move.line), uci: move.uci };
+  introduceRepertoireCard(db, key, "2026-11-01T09:00:00.000Z");
+  const card = findRepertoireCard(db, key);
+  if (!card) throw new Error(`no card for ${move.uci}`);
+  for (let review = 0; review < reviews; review += 1) {
+    saveRepertoireCardReview(db, card.id, {
+      schedule,
+      nextReviewAt: "2026-11-20T09:00:00.000Z",
+      reviewedAt: "2026-11-08T09:00:00.000Z",
+    });
+  }
+  return cardsOf(db).find((row) => row.id === card.id) as RepertoireTestCard;
+}
+
+const comparableRows = (rows: RepertoireTestRow[]) =>
+  rows.map(({ id: _id, repertoire_id: _repertoire, ...row }) => row);
+
+/** The rows a first run over the same data stores in a database of its own. */
+async function rowsOfFirstRun(options: RepertoireOptions, names: OpeningNames) {
+  const cleanDir = mkdtempSync(join(tmpdir(), "cc-repertoire-first-"));
+  const cleanDb = openDatabase(cleanDir);
+  try {
+    const cleanCache = join(cleanDir, "explorer-cache");
+    await generateRepertoire(cleanDb, engine, explorer, cleanCache, clock, names, options);
+    return comparableRows(rowsOf(cleanDb));
+  } finally {
+    cleanDb.close();
+    rmSync(cleanDir, { recursive: true, force: true });
+  }
+}
+
+const rebuild = (options: RepertoireOptions = {}, names: OpeningNames = BRANCH_FIXTURE_NAMES) =>
+  generate({ ...options, rebuild: true }, names);
+
+describe("rebuilding a unit", () => {
+  it("replaces the unit's rows with those of a first run under the rule, in the same variation", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    const before = variationNamed("Classical Variation (4.c3)");
+    writePlanWithinMargin();
+
+    const result = await rebuild();
+
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("d3");
+    expect(rowsAfter(AFTER_C3)).toEqual([]);
+    expect(comparableRows(rowsOf(db))).toEqual(await rowsOfFirstRun({}, BRANCH_FIXTURE_NAMES));
+    expect(new Set(rowsOf(db).map((row) => row.repertoire_id))).toEqual(new Set([before.id]));
+    expect(variationsOf(db)).toEqual([
+      { side: "white", group_name: "Italian Game", variation_name: "Giuoco Pianissimo (4.d3)" },
+    ]);
+    expect(variationNamed("Giuoco Pianissimo (4.d3)").id).toBe(before.id);
+    expect(result).toMatchObject({
+      variation: "Giuoco Pianissimo (4.d3)",
+      created: rowsOf(db).length,
+      truncated: false,
+      planChoices: expect.any(Number),
+    });
+    expect(result.planChoices).toBeGreaterThan(0);
+  });
+
+  it("keeps the schedule of a card whose move survives and deletes the card of a move no longer stored", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    const survivor = scheduleCard(
+      ON_NF6,
+      { interval_hours: 72, ease_factor: 2.36, repetitions: 3 },
+      2,
+    );
+    const setup = scheduleCard(
+      ON_SETUP,
+      { interval_hours: 24, ease_factor: 2.5, repetitions: 2 },
+      1,
+    );
+    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    writePlanWithinMargin();
+
+    const result = await rebuild();
+
+    expect(cardsOf(db)).toEqual([survivor, setup]);
+    expect(survivor).toMatchObject({ interval_hours: 72, ease_factor: 2.36, reviews: 2 });
+    expect(result).toMatchObject({ cardsKept: 2, cardsDeleted: 1 });
+  });
+
+  it("keeps a card whose move the rebuilt unit dropped while another unit still stores it", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    const first = variationNamed("Classical Variation (4.c3)");
+    // Forced on White's 5th move of the 4.c3 line, so the branch plays 4.c3 as the first did.
+    const other = await generateBranch([...AFTER_C3, "Nf6", "d3"]);
+    const branched = variationNamed(other.variation ?? "");
+    expect(ownOf(branched.id, AFTER_BC5)?.move_san).toBe("c3");
+    const shared = scheduleCard(
+      ON_BC5,
+      { interval_hours: 168, ease_factor: 2.2, repetitions: 4 },
+      3,
+    );
+    writePlanWithinMargin();
+
+    const result = await rebuild();
+
+    expect(ownOf(first.id, AFTER_BC5)?.move_san).toBe("d3");
+    expect(ownOf(branched.id, AFTER_BC5)?.move_san).toBe("c3");
+    expect(cardsOf(db)).toEqual([shared]);
+    expect(result).toMatchObject({ cardsKept: 1, cardsDeleted: 0 });
+  });
+
+  it("changes nothing without rebuild, even where the rule would now answer 3...Bc5 otherwise", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    const stored = rowsOf(db);
+    const cards = cardsOf(db);
+    writePlanWithinMargin();
+
+    const rerun = await generate({}, BRANCH_FIXTURE_NAMES);
+
+    expect(rerun).toMatchObject({ created: 0, planChoices: 0, requests: 0 });
+    expect(rerun).not.toHaveProperty("cardsKept");
+    expect(rerun).not.toHaveProperty("cardsDeleted");
+    expect(rowsOf(db)).toEqual(stored);
+    expect(cardsOf(db)).toEqual(cards);
+    expect(variationsOf(db)).toEqual([
+      { side: "white", group_name: "Italian Game", variation_name: "Classical Variation (4.c3)" },
+    ]);
+  });
+
+  it("leaves the unit and its cards as they were when the budget cuts the rebuild short", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    const stored = rowsOf(db);
+    const cards = cardsOf(db);
+    writePlanWithinMargin();
+
+    // Every position of the stored unit is in the cache; the first new one, after 4.d3, is not.
+    const cut = await rebuild({ maxRequests: 0 });
+
+    expect(cut).toMatchObject({
+      variation: "Classical Variation (4.c3)",
+      truncated: true,
+      created: 0,
+      planChoices: 0,
+    });
+    expect(cut).not.toHaveProperty("cardsKept");
+    expect(rowsOf(db)).toEqual(stored);
+    expect(cardsOf(db)).toEqual(cards);
+    expect(variationsOf(db)).toHaveLength(1);
+
+    const resumed = await rebuild();
+    expect(resumed).toMatchObject({ truncated: false, cardsDeleted: 1 });
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("d3");
+  });
+
+  it("leaves the unit as it was when the rebuild fails, and keeps no rows apart", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    const stored = rowsOf(db);
+    const cards = cardsOf(db);
+    writePlanWithinMargin();
+    const failure = new ExplorerError("upstream", "the explorer answered 500");
+    explorer.failAt(D3_BRANCH, EXPLORER_RATINGS, failure);
+
+    await expect(rebuild()).rejects.toBe(failure);
+
+    expect(rowsOf(db)).toEqual(stored);
+    expect(cardsOf(db)).toEqual(cards);
+    expect(variationsOf(db)).toHaveLength(1);
+  });
+
+  it("clears the rows a rebuild that died with the process left apart", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    // A rebuild under the old numbers that died after storing its answer to 3...Bc5: a walk that
+    // carried it on would follow that answer instead of choosing again.
+    const leftover = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game (rebuilding)",
+      variationName: "Classical Variation (4.c3)",
+    });
+    const stale = ownAt(AFTER_BC5) as RepertoireTestRow;
+    insertRepertoireOwnMove(db, {
+      repertoireId: leftover.id,
+      positionKey: stale.position_key,
+      ply: stale.ply,
+      line: lineOf(stale),
+      reach: stale.reach,
+      openingName: stale.opening_name,
+      uci: stale.move_uci,
+      san: stale.move_san,
+      share: stale.share,
+      source: "explorer",
+      cpLoss: 10,
+      evalCp: 30,
+      results: null,
+    });
+    writePlanWithinMargin();
+
+    await rebuild();
+
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("d3");
+    expect(variationsOf(db)).toEqual([
+      { side: "white", group_name: "Italian Game", variation_name: "Giuoco Pianissimo (4.d3)" },
+    ]);
+    expect(rowsOf(db).some((row) => row.repertoire_id === leftover.id)).toBe(false);
+  });
+
+  it("refuses to give the rebuilt unit the name of a variation built at a branch point, and changes nothing", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    await generateBranch(D3_BRANCH);
+    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    const stored = rowsOf(db);
+    const cards = cardsOf(db);
+    writePlanWithinMargin();
+
+    await expect(rebuild()).rejects.toThrow(
+      new RepertoireBranchError(
+        "Giuoco Pianissimo (4.d3) already names another variation of Italian Game",
+      ),
+    );
+
+    expect(rowsOf(db)).toEqual(stored);
+    expect(cardsOf(db)).toEqual(cards);
+    expect(variationsOf(db)).toEqual([
+      { side: "white", group_name: "Italian Game", variation_name: "Classical Variation (4.c3)" },
+      { side: "white", group_name: "Italian Game", variation_name: "Giuoco Pianissimo (4.d3)" },
+    ]);
+  });
+
+  it("rebuilds a unit built from a root in its own group, keeping every card", async () => {
+    writeScandinavianTree();
+    await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    const stored = comparableRows(rowsOf(db));
+    const card = scheduleCard(
+      { line: SCANDINAVIAN, uci: "e4d5" },
+      { interval_hours: 72, ease_factor: 2.36, repetitions: 3 },
+      2,
+    );
+
+    const result = await rebuild({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+
+    expect(comparableRows(rowsOf(db))).toEqual(stored);
+    expect(cardsOf(db)).toEqual([card]);
+    expect(result).toMatchObject({
+      variation: "Mieses-Kotroc Variation (2.exd5)",
+      cardsKept: 1,
+      cardsDeleted: 0,
+    });
+    expect(variationsOf(db)).toEqual([
+      {
+        side: "white",
+        group_name: "Scandinavian Defense",
+        variation_name: "Mieses-Kotroc Variation (2.exd5)",
+      },
+    ]);
+  });
+
+  it("builds the unit as a first run does where none is stored yet", async () => {
+    writeItalianTree();
+    const result = await rebuild();
+    expect(comparableRows(rowsOf(db))).toEqual(await rowsOfFirstRun({}, BRANCH_FIXTURE_NAMES));
+    expect(result).not.toHaveProperty("cardsKept");
+  });
+
+  it("logs the cards kept and deleted and the plan rule's choices for a rebuild posted to the route", async () => {
+    writeItalianTree();
+    const log = new RecordingLog();
+    await postRepertoireRun({ sources: ["repertoire"] }, log, BRANCH_FIXTURE_NAMES);
+    scheduleCard(ON_NF6, { interval_hours: 72, ease_factor: 2.36, repetitions: 3 }, 2);
+    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    writePlanWithinMargin();
+
+    const response = await postRepertoireRun(
+      { sources: ["repertoire"], rebuild: true },
+      log,
+      BRANCH_FIXTURE_NAMES,
+    );
+
+    expect(response.statusCode).toBe(200);
+    const answered = response.json().repertoire as RepertoireResult;
+    expect(answered).toMatchObject({ cardsKept: 1, cardsDeleted: 1 });
+    expect(answered.planChoices).toBeGreaterThan(0);
+    expect(log.named("openings.generate").at(-1)?.fields).toMatchObject({
+      sources: ["repertoire"],
+      rebuild: true,
+      result: {
+        repertoire: { cardsKept: 1, cardsDeleted: 1, planChoices: answered.planChoices },
+      },
+    });
+  });
 });
 
 describe("checking a branch", () => {

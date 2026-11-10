@@ -120,6 +120,40 @@ export function introduceRepertoireCard(
   ).run(move.positionKey, move.uci, at, at);
 }
 
+/** What a rebuild did to the cards of the White moves it replaced. */
+export interface RepertoireCardSweep {
+  /** Cards whose position and move some variation still stores, history and all. */
+  kept: number;
+  /** Cards whose position and move no variation stores any more. */
+  deleted: number;
+}
+
+/**
+ * A card is shared by every variation that plays its move in its position, so it is kept while any
+ * variation still stores that White move, and deleted once none does: the drill would otherwise
+ * keep asking for a move nothing expects.
+ */
+export function deleteRepertoireCardsNoVariationPlays(
+  db: Database,
+  moves: ReadonlyArray<{ positionKey: string; uci: string }>,
+): RepertoireCardSweep {
+  const played = db.prepare(
+    `SELECT 1 FROM repertoire_positions
+     WHERE kind = 'own' AND position_key = ? AND move_uci = ? LIMIT 1`,
+  );
+  const held = db.prepare("SELECT 1 FROM repertoire_cards WHERE position_key = ? AND move_uci = ?");
+  const remove = db.prepare("DELETE FROM repertoire_cards WHERE position_key = ? AND move_uci = ?");
+  const sweep: RepertoireCardSweep = { kept: 0, deleted: 0 };
+  for (const move of moves) {
+    if (played.get(move.positionKey, move.uci) === undefined) {
+      sweep.deleted += remove.run(move.positionKey, move.uci).changes;
+    } else if (held.get(move.positionKey, move.uci) !== undefined) {
+      sweep.kept += 1;
+    }
+  }
+  return sweep;
+}
+
 export function findRepertoireCard(
   db: Database,
   move: { positionKey: string; uci: string },

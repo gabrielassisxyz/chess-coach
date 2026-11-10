@@ -4,8 +4,13 @@ import { repertoireRootText } from "@chess-coach/shared";
 import { Chess, type Move } from "chess.js";
 import type { Database } from "../db/open.js";
 import {
+  deleteRepertoireCardsNoVariationPlays,
+  type RepertoireCardSweep,
+} from "../db/repertoire-cards.js";
+import {
   countRepertoireOwnMovesBySan,
   createRepertoireVariation,
+  deleteRepertoireGroupVariations,
   deleteRepertoireRepliesAtPly,
   findFirstRepertoireVariation,
   findRepertoireContinuations,
@@ -14,6 +19,8 @@ import {
   findRepertoireVariationByName,
   findRepertoireVariationPlaying,
   insertRepertoireOwnMove,
+  listRepertoireOwnMoveKeys,
+  moveRepertoirePositionsOnto,
   type RepertoireCounts,
   type RepertoireMoveSource,
   type RepertoireResultCounts,
@@ -70,6 +77,8 @@ const ITALIAN_NAMING_REPLY_SAN = "Bc5";
 // from its fixed line, so the preference could only choose White's answer after a root, where the
 // rule is the most played move within the margin. No turn has no setup move.
 const NO_SETUP_PREFERENCE_TURN = 0;
+// A rebuild stores its rows under this group until its walk ends, apart from the unit it replaces.
+const REPERTOIRE_REBUILD_GROUP_SUFFIX = " (rebuilding)";
 
 export interface RepertoireOptions {
   /**
@@ -83,6 +92,12 @@ export interface RepertoireOptions {
    * root, and is checked again here, whoever called.
    */
   branch?: readonly string[] | undefined;
+  /**
+   * Replaces the stored unit with a new walk under the current rule, since a rerun never changes a
+   * stored move. The unit changes only if that walk ends: one that fails or that the request budget
+   * cuts short leaves it as it was.
+   */
+  rebuild?: boolean | undefined;
   maxPly?: number;
   minGames?: number;
   minReach?: number;
@@ -114,6 +129,10 @@ export interface RepertoireResult {
   shallowestDepth: number | null;
   /** White moves this run stored where the unit already played a candidate, so the plan rule chose. */
   planChoices: number;
+  /** On a rebuild that replaced the unit: the cards of its old White moves that some unit still stores. */
+  cardsKept?: number;
+  /** On a rebuild that replaced the unit: the cards of its old White moves that no unit stores now. */
+  cardsDeleted?: number;
 }
 
 interface RepertoirePlayedMove {
@@ -892,6 +911,53 @@ function repertoireRunResult(
   };
 }
 
+// One transaction: the unit takes the new rows and, unless a forced move names it, the name its new
+// answer gives, and the cards of its old White moves that no unit stores any more go with the rows.
+function swapInRebuiltUnit(
+  db: Database,
+  unit: RepertoireUnit,
+  stored: RepertoireRow,
+  built: RepertoireRow,
+): RepertoireCardSweep {
+  return db.transaction(() => {
+    const oldMoves = listRepertoireOwnMoveKeys(db, stored.id);
+    if (!unit.forced) renameUnitVariation(db, unit.groupName, stored.id, built.variation_name);
+    moveRepertoirePositionsOnto(db, stored.id, built.id);
+    return deleteRepertoireCardsNoVariationPlays(db, oldMoves);
+  })();
+}
+
+// The walk stores its rows under a group of their own, so the unit, its drills and its game reviews
+// stay as they are while it runs. Its writes stay outside a transaction: the walk waits minutes on
+// the network and the engine, and every other write of the app in that time would join it and be
+// undone with it. A walk that fails or that the budget cuts short is thrown away; running the
+// rebuild again resumes from the cache.
+async function rebuildRepertoireUnit(
+  deps: RepertoireRunDeps,
+  unit: RepertoireUnit,
+  stored: RepertoireRow,
+): Promise<RepertoireResult> {
+  const apart = { ...unit, groupName: `${unit.groupName}${REPERTOIRE_REBUILD_GROUP_SUFFIX}` };
+  const discard = () => deleteRepertoireGroupVariations(deps.db, "white", apart.groupName);
+  // What a rebuild that died with the process left behind.
+  discard();
+  try {
+    const outcome = await walkRepertoireUnit(deps, apart);
+    const built = findUnitVariation(deps.db, apart);
+    if (outcome.truncated || !built) {
+      discard();
+      const unchanged = { ...outcome, before: unitVariationCounts(deps.db, unit) };
+      return { ...repertoireRunResult(deps, unit, unchanged), planChoices: 0 };
+    }
+    const cards = swapInRebuiltUnit(deps.db, unit, stored, built);
+    const result = repertoireRunResult(deps, unit, outcome);
+    return { ...result, cardsKept: cards.kept, cardsDeleted: cards.deleted };
+  } catch (error) {
+    discard();
+    throw error;
+  }
+}
+
 /**
  * Builds the first variation of a unit, the Italian unless `options.root` names another, or with
  * `options.branch` another variation of the Italian, whose White move is forced in one position: one
@@ -903,7 +969,8 @@ function repertoireRunResult(
  * A search that is slow stops at the cap and keeps its best line, so a run never fails on one: the
  * depth reached is stored beside each White move's evaluation, and the result counts the cut searches.
  * White's move follows the plan rule: among the engine's lines within the margin, the move the unit
- * already plays most often.
+ * already plays most often. With `options.rebuild` a stored unit is walked again from scratch and
+ * replaced, keeping the review cards of every White move some unit still stores.
  */
 export async function generateRepertoire(
   db: Database,
@@ -919,6 +986,8 @@ export async function generateRepertoire(
   assertBranchAddsVariation(db, unit);
   const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
   const deps: RepertoireRunDeps = { db, engine, explorer, names, options };
+  const stored = options.rebuild ? findUnitVariation(db, unit) : undefined;
+  if (stored) return rebuildRepertoireUnit(deps, unit, stored);
   return repertoireRunResult(deps, unit, await walkRepertoireUnit(deps, unit));
 }
 

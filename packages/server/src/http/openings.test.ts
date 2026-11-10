@@ -508,6 +508,89 @@ describe("POST /api/openings/generate", () => {
       });
     });
 
+    describe("with rebuild", () => {
+      type Handed = { root: readonly string[] | undefined; rebuild: boolean | undefined };
+      const buildRebuilding = (handed: Handed[], log?: RecordingLog) =>
+        buildApp({
+          db: db(),
+          ...(log ? { log } : {}),
+          generateOpenings: async () => own,
+          generateRepertoireOpenings: async (root, _branch, rebuild) => {
+            handed.push({ root, rebuild });
+            return repertoire;
+          },
+        });
+      const postRebuilding = async (app: ReturnType<typeof buildApp>, payload: object) => {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/openings/generate",
+          payload,
+        });
+        await app.close();
+        return response;
+      };
+
+      it("hands the generator rebuild true when asked, with or without a root, and false otherwise", async () => {
+        const handed: Handed[] = [];
+        const asked = await postRebuilding(buildRebuilding(handed), {
+          sources: ["repertoire"],
+          rebuild: true,
+        });
+        await postRebuilding(buildRebuilding(handed), {
+          sources: ["repertoire"],
+          root: ["e4", "d5"],
+          rebuild: true,
+        });
+        await postRebuilding(buildRebuilding(handed), { sources: ["repertoire"], rebuild: false });
+        await postRebuilding(buildRebuilding(handed), { sources: ["repertoire"] });
+        expect(asked.statusCode).toBe(200);
+        expect(asked.json()).toEqual({ repertoire });
+        expect(handed).toEqual([
+          { root: undefined, rebuild: true },
+          { root: ["e4", "d5"], rebuild: true },
+          { root: undefined, rebuild: false },
+          { root: undefined, rebuild: false },
+        ]);
+      });
+
+      it("logs a rebuild with the run, and no rebuild field on a run without one", async () => {
+        const log = new RecordingLog();
+        await postRebuilding(buildRebuilding([], log), { sources: ["repertoire"], rebuild: true });
+        await postRebuilding(buildRebuilding([], log), { sources: ["repertoire"] });
+        const [rebuilt, plain] = log.named("openings.generate");
+        expect(rebuilt?.fields).toMatchObject({ sources: ["repertoire"], rebuild: true });
+        expect(plain?.fields).not.toHaveProperty("rebuild");
+      });
+
+      it.each([
+        ["a string", "true"],
+        ["a number", 1],
+        ["a list", [true]],
+      ])("refuses a rebuild flag that is %s, and runs nothing", async (_label, rebuild) => {
+        const handed: Handed[] = [];
+        const response = await postRebuilding(buildRebuilding(handed), {
+          sources: ["repertoire"],
+          rebuild,
+        });
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toEqual({
+          error: "invalid_rebuild",
+          message: "rebuild is true or false",
+        });
+        expect(handed).toEqual([]);
+      });
+
+      it("reads the rebuild flag for the repertoire source only", async () => {
+        const handed: Handed[] = [];
+        const response = await postRebuilding(buildRebuilding(handed), {
+          sources: ["own"],
+          rebuild: "not a flag",
+        });
+        expect(response.statusCode).toBe(200);
+        expect(handed).toEqual([]);
+      });
+    });
+
     it("refuses a repertoire run while an explorer run is going", async () => {
       let release: () => void = () => {};
       const gate = new Promise<void>((resolve) => {
