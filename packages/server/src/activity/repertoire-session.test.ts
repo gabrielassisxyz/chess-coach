@@ -28,6 +28,7 @@ import { ReviewDesk } from "../srs/review.js";
 import { review } from "../srs/sm2.js";
 import {
   REPERTOIRE_FLAG_BUDGET_MS,
+  REPERTOIRE_FLAG_CP,
   REPERTOIRE_NO_IDEA,
   REPERTOIRE_RECOMMENDED_SIZE,
   type RepertoireTryJudge,
@@ -218,6 +219,14 @@ class GatedRepertoireJudge extends FakeRepertoireJudge {
 
   release(loss: number): void {
     for (const resolve of this.releases.splice(0)) resolve(loss);
+  }
+}
+
+// The same table, with an engine whose every search fails, as a missing or faulted Stockfish does.
+class FailingRepertoireJudge extends FakeRepertoireJudge {
+  override async cpLoss(fen: string, uci: string): Promise<number> {
+    await super.cpLoss(fen, uci);
+    throw new Error("the engine stopped answering");
   }
 }
 
@@ -891,5 +900,102 @@ describe("the passes of a repertoire drill", () => {
     expect(db.prepare("SELECT outcomes_json FROM training_runs").get()).toEqual({
       outcomes_json: JSON.stringify(["failed", "solved", "solved"]),
     });
+  });
+});
+
+describe("rating a repertoire move", () => {
+  it("leaves a missed move's card alone on its retries, missed again or right after the fail interval", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = await play(service, state, "h3");
+    state = await play(service, state, "e4");
+    const failed = cardOf("", "e4");
+    expect(failed).toMatchObject({ interval_hours: 4, repetitions: 0, reviews: 3 });
+
+    state = await next(service, state);
+    state = await play(service, state, "a3");
+    expect(cardOf("", "e4")).toEqual(failed);
+    state = await play(service, state, "e4");
+    // Thirty hours on, the fail's four-hour interval is over and the card is due again.
+    now = new Date(T0.getTime() + 30 * HOUR_MS);
+    state = await next(service, state);
+    state = await play(service, state, "e4");
+    expect(cardOf("", "e4")).toEqual(failed);
+    state = await next(service, state);
+    expect(drillOf(state).result).toEqual({ practised: 1, first_try_right: 0 });
+  });
+
+  it("shows the move on show_solution and fails it, so playing it then is not right at the first try", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = training(await service.trainingShowSolution(state.activity_id));
+    expect(drillOf(state).hint).toEqual({ kind: "move", uci: "e2e4", san: "e4" });
+    expect(state.input_enabled).toBe(true);
+    expect(cardOf("", "e4")).toMatchObject({ interval_hours: 4, repetitions: 0, reviews: 3 });
+
+    state = await play(service, state, "e4");
+    expect(state.status).toBe("failed");
+    expect(drillOf(state)).toMatchObject({ moves_left: 1, moves_right: 0, moves_wrong: 1 });
+  });
+});
+
+describe("flagging a repertoire try", () => {
+  it("does not flag a try that reaches the expected line's own opening, named by the table or by the line", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "c3" || san === "d4");
+    // A table that gives 4.c3 and 4.d3 one name, and none to 5.d4, which the line calls the
+    // Italian Game.
+    const judge = new FakeRepertoireJudge(
+      {
+        [keyAfter("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3")]: "Giuoco Piano",
+        [keyAfter("e4 e5 Nf3 Nc6 Bc4 Bc5", "d3")]: "Giuoco Piano",
+        [keyAfter("e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6", "d3")]: "Italian Game",
+      },
+      { d2d3: 10 },
+    );
+    const service = boot(judge);
+    let state = await start(service, id, "due");
+    expect(lineSan(state)).toEqual(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]);
+    state = await play(service, state, "d3");
+    expect(drillOf(state).flagged_opening).toBeNull();
+    state = await play(service, state, "c3");
+    expect(lineSan(state)).toEqual(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"]);
+    state = await play(service, state, "d3");
+    expect(drillOf(state).flagged_opening).toBeNull();
+    expect(judge.searched).toEqual([]);
+  });
+
+  it("flags a try that loses exactly the margin, and not one that loses a centipawn more", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const judge = new FakeRepertoireJudge(
+      { ...RUY_LOPEZ_JUDGE_NAMES(), [keyAfter("e4 e5 Nf3 Nc6", "d4")]: "Scotch Game" },
+      { f1b5: REPERTOIRE_FLAG_CP, d2d4: REPERTOIRE_FLAG_CP + 1 },
+    );
+    const service = boot(judge);
+    let state = await start(service, id, "due");
+    state = await play(service, state, "Bb5");
+    expect(drillOf(state).flagged_opening).toBe("Ruy Lopez");
+    state = await play(service, state, "d4");
+    expect(drillOf(state).flagged_opening).toBeNull();
+    expect(judge.searched).toEqual(["f1b5", "d2d4"]);
+  });
+
+  it("leaves a try unflagged when the engine search fails, and still answers with the drill", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const judge = new FailingRepertoireJudge(RUY_LOPEZ_JUDGE_NAMES(), {});
+    const service = boot(judge);
+    let state = await start(service, id, "due");
+    state = await play(service, state, "Bb5");
+    expect(judge.searched).toEqual(["f1b5"]);
+    expect(state.last_try).toMatchObject({ san: "Bb5", correct: false });
+    expect(drillOf(state).flagged_opening).toBeNull();
+    expect(state.input_enabled).toBe(true);
+    expect(service.current()).toBe(state);
   });
 });
