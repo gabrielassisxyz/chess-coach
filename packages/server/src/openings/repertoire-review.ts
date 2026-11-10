@@ -37,7 +37,7 @@ import {
 } from "./repertoire-review-walk.js";
 
 /** The `source` of every position a played game added, so they can be told from generated ones. */
-export const REPERTOIRE_GAME_SOURCE = "game";
+const REPERTOIRE_GAME_SOURCE = "game";
 
 export type GameReviewOutcome =
   | "in_book"

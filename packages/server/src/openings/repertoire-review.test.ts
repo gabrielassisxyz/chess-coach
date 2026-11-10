@@ -45,7 +45,6 @@ import { positionKey } from "./from-games.js";
 import { parseOpeningTable } from "./names.js";
 import {
   type GameReviewDeps,
-  REPERTOIRE_GAME_SOURCE,
   reviewRepertoireGame,
   reviewRepertoireGames,
 } from "./repertoire-review.js";
@@ -570,7 +569,7 @@ describe("a Black reply the repertoire lacks", () => {
       failed: 0,
       added: 2,
     });
-    const added = positionsOf().filter((row) => row.source === REPERTOIRE_GAME_SOURCE);
+    const added = positionsOf().filter((row) => row.source === "game");
     expect(added).toHaveLength(2);
     // The reply is stored although its share is far under 1 in 50 and its games under 200.
     expect(added[0]).toMatchObject({
@@ -631,7 +630,7 @@ describe("a Black reply the repertoire lacks", () => {
     engine.write([...SETUP, "h6"], [["d2d3", 30]]);
     await reviewRepertoireGame(deps(), addGame([...SETUP, "h6", "d3"]));
     const reply = positionsOf().find((row) => row.kind === "reply" && row.move_san === "h6");
-    expect(reply).toMatchObject({ share: null, reach: 0, source: REPERTOIRE_GAME_SOURCE });
+    expect(reply).toMatchObject({ share: null, reach: 0, source: "game" });
   });
 
   it("is stored alone when the position after it already holds a White move", async () => {
@@ -655,7 +654,7 @@ describe("a Black reply the repertoire lacks", () => {
     explorer.write(SETUP, EXPLORER_RATINGS, { h6: 1000 }, 10000);
     const result = await reviewRepertoireGame(deps(), addGame([...SETUP, "h6", "c3"]));
     expect(result).toMatchObject({ outcome: "reply_added", added: 1 });
-    expect(positionsOf().filter((row) => row.source === REPERTOIRE_GAME_SOURCE)).toHaveLength(1);
+    expect(positionsOf().filter((row) => row.source === "game")).toHaveLength(1);
     expect(engine.requests).toEqual([]);
   });
 
@@ -800,14 +799,43 @@ describe("processing a game twice", () => {
     const added = addGame([...SETUP, "h6", "c3"]);
     expect((await reviewRepertoireGames(deps())).reviewed).toBe(2);
     const after = snapshot();
+    const messages = noticesOf();
     const fetches = explorer.calls.length;
     const searches = engine.requests.length;
     expect((await reviewRepertoireGames(deps())).reviewed).toBe(0);
     expect(await reviewRepertoireGame(deps(), departed)).toBeNull();
     expect(await reviewRepertoireGame(deps(), added)).toBeNull();
     expect(snapshot()).toEqual(after);
+    expect(noticesOf()).toEqual(messages);
     expect(explorer.calls).toHaveLength(fetches);
     expect(engine.requests).toHaveLength(searches);
+  });
+
+  it("leaves a reviewed game alone even after the positions it added were deleted", async () => {
+    seedRepertoire();
+    writeH6Answers();
+    const id = addGame([...SETUP, "h6", "c3"]);
+    await reviewRepertoireGame(deps(), id);
+    db.prepare("DELETE FROM repertoire_positions WHERE source = 'game'").run();
+    const after = snapshot();
+    const searches = engine.requests.length;
+    expect(await reviewRepertoireGame(deps(), id)).toBeNull();
+    expect((await reviewRepertoireGames(deps())).reviewed).toBe(0);
+    expect(snapshot()).toEqual(after);
+    expect(engine.requests).toHaveLength(searches);
+  });
+
+  it("applies a game once when two reviews of it overlap", async () => {
+    seedRepertoire();
+    const id = addGame([...AFTER_NF6, "d3", "d6"]);
+    const results = await Promise.all([
+      reviewRepertoireGame(deps(), id),
+      reviewRepertoireGame(deps(), id),
+    ]);
+    expect(results.filter((result) => result !== null)).toHaveLength(1);
+    expect(cardAt(AFTER_NF6, "d4")).toMatchObject({ reviews: 1, repetitions: 0 });
+    expect(reviewsOf()).toHaveLength(1);
+    expect(noticesOf()).toHaveLength(1);
   });
 });
 
@@ -1179,7 +1207,7 @@ describe("the review table", () => {
     const generated = positionsOf().length;
     const id = addGame([...SETUP, "h6", "c3"]);
     await reviewRepertoireGame(deps(), id);
-    db.prepare("DELETE FROM repertoire_positions WHERE source = ?").run(REPERTOIRE_GAME_SOURCE);
+    db.prepare("DELETE FROM repertoire_positions WHERE source = 'game'").run();
     expect(positionsOf()).toHaveLength(generated);
     expect(reviewOf(id)).toMatchObject({
       outcome: "reply_added",
