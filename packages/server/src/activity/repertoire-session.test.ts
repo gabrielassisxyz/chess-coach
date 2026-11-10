@@ -1807,6 +1807,7 @@ describe("a drill over the units found in games", () => {
     expect(state.last_try).toMatchObject({ san: "d4", correct: false });
     expect(state.input_enabled).toBe(true);
     state = await play(service, state, "e5");
+    expect(state.last_try).toMatchObject({ san: "e5", correct: true });
     state = await next(service, state);
     // Against 1...d5 the same 2.e5 is legal and wrong: only 2.exd5 is the Scandinavian's move.
     expect(openingOf(state)).toBe(SCANDINAVIAN_GROUP);
@@ -1814,6 +1815,7 @@ describe("a drill over the units found in games", () => {
     expect(state.last_try).toMatchObject({ san: "e5", correct: false });
     expect(state.input_enabled).toBe(true);
     state = await play(service, state, "exd5");
+    expect(state.last_try).toMatchObject({ san: "exd5", correct: true });
     expect(state.status).toBe("failed");
     expect(openingOf(state)).toBe(SCANDINAVIAN_GROUP);
   });
