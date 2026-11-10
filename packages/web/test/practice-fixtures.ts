@@ -1,4 +1,12 @@
-import type { ProgressResponse } from "@chess-coach/shared";
+import type {
+  PlayedMove,
+  ProgressResponse,
+  RepertoireDrill,
+  RepertoireSummary,
+  TrainingActivity,
+} from "@chess-coach/shared";
+import { Chess } from "chess.js";
+import { legalMovesOf, START_FEN } from "./fixtures.js";
 
 type Cards = ProgressResponse["cards"];
 
@@ -50,3 +58,87 @@ export const motifCounts = [
   { motif: "opening-white", count: 12 },
   { motif: "opening-black", count: 0 },
 ];
+
+export const CLASSICAL_VARIATION = "Classical Variation (4.c3)";
+
+export const italianRepertoire: RepertoireSummary = {
+  id: 3,
+  side: "white",
+  group_name: "Italian Game",
+  variation_name: CLASSICAL_VARIATION,
+  moves: { recommended: 10, due: 14, all: 38 },
+};
+
+export const repertoireList: RepertoireSummary[] = [italianRepertoire];
+
+// The moves the server plays on the student's behalf before the first move it asks for.
+export const ITALIAN_APPROACH = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"];
+
+export interface RepertoireActivityOptions {
+  // The line on the board, played by the server; the next move is the one asked.
+  sans?: string[];
+  training?: Partial<TrainingActivity>;
+  drill?: Partial<RepertoireDrill>;
+}
+
+// A repertoire drill stopped on a move to find: later pass, no hint, nothing wrong yet.
+export function repertoireActivity(options: RepertoireActivityOptions = {}): TrainingActivity {
+  const board = new Chess();
+  const moves: PlayedMove[] = (options.sans ?? ITALIAN_APPROACH).map((san, ply) => {
+    const played = board.move(san);
+    return { ply, uci: `${played.from}${played.to}${played.promotion ?? ""}`, san, by: "reply" };
+  });
+  const fen = board.fen();
+  const last = moves.at(-1);
+  return {
+    kind: "training",
+    activity_id: 6,
+    orientation: "white",
+    fen,
+    turn: board.turn() === "w" ? "white" : "black",
+    last_move: last ? { from: last.uci.slice(0, 2), to: last.uci.slice(2, 4) } : null,
+    legal_moves: legalMovesOf(fen),
+    input_enabled: true,
+    pending: "none",
+    mode: "repertoire",
+    item: {
+      kind: "repertoire",
+      repertoire_id: 3,
+      fen: START_FEN,
+      position_in_queue: 1,
+      queue_length: 3,
+    },
+    status: "prompt",
+    served_at: "2026-03-01T00:00:00.000Z",
+    run_motif: null,
+    expected: null,
+    exploring: { fen, line_san: [], trail: [] },
+    tries: 0,
+    last_try: null,
+    gave_up: false,
+    solution_line: null,
+    suggested_quality: null,
+    hint_square: null,
+    summary: null,
+    moves,
+    wrong_tries: [],
+    queue_outcomes: ["current", "pending", "pending"],
+    student_rating: 1200,
+    rating_change: null,
+    repertoire: {
+      repertoire_id: 3,
+      scope: "recommended",
+      opening_name: "Italian Game: Giuoco Piano",
+      first_pass: false,
+      answer: null,
+      hint: { kind: "none" },
+      flagged_opening: null,
+      moves_left: 4,
+      moves_right: 0,
+      moves_wrong: 0,
+      result: null,
+      ...options.drill,
+    },
+    ...options.training,
+  };
+}

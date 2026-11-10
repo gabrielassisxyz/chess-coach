@@ -1,4 +1,4 @@
-import type { TrainingActivity } from "@chess-coach/shared";
+import type { RepertoireDrill, TrainingActivity } from "@chess-coach/shared";
 import { type ReactNode, useState } from "react";
 import { formatElapsed, lookedAtMs, NONE, type TrainingView } from "../state/practice.js";
 import {
@@ -12,8 +12,11 @@ import {
   signedCount,
   variationText,
 } from "../state/practice-item.js";
+import { hintLabelOf, nextEndsDrill, shownMoveOf } from "../state/repertoire-drill.js";
+import type { FetchRepertoires } from "../state/repertoires-api.js";
 import { ExplorationTrail } from "./ExplorationTrail.js";
 import { RatingButtons } from "./RatingButtons.js";
+import { RepertoireHead } from "./RepertoireHead.js";
 
 export interface PracticeColumnActions {
   showSolution(): void;
@@ -39,6 +42,8 @@ export interface PracticeColumnProps {
   // The engine strip, rendered by the screen that owns the engine state.
   engineStrip: ReactNode;
   runMotif?: string | null | undefined;
+  // Where a repertoire drill reads its variation names from when a position has none of its own.
+  fetchRepertoires?: FetchRepertoires | undefined;
 }
 
 function Segments({ training }: { training: TrainingActivity }) {
@@ -92,10 +97,30 @@ function Ratings({ training, view }: Pick<PracticeColumnProps, "training" | "vie
   );
 }
 
-function Cell({ cell, current }: { cell: MoveCell | "ellipsis" | null; current: boolean }) {
+interface CellProps {
+  cell: MoveCell | "ellipsis" | null;
+  current: boolean;
+  // The move a repertoire drill shows in the empty cell of the ply the student is on.
+  answer: string | null;
+}
+
+function Cell({ cell, current, answer }: CellProps) {
   if (cell === null) return <span className="moves-list__cell" />;
   if (cell === "ellipsis") {
     return <span className="moves-list__cell moves-list__cell--ellipsis">{"…"}</span>;
+  }
+  if (cell.by === "pending" && answer !== null) {
+    return (
+      <span
+        className="moves-list__cell"
+        data-by="answer"
+        data-current={current ? "true" : undefined}
+        data-testid="answer-cell"
+      >
+        {answer}
+        <span className="sr-only">the move to play</span>
+      </span>
+    );
   }
   return (
     <span
@@ -133,8 +158,14 @@ function variations(row: MoveRow): ReactNode[] {
   return lines;
 }
 
-function MovesList({ training, shownPly }: Pick<PracticeColumnProps, "training" | "shownPly">) {
-  const rows = moveRowsOf(training);
+// A repertoire drill keeps the wrong tries out of the list: a miss puts the piece back and shows
+// nothing else.
+function MovesList({
+  training,
+  shownPly,
+  answer,
+}: Pick<PracticeColumnProps, "training" | "shownPly"> & { answer: string | null }) {
+  const rows = moveRowsOf(training.repertoire ? { ...training, wrong_tries: [] } : training);
   const isCurrent = (cell: MoveCell | "ellipsis" | null): boolean =>
     cell !== null && cell !== "ellipsis" && cell.ply === shownPly - 1;
   const pendingCurrent = (cell: MoveCell | "ellipsis" | null): boolean =>
@@ -145,8 +176,16 @@ function MovesList({ training, shownPly }: Pick<PracticeColumnProps, "training" 
         <li key={row.number} className="moves-list__row">
           <div className="moves-list__line">
             <span className="moves-list__number">{row.number}.</span>
-            <Cell cell={row.white} current={isCurrent(row.white) || pendingCurrent(row.white)} />
-            <Cell cell={row.black} current={isCurrent(row.black) || pendingCurrent(row.black)} />
+            <Cell
+              cell={row.white}
+              current={isCurrent(row.white) || pendingCurrent(row.white)}
+              answer={answer}
+            />
+            <Cell
+              cell={row.black}
+              current={isCurrent(row.black) || pendingCurrent(row.black)}
+              answer={answer}
+            />
           </div>
           {variations(row)}
         </li>
@@ -229,12 +268,34 @@ function OpenActions({ actions }: { actions: PracticeColumnActions }) {
   );
 }
 
+// The hint button is the only way the idea or the move of a repertoire line appears, so there is no
+// View solution beside it; once both were asked there is nothing left to offer.
+function DrillOpenActions({
+  actions,
+  drill,
+}: {
+  actions: PracticeColumnActions;
+  drill: RepertoireDrill;
+}) {
+  const label = hintLabelOf(drill);
+  if (label === null) return null;
+  return (
+    <div className="state-card__actions">
+      <button type="button" className="button" onClick={actions.hint}>
+        {label}
+      </button>
+    </div>
+  );
+}
+
 function EndedActions({
   training,
   view,
   actions,
 }: Pick<PracticeColumnProps, "training" | "view" | "actions">) {
-  const last = training.item.position_in_queue === training.item.queue_length;
+  const last = training.repertoire
+    ? nextEndsDrill(training.repertoire)
+    : training.item.position_in_queue === training.item.queue_length;
   return (
     <>
       {view.canRate && training.item.kind === "card" ? (
@@ -276,13 +337,15 @@ function EndedActions({
 
 export function PracticeColumn(props: PracticeColumnProps) {
   const { training, view, actions, card, elapsedMs, scratchLine, shownPly, runMotif } = props;
-  const { engineStrip } = props;
+  const { engineStrip, fetchRepertoires } = props;
   const [confirming, setConfirming] = useState(false);
   const heading = headingOf(
     training,
     runMotif !== undefined ? runMotif : (training.run_motif ?? null),
   );
   const trail = training.exploring.trail;
+  const drill = training.repertoire ?? null;
+  const answer = drill && view.open ? (shownMoveOf(drill)?.san ?? null) : null;
   return (
     <section className="screen practice-item" aria-label="Practice">
       <header className="practice-item__head">
@@ -304,9 +367,12 @@ export function PracticeColumn(props: PracticeColumnProps) {
         </div>
         <Segments training={training} />
       </header>
-      <Ratings training={training} view={view} />
+      {drill ? null : <Ratings training={training} view={view} />}
       {engineStrip}
-      <MovesList training={training} shownPly={shownPly} />
+      {drill ? (
+        <RepertoireHead training={training} drill={drill} fetchRepertoires={fetchRepertoires} />
+      ) : null}
+      <MovesList training={training} shownPly={shownPly} answer={answer} />
       <div className="state-card" data-tone={card.tone}>
         <div className="state-card__head">
           <CardIcon tone={card.tone} />
@@ -337,7 +403,11 @@ export function PracticeColumn(props: PracticeColumnProps) {
             Done
           </button>
         ) : view.open ? (
-          <OpenActions actions={actions} />
+          drill ? (
+            <DrillOpenActions actions={actions} drill={drill} />
+          ) : (
+            <OpenActions actions={actions} />
+          )
         ) : (
           <EndedActions training={training} view={view} actions={actions} />
         )}

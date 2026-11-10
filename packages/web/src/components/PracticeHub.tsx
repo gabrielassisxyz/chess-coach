@@ -1,4 +1,10 @@
-import type { PausedTraining, ProgressResponse, TrainingMode } from "@chess-coach/shared";
+import type {
+  PausedTraining,
+  ProgressResponse,
+  RepertoireScope,
+  RepertoireSummary,
+  TrainingMode,
+} from "@chess-coach/shared";
 import { type ReactNode, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
 import {
@@ -7,6 +13,7 @@ import {
   dueBreakdown,
   italianOpeningCount,
   type LastSession,
+  lastSessionText,
   type MotifCount,
   motifLabel,
   motifRows,
@@ -16,6 +23,7 @@ import {
   percent,
   resumeLabelOf,
 } from "../state/practice.js";
+import { RepertoireMenu } from "./RepertoireMenu.js";
 
 const ANY_MOTIF = "";
 const NEEDS_ENGINE = "Needs the engine to grade answers.";
@@ -23,12 +31,15 @@ const NEEDS_ENGINE = "Needs the engine to grade answers.";
 export interface PracticeHubProps {
   progress: Loaded<ProgressResponse>;
   motifs: Loaded<MotifCount[]>;
+  repertoires: Loaded<RepertoireSummary[]>;
   engineMissing: boolean;
-  starting: { mode: TrainingMode; motif: string } | null;
+  // A repertoire start carries its scope in `motif` and names its repertoire.
+  starting: { mode: TrainingMode; motif: string; repertoireId?: number } | null;
   failure: string | null;
   size: DrillSize;
   onSize(size: DrillSize): void;
   onStart(mode: TrainingMode, motif: string): void;
+  onStartRepertoire(repertoireId: number, scope: RepertoireScope): void;
   now?: Date;
   lastSession?: LastSession | null;
 }
@@ -81,7 +92,8 @@ function ItalianRow({
 }
 
 export function PracticeHub(props: PracticeHubProps) {
-  const { progress, motifs, engineMissing, starting, failure, size, onSize, onStart } = props;
+  const { progress, motifs, repertoires, engineMissing, starting, failure, size, onSize } = props;
+  const { onStart, onStartRepertoire } = props;
   const lastSession = props.lastSession ?? null;
   const [motif, setMotif] = useState(ANY_MOTIF);
   const busy = starting !== null;
@@ -107,7 +119,7 @@ export function PracticeHub(props: PracticeHubProps) {
     <div className="practice__hub" aria-busy={busy}>
       {lastSession ? (
         <p className="practice__last-session" data-testid="last-session">
-          Last session: {lastSession.solved} solved, {lastSession.failed} failed
+          {lastSessionText(lastSession)}
         </p>
       ) : null}
       <section className="practice__card" aria-label="Due cards">
@@ -167,6 +179,17 @@ export function PracticeHub(props: PracticeHubProps) {
           idle: `Start ${motif === ANY_MOTIF ? "any motif" : motifLabel(motif)}`,
         })}
       </section>
+
+      <RepertoireMenu
+        repertoires={repertoires}
+        busy={busy}
+        starting={
+          starting?.mode === "repertoire" && starting.repertoireId !== undefined
+            ? { repertoireId: starting.repertoireId, scope: starting.motif as RepertoireScope }
+            : null
+        }
+        onStart={onStartRepertoire}
+      />
 
       <section className="practice__card" aria-label="Openings">
         <h3 className="practice__card-title">Openings</h3>
