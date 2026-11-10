@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { Chessground } from "@lichess-org/chessground";
 import type { Api } from "@lichess-org/chessground/api";
 import type { Config } from "@lichess-org/chessground/config";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { Chess } from "chess.js";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board, type BoardFactory } from "../src/components/Board.js";
@@ -29,6 +31,98 @@ class RecordingBoard {
 }
 
 afterEach(cleanup);
+
+describe("Board drawing", () => {
+  it("does not describe drawing as unavailable", () => {
+    const source = readFileSync("src/components/Board.tsx", "utf8");
+    expect(source.includes("the student cannot draw their own")).toBe(false);
+  });
+
+  it("reads four distinct drawing brush colours from the board tokens", () => {
+    const css = readFileSync("src/styles/tokens.css", "utf8");
+    const tokens = {
+      green: "--overlay-arrow-1",
+      blue: "--overlay-arrow-2",
+      yellow: "--overlay-arrow-3",
+      red: "--overlay-arrow-4",
+    } as const;
+    const colours: string[] = [];
+    for (const token of Object.values(tokens)) {
+      const colour = css.match(new RegExp(`${token}:\\s*(#[0-9a-fA-F]{6});`))?.[1];
+      expect(colour).toBeDefined();
+      document.documentElement.style.setProperty(token, colour as string);
+      colours.push(colour as string);
+    }
+    const recorder = new RecordingBoard();
+    render(<Board activity={liveGame()} onMove={vi.fn()} createBoard={recorder.factory} />);
+    const brushes = recorder.created[0]?.drawable?.brushes;
+    for (const [brush, token] of Object.entries(tokens)) {
+      expect(brushes?.[brush]?.color).toBe(
+        getComputedStyle(document.documentElement).getPropertyValue(token).trim(),
+      );
+    }
+    expect(new Set(colours).size).toBe(4);
+    for (const token of Object.values(tokens)) document.documentElement.style.removeProperty(token);
+  });
+
+  it("enables drawing and clears it on a left click without replacing hand-drawn shapes in config", () => {
+    const recorder = new RecordingBoard();
+    const { rerender } = render(
+      <Board activity={liveGame()} onMove={vi.fn()} createBoard={recorder.factory} />,
+    );
+    rerender(
+      <Board
+        activity={liveGame()}
+        onMove={vi.fn()}
+        shapes={[{ orig: "e2", dest: "e4" }]}
+        createBoard={recorder.factory}
+      />,
+    );
+    for (const config of [recorder.created[0], ...recorder.sets]) {
+      expect(config?.drawable).toMatchObject({ enabled: true, eraseOnClick: true });
+      expect(config?.drawable).not.toHaveProperty("shapes");
+    }
+  });
+
+  it("keeps hand drawings beside app arrows on a shapes update and clears them for a new position", () => {
+    let api!: Api;
+    const createBoard: BoardFactory = (element, config) => {
+      api = Chessground(element, config);
+      return api;
+    };
+    const initial = liveGame();
+    const onMove = vi.fn();
+    const { rerender } = render(
+      <Board activity={initial} onMove={onMove} createBoard={createBoard} />,
+    );
+    const handDrawn = [{ orig: "e2" as const, dest: "e4" as const, brush: "red" }];
+    const appArrow = [{ orig: "d2" as const, dest: "d4" as const, brush: "green" }];
+    api.setShapes(handDrawn);
+    rerender(
+      <Board activity={initial} onMove={onMove} shapes={appArrow} createBoard={createBoard} />,
+    );
+    expect(api.state.drawable.shapes).toEqual(handDrawn);
+    expect(api.state.drawable.autoShapes).toEqual(appArrow);
+
+    const chess = new Chess(initial.fen);
+    chess.move("e4");
+    const next = liveGame({ fen: chess.fen(), turn: "black" });
+    rerender(<Board activity={next} onMove={onMove} shapes={appArrow} createBoard={createBoard} />);
+    expect(api.state.drawable.shapes).toEqual([]);
+    expect(api.state.drawable.autoShapes).toEqual(appArrow);
+
+    api.setShapes(handDrawn);
+    rerender(
+      <Board
+        activity={{ ...next, activity_id: 2 }}
+        onMove={onMove}
+        shapes={appArrow}
+        createBoard={createBoard}
+      />,
+    );
+    expect(api.state.drawable.shapes).toEqual([]);
+  });
+});
 
 describe("Board lifecycle", () => {
   it("keeps exactly one instance and one move callback after a Strict Mode double mount", () => {
@@ -166,17 +260,36 @@ function trustingFactory(): BoardFactory {
   return (element, config) => Chessground(element, { ...config, trustAllEvents: true });
 }
 
-function click(board: HTMLElement, square: string, orientation: "white" | "black" = "white") {
+function squarePoint(square: string, orientation: "white" | "black" = "white") {
   const file = square.charCodeAt(0) - 97;
   const rank = Number(square[1]) - 1;
   const column = orientation === "white" ? file : 7 - file;
   const row = orientation === "white" ? 7 - rank : rank;
   const cell = BOARD_PX / 8;
-  const point = { clientX: (column + 0.5) * cell, clientY: (row + 0.5) * cell, button: 0 };
+  return { clientX: (column + 0.5) * cell, clientY: (row + 0.5) * cell };
+}
+
+function click(board: HTMLElement, square: string, orientation: "white" | "black" = "white") {
+  const point = { ...squarePoint(square, orientation), button: 0 };
   act(() => {
     fireEvent.mouseDown(board, point);
     fireEvent.mouseUp(board, point);
   });
+}
+
+async function rightDraw(
+  board: HTMLElement,
+  from: string,
+  to: string,
+  modifiers: { shiftKey?: boolean; altKey?: boolean } = {},
+) {
+  act(() => fireEvent.mouseDown(board, { ...squarePoint(from), button: 2, ...modifiers }));
+  await settle();
+  if (to !== from) {
+    act(() => fireEvent.mouseMove(document, { ...squarePoint(to), button: 2, ...modifiers }));
+    await settle();
+  }
+  act(() => fireEvent.mouseUp(document, { ...squarePoint(to), button: 2, ...modifiers }));
 }
 
 // Chessground reports a user move through a 1ms timer, so a test waits for it to fire; an
@@ -243,6 +356,71 @@ describe("Board click-to-move", () => {
     );
     return { onMove, board: container.querySelector("cg-board") as HTMLElement };
   }
+
+  it("draws right-click circles and modifier-coloured arrows on a read-only board, then erases them on left click", async () => {
+    let api!: Api;
+    const createBoard: BoardFactory = (element, config) => {
+      api = Chessground(element, { ...config, trustAllEvents: true });
+      return api;
+    };
+    const { container } = render(
+      <Board
+        activity={liveGame({ input_enabled: false, legal_moves: [] })}
+        onMove={vi.fn()}
+        createBoard={createBoard}
+      />,
+    );
+    const board = container.querySelector("cg-board") as HTMLElement;
+    await rightDraw(board, "e4", "e4");
+    await rightDraw(board, "e2", "e4");
+    await rightDraw(board, "d2", "d4", { shiftKey: true });
+    await rightDraw(board, "g1", "f3", { altKey: true });
+    await rightDraw(board, "b1", "c3", { shiftKey: true, altKey: true });
+    expect(api.state.drawable.shapes).toEqual([
+      { orig: "e4", dest: undefined, brush: "green" },
+      { orig: "e2", dest: "e4", brush: "green" },
+      { orig: "d2", dest: "d4", brush: "red" },
+      { orig: "g1", dest: "f3", brush: "blue" },
+      { orig: "b1", dest: "c3", brush: "yellow" },
+    ]);
+    click(board, "e2");
+    expect(api.state.drawable.shapes).toEqual([]);
+  });
+
+  it("keeps a drawing when the server echoes a move already made on the board", async () => {
+    let api!: Api;
+    const createBoard: BoardFactory = (element, config) => {
+      api = Chessground(element, { ...config, trustAllEvents: true });
+      return api;
+    };
+    const initial = liveGame();
+    const onMove = vi.fn();
+    const { container, rerender } = render(
+      <Board activity={initial} onMove={onMove} createBoard={createBoard} />,
+    );
+    const board = container.querySelector("cg-board") as HTMLElement;
+    click(board, "e2");
+    click(board, "e4");
+    await settle();
+    expect(onMove).toHaveBeenCalledWith("e2", "e4");
+    const handDrawn = [{ orig: "d2" as const, dest: "d4" as const, brush: "green" }];
+    api.setShapes(handDrawn);
+    const chess = new Chess(initial.fen);
+    chess.move("e4");
+    rerender(
+      <Board
+        activity={liveGame({
+          fen: chess.fen(),
+          turn: "black",
+          last_move: { from: "e2", to: "e4" },
+          legal_moves: legalMovesOf(chess.fen()),
+        })}
+        onMove={onMove}
+        createBoard={createBoard}
+      />,
+    );
+    expect(api.state.drawable.shapes).toEqual(handDrawn);
+  });
 
   it("sends exactly one move for a piece click then a legal square click", async () => {
     const { onMove, board } = mount();

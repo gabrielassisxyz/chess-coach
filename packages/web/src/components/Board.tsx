@@ -48,7 +48,7 @@ export interface BoardProps {
   badge?: SquareBadge | null | undefined;
   // Coordinates, animation and highlights, the same set on every screen.
   prefs?: BoardPrefs | undefined;
-  // Arrows drawn over the board, one per engine line; the student cannot draw their own.
+  // App arrows stay separate from the student's own drawings.
   shapes?: readonly DrawShape[] | undefined;
   createBoard?: BoardFactory | undefined;
 }
@@ -80,8 +80,8 @@ function arrowBrushes(): DrawBrushes {
     green: { key: "g", color: colour("--overlay-arrow-1"), opacity: 0.9, lineWidth: 10 },
     blue: { key: "b", color: colour("--overlay-arrow-2"), opacity: 0.8, lineWidth: 8 },
     yellow: { key: "y", color: colour("--overlay-arrow-3"), opacity: 0.7, lineWidth: 7 },
-    red: { key: "r", color: colour("--overlay-arrow-3"), opacity: 0.5, lineWidth: 6 },
-    paleBlue: { key: "pb", color: colour("--overlay-arrow-3"), opacity: 0.4, lineWidth: 5 },
+    red: { key: "r", color: colour("--overlay-arrow-4"), opacity: 0.5, lineWidth: 6 },
+    paleBlue: { key: "pb", color: colour("--overlay-arrow-2"), opacity: 0.4, lineWidth: 5 },
   };
   return brushes;
 }
@@ -98,6 +98,13 @@ function toConfig(
   const last = shown ?? activity.last_move;
   const lastMove = last ? [last.from, last.to] : [];
   const fen = shown ? shown.fen : activity.fen;
+  const drawable = {
+    enabled: true,
+    visible: true,
+    autoShapes: [...shapes],
+    brushes: arrowBrushes(),
+    eraseOnClick: true,
+  };
   return {
     fen,
     orientation,
@@ -122,7 +129,7 @@ function toConfig(
       dests: destsFrom(activity.legal_moves),
       showDests: prefs.legalMoves,
     },
-    drawable: { enabled: false, visible: true, autoShapes: [...shapes], brushes: arrowBrushes() },
+    drawable,
     // Always a map: chessground keeps the previous one when the key is absent, so a cleared
     // hint would stay on the square into the next item.
     highlight: {
@@ -202,6 +209,8 @@ export function Board({
   const facing = orientation ?? activity.orientation;
   const elementRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<Api | null>(null);
+  const appliedPosition = useRef<{ key: string; syncToken: number; resync: number } | null>(null);
+  const localMove = useRef<{ activityId: number; from: Key; to: Key } | null>(null);
   const [pending, setPending] = useState<PendingPromotion | null>(null);
   const [resync, setResync] = useState(0);
   const shown = useLinePlayback(activity.fen, line);
@@ -213,6 +222,8 @@ export function Board({
   useEffect(() => {
     const element = elementRef.current;
     if (!element) return;
+    appliedPosition.current = null;
+    localMove.current = null;
     const api = createBoard(element, {
       ...toConfig(
         latest.current.activity,
@@ -229,6 +240,7 @@ export function Board({
       events: {
         move: (from, to) => {
           const { activity: current, onMove: send } = latest.current;
+          localMove.current = { activityId: current.activity_id, from, to };
           const pieces = promotionsFor(current.legal_moves, from, to);
           if (pieces) setPending({ from, to, pieces });
           else send(from, to);
@@ -247,7 +259,29 @@ export function Board({
   // its position, since the step object is rebuilt on every render.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    apiRef.current?.set(toConfig(activity, bothSides, shown, hintSquare, facing, prefs, shapes));
+    const api = apiRef.current;
+    if (!api) return;
+    const config = toConfig(activity, bothSides, shown, hintSquare, facing, prefs, shapes);
+    const positionKey = `${activity.activity_id} ${shown?.fen ?? activity.fen}`;
+    const previous = appliedPosition.current;
+    const positionChanged = previous?.key !== positionKey;
+    const needsResync = previous?.syncToken !== syncToken || previous?.resync !== resync;
+    const move = localMove.current;
+    const localEcho =
+      positionChanged &&
+      !needsResync &&
+      shown === null &&
+      move?.activityId === activity.activity_id &&
+      activity.last_move?.from === move.from &&
+      activity.last_move?.to === move.to &&
+      api.getFen() === activity.fen.split(" ")[0];
+    // Chessground clears user shapes whenever set() receives a fen, even if the fen is unchanged.
+    const keepDrawings = (!positionChanged && !needsResync) || localEcho;
+    const handDrawn = keepDrawings ? (api.state?.drawable.shapes.slice() ?? []) : [];
+    api.set(config);
+    if (handDrawn.length) api.setShapes(handDrawn);
+    appliedPosition.current = { key: positionKey, syncToken, resync };
+    if (positionChanged || needsResync) localMove.current = null;
   }, [activity, bothSides, hintSquare, facing, prefs, shapes, syncToken, resync, shown?.fen]);
 
   const choose = (piece: PromotionPiece): void => {

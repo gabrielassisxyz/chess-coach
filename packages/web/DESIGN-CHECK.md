@@ -104,6 +104,11 @@ The cells were read off the stylesheets and the markup, and the Phone column off
 media blocks; they were not re-measured in a browser for this rewrite. The measurements the
 screens were built to are in the design probe's spec (token layer and interaction inventory).
 
+The Play, Games and Practice columns were re-checked for board drawing. All three render the
+same `Board`, including the read-only review and demo boards. Right-click drawings use four
+distinct arrow tokens and share the overlay with app arrows; they add no control, layout,
+motion or focus treatment. M1 and M2 still find no matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph
@@ -145,10 +150,11 @@ screens were built to are in the design probe's spec (token layer and interactio
   removing or moving a column means renumbering those selectors, or the wrong columns show on a
   phone.
 - **Tokens nothing references from `src`.** `--duration-fast`, `--leading-heading`,
-  `--status-ready`, `--status-busy` and the four `--overlay-*` tokens have no `var()` user in
-  the stylesheets or the code. They are the prototype's values, kept for the states and
-  overlays that are not drawn yet (busy and ready dots, arrows, premove); delete them if
-  those never land. `--space-12` is gone, and no `review__` or `train__` name survives.
+  `--status-ready`, `--status-busy` and `--overlay-premove` have no user in the stylesheets or
+  code. They are the prototype's values, kept for states that are not drawn yet (busy and
+  ready dots, premove); delete them if those never land. The four `--overlay-arrow-*` tokens
+  are read by `Board.tsx` through `getComputedStyle`, so they have no `var()` caller.
+  `--space-12` is gone, and no `review__` or `train__` name survives.
 - **Placeholder tab.** "Routine" is a disabled tab tagged "soon"; the screen behind it does
   not exist.
 - **Play's board settings.** Play still opens the older settings card in its column with the
