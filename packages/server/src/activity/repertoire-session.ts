@@ -56,6 +56,11 @@ import { type PracticeRunPort, pausedTrainingOf, type TrainingDeps } from "./tra
 
 /** The `recommended` scope serves at most this many due moves, the likeliest first. */
 export const REPERTOIRE_RECOMMENDED_SIZE = 10;
+/** A new move waits while a sibling holds a card whose interval is shorter than this. */
+const REPERTOIRE_SIBLING_STABLE_HOURS = 72;
+/** At most this many new moves are introduced in any 24 hours. */
+const REPERTOIRE_NEW_MOVES_PER_DAY = 5;
+const REPERTOIRE_NEW_MOVE_WINDOW_MS = 24 * 3_600_000;
 /** A wrong try this close to the engine's best that reaches another named opening is flagged. */
 export const REPERTOIRE_FLAG_CP = 50;
 /** How long a try waits for the engine before it is left unflagged. */
@@ -144,24 +149,96 @@ export function compareRepertoireLineOrder(a: RepertoireDrillMove, b: Repertoire
   );
 }
 
-/** The moves a drill of this scope serves, in line order. A new move is due. */
+// Two moves are siblings when their lines agree up to Black's last reply: the answers to one White
+// move that differ only in what Black played next. Two variations that part in one position
+// answer it differently, and those answers are siblings too, since they are as easy to confuse.
+const repertoireSiblingKey = (move: RepertoireDrillMove): string =>
+  `${move.line.length}|${move.line.slice(0, -1).join(" ")}`;
+
+function repertoireMovesBlockedBySibling(ordered: readonly RepertoireDrillMove[]): Set<string> {
+  const blocked = new Set<string>();
+  for (const move of ordered) {
+    if (move.card !== null && move.card.interval_hours < REPERTOIRE_SIBLING_STABLE_HOURS) {
+      blocked.add(repertoireSiblingKey(move));
+    }
+  }
+  return blocked;
+}
+
+// A new move is not learned before the moves that lead to it, so it waits for each of them to be
+// shown once; stable is not asked of them, only known.
+function hasNewMoveEarlierInLine(
+  move: RepertoireDrillMove,
+  newPaths: ReadonlySet<string>,
+): boolean {
+  for (let length = 1; length < move.line.length; length += 1) {
+    if (newPaths.has(move.line.slice(0, length).join(" "))) return true;
+  }
+  return false;
+}
+
+// Counted over the moves the drill covers, so a drill of one unit and the menu entry that offers it
+// read the same cards.
+function repertoireIntroductionsInWindow(moves: readonly RepertoireDrillMove[], now: Date): number {
+  const since = now.getTime() - REPERTOIRE_NEW_MOVE_WINDOW_MS;
+  return moves.filter((move) => move.card !== null && Date.parse(move.card.introduced_at) > since)
+    .length;
+}
+
+// The new moves that may enter now: the likeliest of each group of siblings that nothing holds
+// back, as many as the day's limit leaves room for. The limit trims that list instead of choosing
+// again, so a likelier sibling it leaves out never lets a less likely one in behind it.
+function repertoireNewMovesMayEnter<T extends RepertoireDrillMove>(
+  ordered: readonly T[],
+  now: Date,
+): Set<T> {
+  const blocked = repertoireMovesBlockedBySibling(ordered);
+  const newPaths = new Set(
+    ordered
+      .filter((move) => move.card === null)
+      .map((move) => pathOfRepertoireMove(move).join(" ")),
+  );
+  const groupsWithALeader = new Set<string>();
+  const leaders: T[] = [];
+  for (const move of ordered) {
+    const key = repertoireSiblingKey(move);
+    const waits = move.card !== null || blocked.has(key) || hasNewMoveEarlierInLine(move, newPaths);
+    if (waits || groupsWithALeader.has(key)) continue;
+    groupsWithALeader.add(key);
+    leaders.push(move);
+  }
+  const room = REPERTOIRE_NEW_MOVES_PER_DAY - repertoireIntroductionsInWindow(ordered, now);
+  return new Set(leaders.slice(0, Math.max(0, room)));
+}
+
+// Every move with a card stays, as it always has; a new move enters only as far as the pacing
+// allows, one sibling at a time and a few a day, so the student learns one branch before the next.
+function admitRepertoireMoves<T extends RepertoireDrillMove>(moves: readonly T[], now: Date): T[] {
+  const ordered = [...moves].sort(compareRepertoireLineOrder);
+  const entering = repertoireNewMovesMayEnter(ordered, now);
+  return ordered.filter((move) => move.card !== null || entering.has(move));
+}
+
+/** The moves a drill of this scope serves, in line order. A new move is due once it may enter. */
 export function selectRepertoireDrillMoves<T extends RepertoireDrillMove>(
   moves: readonly T[],
   scope: RepertoireScope,
   now: Date,
 ): T[] {
-  const ordered = [...moves].sort(compareRepertoireLineOrder);
-  if (scope === "all") return ordered;
-  const due = ordered.filter((move) => isRepertoireMoveDue(move, now));
+  const served = admitRepertoireMoves(moves, now);
+  if (scope === "all") return served;
+  const due = served.filter((move) => isRepertoireMoveDue(move, now));
   return scope === "due" ? due : due.slice(0, REPERTOIRE_RECOMMENDED_SIZE);
 }
 
+// A move that waits is left out of every count, as the drill leaves it out of every scope.
 export function repertoireScopeCounts(
   moves: readonly RepertoireDrillMove[],
   now: Date,
 ): RepertoireScopeCounts {
-  const due = moves.filter((move) => isRepertoireMoveDue(move, now)).length;
-  return { recommended: Math.min(due, REPERTOIRE_RECOMMENDED_SIZE), due, all: moves.length };
+  const served = admitRepertoireMoves(moves, now);
+  const due = served.filter((move) => isRepertoireMoveDue(move, now)).length;
+  return { recommended: Math.min(due, REPERTOIRE_RECOMMENDED_SIZE), due, all: served.length };
 }
 
 export interface RepertoirePassPlan {

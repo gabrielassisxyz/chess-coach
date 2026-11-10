@@ -88,12 +88,40 @@ const ownMoveStored = (repertoireId: number, key: string): boolean =>
     )
     .get(repertoireId, key) !== undefined;
 
-function addCard(line: string[], san: string, nextReviewAt: string): void {
+interface CardOptions {
+  introducedAt?: string;
+  intervalHours?: number;
+}
+
+function addCard(line: string[], san: string, nextReviewAt: string, card: CardOptions = {}): void {
   const place = placeOf(line, san);
   db.prepare(
-    `INSERT INTO repertoire_cards (position_key, move_uci, introduced_at, next_review_at)
-     VALUES (?, ?, ?, ?)`,
-  ).run(place.positionKey, place.uci, LONG_AGO, nextReviewAt);
+    `INSERT INTO repertoire_cards (position_key, move_uci, introduced_at, next_review_at,
+       interval_hours)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    place.positionKey,
+    place.uci,
+    card.introducedAt ?? LONG_AGO,
+    nextReviewAt,
+    card.intervalHours ?? 0,
+  );
+}
+
+function setCardInterval(line: string[], san: string, intervalHours: number): void {
+  const place = placeOf(line, san);
+  db.prepare(
+    "UPDATE repertoire_cards SET interval_hours = ? WHERE position_key = ? AND move_uci = ?",
+  ).run(intervalHours, place.positionKey, place.uci);
+}
+
+// A card on every White move that has none, as a student who has met them all has: none is new, so
+// none waits.
+function addCardsForEveryMove(): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO repertoire_cards (position_key, move_uci, introduced_at, next_review_at)
+     SELECT DISTINCT position_key, move_uci, ?, ? FROM repertoire_positions WHERE kind = 'own'`,
+  ).run(LONG_AGO, LONG_AGO);
 }
 
 async function getRepertoires() {
@@ -116,6 +144,7 @@ describe("GET /api/repertoires", () => {
     // A move both variations play has one card, so it is due, or not, in both at once.
     addCard(["e4", "e5", "Nf3", "Nc6"], "Bc4", FAR_AHEAD);
     addCard([], "e4", LONG_AGO);
+    addCardsForEveryMove();
 
     const response = await getRepertoires();
     expect(response.statusCode).toBe(200);
@@ -158,6 +187,10 @@ describe("GET /api/repertoires at the group and side levels", () => {
     addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
     // 1.e4 opens all three units and has one card, not due, so every level leaves it out alike.
     addCard([], "e4", FAR_AHEAD);
+    // 2.Nf3 and 3.Bc4 are known, stable and due: 4.c3, 4.d3 and 2.exd5 are the new moves.
+    const stable = { intervalHours: 72 };
+    addCard(["e4", "e5"], "Nf3", LONG_AGO, stable);
+    addCard(["e4", "e5", "Nf3", "Nc6"], "Bc4", LONG_AGO, stable);
 
     const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
 
@@ -166,11 +199,12 @@ describe("GET /api/repertoires at the group and side levels", () => {
       { recommended: 3, due: 3, all: 4 },
       { recommended: 1, due: 1, all: 2 },
     ]);
+    // 4.c3 and 4.d3 answer one position, so a drill over both takes one of them and the other waits.
     expect(body.groups).toEqual([
       {
         side: "white",
         group_name: "Italian Game",
-        moves: { recommended: 4, due: 4, all: 5 },
+        moves: { recommended: 3, due: 3, all: 4 },
       },
       {
         side: "white",
@@ -178,7 +212,99 @@ describe("GET /api/repertoires at the group and side levels", () => {
         moves: { recommended: 1, due: 1, all: 2 },
       },
     ]);
-    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 5, due: 5, all: 6 } }]);
+    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 4, due: 4, all: 5 } }]);
+  });
+
+  it("holds 2.exd5 back for 2.Nf3, its sibling, only at the level that covers both openings", async () => {
+    const italian = addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+    addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    addCard([], "e4", LONG_AGO);
+    addCard(["e4", "e5"], "Nf3", LONG_AGO, { intervalHours: 24 });
+    addCard(["e4", "e5", "Nf3", "Nc6"], "Bc4", LONG_AGO);
+    addCard(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"], "c3", LONG_AGO);
+    const counts = async () => {
+      const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
+      return {
+        italian: body.repertoires.find((entry) => entry.id === italian)?.moves,
+        scandinavian: body.groups?.find((group) => group.group_name === "Scandinavian Defense")
+          ?.moves,
+        side: body.sides?.[0]?.moves,
+      };
+    };
+
+    // 2.Nf3 is shown but not stable: the side's drill leaves 2.exd5 out, its own opening does not.
+    expect(await counts()).toEqual({
+      italian: { recommended: 4, due: 4, all: 4 },
+      scandinavian: { recommended: 2, due: 2, all: 2 },
+      side: { recommended: 4, due: 4, all: 4 },
+    });
+
+    setCardInterval(["e4", "e5"], "Nf3", 72);
+    expect(await counts()).toEqual({
+      italian: { recommended: 4, due: 4, all: 4 },
+      scandinavian: { recommended: 2, due: 2, all: 2 },
+      side: { recommended: 5, due: 5, all: 5 },
+    });
+  });
+});
+
+const SETUP_CARDS: [string[], string][] = [
+  [[], "e4"],
+  [["e4", "e5"], "Nf3"],
+  [["e4", "e5", "Nf3", "Nc6"], "Bc4"],
+];
+
+describe("GET /api/repertoires pacing of new moves", () => {
+  const AFTER_BC5 = [...SETUP, "Bc5"];
+  const AFTER_NF6 = [...SETUP, "Nf6"];
+  let classical: number;
+
+  const classicalCounts = async () => {
+    const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
+    return body.repertoires.find((entry) => entry.id === classical)?.moves;
+  };
+
+  beforeEach(() => {
+    classical = addVariation("Classical Variation (4.c3)", [
+      ["Bc5", "c3", "Nf6", "d4"],
+      ["Nf6", "d3"],
+    ]);
+  });
+
+  it("leaves out a new move while a sibling is short of stable or an earlier move of its line is new", async () => {
+    for (const [line, san] of SETUP_CARDS) addCard(line, san, LONG_AGO);
+    // 4.c3 leads its sibling 4.d3, and 5.d4 below it waits for 4.c3 to be shown.
+    expect(await classicalCounts()).toEqual({ recommended: 4, due: 4, all: 4 });
+
+    // 4.d3 is shown, not due and not stable: 4.c3 waits for it, and so does 5.d4.
+    addCard(AFTER_NF6, "d3", FAR_AHEAD, { intervalHours: 24 });
+    expect(await classicalCounts()).toEqual({ recommended: 3, due: 3, all: 4 });
+
+    setCardInterval(AFTER_NF6, "d3", 72);
+    expect(await classicalCounts()).toEqual({ recommended: 4, due: 4, all: 5 });
+
+    // Shown once, 4.c3 only has to be known for 5.d4 to enter.
+    addCard(AFTER_BC5, "c3", LONG_AGO);
+    expect(await classicalCounts()).toEqual({ recommended: 5, due: 5, all: 6 });
+  });
+
+  it("leaves out the new moves the day's limit holds back, counting only cards introduced in the last 24 hours", async () => {
+    const hoursAgo = (hours: number): string =>
+      new Date(Date.now() - hours * 3_600_000).toISOString();
+    const known = [...SETUP_CARDS, [AFTER_BC5, "c3"] as [string[], string]];
+    for (const [line, san] of known) {
+      addCard(line, san, LONG_AGO, { introducedAt: hoursAgo(1), intervalHours: 72 });
+    }
+    // Four cards in the last day leave room for 5.d4, the likelier of the two new moves.
+    expect(await classicalCounts()).toEqual({ recommended: 5, due: 5, all: 5 });
+
+    // A fifth, which is 4.d3 and not due, leaves none: 5.d4 waits, though nothing else holds it.
+    addCard(AFTER_NF6, "d3", FAR_AHEAD, { introducedAt: hoursAgo(1), intervalHours: 72 });
+    expect(await classicalCounts()).toEqual({ recommended: 4, due: 4, all: 5 });
+
+    // Introduced more than a day ago, the five leave room again.
+    db.prepare("UPDATE repertoire_cards SET introduced_at = ?").run(hoursAgo(25));
+    expect(await classicalCounts()).toEqual({ recommended: 5, due: 5, all: 6 });
   });
 });
 
