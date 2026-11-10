@@ -294,3 +294,70 @@ export function repertoireCounts(db: Database, repertoireId: number): Repertoire
     total: row.total,
   };
 }
+
+/** A Black move that left the stored Italian line in reviewed games, and the games that played it. */
+export interface MetOpeningRow {
+  /** The line from move 1 through that move, read back from a game that played it. */
+  root: string[];
+  /** The opening of the position reached, as the review saw it; null where the book names none. */
+  openingName: string | null;
+  games: number;
+  /** The unit already built from this root, if any. */
+  repertoireId: number | null;
+}
+
+// A unit built from a root stores the root's last move, Black's, as the last of its setup rows. The
+// Italian's own setup ends on a White move, so it never matches a Black departure. The oldest unit
+// wins if two ever share a root.
+function unitsByLastRootMove(db: Database): Map<string, number> {
+  const rows = db
+    .prepare(
+      `SELECT p.repertoire_id, p.position_key, p.move_uci
+       FROM repertoire_positions p JOIN repertoires r ON r.id = p.repertoire_id
+       WHERE r.side = 'white' AND p.kind = 'reply' AND p.source = 'setup'
+         AND p.ply = (SELECT MAX(q.ply) FROM repertoire_positions q
+                      WHERE q.repertoire_id = p.repertoire_id AND q.source = 'setup')
+       ORDER BY p.repertoire_id`,
+    )
+    .all() as Array<{ repertoire_id: number; position_key: string; move_uci: string }>;
+  const units = new Map<string, number>();
+  for (const row of rows) {
+    const key = `${row.position_key}|${row.move_uci}`;
+    if (!units.has(key)) units.set(key, row.repertoire_id);
+  }
+  return units;
+}
+
+// A review with outcome 'not_reached' holds the move that took the game out of the line before the
+// variation began. Only Black's move can start a unit: a departure on an even ply is the opponent's
+// choice, while White's own is the student's. Grouped by the position the move was played from and
+// the move, which is the position left to; the most met come first.
+export function listMetOpenings(db: Database): MetOpeningRow[] {
+  const groups = db
+    .prepare(
+      `SELECT left_position_key AS position_key, left_uci AS move_uci,
+              MIN(game_id) AS sample_game_id, COUNT(*) AS games, MAX(opening_name) AS opening_name
+       FROM repertoire_game_reviews
+       WHERE outcome = 'not_reached' AND left_ply IS NOT NULL AND left_ply % 2 = 0
+       GROUP BY left_position_key, left_uci
+       ORDER BY games DESC, sample_game_id`,
+    )
+    .all() as Array<{
+    position_key: string;
+    move_uci: string;
+    sample_game_id: number;
+    games: number;
+    opening_name: string | null;
+  }>;
+  const units = unitsByLastRootMove(db);
+  const rootOf = db.prepare(
+    `SELECT m.san FROM moves m JOIN repertoire_game_reviews r ON r.game_id = m.game_id
+     WHERE m.game_id = ? AND m.ply <= r.left_ply ORDER BY m.ply`,
+  );
+  return groups.map((group) => ({
+    root: (rootOf.all(group.sample_game_id) as Array<{ san: string }>).map((move) => move.san),
+    openingName: group.opening_name,
+    games: group.games,
+    repertoireId: units.get(`${group.position_key}|${group.move_uci}`) ?? null,
+  }));
+}

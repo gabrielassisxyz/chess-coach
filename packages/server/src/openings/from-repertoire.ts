@@ -1,3 +1,4 @@
+import { repertoireRootText } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import type { Database } from "../db/open.js";
 import {
@@ -36,6 +37,7 @@ import { MIN_POSITION_GAMES } from "./from-explorer.js";
 import { positionKey } from "./from-games.js";
 import { pickItalianWhiteUci } from "./from-italian.js";
 import type { OpeningNames } from "./names.js";
+import { checkRepertoireRoot, ITALIAN_SETUP_SAN, RepertoireRootError } from "./repertoire-root.js";
 
 export const REPERTOIRE_GROUP_ITALIAN = "Italian Game";
 // A Black reply is stored only where White's answer fits under the limit, so a line ends on White's
@@ -48,13 +50,15 @@ const REPERTOIRE_SEARCH_LINES = 5;
 // position where a live game cannot.
 export const REPERTOIRE_SEARCH_CAP_MS = 30_000;
 
-// The opening is chosen rather than scored, so these plies are played whatever the data says, and
-// reach starts counting after them: a reply that leaves earlier is out of scope for this unit.
-const ITALIAN_SETUP_SAN = ["e4", "e5", "Nf3", "Nc6", "Bc4"];
 // White's answer to this reply is the choice the variation is named after.
 const ITALIAN_NAMING_REPLY_SAN = "Bc5";
 
 export interface RepertoireOptions {
+  /**
+   * The line to build a unit from, 1.e4 through the Black move that leaves the Italian setup; left
+   * out, the run builds the Italian. It is checked again here, whoever called.
+   */
+  root?: readonly string[] | undefined;
   maxPly?: number;
   minGames?: number;
   minReach?: number;
@@ -200,9 +204,48 @@ function repertoireShallowerDepth(
   return first === undefined || second === undefined ? undefined : Math.min(first, second);
 }
 
-function repertoireVariationName(openingName: string | null, san: string): string {
+/** What one stored unit is built around: where it starts and what it is called. */
+interface RepertoireUnit {
+  groupName: string;
+  /** The moves of both sides played whatever the data says; reach counts from the end of them. */
+  fixed: readonly string[];
+  /** The line after whose last move White's answer names the variation. */
+  naming: readonly string[];
+}
+
+const ITALIAN_UNIT: RepertoireUnit = {
+  groupName: REPERTOIRE_GROUP_ITALIAN,
+  fixed: ITALIAN_SETUP_SAN,
+  naming: [...ITALIAN_SETUP_SAN, ITALIAN_NAMING_REPLY_SAN],
+};
+
+// The book's name for the root position, else the root as a line: a position the table does not
+// name still gets a group of its own.
+function repertoireUnitOf(options: RepertoireOptions, names: OpeningNames): RepertoireUnit {
+  if (!options.root) return ITALIAN_UNIT;
+  const checked = checkRepertoireRoot(options.root);
+  if (!checked.ok) throw new RepertoireRootError(checked.reason);
+  return {
+    groupName: names.ofPosition(checked.fen)?.name ?? repertoireRootText(checked.root),
+    fixed: checked.root,
+    naming: checked.root,
+  };
+}
+
+function repertoireVariationName(
+  unit: RepertoireUnit,
+  openingName: string | null,
+  san: string,
+): string {
   const afterColon = openingName?.split(":")[1]?.trim();
-  return `${afterColon || openingName || REPERTOIRE_GROUP_ITALIAN} (4.${san})`;
+  const answerMove = Math.ceil((unit.naming.length + 1) / 2);
+  return `${afterColon || openingName || unit.groupName} (${answerMove}.${san})`;
+}
+
+// "3...Bc5": the reply the variation is named after, as the book writes it.
+function repertoireReplyText(naming: readonly string[]): string {
+  const dots = naming.length % 2 === 0 ? "..." : ".";
+  return `${Math.ceil(naming.length / 2)}${dots}${naming.at(-1)}`;
 }
 
 class RepertoireWalk {
@@ -219,6 +262,7 @@ class RepertoireWalk {
     private readonly engine: Searcher,
     private readonly explorer: CachedExplorer,
     private readonly names: OpeningNames,
+    private readonly unit: RepertoireUnit,
     options: RepertoireOptions,
   ) {
     this.maxPly = options.maxPly ?? REPERTOIRE_MAX_PLY;
@@ -230,12 +274,12 @@ class RepertoireWalk {
   // of being found at the limit and left, and before the first count, so `created` never goes
   // negative.
   removeRepliesAtLimit(): number {
-    const stored = findFirstRepertoireVariation(this.db, "white", REPERTOIRE_GROUP_ITALIAN);
+    const stored = findFirstRepertoireVariation(this.db, "white", this.unit.groupName);
     return stored ? deleteRepertoireRepliesAtPly(this.db, stored.id, this.maxPly) : 0;
   }
 
   async run(): Promise<void> {
-    const stored = findFirstRepertoireVariation(this.db, "white", REPERTOIRE_GROUP_ITALIAN);
+    const stored = findFirstRepertoireVariation(this.db, "white", this.unit.groupName);
     this.repertoireId = (stored ?? (await this.createVariation())).id;
     await this.visitOwn(replayRepertoireLine([]));
   }
@@ -246,14 +290,17 @@ class RepertoireWalk {
   }
 
   private async createVariation(): Promise<RepertoireRow> {
-    const step = replayRepertoireLine([...ITALIAN_SETUP_SAN, ITALIAN_NAMING_REPLY_SAN]);
+    const step = replayRepertoireLine([...this.unit.naming]);
     const choice = await this.freshOwnChoice(step);
-    if (!choice) throw new Error("the engine found no answer to 3...Bc5 to name the variation");
+    if (!choice) {
+      const reply = repertoireReplyText(this.unit.naming);
+      throw new Error(`the engine found no answer to ${reply} to name the variation`);
+    }
     const opening = this.names.ofGame([...step.fens, choice.move.after])?.name ?? null;
     return createRepertoireVariation(this.db, {
       side: "white",
-      groupName: REPERTOIRE_GROUP_ITALIAN,
-      variationName: repertoireVariationName(opening, choice.move.san),
+      groupName: this.unit.groupName,
+      variationName: repertoireVariationName(this.unit, opening, choice.move.san),
     });
   }
 
@@ -333,7 +380,7 @@ class RepertoireWalk {
   }
 
   private repliesToKeep(step: RepertoireStep, position: ExplorerPosition): RepertoireKeptReply[] {
-    const setupSan = ITALIAN_SETUP_SAN[step.ply - 1];
+    const setupSan = this.unit.fixed[step.ply - 1];
     return setupSan
       ? this.setupReply(step, position, setupSan)
       : this.popularReplies(step, position);
@@ -430,7 +477,7 @@ class RepertoireWalk {
   private async computeOwnChoice(step: RepertoireStep): Promise<RepertoireOwnChoice | null> {
     const position = await this.explorer.position(step.fen, ITALIAN_WHITE_RATINGS);
     const searched = await this.searchPosition(step.fen, REPERTOIRE_SEARCH_LINES);
-    const setupSan = ITALIAN_SETUP_SAN[step.ply - 1];
+    const setupSan = this.unit.fixed[step.ply - 1];
     const uci = setupSan
       ? repertoirePlaySan(step.fen, setupSan)?.uci
       : pickItalianWhiteUci(step.fen, position, searched.lines, Math.ceil(step.ply / 2));
@@ -505,16 +552,17 @@ const NO_REPERTOIRE_COUNTS: RepertoireCounts = {
   total: 0,
 };
 
-function italianVariationCounts(db: Database): RepertoireCounts {
-  const stored = findFirstRepertoireVariation(db, "white", REPERTOIRE_GROUP_ITALIAN);
+function unitVariationCounts(db: Database, unit: RepertoireUnit): RepertoireCounts {
+  const stored = findFirstRepertoireVariation(db, "white", unit.groupName);
   return stored ? repertoireCounts(db, stored.id) : NO_REPERTOIRE_COUNTS;
 }
 
 /**
- * Builds the first Italian variation: one expected White move per position and every Black reply
- * common at the student's rating, from 1.e4 to White's 15th move, stored row by row so that a run
- * the request budget cuts short resumes by running again. Where no reply is common enough, the line
- * continues with a single one, the most played or else the engine's. A reply is stored only where
+ * Builds the first variation of a unit, the Italian unless `options.root` names another: one
+ * expected White move per position and every Black reply common at the student's rating, from
+ * 1.e4 (from the root, for a unit built from one) to White's 15th move, stored row by row so that
+ * a run the request budget cuts short resumes by running again. Where no reply is common enough,
+ * the line continues with a single one, the most played or else the engine's. A reply is stored only where
  * White's answer can be, and the replies an earlier run left at ply 30 without one are deleted first.
  * A search that is slow stops at the cap and keeps its best line, so a run never fails on one: the
  * depth reached is stored beside each White move's evaluation, and the result counts the cut searches.
@@ -528,10 +576,11 @@ export async function generateRepertoire(
   names: OpeningNames,
   options: RepertoireOptions = {},
 ): Promise<RepertoireResult> {
+  const unit = repertoireUnitOf(options, names);
   const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
-  const walk = new RepertoireWalk(db, engine, explorer, names, options);
+  const walk = new RepertoireWalk(db, engine, explorer, names, unit, options);
   const removedReplies = walk.removeRepliesAtLimit();
-  const before = italianVariationCounts(db);
+  const before = unitVariationCounts(db, unit);
   let truncated = false;
   try {
     await walk.run();
@@ -539,10 +588,9 @@ export async function generateRepertoire(
     if (!(error instanceof ExplorerError && error.code === "budget")) throw error;
     truncated = true;
   }
-  const after = italianVariationCounts(db);
+  const after = unitVariationCounts(db, unit);
   return {
-    variation:
-      findFirstRepertoireVariation(db, "white", REPERTOIRE_GROUP_ITALIAN)?.variation_name ?? null,
+    variation: findFirstRepertoireVariation(db, "white", unit.groupName)?.variation_name ?? null,
     ownMoves: after.ownMoves,
     replies: after.replies,
     mainlineReplies: after.mainlineReplies,

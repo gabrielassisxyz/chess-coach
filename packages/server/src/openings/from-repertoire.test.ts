@@ -32,6 +32,11 @@ import {
   type RepertoireResult,
 } from "./from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames, parseOpeningTable } from "./names.js";
+import {
+  checkRepertoireRoot,
+  REPERTOIRE_ROOT_MAX_PLY,
+  RepertoireRootError,
+} from "./repertoire-root.js";
 
 const SETUP = ["e4", "e5", "Nf3", "Nc6", "Bc4"];
 const BEFORE_BC4 = SETUP.slice(0, 4);
@@ -1659,6 +1664,286 @@ describe("POST /api/openings/generate with the repertoire source", () => {
   });
 });
 
+const SCANDINAVIAN = ["e4", "d5"];
+const AFTER_EXD5 = [...SCANDINAVIAN, "exd5"];
+const RUSSIAN = ["e4", "e5", "Nf3", "Nf6"];
+
+// The Italian rows of the fixture book and the names of the openings a root can name.
+const ROOT_FIXTURE_NAMES: OpeningNames = parseOpeningTable(
+  [
+    "eco\tname\tpgn\tuci\tepd",
+    `C50\tItalian Game\t-\t-\t${keyOf(SETUP)}`,
+    `C50\tItalian Game: Giuoco Piano\t-\t-\t${keyOf(AFTER_BC5)}`,
+    `C53\tItalian Game: Classical Variation\t-\t-\t${keyOf(AFTER_C3)}`,
+    `B00\tKing's Pawn Game\t-\t-\t${keyOf(["e4"])}`,
+    `B01\tScandinavian Defense\t-\t-\t${keyOf(SCANDINAVIAN)}`,
+    `B01\tScandinavian Defense: Mieses-Kotroc Variation\t-\t-\t${keyOf(AFTER_EXD5)}`,
+    `C42\tRussian Game\t-\t-\t${keyOf(RUSSIAN)}`,
+  ].join("\n"),
+);
+
+// 1...d5 holds 20% of the replies to 1.e4, and the replies to 2.exd5 are shares of their own
+// position: a reach measured from 1.e4 would put each of them a fifth lower.
+function writeScandinavianTree(): void {
+  explorer
+    .write([], ITALIAN_WHITE_RATINGS, { e4: 5000 }, 10000)
+    .write(["e4"], EXPLORER_RATINGS, { e5: 62500, d5: 20000, c5: 10000 }, 100000)
+    .write(SCANDINAVIAN, ITALIAN_WHITE_RATINGS, { exd5: 6000, Nc3: 2000 }, 10000)
+    .write(AFTER_EXD5, EXPLORER_RATINGS, { Qxd5: 6000, Nf6: 3000, c6: 500, e6: 150 }, 10000);
+  engine.write([], [["e2e4", 30]]).write(SCANDINAVIAN, [
+    ["e4d5", 40],
+    ["b1c3", 30],
+  ]);
+}
+
+describe("a unit built from a root", () => {
+  it("stores a White repertoire named by the book for the root and by White's answer to it", async () => {
+    writeScandinavianTree();
+    const result = await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    expect(result.variation).toBe("Mieses-Kotroc Variation (2.exd5)");
+    expect(variationsOf(db)).toEqual([
+      {
+        side: "white",
+        group_name: "Scandinavian Defense",
+        variation_name: "Mieses-Kotroc Variation (2.exd5)",
+      },
+    ]);
+  });
+
+  it("stores the root as setup rows at reach 1 and starts choosing with White's answer", async () => {
+    writeScandinavianTree();
+    await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    const root = rowsOf(db).filter((row) => row.ply <= 2);
+    expect(root.map((row) => [row.kind, row.move_san, row.source, row.reach])).toEqual([
+      ["own", "e4", "setup", 1],
+      ["reply", "d5", "setup", 1],
+    ]);
+    expect(replyAt(["e4"], "d5")?.share).toBeCloseTo(0.2);
+    expect(ownAt(SCANDINAVIAN)).toMatchObject({ move_san: "exd5", source: "explorer", ply: 3 });
+    expect(ownAt(SCANDINAVIAN)?.share).toBeCloseTo(0.6);
+  });
+
+  it("measures reach from the root, not from move 1", async () => {
+    writeScandinavianTree();
+    await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    expect(replyAt(AFTER_EXD5, "Qxd5")?.reach).toBeCloseTo(0.6);
+    expect(replyAt(AFTER_EXD5, "Nf6")?.reach).toBeCloseTo(0.3);
+    // 5% of the games clears 1 in 50 from the root; from move 1 it would be 1% and be dropped.
+    expect(replyAt(AFTER_EXD5, "c6")?.reach).toBeCloseTo(0.05);
+    expect(replyAt(AFTER_EXD5, "e6")).toBeUndefined();
+    expect(ownAt([...AFTER_EXD5, "Qxd5"])?.reach).toBeCloseTo(0.6);
+  });
+
+  it("branches only while a reply clears the goal and 200 games, as the Italian does", async () => {
+    writeScandinavianTree();
+    await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    const replies = rowsOf(db)
+      .filter((row) => row.kind === "reply" && row.position_key === keyOf(AFTER_EXD5))
+      .map((row) => row.move_san)
+      .sort();
+    expect(replies).toEqual(["Nf6", "Qxd5", "c6"]);
+  });
+
+  it("continues every line to White's 15th move, past the coverage goal", async () => {
+    writeScandinavianTree();
+    const result = await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    expect(result.deepestPly).toBe(REPERTOIRE_MAX_PLY - 1);
+    expect(repliesWithoutWhiteAnswer(rowsOf(db))).toEqual([]);
+    expect(result.engineReplies).toBeGreaterThan(0);
+  });
+
+  it("leaves a stored Italian unit exactly as it was", async () => {
+    writeItalianTree();
+    writeScandinavianTree();
+    await generate({}, ROOT_FIXTURE_NAMES);
+    const italian = findFirstRepertoireVariation(db, "white", "Italian Game");
+    const italianRows = () => rowsOf(db).filter((row) => row.repertoire_id === italian?.id);
+    const before = digestOf(italianRows());
+    expect(italianRows().length).toBeGreaterThan(0);
+    await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    expect(digestOf(italianRows())).toBe(before);
+    expect(variationsOf(db)).toHaveLength(2);
+    const scandinavian = findFirstRepertoireVariation(db, "white", "Scandinavian Defense");
+    expect(scandinavian?.id).not.toBe(italian?.id);
+    expect(
+      rowsOf(db).filter((row) => row.repertoire_id === scandinavian?.id).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("adds no row on a second run of the same root and asks neither the network nor the engine", async () => {
+    writeScandinavianTree();
+    const first = await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    const stored = rowsOf(db);
+    const searches = engine.requests.length;
+    const second = await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    expect(first.created).toBe(stored.length);
+    expect(second).toMatchObject({ created: 0, requests: 0, truncated: false });
+    expect(engine.requests).toHaveLength(searches);
+    expect(rowsOf(db)).toEqual(stored);
+    expect(variationsOf(db)).toHaveLength(1);
+  });
+
+  it("names a root the book does not name after the root as a line", async () => {
+    explorer.write(["e4", "c6"], ITALIAN_WHITE_RATINGS, { d4: 500 }, 1000);
+    engine.write(["e4", "c6"], [["d2d4", 30]]);
+    await generate({ root: ["e4", "c6"] }, NO_OPENING_NAMES);
+    expect(variationsOf(db)).toEqual([
+      { side: "white", group_name: "1.e4 c6", variation_name: "1.e4 c6 (2.d4)" },
+    ]);
+  });
+
+  it("counts White's answer from the length of the root: 3.Nxe5 after 1.e4 e5 2.Nf3 Nf6", async () => {
+    engine.write(RUSSIAN, [["f3e5", 40]]);
+    const result = await generate({ root: RUSSIAN }, ROOT_FIXTURE_NAMES);
+    expect(result.variation).toBe("Russian Game (3.Nxe5)");
+    expect(variationsOf(db)).toMatchObject([{ group_name: "Russian Game" }]);
+    expect(
+      rowsOf(db)
+        .filter((row) => row.source === "setup")
+        .map((row) => row.move_san),
+    ).toEqual(RUSSIAN);
+  });
+
+  it("refuses a root the rules refuse, before it asks the network or stores anything", async () => {
+    await expect(generate({ root: ["d4", "d5"] }, ROOT_FIXTURE_NAMES)).rejects.toBeInstanceOf(
+      RepertoireRootError,
+    );
+    expect(variationsOf(db)).toEqual([]);
+    expect(explorer.calls).toEqual([]);
+    expect(engine.requests).toEqual([]);
+  });
+
+  it("builds the Italian when no root is given, even beside the unit of a root", async () => {
+    writeItalianTree();
+    writeScandinavianTree();
+    await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    const italian = await generate({}, ROOT_FIXTURE_NAMES);
+    expect(italian.variation).toBe("Classical Variation (4.c3)");
+    expect(variationsOf(db)).toHaveLength(2);
+  });
+});
+
+describe("the root of a unit", () => {
+  const LONG_LINE = [...SETUP, "Bc5", "c3", "Nf6", "d4", "exd4"];
+
+  it.each([
+    ["1.e4 d5", SCANDINAVIAN],
+    ["a departure from the setup at move 2", ["e4", "e5", "Nf3", "Bc5"]],
+    ["a departure after 3.Bc4", [...SETUP, "Bc5"]],
+    ["a White move past the setup, up to 8 plies", [...SETUP, "Bc5", "c3", "Nf6"]],
+  ])("accepts %s", (_label, root) => {
+    expect(checkRepertoireRoot(root)).toMatchObject({ ok: true, root });
+  });
+
+  it("returns the position the root leads to", () => {
+    expect(checkRepertoireRoot(SCANDINAVIAN)).toMatchObject({ fen: fenOf(SCANDINAVIAN) });
+  });
+
+  it("writes each move the way the board does, whatever the spelling it came in", () => {
+    expect(checkRepertoireRoot(["e2e4", "d7d5"])).toMatchObject({ ok: true, root: SCANDINAVIAN });
+  });
+
+  it.each([
+    ["an illegal move", ["e4", "d4"]],
+    ["a move that is not text", ["e4", 5]],
+    ["text that is not a move", ["e4", "x".repeat(40)]],
+    ["a list that is not a list", "e4 d5"],
+    ["an empty root", []],
+    ["a root that starts with another move", ["d4", "d5"]],
+    ["a root that ends on a White move", ["e4", "d5", "exd5"]],
+    ["a single White move", ["e4"]],
+    ["a White move other than the setup move at ply 3", ["e4", "e5", "Bc4", "Nf6"]],
+    ["a White move other than the setup move at ply 5", [...BEFORE_BC4, "Bb5", "a6"]],
+    ["more than 8 plies", LONG_LINE],
+  ])("refuses %s", (_label, root) => {
+    expect(checkRepertoireRoot(root)).toMatchObject({ ok: false, reason: expect.any(String) });
+  });
+
+  it("allows the longest root and refuses one ply more", () => {
+    const longest = [...SETUP, "Bc5", "c3", "Nf6"];
+    expect(longest).toHaveLength(REPERTOIRE_ROOT_MAX_PLY);
+    expect(checkRepertoireRoot(longest).ok).toBe(true);
+    expect(checkRepertoireRoot([...longest, "d4", "exd4"]).ok).toBe(false);
+  });
+});
+
+describe("POST /api/openings/generate with a root", () => {
+  const appWithFakes = (log = new RecordingLog()) =>
+    buildApp({
+      db,
+      log,
+      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateRepertoireOpenings: (root) =>
+        generateRepertoire(db, engine, explorer, cacheDir, clock, ROOT_FIXTURE_NAMES, { root }),
+    });
+  const post = (app: ReturnType<typeof appWithFakes>, payload: object) =>
+    app.inject({ method: "POST", url: "/api/openings/generate", payload });
+
+  it("stores the unit of the root beside the Italian and touches none of the Italian's rows", async () => {
+    writeItalianTree();
+    writeScandinavianTree();
+    const app = appWithFakes();
+    await post(app, { sources: ["repertoire"] });
+    const italian = findFirstRepertoireVariation(db, "white", "Italian Game");
+    const italianBefore = digestOf(rowsOf(db).filter((row) => row.repertoire_id === italian?.id));
+    const response = await post(app, { sources: ["repertoire"], root: ["e4", "d5"] });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      repertoire: { variation: "Mieses-Kotroc Variation (2.exd5)" },
+    });
+    expect(variationsOf(db)).toEqual([
+      { side: "white", group_name: "Italian Game", variation_name: "Classical Variation (4.c3)" },
+      {
+        side: "white",
+        group_name: "Scandinavian Defense",
+        variation_name: "Mieses-Kotroc Variation (2.exd5)",
+      },
+    ]);
+    expect(digestOf(rowsOf(db).filter((row) => row.repertoire_id === italian?.id))).toBe(
+      italianBefore,
+    );
+    const unit = findFirstRepertoireVariation(db, "white", "Scandinavian Defense");
+    const stored = rowsOf(db).filter((row) => row.repertoire_id === unit?.id);
+    expect(stored.map((row) => row.move_san).slice(0, 3)).toEqual(["e4", "d5", "exd5"]);
+    expect(stored.find((row) => row.move_san === "Qxd5")?.reach).toBeCloseTo(0.6);
+  });
+
+  it("adds no row when the same root is posted twice", async () => {
+    writeScandinavianTree();
+    const app = appWithFakes();
+    const first = await post(app, { sources: ["repertoire"], root: ["e4", "d5"] });
+    const stored = rowsOf(db);
+    const second = await post(app, { sources: ["repertoire"], root: ["e4", "d5"] });
+    await app.close();
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({ repertoire: { created: 0 } });
+    expect(stored.length).toBeGreaterThan(0);
+    expect(rowsOf(db)).toEqual(stored);
+    expect(variationsOf(db)).toHaveLength(1);
+  });
+
+  it.each([
+    ["illegal", ["e4", "d4"]],
+    ["not starting with e4", ["d4", "d5"]],
+    ["ending on a White move", ["e4", "d5", "exd5"]],
+    ["longer than 8 plies", [...SETUP, "Bc5", "c3", "Nf6", "d4", "exd4"]],
+    ["departing from the setup on White's side", ["e4", "e5", "Bc4", "Nf6"]],
+  ])("refuses a root that is %s with invalid_root and stores nothing", async (_label, root) => {
+    writeItalianTree();
+    writeScandinavianTree();
+    const app = appWithFakes();
+    const response = await post(app, { sources: ["repertoire"], root });
+    await app.close();
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_root" });
+    expect(variationsOf(db)).toEqual([]);
+    expect(rowsOf(db)).toEqual([]);
+    expect(explorer.calls).toEqual([]);
+  });
+});
+
 describe("the documentation of the repertoire source", () => {
   const repositoryRoot = join(import.meta.dirname, "../../../..");
 
@@ -1678,6 +1963,22 @@ describe("the documentation of the repertoire source", () => {
     );
     expect(openings).toContain("`mainlineReplies`");
     expect(openings).toContain("`engineReplies`");
+  });
+
+  it("says under Openings that a unit can be built from any root that leaves the Italian setup, and how the hub offers them", () => {
+    const agents = readFileSync(join(repositoryRoot, "AGENTS.md"), "utf8");
+    const openings = /- \*\*Openings:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "";
+    expect(openings).toContain("built from any root that leaves the Italian setup");
+    for (const documented of [
+      '`POST /api/openings/generate {sources: ["repertoire"], root: ["e4", "d5"]}`',
+      "`invalid_root`",
+      "`REPERTOIRE_ROOT_MAX_PLY`",
+      "`GET /api/repertoires`",
+      "`met`",
+      "Add action",
+    ]) {
+      expect(openings).toContain(documented);
+    }
   });
 
   it("says under Openings that a search stops at the cap, and where the depth is stored and logged", () => {
