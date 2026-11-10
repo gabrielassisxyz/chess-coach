@@ -1,5 +1,6 @@
 import type { PromotionPiece, TrainingActivity } from "@chess-coach/shared";
-import { useCallback, useEffect, useState } from "react";
+import type { DrawShape } from "@lichess-org/chessground/draw";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { boardOf, trainingView } from "../state/practice.js";
 import {
   isLegalIn,
@@ -8,10 +9,13 @@ import {
   positionAfter,
   startFenOf,
 } from "../state/practice-item.js";
+import { shownMoveOf } from "../state/repertoire-drill.js";
 import type { ServerApi } from "./useServer.js";
 
 // How long the right or wrong mark stays on the destination square; the final right mark stays.
 export const BADGE_MS = 500;
+
+const NO_SHAPES: readonly DrawShape[] = [];
 
 export interface SquareBadge {
   square: string;
@@ -24,6 +28,9 @@ export interface PracticeBoard {
   bothSides: boolean;
   line: readonly string[] | null;
   hintSquare: string | null;
+  // The arrow a repertoire drill draws for the move it shows: the answer of a new move, or the
+  // move a second hint asked for.
+  answerShapes: readonly DrawShape[];
   orientation: "white" | "black";
   badge: SquareBadge | null;
   // The free line's SAN while exploring (open item) or analysing (ended item); null otherwise.
@@ -81,10 +88,12 @@ export function usePracticeBoard(
   }, [open]);
 
   const lastTry = training.last_try;
+  const drill = training.repertoire ?? null;
   const badgeKey = `${servedKey}:${lastTry?.uci ?? ""}:${training.tries}:${tip}:${training.status}`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: the key names the try the mark is for
   useEffect(() => {
-    if (!lastTry) {
+    // A repertoire drill answers a miss with the piece going back and nothing else.
+    if (!lastTry || (drill !== null && !lastTry.correct)) {
       setBadge(null);
       return;
     }
@@ -192,6 +201,18 @@ export function usePracticeBoard(
     activity = boardOf(training);
   }
 
+  const shown = open && drill ? shownMoveOf(drill) : null;
+  const shownUci = shown?.uci ?? null;
+  const answerShapes = useMemo<readonly DrawShape[]>(
+    () =>
+      shownUci === null
+        ? NO_SHAPES
+        : ([
+            { orig: shownUci.slice(0, 2), dest: shownUci.slice(2, 4), brush: "green" },
+          ] as DrawShape[]),
+    [shownUci],
+  );
+
   const scratchLine = scratch ? (open ? training.exploring.line_san : (local?.sans ?? [])) : null;
   const atTip = !stepping && !local;
   return {
@@ -199,6 +220,7 @@ export function usePracticeBoard(
     bothSides: scratch,
     line: atTip && training.gave_up ? training.solution_line : null,
     hintSquare: atTip ? training.hint_square : null,
+    answerShapes: atTip ? answerShapes : NO_SHAPES,
     orientation: flipped
       ? training.orientation === "white"
         ? "black"

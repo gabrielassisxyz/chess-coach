@@ -1,4 +1,4 @@
-import type { Schedule } from "../srs/sm2.js";
+import { dueAt, type Quality, review as reviewSchedule, type Schedule } from "../srs/sm2.js";
 import type { Database } from "./open.js";
 import type { RepertoireRow } from "./repertoires.js";
 
@@ -151,4 +151,31 @@ export function saveRepertoireCardReview(
     review.reviewedAt,
     cardId,
   );
+}
+
+// The qualities a drill's first try carries, so a move rates the same whichever way it was played.
+const GAME_PASS_QUALITY: Quality = 4;
+const GAME_FAIL_QUALITY: Quality = 2;
+
+/**
+ * Rates a repertoire move that a played game either got right or missed, by the rule a drill's
+ * first try follows: a move never shown gets its card now, a right move that is not yet due keeps
+ * its schedule so playing it often earns no longer interval, and anything else moves the card
+ * along the SM-2 ladder.
+ */
+export function rateRepertoireCardFromGame(
+  db: Database,
+  move: { positionKey: string; uci: string },
+  right: boolean,
+  now: Date,
+): void {
+  introduceRepertoireCard(db, move, now.toISOString());
+  const card = findRepertoireCard(db, move) as RepertoireCardSchedule;
+  if (right && Date.parse(card.next_review_at) > now.getTime()) return;
+  const schedule = reviewSchedule(card, right ? GAME_PASS_QUALITY : GAME_FAIL_QUALITY);
+  saveRepertoireCardReview(db, card.id, {
+    schedule,
+    nextReviewAt: dueAt(now, schedule.interval_hours).toISOString(),
+    reviewedAt: now.toISOString(),
+  });
 }
