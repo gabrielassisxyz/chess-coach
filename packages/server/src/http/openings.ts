@@ -6,7 +6,11 @@ import type { ExplorerResult } from "../openings/from-explorer.js";
 import type { GenerationResult } from "../openings/from-games.js";
 import type { RepertoireResult } from "../openings/from-repertoire.js";
 import { IdeaSessionError, type RepertoireIdeasResult } from "../openings/repertoire-ideas.js";
-import { checkRepertoireRoot, type RepertoireRootCheck } from "../openings/repertoire-root.js";
+import {
+  checkRepertoireRoot,
+  type RepertoireRootCheck,
+  RepertoireRootConflictError,
+} from "../openings/repertoire-root.js";
 
 const generateBody = z
   .object({
@@ -138,6 +142,9 @@ export function registerOpeningRoutes(
         ...rootFields,
         duration_ms: elapsed(),
       });
+      if (error instanceof RepertoireRootConflictError) {
+        return reply.code(409).send({ error: "root_conflict", message });
+      }
       if (error instanceof ExplorerError) {
         return reply.code(502).send({ error: "explorer_unavailable", message });
       }

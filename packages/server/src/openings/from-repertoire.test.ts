@@ -35,6 +35,7 @@ import { NO_OPENING_NAMES, type OpeningNames, parseOpeningTable } from "./names.
 import {
   checkRepertoireRoot,
   REPERTOIRE_ROOT_MAX_PLY,
+  RepertoireRootConflictError,
   RepertoireRootError,
 } from "./repertoire-root.js";
 
@@ -1667,6 +1668,9 @@ describe("POST /api/openings/generate with the repertoire source", () => {
 const SCANDINAVIAN = ["e4", "d5"];
 const AFTER_EXD5 = [...SCANDINAVIAN, "exd5"];
 const RUSSIAN = ["e4", "e5", "Nf3", "Nf6"];
+// The book gives this line the name of RUSSIAN, as it does for two roots of the Philidor Defense.
+const RUSSIAN_LONG = [...RUSSIAN, "Bc4", "Nxe4"];
+const PHILIDOR = ["e4", "e5", "Nf3", "d6"];
 
 // The Italian rows of the fixture book and the names of the openings a root can name.
 const ROOT_FIXTURE_NAMES: OpeningNames = parseOpeningTable(
@@ -1679,6 +1683,8 @@ const ROOT_FIXTURE_NAMES: OpeningNames = parseOpeningTable(
     `B01\tScandinavian Defense\t-\t-\t${keyOf(SCANDINAVIAN)}`,
     `B01\tScandinavian Defense: Mieses-Kotroc Variation\t-\t-\t${keyOf(AFTER_EXD5)}`,
     `C42\tRussian Game\t-\t-\t${keyOf(RUSSIAN)}`,
+    `C42\tRussian Game\t-\t-\t${keyOf(RUSSIAN_LONG)}`,
+    `C41\tPhilidor Defense\t-\t-\t${keyOf(PHILIDOR)}`,
   ].join("\n"),
 );
 
@@ -1821,6 +1827,100 @@ describe("a unit built from a root", () => {
     expect(italian.variation).toBe("Classical Variation (4.c3)");
     expect(variationsOf(db)).toHaveLength(2);
   });
+
+  it("answers the root with the most played move within the margin, not with a setup move", async () => {
+    // 2.Nf3 is within 50 cp of the best, but 2.exd5 is what is played: the setup move of turn 2 is
+    // for the Italian's own plies, and after a root it must not outrank the games.
+    explorer.write(SCANDINAVIAN, ITALIAN_WHITE_RATINGS, { exd5: 6000, Nf3: 1000 }, 10000);
+    engine.write(SCANDINAVIAN, [
+      ["e4d5", 40],
+      ["g1f3", 30],
+    ]);
+    await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    expect(ownAt(SCANDINAVIAN)?.move_san).toBe("exd5");
+  });
+
+  it("does the same on turn 3, where the setup move is 3.Bc4", async () => {
+    explorer.write(PHILIDOR, ITALIAN_WHITE_RATINGS, { d4: 6000, Bc4: 1000 }, 10000);
+    engine.write(PHILIDOR, [
+      ["d2d4", 40],
+      ["f1c4", 30],
+    ]);
+    await generate({ root: PHILIDOR }, ROOT_FIXTURE_NAMES);
+    expect(ownAt(PHILIDOR)?.move_san).toBe("d4");
+  });
+
+  it("refuses a root whose group holds the unit of another root, and changes nothing", async () => {
+    engine.write(RUSSIAN, [["f3e5", 40]]);
+    await generate({ root: RUSSIAN }, ROOT_FIXTURE_NAMES);
+    const stored = rowsOf(db);
+    const searches = engine.requests.length;
+    const calls = explorer.calls.length;
+    await expect(generate({ root: RUSSIAN_LONG }, ROOT_FIXTURE_NAMES)).rejects.toBeInstanceOf(
+      RepertoireRootConflictError,
+    );
+    expect(rowsOf(db)).toEqual(stored);
+    expect(variationsOf(db)).toHaveLength(1);
+    expect(engine.requests).toHaveLength(searches);
+    expect(explorer.calls).toHaveLength(calls);
+  });
+
+  it("says which root holds the group", async () => {
+    await generate({ root: RUSSIAN }, ROOT_FIXTURE_NAMES);
+    await expect(generate({ root: RUSSIAN_LONG }, ROOT_FIXTURE_NAMES)).rejects.toThrow(
+      "Russian Game already holds the unit of 1.e4 e5 2.Nf3 Nf6",
+    );
+  });
+
+  it("refuses the other way round too: the short root after the long one", async () => {
+    await generate({ root: RUSSIAN_LONG }, ROOT_FIXTURE_NAMES);
+    const stored = rowsOf(db);
+    await expect(generate({ root: RUSSIAN }, ROOT_FIXTURE_NAMES)).rejects.toBeInstanceOf(
+      RepertoireRootConflictError,
+    );
+    expect(rowsOf(db)).toEqual(stored);
+  });
+
+  it("carries on with a unit whose run was cut off before a move was stored", async () => {
+    writeScandinavianTree();
+    const cut = await generate({ root: SCANDINAVIAN, maxRequests: 2 }, ROOT_FIXTURE_NAMES);
+    expect(cut).toMatchObject({ truncated: true, created: 0 });
+    expect(variationsOf(db)).toHaveLength(1);
+    expect(rowsOf(db)).toEqual([]);
+    const resumed = await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    expect(resumed.truncated).toBe(false);
+    expect(resumed.created).toBeGreaterThan(0);
+    expect(variationsOf(db)).toHaveLength(1);
+  });
+
+  it("carries on with a unit that holds only the start of its root", async () => {
+    writeScandinavianTree();
+    const made = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Scandinavian Defense",
+      variationName: "Mieses-Kotroc Variation (2.exd5)",
+    });
+    insertRepertoireOwnMove(db, {
+      repertoireId: made.id,
+      positionKey: keyOf([]),
+      ply: 1,
+      line: [],
+      reach: 1,
+      openingName: null,
+      uci: "e2e4",
+      san: "e4",
+      share: null,
+      source: "setup",
+      cpLoss: 0,
+      evalCp: 30,
+      results: null,
+    });
+    const resumed = await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    expect(resumed.truncated).toBe(false);
+    expect(variationsOf(db)).toHaveLength(1);
+    expect(replyAt(["e4"], "d5")).toMatchObject({ source: "setup" });
+    expect(ownAt(SCANDINAVIAN)?.move_san).toBe("exd5");
+  });
 });
 
 describe("the root of a unit", () => {
@@ -1831,8 +1931,17 @@ describe("the root of a unit", () => {
     ["a departure from the setup at move 2", ["e4", "e5", "Nf3", "Bc5"]],
     ["a departure after 3.Bc4", [...SETUP, "Bc5"]],
     ["a White move past the setup, up to 8 plies", [...SETUP, "Bc5", "c3", "Nf6"]],
+    ["a setup move that gives check", ["e4", "f6", "Nf3", "Kf7", "Bc4+", "Kg6"]],
   ])("accepts %s", (_label, root) => {
     expect(checkRepertoireRoot(root)).toMatchObject({ ok: true, root });
+  });
+
+  it("takes a setup move for the setup move whether or not it was written with its check", () => {
+    const checking = ["e4", "f6", "Nf3", "Kf7", "Bc4+", "Kg6"];
+    expect(checkRepertoireRoot(["e4", "f6", "Nf3", "Kf7", "Bc4", "Kg6"])).toMatchObject({
+      ok: true,
+      root: checking,
+    });
   });
 
   it("returns the position the root leads to", () => {
@@ -1948,6 +2057,21 @@ describe("POST /api/openings/generate with a root", () => {
     expect(rowsOf(db)).toEqual([]);
     expect(explorer.calls).toEqual([]);
   });
+
+  it("answers 409 root_conflict, and changes nothing, for a root the book names as another stored root", async () => {
+    const app = appWithFakes();
+    await post(app, { sources: ["repertoire"], root: RUSSIAN });
+    const stored = rowsOf(db);
+    const response = await post(app, { sources: ["repertoire"], root: RUSSIAN_LONG });
+    await app.close();
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      error: "root_conflict",
+      message: expect.stringContaining("Russian Game already holds the unit of"),
+    });
+    expect(rowsOf(db)).toEqual(stored);
+    expect(variationsOf(db)).toHaveLength(1);
+  });
 });
 
 describe("the documentation of the repertoire source", () => {
@@ -1978,6 +2102,7 @@ describe("the documentation of the repertoire source", () => {
     for (const documented of [
       '`POST /api/openings/generate {sources: ["repertoire"], root: ["e4", "d5"]}`',
       "`invalid_root`",
+      "`root_conflict`",
       "`REPERTOIRE_ROOT_MAX_PLY`",
       "`GET /api/repertoires`",
       "`met`",

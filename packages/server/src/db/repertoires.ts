@@ -361,3 +361,24 @@ export function listMetOpenings(db: Database): MetOpeningRow[] {
     repertoireId: units.get(`${group.position_key}|${group.move_uci}`) ?? null,
   }));
 }
+
+/** The moves a unit was rooted at, in order: the setup rows of White and of Black. */
+export function repertoireSetupLine(db: Database, repertoireId: number): string[] {
+  const rows = db
+    .prepare(
+      "SELECT move_san FROM repertoire_positions WHERE repertoire_id = ? AND source = 'setup' ORDER BY ply",
+    )
+    .all(repertoireId) as Array<{ move_san: string }>;
+  return rows.map((row) => row.move_san);
+}
+
+/** Whether a run got past the root of a unit: a run cut short at the start stored only its setup. */
+export function repertoireHoldsMovesBeyondSetup(db: Database, repertoireId: number): boolean {
+  return (
+    db
+      .prepare(
+        "SELECT 1 FROM repertoire_positions WHERE repertoire_id = ? AND source <> 'setup' LIMIT 1",
+      )
+      .get(repertoireId) !== undefined
+  );
+}

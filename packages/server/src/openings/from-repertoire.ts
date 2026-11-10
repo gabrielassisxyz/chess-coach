@@ -15,6 +15,8 @@ import {
   type RepertoireRowPlace,
   raiseRepertoireOwnMoveReach,
   repertoireCounts,
+  repertoireHoldsMovesBeyondSetup,
+  repertoireSetupLine,
   type StoredRepertoireContinuation,
   type StoredRepertoireOwnMove,
   upsertRepertoireReply,
@@ -37,7 +39,12 @@ import { MIN_POSITION_GAMES } from "./from-explorer.js";
 import { positionKey } from "./from-games.js";
 import { pickItalianWhiteUci } from "./from-italian.js";
 import type { OpeningNames } from "./names.js";
-import { checkRepertoireRoot, ITALIAN_SETUP_SAN, RepertoireRootError } from "./repertoire-root.js";
+import {
+  checkRepertoireRoot,
+  ITALIAN_SETUP_SAN,
+  RepertoireRootConflictError,
+  RepertoireRootError,
+} from "./repertoire-root.js";
 
 export const REPERTOIRE_GROUP_ITALIAN = "Italian Game";
 // A Black reply is stored only where White's answer fits under the limit, so a line ends on White's
@@ -52,6 +59,10 @@ export const REPERTOIRE_SEARCH_CAP_MS = 30_000;
 
 // White's answer to this reply is the choice the variation is named after.
 const ITALIAN_NAMING_REPLY_SAN = "Bc5";
+// pickItalianWhiteUci prefers the Italian setup move on turns 1 to 3. The walk plays those plies
+// from its fixed line, so the preference could only choose White's answer after a root, where the
+// rule is the most played move within the margin. No turn has no setup move.
+const NO_SETUP_PREFERENCE_TURN = 0;
 
 export interface RepertoireOptions {
   /**
@@ -230,6 +241,28 @@ function repertoireUnitOf(options: RepertoireOptions, names: OpeningNames): Repe
     fixed: checked.root,
     naming: checked.root,
   };
+}
+
+const lineStartsWith = (line: readonly string[], start: readonly string[]): boolean =>
+  start.length <= line.length && start.every((san, index) => san === line[index]);
+
+// The unit stored under a group is the one a root builds only if it was made from that root: its
+// setup is the root, or the start of it while nothing past the setup is stored, which is what a run
+// cut short at the beginning leaves. Anything else is the unit of another root that the book gave
+// the same name, and walking it would write this root's lines into that unit.
+function assertGroupHoldsRoot(db: Database, unit: RepertoireUnit): void {
+  if (unit === ITALIAN_UNIT) return;
+  const stored = findFirstRepertoireVariation(db, "white", unit.groupName);
+  if (!stored) return;
+  const setup = repertoireSetupLine(db, stored.id);
+  const isStartOfRoot = lineStartsWith(unit.fixed, setup);
+  const isRoot = isStartOfRoot && setup.length === unit.fixed.length;
+  const cutShort = isStartOfRoot && !repertoireHoldsMovesBeyondSetup(db, stored.id);
+  if (isRoot || cutShort) return;
+  const other = repertoireRootText(setup);
+  throw new RepertoireRootConflictError(
+    `${unit.groupName} already holds the unit of ${other}, another root the book gives the same name`,
+  );
 }
 
 function repertoireVariationName(
@@ -480,7 +513,7 @@ class RepertoireWalk {
     const setupSan = this.unit.fixed[step.ply - 1];
     const uci = setupSan
       ? repertoirePlaySan(step.fen, setupSan)?.uci
-      : pickItalianWhiteUci(step.fen, position, searched.lines, Math.ceil(step.ply / 2));
+      : pickItalianWhiteUci(step.fen, position, searched.lines, NO_SETUP_PREFERENCE_TURN);
     if (!uci) return null;
     const move = repertoirePlayUci(step.fen, uci);
     const scores = await this.scoreOwnMove(step.fen, uci, searched);
@@ -577,6 +610,7 @@ export async function generateRepertoire(
   options: RepertoireOptions = {},
 ): Promise<RepertoireResult> {
   const unit = repertoireUnitOf(options, names);
+  assertGroupHoldsRoot(db, unit);
   const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
   const walk = new RepertoireWalk(db, engine, explorer, names, unit, options);
   const removedReplies = walk.removeRepliesAtLimit();

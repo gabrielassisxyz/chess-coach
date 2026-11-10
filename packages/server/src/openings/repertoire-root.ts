@@ -13,6 +13,9 @@ const LONGEST_SAN = 12;
 
 export class RepertoireRootError extends Error {}
 
+/** The group of a root already holds the unit of another root: two lines the book gives one name. */
+export class RepertoireRootConflictError extends Error {}
+
 export type RepertoireRootCheck =
   | { ok: true; root: string[]; fen: string }
   | { ok: false; reason: string };
@@ -34,12 +37,16 @@ function playRoot(sans: readonly string[]): { sans: string[]; fen: string } | nu
   return { sans: played, fen: game.fen() };
 }
 
+// chess.js writes a move that gives check with a "+", and it is still the setup move: 3.Bc4
+// against a king that stepped out onto f7 is 3.Bc4+.
+const withoutCheck = (san: string): string => san.replace(/[+#]$/, "");
+
 // White's moves must be the setup moves at the plies the setup has one. Past the setup White has
 // no fixed move, and the length cap is what bounds the root there.
 const departsFromSetup = (sans: readonly string[]): boolean =>
   sans.some((san, ply) => {
     const setup = ITALIAN_SETUP_SAN[ply];
-    return ply % 2 === 0 && setup !== undefined && san !== setup;
+    return ply % 2 === 0 && setup !== undefined && withoutCheck(san) !== setup;
   });
 
 /**
