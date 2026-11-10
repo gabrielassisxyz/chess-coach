@@ -2,9 +2,13 @@ import {
   type CoverageReply,
   type CoverageStatus,
   type MetOpening,
+  type RepertoireBranch,
   type RepertoireCoverage,
   RepertoireCoverageSchema,
+  type RepertoireGroupSummary,
   type RepertoireScope,
+  type RepertoireScopeCounts,
+  type RepertoireSideSummary,
   type RepertoireSummary,
   type RepertoiresResponse,
   RepertoiresResponseSchema,
@@ -57,20 +61,28 @@ async function truncatedIn(response: Response): Promise<boolean> {
   }
 }
 
-export const addOpeningToServer: AddOpening = async (root) => {
+async function runRepertoireSource(line: { root?: readonly string[]; branch?: readonly string[] }) {
   let response: Response;
   try {
     response = await fetch("/api/openings/generate", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sources: ["repertoire"], root }),
+      body: JSON.stringify({ sources: ["repertoire"], ...line }),
     });
   } catch {
     throw new Error(CONNECTION_LOST);
   }
   if (!response.ok) throw new Error(await refusalOf(response));
   return { truncated: await truncatedIn(response) };
-};
+}
+
+export const addOpeningToServer: AddOpening = (root) => runRepertoireSource({ root });
+
+// Builds another variation of the Italian from a branch: the line from 1.e4 through White's move
+// at a branch point. Like a root, the server answers when the run ends.
+export type AddVariation = (branch: readonly string[]) => Promise<AddedOpening>;
+
+export const addVariationToServer: AddVariation = (branch) => runRepertoireSource({ branch });
 
 export const SCOPE_LABEL: Record<RepertoireScope, string> = {
   recommended: "Recommended",
@@ -82,19 +94,30 @@ export interface OpeningMenu {
   name: string;
   due: number;
   variations: RepertoireSummary[];
+  // What a drill of the whole opening would serve, a move its variations share counted once; null
+  // until the server has said.
+  moves: RepertoireScopeCounts | null;
 }
 
 export interface SideMenu {
   side: RepertoireSummary["side"];
   heading: string;
   openings: OpeningMenu[];
+  // The same for every opening of the side.
+  moves: RepertoireScopeCounts | null;
+}
+
+// The counts the server gives the levels above a variation; absent until the list has been read.
+export interface LevelCounts {
+  groups?: readonly RepertoireGroupSummary[] | undefined;
+  sides?: readonly RepertoireSideSummary[] | undefined;
 }
 
 const SIDES: readonly RepertoireSummary["side"][] = ["white", "black"];
 
 // The hub groups openings under the side the student plays, White first. An opening lists its
 // variations in the order the server gave them, and its due count adds theirs up.
-export function menuOf(list: readonly RepertoireSummary[]): SideMenu[] {
+export function menuOf(list: readonly RepertoireSummary[], levels: LevelCounts = {}): SideMenu[] {
   return SIDES.flatMap((side): SideMenu[] => {
     const openings = new Map<string, OpeningMenu>();
     for (const entry of list.filter((candidate) => candidate.side === side)) {
@@ -102,6 +125,10 @@ export function menuOf(list: readonly RepertoireSummary[]): SideMenu[] {
         name: entry.group_name,
         due: 0,
         variations: [],
+        moves:
+          levels.groups?.find(
+            (group) => group.side === side && group.group_name === entry.group_name,
+          )?.moves ?? null,
       };
       opening.due += entry.moves.due;
       opening.variations.push(entry);
@@ -109,9 +136,33 @@ export function menuOf(list: readonly RepertoireSummary[]): SideMenu[] {
     }
     if (openings.size === 0) return [];
     const word = side === "white" ? "White" : "Black";
-    return [{ side, heading: `${word} openings`, openings: [...openings.values()] }];
+    const moves = levels.sides?.find((entry) => entry.side === side)?.moves ?? null;
+    return [{ side, heading: `${word} openings`, openings: [...openings.values()], moves }];
   });
 }
+
+// A drill of a group or a side is started from one of its variations, the first the menu lists;
+// the server widens it from there.
+export const levelAnchorOf = (variations: readonly RepertoireSummary[]): number | null =>
+  variations[0]?.id ?? null;
+
+// A level that holds one thing below it serves exactly what that one serves, so it gets no starts.
+export const offersGroupStarts = (opening: OpeningMenu): boolean =>
+  opening.moves !== null && opening.variations.length > 1;
+
+export const offersSideStarts = (side: SideMenu): boolean =>
+  side.moves !== null && side.openings.length > 1;
+
+export const branchKey = (line: readonly string[], san: string): string => [...line, san].join(" ");
+
+// "4.d3": White's move after a line that ends on Black's, as the book writes it.
+export const branchMoveText = (line: readonly string[], san: string): string =>
+  `${Math.floor(line.length / 2) + 1}.${san}`;
+
+export const branchesOf = (
+  branches: readonly RepertoireBranch[] | undefined,
+  groupName: string,
+): RepertoireBranch[] => (branches ?? []).filter((branch) => branch.group_name === groupName);
 
 export const metRootKey = (root: readonly string[]): string => root.join(" ");
 

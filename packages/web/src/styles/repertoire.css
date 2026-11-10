@@ -50,6 +50,41 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The starts of a side or an opening with more than one thing under it, above what they cover. */
+.repertoire-menu__level {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.repertoire-menu__level-name {
+  margin: 0;
+  color: var(--text-2);
+}
+
+/* The book's other White moves where the first variation goes, opened under the opening's
+ * variations: each position as the reply before it, then its moves with an Add action. */
+.repertoire-menu__branches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.repertoire-menu__branch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.repertoire-menu__branch-at {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  font-weight: 500;
+}
+
 /* The openings the student's games met that have no drill yet, under the drills they have: a name,
  * the line, how many games met it and an Add action. */
 .repertoire-menu__met {
@@ -246,6 +281,30 @@
   color: var(--text-1);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* The variation of the move in play, under the head of a line drill: in a drill of a group or a
+ * side it is what says which of a position's moves is asked. */
+.repertoire-variation {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-xs);
+}
+
+.repertoire-variation__label {
+  color: var(--text-2);
+}
+
+.repertoire-variation__name {
+  color: var(--text-1);
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 /* The move a drill shows in the empty cell of the ply the student is on. */

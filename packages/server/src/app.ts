@@ -15,7 +15,11 @@ import { registerRoutineRoutes } from "./http/routine.js";
 import { type Log, silentLog } from "./log.js";
 import type { ExplorerResult } from "./openings/from-explorer.js";
 import type { GenerationResult } from "./openings/from-games.js";
-import type { RepertoireResult } from "./openings/from-repertoire.js";
+import {
+  NO_REPERTOIRE_BRANCH_BOOK,
+  type RepertoireBranchBook,
+  type RepertoireResult,
+} from "./openings/from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames } from "./openings/names.js";
 import type { RepertoireIdeasResult } from "./openings/repertoire-ideas.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
@@ -31,6 +35,8 @@ export interface AppOptions {
   db?: Database;
   /** Names the opening of each game from its positions; without it no game carries one. */
   openingNames?: OpeningNames;
+  /** The book's branch points in the Italian, which the openings menu offers new variations at. */
+  repertoireBranches?: RepertoireBranchBook;
   /** Everything the import routes need besides the database; without it they are not mounted. */
   importer?: Omit<ImportRoutesOptions, "db">;
   /** What saving a Lichess token or a Chess.com account checks against; without it the routes are not mounted. */
@@ -42,10 +48,13 @@ export interface AppOptions {
   /** Builds the White Italian drill from the explorer; only asked for by name, never after an import. */
   generateItalianOpenings?: () => Promise<ExplorerResult>;
   /**
-   * Builds the first stored variation of the Italian, or of the unit rooted at a line; only asked
-   * for by name, never after an import.
+   * Builds the first stored variation of the Italian, or of the unit rooted at a line, or another
+   * variation of the Italian forced at a branch point; only asked for by name, never after an import.
    */
-  generateRepertoireOpenings?: (root?: readonly string[]) => Promise<RepertoireResult>;
+  generateRepertoireOpenings?: (
+    root?: readonly string[],
+    branch?: readonly string[],
+  ) => Promise<RepertoireResult>;
   /** Writes the idea of each stored White move through the model; only asked for by name, never at boot. */
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>;
   log?: Log;
@@ -84,7 +93,10 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     registerGameRoutes(app, options.db, options.openingNames ?? NO_OPENING_NAMES);
     registerProgressRoutes(app, options.db);
     registerPuzzleRoutes(app, options.db);
-    registerRepertoireRoutes(app, options.db);
+    registerRepertoireRoutes(app, options.db, {
+      names: options.openingNames ?? NO_OPENING_NAMES,
+      book: options.repertoireBranches ?? NO_REPERTOIRE_BRANCH_BOOK,
+    });
     registerRoutineRoutes(app, options.db);
     if (options.importer) {
       registerImportRoutes(app, { db: options.db, log, ...options.importer });

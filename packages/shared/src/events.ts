@@ -9,7 +9,7 @@ import {
   TrainingStatusSchema,
   TrainingSummarySchema,
 } from "./activity.js";
-import { RepertoireScopeSchema } from "./repertoires.js";
+import { RepertoireLevelSchema, RepertoireScopeSchema } from "./repertoires.js";
 
 // The wire contract between server and browser. Every frame is validated on arrival by the side
 // that receives it; a schema sits beside each type so the two cannot drift apart.
@@ -299,7 +299,8 @@ export const UndoCommandSchema = z.object({
   activity_id: activityId,
 });
 
-// A repertoire drill names its repertoire and scope; the other modes ignore both.
+// A repertoire drill names its repertoire and scope, and a level that widens it to that repertoire's
+// group or side; without one it drills that variation alone. The other modes ignore all three.
 export const StartTrainingCommandSchema = z.object({
   type: z.literal("start_training"),
   command_id: commandId,
@@ -309,6 +310,7 @@ export const StartTrainingCommandSchema = z.object({
   size: z.union([z.literal(5), z.literal(10), z.literal(20)]).optional(),
   repertoire_id: z.number().int().positive().optional(),
   scope: RepertoireScopeSchema.optional(),
+  level: RepertoireLevelSchema.optional(),
 });
 
 const uci = z.string().regex(/^[a-h][1-8][a-h][1-8][qrbn]?$/);

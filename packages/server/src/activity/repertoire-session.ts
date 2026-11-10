@@ -5,6 +5,7 @@ import type {
   RepertoireDrill,
   RepertoireDrillResult,
   RepertoireHint,
+  RepertoireLevel,
   RepertoireScope,
   RepertoireScopeCounts,
   TrainingActivity,
@@ -18,6 +19,7 @@ import {
   findDrillRepertoire,
   findRepertoireCard,
   introduceRepertoireCard,
+  listDrillRepertoires,
   listRepertoireDrillMoves,
   type RepertoireCardSchedule,
   type RepertoireDrillMove,
@@ -68,6 +70,61 @@ const REPERTOIRE_START_FEN = new Chess().fen();
 export interface RepertoireDrillInput {
   repertoireId?: number | undefined;
   scope?: RepertoireScope | undefined;
+  /** Widens the drill from that repertoire to its group or its side; left out, it is the variation. */
+  level?: RepertoireLevel | undefined;
+}
+
+/** A move of a drill, with the variation it is served under. */
+export interface RepertoireLevelMove extends RepertoireDrillMove {
+  variation: RepertoireRow;
+}
+
+/** The moves of one variation, as the drill reads them. */
+export interface RepertoireUnitMoves {
+  variation: RepertoireRow;
+  moves: readonly RepertoireDrillMove[];
+}
+
+/** The variations a level covers, in the order given: the anchor alone, its group or its side. */
+export function repertoireUnitsOfLevel(
+  units: readonly RepertoireRow[],
+  anchor: RepertoireRow,
+  level: RepertoireLevel,
+): RepertoireRow[] {
+  if (level === "variation") return [anchor];
+  return units.filter(
+    (unit) =>
+      unit.side === anchor.side && (level === "side" || unit.group_name === anchor.group_name),
+  );
+}
+
+// A move two variations share has one card, so a drill over both serves it once, under the
+// variation where it is likeliest; at equal reach the variation given first keeps it.
+export function mergeRepertoireUnitMoves(
+  units: readonly RepertoireUnitMoves[],
+): RepertoireLevelMove[] {
+  const kept = new Map<string, RepertoireLevelMove>();
+  for (const { variation, moves } of units) {
+    for (const move of moves) {
+      const key = `${move.positionKey}|${move.uci}`;
+      const held = kept.get(key);
+      if (held && held.reach >= move.reach) continue;
+      kept.set(key, { ...move, variation });
+    }
+  }
+  return [...kept.values()];
+}
+
+function listLevelUnitMoves(
+  db: TrainingDeps["db"],
+  anchor: RepertoireRow,
+  level: RepertoireLevel,
+): RepertoireUnitMoves[] {
+  const all = level === "variation" ? [anchor] : listDrillRepertoires(db);
+  return repertoireUnitsOfLevel(all, anchor, level).map((variation) => ({
+    variation,
+    moves: listRepertoireDrillMoves(db, variation.id),
+  }));
 }
 
 export function isRepertoireMoveDue(move: RepertoireDrillMove, now: Date): boolean {
@@ -88,11 +145,11 @@ export function compareRepertoireLineOrder(a: RepertoireDrillMove, b: Repertoire
 }
 
 /** The moves a drill of this scope serves, in line order. A new move is due. */
-export function selectRepertoireDrillMoves(
-  moves: readonly RepertoireDrillMove[],
+export function selectRepertoireDrillMoves<T extends RepertoireDrillMove>(
+  moves: readonly T[],
   scope: RepertoireScope,
   now: Date,
-): RepertoireDrillMove[] {
+): T[] {
   const ordered = [...moves].sort(compareRepertoireLineOrder);
   if (scope === "all") return ordered;
   const due = ordered.filter((move) => isRepertoireMoveDue(move, now));
@@ -205,7 +262,7 @@ type RepertoireStage = "intro" | "test" | "retry" | "done";
 type RepertoireRating = "right" | "wrong";
 
 interface DrillMoveState {
-  move: RepertoireDrillMove;
+  move: RepertoireLevelMove;
   stage: RepertoireStage;
   rating: RepertoireRating | null;
   /** Asked in the current round; until the round ends a pass plays it for the student. */
@@ -237,6 +294,8 @@ interface DrillPass {
   fen: string;
   /** The move the student must find now; null once the pass has reached its end. */
   ask: DrillAsk | null;
+  /** The variation of the move asked last, or of the move the pass was planned for before that. */
+  variation: RepertoireRow;
   missed: boolean;
   hinted: boolean;
   openingName: string | null;
@@ -253,14 +312,19 @@ interface StoredDrillPass {
   line: PlayedMove[];
   fen: string;
   ask: { row_id: number; hint: 0 | 1 | 2; attempted: boolean; flagged: string | null } | null;
+  /** Absent from rows written before a drill could span variations, whose pass had one. */
+  variation_id?: number;
   missed: boolean;
   hinted: boolean;
   opening_name: string | null;
 }
 
 interface StoredDrill {
+  /** The repertoire the drill was started from; its level widens it to the group or the side. */
   repertoire_id: number;
   scope: RepertoireScope;
+  /** Absent from rows written before levels existed, which drilled one variation. */
+  level?: RepertoireLevel;
   pass_index: number;
   moves: {
     row_id: number;
@@ -300,7 +364,8 @@ export class RepertoireSession implements PracticeRunPort {
   private readonly clock: Clock;
   private readonly order: DrillMoveState[];
   private readonly byRow = new Map<number, DrillMoveState>();
-  private readonly byKey = new Map<string, DrillMoveState>();
+  // Two variations can expect different moves in one position, so a position can hold several.
+  private readonly byKey = new Map<string, DrillMoveState[]>();
   private passIndex = 0;
   private outcomes: ItemOutcome[] = [];
   private pass: DrillPass;
@@ -308,11 +373,14 @@ export class RepertoireSession implements PracticeRunPort {
   // Set while a transition writes, so the coach is woken once the rows are committed.
   private wake = false;
 
+  // `repertoire` is the one the drill was started from: its side is the side of every variation
+  // the level covers, and a pass with nothing asked yet falls back to it.
   private constructor(
     private readonly deps: TrainingDeps,
     readonly runId: number,
     private readonly repertoire: RepertoireRow,
     private readonly scope: RepertoireScope,
+    private readonly level: RepertoireLevel,
     states: DrillMoveState[],
     resume: DrillResume | null,
   ) {
@@ -320,7 +388,9 @@ export class RepertoireSession implements PracticeRunPort {
     this.order = [...states].sort((a, b) => compareRepertoireLineOrder(a.move, b.move));
     for (const state of this.order) {
       this.byRow.set(state.move.rowId, state);
-      this.byKey.set(state.move.positionKey, state);
+      const atKey = this.byKey.get(state.move.positionKey) ?? [];
+      atKey.push(state);
+      this.byKey.set(state.move.positionKey, atKey);
     }
     if (resume === null) {
       this.pass = this.openPass(this.planNext() as RepertoirePassPlan);
@@ -334,6 +404,7 @@ export class RepertoireSession implements PracticeRunPort {
   // A drill that would serve nothing is refused; a new one ends any run still open as replaced.
   static begin(deps: TrainingDeps, input: RepertoireDrillInput): RepertoireSession {
     const { repertoireId, scope } = input;
+    const level = input.level ?? "variation";
     if (repertoireId === undefined || scope === undefined) {
       throw new ActivityError("empty_queue", "choose a repertoire and a scope for the line drill");
     }
@@ -343,7 +414,7 @@ export class RepertoireSession implements PracticeRunPort {
     }
     const now = (deps.clock ?? systemClock).now();
     const moves = selectRepertoireDrillMoves(
-      listRepertoireDrillMoves(deps.db, repertoireId),
+      mergeRepertoireUnitMoves(listLevelUnitMoves(deps.db, repertoire, level)),
       scope,
       now,
     );
@@ -376,7 +447,7 @@ export class RepertoireSession implements PracticeRunPort {
         currentJson: "{}",
         startedAt,
       });
-      const session = new RepertoireSession(deps, runId, repertoire, scope, states, null);
+      const session = new RepertoireSession(deps, runId, repertoire, scope, level, states, null);
       session.save();
       return session;
     })();
@@ -389,9 +460,13 @@ export class RepertoireSession implements PracticeRunPort {
     if (!repertoire) {
       throw new ActivityError("empty_queue", `repertoire ${stored.repertoire_id} no longer exists`);
     }
-    const moves = new Map(
-      listRepertoireDrillMoves(deps.db, repertoire.id).map((m) => [m.rowId, m]),
-    );
+    const level = stored.level ?? "variation";
+    // Every row of every variation, not only the ones a merge would keep: the drill stored the rows
+    // it served, and a rerun that raised another variation's reach since must not drop them.
+    const moves = new Map<number, RepertoireLevelMove>();
+    for (const { variation, moves: listed } of listLevelUnitMoves(deps.db, repertoire, level)) {
+      for (const move of listed) moves.set(move.rowId, { ...move, variation });
+    }
     const states = stored.moves.flatMap((state): DrillMoveState[] => {
       const move = moves.get(state.row_id);
       if (!move) return [];
@@ -399,7 +474,15 @@ export class RepertoireSession implements PracticeRunPort {
     });
     const resume = { passIndex: stored.pass_index, outcomes: row.outcomes, pass: stored.pass };
     return deps.db.transaction(() => {
-      const session = new RepertoireSession(deps, row.id, repertoire, stored.scope, states, resume);
+      const session = new RepertoireSession(
+        deps,
+        row.id,
+        repertoire,
+        stored.scope,
+        level,
+        states,
+        resume,
+      );
       session.save();
       return session;
     })();
@@ -412,6 +495,7 @@ export class RepertoireSession implements PracticeRunPort {
       ...pausedTrainingOf(row),
       ...(stored.repertoire_id === undefined ? {} : { repertoire_id: stored.repertoire_id }),
       ...(stored.scope === undefined ? {} : { scope: stored.scope }),
+      ...(stored.level === undefined ? {} : { level: stored.level }),
     };
   }
 
@@ -437,7 +521,8 @@ export class RepertoireSession implements PracticeRunPort {
       mode: "repertoire",
       item: {
         kind: "repertoire",
-        repertoire_id: this.repertoire.id,
+        repertoire_id: pass.variation.id,
+        variation_name: pass.variation.variation_name,
         fen: REPERTOIRE_START_FEN,
         position_in_queue: this.passIndex + 1,
         queue_length: this.passIndex + 1 + passesLeft,
@@ -474,8 +559,9 @@ export class RepertoireSession implements PracticeRunPort {
     const count = (keep: (state: DrillMoveState) => boolean): number =>
       this.order.filter(keep).length;
     return {
-      repertoire_id: this.repertoire.id,
+      repertoire_id: this.pass.variation.id,
       scope: this.scope,
+      level: this.level,
       opening_name: this.pass.openingName,
       first_pass: intro,
       answer: intro && asked ? { uci: asked.move.uci, san: asked.move.san } : null,
@@ -719,6 +805,7 @@ export class RepertoireSession implements PracticeRunPort {
       line: [],
       fen: REPERTOIRE_START_FEN,
       ask: null,
+      variation: this.variationOfRow(plan.chain[0]),
       missed: false,
       hinted: false,
       openingName: null,
@@ -743,16 +830,18 @@ export class RepertoireSession implements PracticeRunPort {
     this.endPass(pass);
   }
 
+  // The move the line plays next decides which of the position's moves is asked, so a pass along
+  // one variation's line is asked that variation's move.
   private askableAt(board: Chess, san: string): DrillMoveState | null {
     if (board.turn() !== (this.repertoire.side === "white" ? "w" : "b")) return null;
-    const state = this.byKey.get(positionKey(board.fen()));
-    if (!this.isAskable(state) || state?.move.san !== san) return null;
-    return state;
+    const states = this.byKey.get(positionKey(board.fen())) ?? [];
+    return states.find((state) => this.isAskable(state) && state.move.san === san) ?? null;
   }
 
   private ask(pass: DrillPass, state: DrillMoveState): void {
     state.asked = true;
     pass.ask = { rowId: state.move.rowId, hint: 0, attempted: false, flagged: null };
+    pass.variation = state.move.variation;
     pass.openingName = state.move.openingName;
     // Showing a new move with its answer is what makes it known.
     if (state.stage === "intro") {
@@ -826,6 +915,7 @@ export class RepertoireSession implements PracticeRunPort {
     const stored: StoredDrill = {
       repertoire_id: this.repertoire.id,
       scope: this.scope,
+      level: this.level,
       pass_index: this.passIndex,
       moves: this.order.map(({ move, stage, rating, asked }) => ({
         row_id: move.rowId,
@@ -864,10 +954,22 @@ export class RepertoireSession implements PracticeRunPort {
       ask: ask
         ? { row_id: ask.rowId, hint: ask.hint, attempted: ask.attempted, flagged: ask.flagged }
         : null,
+      variation_id: pass.variation.id,
       missed: pass.missed,
       hinted: pass.hinted,
       opening_name: pass.openingName,
     };
+  }
+
+  private variationOfRow(rowId: number | undefined): RepertoireRow {
+    const state = rowId === undefined ? undefined : this.byRow.get(rowId);
+    return state?.move.variation ?? this.repertoire;
+  }
+
+  // A variation no move of the drill belongs to any more is gone from what the pass can name.
+  private variationOfId(id: number | undefined): RepertoireRow {
+    const state = this.order.find((candidate) => candidate.move.variation.id === id);
+    return state?.move.variation ?? this.repertoire;
   }
 
   private restorePass(stored: StoredDrillPass): DrillPass {
@@ -881,6 +983,10 @@ export class RepertoireSession implements PracticeRunPort {
       ask: ask
         ? { rowId: ask.row_id, hint: ask.hint, attempted: ask.attempted, flagged: ask.flagged }
         : null,
+      variation:
+        stored.variation_id === undefined
+          ? this.repertoire
+          : this.variationOfId(stored.variation_id),
       missed: stored.missed,
       hinted: stored.hinted,
       openingName: stored.opening_name,

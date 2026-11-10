@@ -19,6 +19,8 @@ import { UciEngine } from "../engine/uci.js";
 import { importFinishedGame } from "../import/pgn.js";
 import { CachedExplorer } from "../openings/explorer-client.js";
 import { positionKey } from "../openings/from-games.js";
+import { parseRepertoireBranchBook } from "../openings/from-repertoire.js";
+import { parseOpeningTable } from "../openings/names.js";
 
 // The route reads the system clock, so a card is due or not by a wide margin either way.
 const LONG_AGO = "2000-01-01T00:00:00.000Z";
@@ -139,7 +141,151 @@ describe("GET /api/repertoires", () => {
   it("answers an empty list before any repertoire is stored", async () => {
     const response = await getRepertoires();
     expect(response.statusCode).toBe(200);
-    expect(RepertoiresResponseSchema.parse(response.json())).toEqual({ repertoires: [], met: [] });
+    expect(RepertoiresResponseSchema.parse(response.json())).toEqual({
+      repertoires: [],
+      groups: [],
+      sides: [],
+      met: [],
+      branches: [],
+    });
+  });
+});
+
+describe("GET /api/repertoires at the group and side levels", () => {
+  it("counts each group and each side with a move two variations share counted once", async () => {
+    addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+    addVariation("Giuoco Pianissimo (4.d3)", [["Bc5", "d3"]]);
+    addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    // 1.e4 opens all three units and has one card, not due, so every level leaves it out alike.
+    addCard([], "e4", FAR_AHEAD);
+
+    const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
+
+    expect(body.repertoires.map((entry) => entry.moves)).toEqual([
+      { recommended: 3, due: 3, all: 4 },
+      { recommended: 3, due: 3, all: 4 },
+      { recommended: 1, due: 1, all: 2 },
+    ]);
+    expect(body.groups).toEqual([
+      {
+        side: "white",
+        group_name: "Italian Game",
+        moves: { recommended: 4, due: 4, all: 5 },
+      },
+      {
+        side: "white",
+        group_name: "Scandinavian Defense",
+        moves: { recommended: 1, due: 1, all: 2 },
+      },
+    ]);
+    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 5, due: 5, all: 6 } }]);
+  });
+});
+
+// The book after 3.Bc4: three White moves against 3...Bc5, two against 3...Nf6 and two against
+// 3...h6, which no stored variation reaches.
+const BRANCH_BOOK_TABLE = [
+  "eco\tname\tpgn\tuci\tepd",
+  ...[
+    "3. Bc4 Bc5 4. c3",
+    "3. Bc4 Bc5 4. d3",
+    "3. Bc4 Bc5 4. b4",
+    "3. Bc4 Nf6 4. d3",
+    "3. Bc4 Nf6 4. Ng5",
+    "3. Bc4 h6 4. d3",
+    "3. Bc4 h6 4. c3",
+  ].map((line) => `C50\tLine\t1. e4 e5 2. Nf3 Nc6 ${line}\t-\t-`),
+].join("\n");
+
+const keyAfterLine = (line: string[]): string => {
+  const board = new Chess();
+  for (const san of line) board.move(san);
+  return positionKey(board.fen());
+};
+
+const BRANCH_NAMES = parseOpeningTable(
+  [
+    "eco\tname\tpgn\tuci\tepd",
+    ...(
+      [
+        ["Italian Game: Giuoco Piano", ["Bc5"]],
+        ["Italian Game: Classical Variation", ["Bc5", "c3"]],
+        ["Italian Game: Giuoco Pianissimo", ["Bc5", "d3"]],
+        ["Italian Game: Evans Gambit", ["Bc5", "b4"]],
+        ["Italian Game: Two Knights Defense", ["Nf6"]],
+        ["Italian Game: Two Knights Defense, Knight Attack", ["Nf6", "Ng5"]],
+        ["Italian Game: Two Knights Defense, Modern Bishop's Opening", ["Nf6", "d3"]],
+      ] as const
+    ).map(([name, moves]) => `C50\t${name}\t-\t-\t${keyAfterLine([...SETUP, ...moves])}`),
+  ].join("\n"),
+);
+
+async function getBranches() {
+  const app = buildApp({
+    db,
+    openingNames: BRANCH_NAMES,
+    repertoireBranches: parseRepertoireBranchBook(BRANCH_BOOK_TABLE),
+  });
+  const response = await app.inject({ method: "GET", url: "/api/repertoires" });
+  await app.close();
+  expect(response.statusCode).toBe(200);
+  return RepertoiresResponseSchema.parse(response.json()).branches;
+}
+
+describe("GET /api/repertoires branch points", () => {
+  it("lists the book's White moves where the first variation goes, named and with the variation that holds each", async () => {
+    const classical = addVariation("Classical Variation (4.c3)", [
+      ["Bc5", "c3"],
+      ["Nf6", "d3"],
+    ]);
+    const pianissimo = addVariation("Giuoco Pianissimo (4.d3)", [["Bc5", "d3"]]);
+    // A run cut short before it stored 4.b4 still holds its variation by name.
+    const evans = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Evans Gambit (4.b4)",
+    }).id;
+
+    expect(await getBranches()).toEqual([
+      {
+        group_name: "Italian Game",
+        line: [...SETUP, "Bc5"],
+        choices: [
+          { san: "b4", variation_name: "Evans Gambit (4.b4)", repertoire_id: evans },
+          { san: "c3", variation_name: "Classical Variation (4.c3)", repertoire_id: classical },
+          { san: "d3", variation_name: "Giuoco Pianissimo (4.d3)", repertoire_id: pianissimo },
+        ],
+      },
+      {
+        group_name: "Italian Game",
+        line: [...SETUP, "Nf6"],
+        choices: [
+          {
+            san: "d3",
+            variation_name: "Two Knights Defense, Modern Bishop's Opening (4.d3)",
+            repertoire_id: classical,
+          },
+          {
+            san: "Ng5",
+            variation_name: "Two Knights Defense, Knight Attack (4.Ng5)",
+            repertoire_id: null,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("lists none before the Italian is built, and none for another group's unit", async () => {
+    addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    expect(await getBranches()).toEqual([]);
+  });
+
+  it("puts the likeliest position first", async () => {
+    addVariation("Classical Variation (4.c3)", [
+      ["Nf6", "d3"],
+      ["Bc5", "c3"],
+    ]);
+    expect((await getBranches())?.map((branch) => branch.line.at(-1))).toEqual(["Nf6", "Bc5"]);
   });
 });
 

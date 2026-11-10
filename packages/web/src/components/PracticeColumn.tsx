@@ -12,7 +12,12 @@ import {
   signedCount,
   variationText,
 } from "../state/practice-item.js";
-import { hintLabelOf, nextEndsDrill, shownMoveOf } from "../state/repertoire-drill.js";
+import {
+  hintLabelOf,
+  itemVariationOf,
+  nextEndsDrill,
+  shownMoveOf,
+} from "../state/repertoire-drill.js";
 import type { FetchRepertoires } from "../state/repertoires-api.js";
 import { ExplorationTrail } from "./ExplorationTrail.js";
 import { RatingButtons } from "./RatingButtons.js";
@@ -191,6 +196,17 @@ function MovesList({
         </li>
       ))}
     </ol>
+  );
+}
+
+function ItemVariation({ training }: { training: TrainingActivity }) {
+  const name = itemVariationOf(training);
+  if (name === null) return null;
+  return (
+    <p className="repertoire-variation" data-testid="item-variation">
+      <span className="repertoire-variation__label">Variation</span>
+      <span className="repertoire-variation__name">{name}</span>
+    </p>
   );
 }
 
@@ -375,6 +391,7 @@ export function PracticeColumn(props: PracticeColumnProps) {
       {drill ? (
         <RepertoireHead training={training} drill={drill} fetchRepertoires={fetchRepertoires} />
       ) : null}
+      {drill ? <ItemVariation training={training} /> : null}
       <MovesList training={training} shownPly={shownPly} answer={answer} />
       <div className="state-card" data-tone={card.tone}>
         <div className="state-card__head">

@@ -5,6 +5,7 @@ import {
   type ActivityState,
   PausedTrainingSchema,
   type RepertoireDrill,
+  type RepertoireLevel,
   type RepertoireScope,
   ServerEventSchema,
   type TrainingActivity,
@@ -17,7 +18,11 @@ import { buildApp } from "../app.js";
 import type { Clock } from "../clock.js";
 import { appendChatMessage, createCoachSession } from "../db/chat.js";
 import { type Database, openDatabase } from "../db/open.js";
-import { listRepertoireDrillMoves, type RepertoireDrillMove } from "../db/repertoire-cards.js";
+import {
+  findDrillRepertoire,
+  listRepertoireDrillMoves,
+  type RepertoireDrillMove,
+} from "../db/repertoire-cards.js";
 import {
   createRepertoireVariation,
   insertRepertoireOwnMove,
@@ -28,6 +33,7 @@ import { positionKey } from "../openings/from-games.js";
 import { ReviewDesk } from "../srs/review.js";
 import { review } from "../srs/sm2.js";
 import {
+  mergeRepertoireUnitMoves,
   REPERTOIRE_FLAG_BUDGET_MS,
   REPERTOIRE_FLAG_CP,
   REPERTOIRE_NO_IDEA,
@@ -120,10 +126,10 @@ function keyAfter(lineText: string, san: string): string {
   return positionKey(board.fen());
 }
 
-function addVariation(name: string, rows: FixtureRow[]): number {
+function addVariation(name: string, rows: FixtureRow[], groupName = "Italian Game"): number {
   const { id } = createRepertoireVariation(db, {
     side: "white",
-    groupName: "Italian Game",
+    groupName,
     variationName: name,
   });
   for (const [lineText, san, reach] of rows) {
@@ -1180,5 +1186,202 @@ describe("refusing a repertoire command", () => {
     expect(db.prepare("SELECT message_id FROM item_messages").all()).toEqual([
       { message_id: during },
     ]);
+  });
+});
+
+// Two Italian variations that part at 3...Bc5, 4.c3 in one and 4.d3 in the other, and a unit of
+// another opening: three White moves the Italians share, one of their own each, and two moves of
+// the Scandinavian, whose 1.e4 is the same move as theirs.
+const partingRows = (answer: string): FixtureRow[] => [
+  ...SETUP_ROWS,
+  ["e4 e5 Nf3 Nc6 Bc4", "Bc5", 0.6],
+  ["e4 e5 Nf3 Nc6 Bc4 Bc5", answer, 0.6],
+];
+const CLASSICAL_ROWS = partingRows("c3");
+const PIANISSIMO_ROWS = partingRows("d3");
+const SCANDINAVIAN_ROWS: FixtureRow[] = [
+  ["", "e4", 1],
+  ["e4", "d5", 1],
+  ["e4 d5", "exd5", 1],
+];
+const CLASSICAL = "Classical Variation (4.c3)";
+const PIANISSIMO = "Giuoco Pianissimo (4.d3)";
+const MIESES = "Mieses-Kotroc Variation (2.exd5)";
+
+function addPartingVariations(): { classical: number; pianissimo: number } {
+  const classical = addVariation(CLASSICAL, CLASSICAL_ROWS);
+  const pianissimo = addVariation(PIANISSIMO, PIANISSIMO_ROWS);
+  addCards(CLASSICAL_ROWS);
+  addCard("e4 e5 Nf3 Nc6 Bc4 Bc5", "d3", PAST);
+  return { classical, pianissimo };
+}
+
+async function startAt(
+  service: ActivityService,
+  repertoireId: number,
+  scope: RepertoireScope,
+  level: RepertoireLevel,
+): Promise<TrainingActivity> {
+  return training(await service.startTraining({ mode: "repertoire", repertoireId, scope, level }));
+}
+
+// The variation the board names for the move in play, on the item and on the drill.
+const variationOf = (state: TrainingActivity) =>
+  state.item.kind === "repertoire"
+    ? {
+        id: state.item.repertoire_id,
+        name: state.item.variation_name,
+        drill: drillOf(state).repertoire_id,
+      }
+    : null;
+
+describe("merging the moves of several variations", () => {
+  it("keeps a shared move under the variation where it is likelier, the older one at equal reach", () => {
+    const at = (reach: number): FixtureRow[] => [
+      ...SETUP_ROWS,
+      ["e4 e5 Nf3 Nc6 Bc4", "Bc5", reach],
+      ["e4 e5 Nf3 Nc6 Bc4 Bc5", "c3", reach],
+    ];
+    const units = [addVariation("Older", at(0.3)), addVariation("Newer", at(0.5))].map((id) => ({
+      variation: findDrillRepertoire(db, id) as NonNullable<ReturnType<typeof findDrillRepertoire>>,
+      moves: listRepertoireDrillMoves(db, id),
+    }));
+    expect(
+      mergeRepertoireUnitMoves(units).map((move) => [label(move), move.variation.variation_name]),
+    ).toEqual([
+      ["start e4", "Older"],
+      ["e5 Nf3", "Older"],
+      ["Nc6 Bc4", "Older"],
+      ["Bc5 c3", "Newer"],
+    ]);
+  });
+});
+
+describe("a drill over a group or a side", () => {
+  it("drills both variations of a group, each move under its own variation and a shared move once", async () => {
+    const { classical, pianissimo } = addPartingVariations();
+    const service = boot();
+    let state = await startAt(service, classical, "due", "group");
+    expect(drillOf(state)).toMatchObject({ level: "group", moves_left: 5 });
+    expect(variationOf(state)).toEqual({ id: classical, name: CLASSICAL, drill: classical });
+
+    for (const san of ["e4", "Nf3", "Bc4"]) state = await play(service, state, san);
+    expect(lineSan(state)).toEqual(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]);
+    state = await play(service, state, "c3");
+    expect(state.status).toBe("solved");
+
+    // The next pass plays the shared moves itself and stops on the other variation's move there.
+    state = await next(service, state);
+    expect(lineSan(state)).toEqual(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]);
+    expect(whoPlayed(state).every((by) => by === "reply")).toBe(true);
+    expect(variationOf(state)).toEqual({ id: pianissimo, name: PIANISSIMO, drill: pianissimo });
+    expect(drillOf(state).moves_left).toBe(1);
+
+    // The first variation's move is wrong where the board names the second.
+    state = await play(service, state, "c3");
+    expect(state.input_enabled).toBe(true);
+    expect(state.last_try).toMatchObject({ san: "c3", correct: false });
+    state = await play(service, state, "d3");
+    state = await next(service, state);
+    state = await play(service, state, "d3");
+    state = await next(service, state);
+    expect(drillOf(state).result).toEqual({ practised: 5, first_try_right: 4 });
+  });
+
+  it("serves one variation, its group or its whole side, whichever level the drill starts at", async () => {
+    const { classical } = addPartingVariations();
+    const scandinavian = addVariation(MIESES, SCANDINAVIAN_ROWS, "Scandinavian Defense");
+    addCard("e4 d5", "exd5", PAST);
+    const service = boot();
+    const left = async (id: number, level: RepertoireLevel): Promise<number> =>
+      drillOf(await startAt(service, id, "due", level)).moves_left;
+
+    expect(await left(classical, "variation")).toBe(4);
+    expect(await left(classical, "group")).toBe(5);
+    expect(await left(scandinavian, "group")).toBe(2);
+    expect(await left(scandinavian, "side")).toBe(6);
+    expect(await left(classical, "side")).toBe(6);
+  });
+
+  it("names another opening's variation on a pass along its line in a drill of the side", async () => {
+    const { classical } = addPartingVariations();
+    const scandinavian = addVariation(MIESES, SCANDINAVIAN_ROWS, "Scandinavian Defense");
+    addCard("e4 d5", "exd5", PAST);
+    const service = boot();
+    let state = await startAt(service, classical, "due", "side");
+    // 1.e4 is likeliest in every unit, so the oldest keeps it.
+    expect(variationOf(state)).toEqual({ id: classical, name: CLASSICAL, drill: classical });
+    state = await play(service, state, "e4");
+    expect(lineSan(state)).toEqual(["e4", "d5"]);
+    expect(variationOf(state)).toEqual({ id: scandinavian, name: MIESES, drill: scandinavian });
+    state = await play(service, state, "exd5");
+    expect(state.status).toBe("solved");
+    expect(variationOf(state)?.name).toBe(MIESES);
+  });
+
+  it("starts a group drill from the start_training command's level, in a frame the page accepts", async () => {
+    const { classical } = addPartingVariations();
+    const app = buildApp({
+      hub: {
+        coach: new FakeCoach(db),
+        activity: boot(),
+        db,
+        allowedOrigins: ["http://localhost:5173"],
+      },
+    });
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    try {
+      const frames: { type: string; state?: unknown }[] = [];
+      const socket = await app.injectWS(
+        "/api/ws",
+        { headers: { origin: "http://localhost:5173", host: "localhost:5173" } },
+        { onInit: (ws) => ws.on("message", (data) => frames.push(JSON.parse(data.toString()))) },
+      );
+      socket.send(
+        JSON.stringify({
+          type: "start_training",
+          command_id: "c1",
+          mode: "repertoire",
+          repertoire_id: classical,
+          scope: "due",
+          level: "group",
+        }),
+      );
+      let frame: unknown;
+      for (let i = 0; i < 200 && frame === undefined; i++) {
+        frame = frames.find((event) => event.type === "activity" && event.state);
+        if (frame === undefined) await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const event = ServerEventSchema.parse(frame);
+      if (event.type !== "activity") throw new Error(`expected activity, got ${event.type}`);
+      const state = training(event.state);
+      expect(drillOf(state)).toMatchObject({ level: "group", moves_left: 5 });
+      expect(state.item).toMatchObject({ kind: "repertoire", variation_name: CLASSICAL });
+      socket.terminate();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("pauses a group drill on restart and resumes it on the same move, under the same variation", async () => {
+    const { classical, pianissimo } = addPartingVariations();
+    const first = boot();
+    let state = await startAt(first, classical, "due", "group");
+    for (const san of ["e4", "Nf3", "Bc4", "c3"]) state = await play(first, state, san);
+    state = await next(first, state);
+    const before = { ...state, activity_id: 0, served_at: "" };
+
+    const second = boot();
+    const paused = second.pausedTraining();
+    expect(paused).toMatchObject({
+      repertoire_id: classical,
+      scope: "due",
+      level: "group",
+      size: 5,
+    });
+    expect(PausedTrainingSchema.parse(paused)).toEqual(paused);
+    const resumed = training(await second.resumeTraining());
+    expect({ ...resumed, activity_id: 0, served_at: "" }).toEqual(before);
+    expect(variationOf(resumed)).toEqual({ id: pianissimo, name: PIANISSIMO, drill: pianissimo });
   });
 });

@@ -6,6 +6,7 @@ import { buildApp } from "../app.js";
 import { openDatabase } from "../db/open.js";
 import { RecordingLog } from "../log.js";
 import { ExplorerError } from "../openings/explorer-client.js";
+import { RepertoireBranchError } from "../openings/from-repertoire.js";
 import { IdeaSessionError } from "../openings/repertoire-ideas.js";
 
 const db = () => openDatabase(mkdtempSync(join(tmpdir(), "opening-route-")));
@@ -410,6 +411,99 @@ describe("POST /api/openings/generate", () => {
         });
         expect(response.statusCode).toBe(200);
         expect(roots).toEqual([]);
+      });
+    });
+
+    describe("with a branch", () => {
+      const ITALIAN = ["e4", "e5", "Nf3", "Nc6", "Bc4"];
+      const D3_BRANCH = [...ITALIAN, "Bc5", "d3"];
+      type Handed = { root: readonly string[] | undefined; branch: readonly string[] | undefined };
+      const buildBranched = (
+        handed: Handed[],
+        options: { log?: RecordingLog; refuse?: string } = {},
+      ) =>
+        buildApp({
+          db: db(),
+          ...(options.log ? { log: options.log } : {}),
+          generateOpenings: async () => own,
+          generateRepertoireOpenings: async (root, branch) => {
+            handed.push({ root, branch });
+            if (options.refuse) throw new RepertoireBranchError(options.refuse);
+            return repertoire;
+          },
+        });
+      const postBranched = async (app: ReturnType<typeof buildApp>, payload: object) => {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/openings/generate",
+          payload,
+        });
+        await app.close();
+        return response;
+      };
+
+      it("hands the generator the branch as the board writes it, with no root", async () => {
+        const handed: Handed[] = [];
+        const response = await postBranched(buildBranched(handed), {
+          sources: ["repertoire"],
+          branch: ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "f8c5", "d2d3"],
+        });
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({ repertoire });
+        expect(handed).toEqual([{ root: undefined, branch: D3_BRANCH }]);
+      });
+
+      it("logs the branch with the run", async () => {
+        const log = new RecordingLog();
+        await postBranched(buildBranched([], { log }), {
+          sources: ["repertoire"],
+          branch: D3_BRANCH,
+        });
+        expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+          sources: ["repertoire"],
+          branch: D3_BRANCH,
+        });
+      });
+
+      it.each([
+        ["a branch that is not a list", { branch: "e4 e5" }],
+        ["an illegal move", { branch: [...ITALIAN, "Bc5", "Ke3"] }],
+        ["a branch that ends on Black's move", { branch: [...D3_BRANCH, "Nf6"] }],
+        ["a branch that leaves the Italian", { branch: ["e4", "d5", "exd5"] }],
+        ["a branch with a root", { branch: D3_BRANCH, root: ["e4", "d5"] }],
+      ])("refuses %s with invalid_branch and starts no run", async (_label, body) => {
+        const handed: Handed[] = [];
+        const response = await postBranched(buildBranched(handed), {
+          sources: ["repertoire"],
+          ...body,
+        });
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toMatchObject({ error: "invalid_branch" });
+        expect(handed).toEqual([]);
+      });
+
+      it("reads the branch for the repertoire source only", async () => {
+        const handed: Handed[] = [];
+        const response = await postBranched(buildBranched(handed), {
+          sources: ["own"],
+          branch: "not a line",
+        });
+        expect(response.statusCode).toBe(200);
+        expect(handed).toEqual([]);
+      });
+
+      it("answers 409 with the generator's words when the data refuses the branch", async () => {
+        const refuse = "4.d3 is already the move of Classical Variation (4.c3)";
+        const log = new RecordingLog();
+        const response = await postBranched(buildBranched([], { log, refuse }), {
+          sources: ["repertoire"],
+          branch: D3_BRANCH,
+        });
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({ error: "branch_refused", message: refuse });
+        expect(log.named("openings.generate_failed")[0]?.fields).toMatchObject({
+          branch: D3_BRANCH,
+        });
       });
     });
 

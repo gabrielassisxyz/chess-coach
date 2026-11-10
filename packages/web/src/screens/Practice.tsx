@@ -1,6 +1,7 @@
 import type {
   ActivityState,
   DemoActivity,
+  RepertoireLevel,
   RepertoireScope,
   TrainingActivity,
   TrainingMode,
@@ -42,7 +43,11 @@ import {
 import { stateCardOf } from "../state/practice-item.js";
 import { type FetchProgress, fetchProgressFromServer } from "../state/progress-api.js";
 import { repertoireCardOf } from "../state/repertoire-drill.js";
-import { type FetchRepertoires, fetchRepertoiresFromServer } from "../state/repertoires-api.js";
+import {
+  type FetchRepertoireList,
+  type FetchRepertoires,
+  fetchRepertoiresFromServer,
+} from "../state/repertoires-api.js";
 
 export interface PracticeProps {
   server: ServerApi;
@@ -50,6 +55,9 @@ export interface PracticeProps {
   fetchMotifs?: FetchMotifs;
   fetchProgress?: FetchProgress;
   fetchRepertoires?: FetchRepertoires;
+  // The whole repertoire answer the openings menu reads its levels and branch points from; the
+  // server's by default.
+  fetchRepertoireList?: FetchRepertoireList | undefined;
   fetchHealth?: FetchHealth | undefined;
 }
 
@@ -60,6 +68,7 @@ interface Starting {
   // A repertoire start puts its scope here, where a puzzle start puts its motif.
   motif: string;
   repertoireId?: number;
+  level?: RepertoireLevel;
   errorsBefore: number;
 }
 
@@ -96,20 +105,28 @@ function useStartOutcome(server: ServerApi, size: DrillSize) {
       setFailure(OFFLINE_START_TEXT);
     }
   };
-  // The scope of a line drill decides what it serves, so no drill size goes with it.
-  const beginRepertoire = (repertoireId: number, scope: RepertoireScope): void => {
+  // The scope of a line drill decides what it serves, so no drill size goes with it. A drill of
+  // one variation names no level, as before levels existed; a group or a side names its own.
+  const beginRepertoire = (
+    repertoireId: number,
+    scope: RepertoireScope,
+    level?: RepertoireLevel,
+  ): void => {
     setFailure(null);
+    const widened = level === undefined || level === "variation" ? {} : { level };
     const sent = server.send({
       type: "start_training",
       mode: "repertoire",
       repertoire_id: repertoireId,
       scope,
+      ...widened,
     });
     if (sent) {
       setStarting({
         mode: "repertoire",
         motif: scope,
         repertoireId,
+        ...widened,
         errorsBefore: server.errorCount,
       });
     } else {
@@ -135,10 +152,13 @@ function Hub({
   fetchMotifs,
   fetchProgress,
   fetchRepertoires,
+  fetchRepertoireList,
   fetchHealth,
   lastSession,
 }: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress" | "fetchRepertoires">> &
-  Pick<PracticeProps, "fetchHealth"> & { lastSession: LastSession | null }) {
+  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList"> & {
+    lastSession: LastSession | null;
+  }) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
   const repertoires = useLoaded(fetchRepertoires);
@@ -177,6 +197,7 @@ function Hub({
         onStart={begin}
         onStartRepertoire={beginRepertoire}
         lastSession={lastSession}
+        fetchRepertoireList={fetchRepertoireList}
       />
     </div>
   );
@@ -374,6 +395,7 @@ export function Practice({
   fetchMotifs = fetchMotifsFromServer,
   fetchProgress = fetchProgressFromServer,
   fetchRepertoires = fetchRepertoiresFromServer,
+  fetchRepertoireList,
   fetchHealth,
 }: PracticeProps) {
   const sessionTraining = trainingOf(server.activity);
@@ -448,6 +470,7 @@ export function Practice({
           fetchMotifs={fetchMotifs}
           fetchProgress={fetchProgress}
           fetchRepertoires={fetchRepertoires}
+          fetchRepertoireList={fetchRepertoireList}
           fetchHealth={fetchHealth}
           lastSession={lastSession}
         />
