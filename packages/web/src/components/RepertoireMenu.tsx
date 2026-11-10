@@ -13,13 +13,14 @@ import {
   addOpeningToServer,
   type FetchRepertoireList,
   fetchRepertoireListFromServer,
-  gamesText,
   menuOf,
+  metGamesText,
+  metLabelOf,
   metNameOf,
+  metRootKey,
+  metToAdd,
   type OpeningMenu,
-  rootKeyOf,
   SCOPE_LABEL,
-  withoutDrill,
 } from "../state/repertoires-api.js";
 
 export interface RepertoireMenuProps {
@@ -48,6 +49,8 @@ interface OpeningAdds {
   unreadable: boolean;
   // The drills as they stand after an add; null before one, when the screen's own list is current.
   built: RepertoireSummary[] | null;
+  // The roots whose last run stopped short: their drill is partial, and adding them again resumes it.
+  unfinished: ReadonlySet<string>;
   // The root being built, if any.
   adding: string | null;
   outcome: AddOutcome | null;
@@ -65,20 +68,35 @@ const builtText = (name: string, listed: boolean): string =>
     ? `${name} is built. Its drill is listed above.`
     : `${name} is built. Reload the page to see its drill.`;
 
+const stoppedText = (name: string): string =>
+  `The run for ${name} stopped at its request limit. Add it again to carry on.`;
+
+const withKey = (keys: ReadonlySet<string>, key: string, present: boolean): ReadonlySet<string> => {
+  const next = new Set(keys);
+  if (present) next.add(key);
+  else next.delete(key);
+  return next;
+};
+
 // The list is read once for the met openings. An add reads it again when the run ends, however it
 // ended: a run cut off midway has stored part of the drill, and the student should see what is there.
+// That unit counts as a drill for the list, so a root whose run stopped short is kept on offer for
+// as long as the page lives, and adding it again carries on.
 function useOpeningAdds(fetchList: FetchRepertoireList, addOpening: AddOpening): OpeningAdds {
   const opened = useLoaded(fetchList);
   const [listing, setListing] = useState<RepertoiresResponse | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<AddOutcome | null>(null);
+  const [unfinished, setUnfinished] = useState<ReadonlySet<string>>(new Set());
 
   const add = async (entry: MetOpening): Promise<void> => {
-    setAdding(rootKeyOf(entry.root));
+    const key = metRootKey(entry.root);
+    setAdding(key);
     setOutcome(null);
     let failure: string | null = null;
+    let truncated = false;
     try {
-      await addOpening(entry.root);
+      truncated = (await addOpening(entry.root)).truncated;
     } catch (error) {
       failure = addFailureText(error);
     }
@@ -89,11 +107,11 @@ function useOpeningAdds(fetchList: FetchRepertoireList, addOpening: AddOpening):
       refreshed = false;
     }
     setAdding(null);
-    setOutcome(
-      failure === null
-        ? { failed: false, text: builtText(metNameOf(entry), refreshed) }
-        : { failed: true, text: failure },
-    );
+    setUnfinished((keys) => withKey(keys, key, failure !== null || truncated));
+    const name = metNameOf(entry);
+    if (failure !== null) setOutcome({ failed: true, text: failure });
+    else if (truncated) setOutcome({ failed: true, text: stoppedText(name) });
+    else setOutcome({ failed: false, text: builtText(name, refreshed) });
   };
 
   const current = listing ?? (opened.status === "ready" ? opened.value : null);
@@ -101,6 +119,7 @@ function useOpeningAdds(fetchList: FetchRepertoireList, addOpening: AddOpening):
     met: current?.met ?? null,
     unreadable: current === null && opened.status === "failed",
     built: listing?.repertoires ?? null,
+    unfinished,
     adding,
     outcome,
     add,
@@ -182,11 +201,11 @@ function MetRow({
           <span className="repertoire-menu__met-line">{repertoireRootText(entry.root)}</span>
         )}
       </div>
-      <span className="repertoire-menu__met-games">{gamesText(entry.games)}</span>
+      <span className="repertoire-menu__met-games">{metGamesText(entry.games)}</span>
       <button
         type="button"
         className="button"
-        aria-label={`${adding ? "Building" : "Add"} ${name}`}
+        aria-label={`${adding ? "Building" : "Add"} ${metLabelOf(entry)}`}
         disabled={disabled}
         onClick={() => onAdd(entry)}
       >
@@ -199,7 +218,7 @@ function MetRow({
 // The openings the student's reviewed games met and no drill covers yet. Adding one builds its drill,
 // which takes minutes, and the new drill appears in the menu above when the run ends.
 function MetOpenings({ adds, busy }: { adds: OpeningAdds; busy: boolean }) {
-  const entries = withoutDrill(adds.met ?? []);
+  const entries = metToAdd(adds.met ?? [], adds.unfinished);
   const running = adds.adding !== null;
   if (entries.length === 0 && !running && adds.outcome === null && !adds.unreadable) return null;
   return (
@@ -218,10 +237,10 @@ function MetOpenings({ adds, busy }: { adds: OpeningAdds; busy: boolean }) {
           <ul className="repertoire-menu__met-list" aria-label="Openings met in your games">
             {entries.map((entry) => (
               <MetRow
-                key={rootKeyOf(entry.root)}
+                key={metRootKey(entry.root)}
                 entry={entry}
                 disabled={busy || running}
-                adding={adds.adding === rootKeyOf(entry.root)}
+                adding={adds.adding === metRootKey(entry.root)}
                 onAdd={adds.add}
               />
             ))}
