@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type ActivityState,
+  PausedTrainingSchema,
   type RepertoireDrill,
   type RepertoireScope,
   ServerEventSchema,
@@ -45,9 +46,12 @@ const clock: Clock = { now: () => now };
 
 let tmp: string;
 let db: Database;
+// Each time the coach was woken, how many notifications it could read by then.
+let wakes: number[] = [];
 
 beforeEach(() => {
   now = T0;
+  wakes = [];
   tmp = mkdtempSync(join(tmpdir(), "cc-repertoire-"));
   db = openDatabase(tmp);
 });
@@ -251,6 +255,16 @@ const settle = async (until: () => boolean): Promise<void> => {
   for (let i = 0; i < 100 && !until(); i++) await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
+const notificationCount = (): number =>
+  (
+    db.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE kind = 'notification'").get() as {
+      n: number;
+    }
+  ).n;
+
+const runEnds = (): unknown[] =>
+  db.prepare("SELECT ended_reason, ended_at FROM training_runs ORDER BY id").all();
+
 // Everything a server boot builds that holds memory: a new call is a restart over the same file.
 function boot(judge?: RepertoireTryJudge): ActivityService {
   const session = createCoachSession(db, { promptVersion: "v" });
@@ -262,6 +276,7 @@ function boot(judge?: RepertoireTryJudge): ActivityService {
       desk: new ReviewDesk({ db, clock, notifications }),
       notifications,
       clock,
+      onNotification: () => wakes.push(notificationCount()),
       ...(judge ? { repertoireJudge: judge } : {}),
     },
   });
@@ -997,5 +1012,99 @@ describe("flagging a repertoire try", () => {
     expect(drillOf(state).flagged_opening).toBeNull();
     expect(state.input_enabled).toBe(true);
     expect(service.current()).toBe(state);
+  });
+});
+
+describe("the run of a repertoire drill", () => {
+  it("closes its run when it finishes, and wakes the coach once the summary is written", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = await play(service, state, "e4");
+    expect(wakes).toEqual([]);
+    state = await next(service, state);
+    expect(drillOf(state).result).toEqual({ practised: 1, first_try_right: 1 });
+    expect(wakes).toEqual([1]);
+    expect(runEnds()).toEqual([{ ended_reason: "finished", ended_at: T0.toISOString() }]);
+    expect(boot().pausedTraining()).toBeNull();
+  });
+
+  it("ends its run on end_training, so nothing is left to resume", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS);
+    const service = boot();
+    const state = await play(service, await start(service, id, "due"), "e4");
+    expect(await service.endTraining(state.activity_id)).toBeNull();
+    expect(service.pausedTraining()).toBeNull();
+    expect(runEnds()).toEqual([{ ended_reason: "ended", ended_at: T0.toISOString() }]);
+  });
+
+  it("ends a paused drill as replaced when a new one starts, so it never comes back", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS);
+    const first = boot();
+    await play(first, await start(first, id, "due"), "e4");
+    const second = boot();
+    expect(second.pausedTraining()).toMatchObject({ mode: "repertoire", solved: 1 });
+
+    const state = await start(second, id, "all");
+    expect(runEnds()).toEqual([
+      { ended_reason: "replaced", ended_at: T0.toISOString() },
+      { ended_reason: null, ended_at: null },
+    ]);
+    await second.endTraining(state.activity_id);
+    expect(second.pausedTraining()).toBeNull();
+  });
+
+  it("shows a paused drill with every move done as on its last move, and keeps its scope in the frame", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS);
+    const first = boot();
+    let state = await start(first, id, "recommended");
+    for (const san of ["e4", "Nf3", "Bc4", "c3", "d4"]) state = await play(first, state, san);
+    state = await play(first, await next(first, state), "d3");
+    expect(drillOf(state).moves_left).toBe(0);
+
+    const second = boot();
+    const paused = second.pausedTraining();
+    expect(paused).toMatchObject({
+      repertoire_id: id,
+      scope: "recommended",
+      size: 6,
+      position: 5,
+      solved: 6,
+      failed: 0,
+    });
+    expect(PausedTrainingSchema.parse(paused)).toEqual(paused);
+    const resumed = await next(second, training(await second.resumeTraining()));
+    expect(drillOf(resumed).result).toEqual({ practised: 6, first_try_right: 6 });
+  });
+
+  it("resumes a drill whose open move left the repertoire with that pass over and the other moves kept", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS);
+    await start(boot(), id, "due");
+    // 1.e4, the move the paused pass is open on.
+    db.prepare("DELETE FROM repertoire_positions WHERE repertoire_id = ? AND ply = 1").run(id);
+
+    const second = boot();
+    let resumed = training(await second.resumeTraining());
+    expect(resumed.input_enabled).toBe(false);
+    resumed = await next(second, resumed);
+    expect(lineSan(resumed)).toEqual(["e4", "e5"]);
+    expect(drillOf(resumed).moves_left).toBe(5);
+  });
+
+  it("refuses to resume a drill whose repertoire is gone, and still discards it", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS);
+    await start(boot(), id, "due");
+    db.prepare("DELETE FROM repertoires WHERE id = ?").run(id);
+
+    const second = boot();
+    expect(await code(second.resumeTraining())).toBe("empty_queue");
+    await second.discardTraining();
+    expect(second.pausedTraining()).toBeNull();
   });
 });
