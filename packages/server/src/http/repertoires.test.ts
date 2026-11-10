@@ -174,6 +174,7 @@ describe("GET /api/repertoires", () => {
       repertoires: [],
       groups: [],
       sides: [],
+      found: { moves: { recommended: 0, due: 0, all: 0 } },
       met: [],
       branches: [],
     });
@@ -581,6 +582,88 @@ describe("GET /api/repertoires met openings", () => {
     expect((await getMet())[0]?.repertoire_id).toBe(unit);
     db.prepare("DELETE FROM repertoires WHERE id = ?").run(unit);
     expect((await getMet())[0]).toMatchObject({ root: ["e4", "d5"], repertoire_id: null });
+  });
+});
+
+describe("GET /api/repertoires at the found level", () => {
+  const stable = { intervalHours: 72 };
+  let italian: number;
+
+  beforeEach(() => {
+    gameCount = 0;
+    italian = addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+  });
+
+  // Two units built from openings the games met against the Italian, so the met openings name them.
+  function addFoundUnits(): { scandinavian: number; alekhine: number } {
+    const scandinavian = addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    const alekhine = addRootedUnit(["e4", "Nf6"], "Alekhine Defense", "e5");
+    addReviewedGame(["e4", "d5", "exd5"], { leftPly: 2 }, italian);
+    addReviewedGame(["e4", "Nf6", "e5"], { leftPly: 2 }, italian);
+    return { scandinavian, alekhine };
+  }
+
+  const bodyOf = async () => RepertoiresResponseSchema.parse((await getRepertoires()).json());
+
+  it("counts the moves of the units the met openings name, a shared move once and none of the Italian's", async () => {
+    const { scandinavian } = addFoundUnits();
+    // 1.e4 is in every unit and has one card, not due; the Italian's other moves are known and due.
+    addCard([], "e4", FAR_AHEAD, stable);
+    addCard(["e4", "e5"], "Nf3", LONG_AGO, stable);
+    addCard([...SETUP.slice(0, 4)], "Bc4", LONG_AGO, stable);
+    addCard([...SETUP, "Bc5"], "c3", LONG_AGO, stable);
+
+    const body = await bodyOf();
+
+    // 1.e4 is in all and not in due, and the new 2.e5 is the likelier of two new siblings: 2.exd5
+    // waits for it in this drill, though its own unit would serve it.
+    expect(body.found).toEqual({ moves: { recommended: 1, due: 1, all: 2 } });
+    expect(body.repertoires.find((entry) => entry.id === scandinavian)?.moves).toEqual({
+      recommended: 1,
+      due: 1,
+      all: 2,
+    });
+    // The side's drill also holds the Italian's three moves, which the found drill never serves.
+    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 4, due: 4, all: 5 } }]);
+  });
+
+  it("counts nothing for a unit no met opening names, and nothing before any game was met", async () => {
+    addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    expect((await bodyOf()).found).toEqual({ moves: { recommended: 0, due: 0, all: 0 } });
+
+    // A game that met an opening with no unit built from it names no unit either.
+    addReviewedGame(["e4", "Nf6", "e5"], { leftPly: 2 }, italian);
+    expect((await bodyOf()).found).toEqual({ moves: { recommended: 0, due: 0, all: 0 } });
+  });
+
+  it("starts counting a unit once a met opening names it, and stops when none does", async () => {
+    addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    const gameId = addReviewedGame(["e4", "d5", "exd5"], { leftPly: 2 }, italian);
+    expect((await bodyOf()).found?.moves.all).toBe(1);
+
+    db.prepare("DELETE FROM repertoire_game_reviews WHERE game_id = ?").run(gameId);
+    expect((await bodyOf()).found?.moves.all).toBe(0);
+  });
+
+  it("leaves out a new move the day's limit holds back, counting the Italian's cards in it", async () => {
+    addFoundUnits();
+    const hoursAgo = (hours: number): string =>
+      new Date(Date.now() - hours * 3_600_000).toISOString();
+    // Five cards in the last day, in the Italian and in no unit at all, leave no room for 2.e5.
+    const known: [string[], string][] = [
+      [[], "e4"],
+      [["e4", "e5"], "Nf3"],
+      [SETUP.slice(0, 4), "Bc4"],
+      [[...SETUP, "Bc5"], "c3"],
+      [[...SETUP, "Bc5"], "d3"],
+    ];
+    for (const [line, san] of known) {
+      addCard(line, san, LONG_AGO, { introducedAt: hoursAgo(1), intervalHours: 72 });
+    }
+    expect((await bodyOf()).found).toEqual({ moves: { recommended: 1, due: 1, all: 1 } });
+
+    db.prepare("UPDATE repertoire_cards SET introduced_at = ?").run(hoursAgo(25));
+    expect((await bodyOf()).found).toEqual({ moves: { recommended: 2, due: 2, all: 2 } });
   });
 });
 

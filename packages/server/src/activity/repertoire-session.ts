@@ -26,7 +26,7 @@ import {
   type RepertoireDrillMove,
   saveRepertoireCardReview,
 } from "../db/repertoire-cards.js";
-import type { RepertoireRow } from "../db/repertoires.js";
+import { listMetOpenings, type MetOpeningRow, type RepertoireRow } from "../db/repertoires.js";
 import {
   closeTrainingItem,
   endOpenTrainingRuns,
@@ -76,7 +76,10 @@ const REPERTOIRE_START_FEN = new Chess().fen();
 export interface RepertoireDrillInput {
   repertoireId?: number | undefined;
   scope?: RepertoireScope | undefined;
-  /** Widens the drill from that repertoire to its group or its side; left out, it is the variation. */
+  /**
+   * Widens the drill from that repertoire to its group, to its side or, for a unit found in games,
+   * to every unit found in games; left out, it is the variation.
+   */
   level?: RepertoireLevel | undefined;
 }
 
@@ -91,13 +94,32 @@ export interface RepertoireUnitMoves {
   moves: readonly RepertoireDrillMove[];
 }
 
-/** The variations a level covers, in the order given: the anchor alone, its group or its side. */
+const NO_FOUND_REPERTOIRE_IDS: ReadonlySet<number> = new Set();
+
+/**
+ * The units a drill at the found level covers: those built from an opening the student's games
+ * met, which is every unit whose id a met opening names. Nothing else marks a unit as found.
+ */
+export function foundRepertoireIdsOf(
+  met: readonly Pick<MetOpeningRow, "repertoireId">[],
+): Set<number> {
+  const ids = new Set<number>();
+  for (const { repertoireId } of met) if (repertoireId !== null) ids.add(repertoireId);
+  return ids;
+}
+
+/**
+ * The variations a level covers, in the order given: the anchor alone, its group, its side, or the
+ * units found in games, which the anchor need not share a group with.
+ */
 export function repertoireUnitsOfLevel(
   units: readonly RepertoireRow[],
   anchor: RepertoireRow,
   level: RepertoireLevel,
+  foundIds: ReadonlySet<number> = NO_FOUND_REPERTOIRE_IDS,
 ): RepertoireRow[] {
   if (level === "variation") return [anchor];
+  if (level === "found") return units.filter((unit) => foundIds.has(unit.id));
   return units.filter(
     (unit) =>
       unit.side === anchor.side && (level === "side" || unit.group_name === anchor.group_name),
@@ -127,7 +149,8 @@ function listLevelUnitMoves(
   level: RepertoireLevel,
 ): RepertoireUnitMoves[] {
   const all = level === "variation" ? [anchor] : listDrillRepertoires(db);
-  return repertoireUnitsOfLevel(all, anchor, level).map((variation) => ({
+  const foundIds = level === "found" ? foundRepertoireIdsOf(listMetOpenings(db)) : undefined;
+  return repertoireUnitsOfLevel(all, anchor, level, foundIds).map((variation) => ({
     variation,
     moves: listRepertoireDrillMoves(db, variation.id),
   }));
@@ -498,8 +521,16 @@ export class RepertoireSession implements PracticeRunPort {
       throw new ActivityError("empty_queue", `repertoire ${repertoireId} does not exist`);
     }
     const now = (deps.clock ?? systemClock).now();
+    const units = listLevelUnitMoves(deps.db, repertoire, level);
+    // The anchor names the side and carries the drill, so it has to be part of what it widens to.
+    if (!units.some(({ variation }) => variation.id === repertoire.id)) {
+      throw new ActivityError(
+        "empty_queue",
+        `repertoire ${repertoireId} is not among the openings found in your games`,
+      );
+    }
     const moves = selectRepertoireDrillMoves(
-      mergeRepertoireUnitMoves(listLevelUnitMoves(deps.db, repertoire, level)),
+      mergeRepertoireUnitMoves(units),
       scope,
       now,
       repertoireIntroductionsInWindow(deps.db, now),
@@ -609,6 +640,7 @@ export class RepertoireSession implements PracticeRunPort {
         kind: "repertoire",
         repertoire_id: pass.variation.id,
         variation_name: pass.variation.variation_name,
+        group_name: pass.variation.group_name,
         fen: REPERTOIRE_START_FEN,
         position_in_queue: this.passIndex + 1,
         queue_length: this.passIndex + 1 + passesLeft,

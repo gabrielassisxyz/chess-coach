@@ -31,6 +31,12 @@ export function itemVariationOf(training: TrainingActivity): string | null {
   return training.item.kind === "repertoire" ? (training.item.variation_name ?? null) : null;
 }
 
+// The opening that variation belongs to. A drill of the units found in games moves from one opening
+// to another, and the opening is what the student recognises first. Null where the item names none.
+export function itemOpeningOf(training: TrainingActivity): string | null {
+  return training.item.kind === "repertoire" ? (training.item.group_name ?? null) : null;
+}
+
 // The move the board and the move list show on the current pass: the answer while a move is new,
 // the move once the second hint asked for it, and nothing otherwise.
 export function shownMoveOf(drill: RepertoireDrill): ExpectedMove | null {

@@ -11,7 +11,7 @@ import {
   type RepertoiresResponse,
   repertoireRootText,
 } from "@chess-coach/shared";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { type Loaded, useLoaded } from "../hooks/useLoaded.js";
 import { type OpeningDrillControls, placeDrills } from "../state/openings-api.js";
 import {
@@ -25,6 +25,7 @@ import {
   type FetchCoverage,
   type FetchRepertoireList,
   fetchRepertoireListFromServer,
+  foundIdsOf,
   levelAnchorOf,
   menuOf,
   metGamesText,
@@ -33,6 +34,7 @@ import {
   metRootKey,
   metToAdd,
   type OpeningMenu,
+  offersFoundStarts,
   offersGroupStarts,
   offersSideStarts,
   replyMoveText,
@@ -519,22 +521,20 @@ function MetRow({
 }
 
 // The openings the student's reviewed games met and no drill covers yet. Adding one builds its drill,
-// which takes minutes, and the new drill appears in the menu above when the run ends.
-function MetOpenings({
+// which takes minutes, and the new drill joins the added ones above when the run ends.
+function MetToAdd({
+  entries,
   adds,
   busy,
   addOpening,
   metLine,
 }: {
+  entries: readonly MetOpening[];
   adds: OpeningAdds;
   busy: boolean;
   addOpening: AddOpening;
   metLine: DrillSlots["metLine"];
 }) {
-  const entries = metToAdd(adds.met ?? [], adds.unfinished);
-  const running = adds.adding?.origin === "met";
-  const told = adds.outcome?.origin === "met";
-  if (entries.length === 0 && !running && !told && !adds.unreadable) return null;
   const add = (entry: MetOpening): Promise<void> =>
     adds.add({
       key: metRootKey(entry.root),
@@ -544,33 +544,81 @@ function MetOpenings({
     });
   return (
     <div className="repertoire-menu__met">
-      {adds.unreadable ? (
-        <p className="practice__card-note">
-          The openings met in your games could not be loaded. Reload the page to try again.
-        </p>
-      ) : null}
-      {entries.length === 0 ? null : (
-        <>
-          <h4 className="repertoire-menu__name">Met in your games</h4>
+      <p className="practice__card-note">
+        Openings your opponents played that have no drill yet. Add one to practise against it.
+      </p>
+      <ul className="repertoire-menu__met-list" aria-label="Openings met in your games">
+        {entries.map((entry) => (
+          <MetRow
+            key={metRootKey(entry.root)}
+            entry={entry}
+            disabled={busy || adds.adding !== null}
+            adding={adds.adding?.key === metRootKey(entry.root)}
+            onAdd={add}
+            drillLine={metLine(metRootKey(entry.root))}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Found in your games: the units built from the openings the student's games met, each with its
+// menu, then the openings still to add, then one start that mixes every added one, since a game
+// does not say which of them comes next. With nothing built and nothing to add there is no
+// section, only what an add or an unreadable list has to say.
+function FoundInGames({
+  adds,
+  busy,
+  addOpening,
+  metLine,
+  openings,
+  starts,
+}: {
+  adds: OpeningAdds;
+  busy: boolean;
+  addOpening: AddOpening;
+  metLine: DrillSlots["metLine"];
+  // The menus of the added units, drawn by the side, which holds what they need.
+  openings: ReactNode[];
+  // The mixed starts, or null where none is offered.
+  starts: ReactNode;
+}) {
+  const headingId = useId();
+  const entries = metToAdd(adds.met ?? [], adds.unfinished);
+  const running = adds.adding?.origin === "met";
+  const told = adds.outcome?.origin === "met";
+  if (openings.length === 0 && entries.length === 0) {
+    if (!running && !told && !adds.unreadable) return null;
+    return (
+      <div className="repertoire-menu__met">
+        {adds.unreadable ? (
           <p className="practice__card-note">
-            Openings your opponents played that have no drill yet. Add one to practise against it.
+            The openings met in your games could not be loaded. Reload the page to try again.
           </p>
-          <ul className="repertoire-menu__met-list" aria-label="Openings met in your games">
-            {entries.map((entry) => (
-              <MetRow
-                key={metRootKey(entry.root)}
-                entry={entry}
-                disabled={busy || adds.adding !== null}
-                adding={adds.adding?.key === metRootKey(entry.root)}
-                onAdd={add}
-                drillLine={metLine(metRootKey(entry.root))}
-              />
-            ))}
-          </ul>
-        </>
+        ) : null}
+        <AddStatus adds={adds} origin="met" />
+      </div>
+    );
+  }
+  return (
+    <section className="repertoire-menu__found" aria-labelledby={headingId}>
+      <h4 id={headingId} className="repertoire-menu__name">
+        Found in your games
+      </h4>
+      {openings}
+      {entries.length === 0 ? null : (
+        <MetToAdd
+          entries={entries}
+          adds={adds}
+          busy={busy}
+          addOpening={addOpening}
+          metLine={metLine}
+        />
       )}
       <AddStatus adds={adds} origin="met" />
-    </div>
+      {starts === null ? null : <div className="repertoire-menu__found-starts">{starts}</div>}
+    </section>
   );
 }
 
@@ -622,12 +670,30 @@ function drillSlotsOfSide(
   const metSettled = side.side !== "white" || adds.met !== null || adds.unreadable;
   if (!controls || !metSettled) return null;
   const met = side.side === "white" ? metToAdd(adds.met ?? [], adds.unfinished) : [];
-  const names = new Set(side.openings.map((opening) => opening.name));
+  const names = new Set([...side.openings, ...side.found].map((opening) => opening.name));
   return drillSlotsOf(
     side.side,
     controls,
     busy,
     placeDrills(controls.drills[side.side], names, met),
+  );
+}
+
+// The mixed starts of the found openings, drilled from the first added unit the menu lists.
+function foundStartsOf(side: SideMenu, actions: MenuActions): ReactNode {
+  const anchor = levelAnchorOf(side.found.flatMap((opening) => opening.variations));
+  if (!offersFoundStarts(side) || !side.foundMoves || anchor === null) return null;
+  return (
+    <LevelStarts
+      label="Every added opening, mixed"
+      counts={side.foundMoves}
+      target={{
+        repertoireId: anchor,
+        level: "found",
+        name: "every added opening found in your games",
+      }}
+      {...actions}
+    />
   );
 }
 
@@ -648,11 +714,23 @@ function Side({
   openingDrills: OpeningDrillControls | undefined;
 } & MenuActions) {
   const slots = drillSlotsOfSide(side, adds, actions.busy, openingDrills);
-  const variations = side.openings.flatMap((opening) => opening.variations);
+  const variations = [...side.openings, ...side.found].flatMap((opening) => opening.variations);
   const anchor = levelAnchorOf(variations);
   const variationName = (id: number): string | null =>
     variations.find((variation) => variation.id === id)?.variation_name ?? null;
   const every = `every ${side.side === "white" ? "White" : "Black"} opening`;
+  const openingMenu = (opening: OpeningMenu): ReactNode => (
+    <Opening
+      key={opening.name}
+      opening={opening}
+      adds={adds}
+      addVariation={addVariation}
+      fetchCoverage={fetchCoverage}
+      variationName={variationName}
+      drillLine={slots?.menuLine(opening.name) ?? null}
+      {...actions}
+    />
+  );
   return (
     <section className="practice__card" aria-label={side.heading}>
       <h3 className="practice__card-title">{side.heading}</h3>
@@ -665,24 +743,15 @@ function Side({
           {...actions}
         />
       ) : null}
-      {side.openings.map((opening) => (
-        <Opening
-          key={opening.name}
-          opening={opening}
-          adds={adds}
-          addVariation={addVariation}
-          fetchCoverage={fetchCoverage}
-          variationName={variationName}
-          drillLine={slots?.menuLine(opening.name) ?? null}
-          {...actions}
-        />
-      ))}
+      {side.openings.map(openingMenu)}
       {side.side === "white" ? (
-        <MetOpenings
+        <FoundInGames
           adds={adds}
           busy={actions.busy}
           addOpening={addOpening}
           metLine={slots?.metLine ?? (() => null)}
+          openings={side.found.map(openingMenu)}
+          starts={foundStartsOf(side, actions)}
         />
       ) : null}
       {slots?.rows}
@@ -692,7 +761,8 @@ function Side({
 
 // The openings the student plays from a stored repertoire, grouped by side and then by opening.
 // Each start is a scope of the drill and says how many moves it would serve right now; a side or
-// an opening with more than one thing under it also starts everything under it at once.
+// an opening with more than one thing under it also starts everything under it at once. The
+// openings built from the student's games sit apart under White openings, and start mixed.
 export function RepertoireMenu({
   repertoires,
   busy,
@@ -709,8 +779,12 @@ export function RepertoireMenu({
   if (repertoires.status === "failed") {
     return <Note text="The openings could not be loaded. Reload the page to try again." />;
   }
-  const levels = { groups: adds.listing?.groups, sides: adds.listing?.sides };
-  const sides = menuOf(adds.built ?? repertoires.value, levels);
+  const levels = {
+    groups: adds.listing?.groups,
+    sides: adds.listing?.sides,
+    found: adds.listing?.found,
+  };
+  const sides = menuOf(adds.built ?? repertoires.value, levels, foundIdsOf(adds.met));
   if (sides.length === 0) {
     return (
       <>

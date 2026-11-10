@@ -10,7 +10,7 @@ import {
   ServerEventSchema,
   type TrainingActivity,
 } from "@chess-coach/shared";
-import { Chess } from "chess.js";
+import { Chess, type Move } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeCoach } from "../../test/fakes/fake-coach.js";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
@@ -29,10 +29,12 @@ import {
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { GameService } from "../game/service.js";
+import { importFinishedGame } from "../import/pgn.js";
 import { positionKey } from "../openings/from-games.js";
 import { ReviewDesk } from "../srs/review.js";
 import { review } from "../srs/sm2.js";
 import {
+  foundRepertoireIdsOf,
   mergeRepertoireUnitMoves,
   REPERTOIRE_FLAG_BUDGET_MS,
   REPERTOIRE_FLAG_CP,
@@ -1670,5 +1672,289 @@ describe("a drill over a group or a side", () => {
     const resumed = training(await second.resumeTraining());
     expect({ ...resumed, activity_id: 0, served_at: "" }).toEqual(before);
     expect(variationOf(resumed)).toEqual({ id: pianissimo, name: PIANISSIMO, drill: pianissimo });
+  });
+});
+
+const SCANDINAVIAN_GROUP = "Scandinavian Defense";
+const ALEKHINE_GROUP = "Alekhine Defense";
+const ALEKHINE_MODERN = "Modern Variation (2.e5)";
+const ALEKHINE_ROWS: FixtureRow[] = [
+  ["", "e4", 1],
+  ["e4", "Nf6", 1],
+  ["e4 Nf6", "e5", 1],
+];
+
+// A unit built from a root that leaves the Italian stores the root's moves as setup rows, and the
+// last of them is Black's: that is what a met opening names the unit by.
+function addFoundUnit(
+  name: string,
+  rows: FixtureRow[],
+  groupName: string,
+  rootPlies: number,
+): number {
+  const id = addVariation(name, rows, groupName);
+  db.prepare(
+    "UPDATE repertoire_positions SET source = 'setup' WHERE repertoire_id = ? AND ply <= ?",
+  ).run(id, rootPlies);
+  return id;
+}
+
+let metGames = 0;
+// A game reviewed against `repertoireId` that left the line on Black's move `leftPly`: the row
+// that makes its root an opening met in the student's games.
+function addMetGame(line: string[], leftPly: number, repertoireId: number): void {
+  metGames += 1;
+  const pgn = line
+    .map((san, index) => (index % 2 === 0 ? `${index / 2 + 1}. ${san}` : san))
+    .join(" ");
+  const gameId = importFinishedGame(db, {
+    pgn: `[Result "1-0"]\n\n${pgn} 1-0`,
+    playerColor: "white",
+    source: "pgn",
+    sourceId: `found-${metGames}`,
+  }) as number;
+  const board = new Chess();
+  let from = "";
+  let left: Move | null = null;
+  for (const [index, san] of line.entries()) {
+    if (index + 1 === leftPly) from = positionKey(board.fen());
+    const played = board.move(san);
+    if (index + 1 === leftPly) left = played;
+  }
+  db.prepare(
+    `INSERT INTO repertoire_game_reviews
+       (game_id, repertoire_id, reviewed_at, outcome, followed_plies, passed_moves, left_ply,
+        left_position_key, left_san, left_uci, opening_name)
+     VALUES (?, ?, ?, 'not_reached', 0, 0, ?, ?, ?, ?, NULL)`,
+  ).run(
+    gameId,
+    repertoireId,
+    T0.toISOString(),
+    leftPly,
+    from,
+    left?.san ?? null,
+    left ? `${left.from}${left.to}` : null,
+  );
+}
+
+// The opening and the variation the board names for the move in play.
+const openingOf = (state: TrainingActivity): string | null =>
+  state.item.kind === "repertoire" ? (state.item.group_name ?? null) : null;
+
+describe("a drill over the units found in games", () => {
+  let italian: number;
+  let scandinavian: number;
+  let alekhine: number;
+
+  // The Italian is a chosen unit. The other two were built from openings the games met, so the
+  // met openings name them; 1.e4 is the first move of all three and has one card.
+  beforeEach(() => {
+    metGames = 0;
+    italian = addVariation(CLASSICAL, CLASSICAL_ROWS);
+    scandinavian = addFoundUnit(MIESES, SCANDINAVIAN_ROWS, SCANDINAVIAN_GROUP, 2);
+    alekhine = addFoundUnit(ALEKHINE_MODERN, ALEKHINE_ROWS, ALEKHINE_GROUP, 2);
+    addMetGame(["e4", "d5", "exd5"], 2, italian);
+    addMetGame(["e4", "Nf6", "e5"], 2, italian);
+    // 1.e4 and 2.exd5 are known and stable, 2.e5 is new: its sibling 2.exd5 has a card that no
+    // longer holds it back.
+    addCard("", "e4", PAST, 2, { intervalHours: STABLE_HOURS });
+    addCard("e4 d5", "exd5", PAST, 2, { intervalHours: STABLE_HOURS });
+  });
+
+  const foundLeft = async (service: ActivityService, scope: RepertoireScope): Promise<number> =>
+    drillOf(await startAt(service, scandinavian, scope, "found")).moves_left;
+
+  it("names the units whose id a met opening carries, and no other", () => {
+    expect(foundRepertoireIdsOf([])).toEqual(new Set());
+    expect(
+      foundRepertoireIdsOf([{ repertoireId: null }, { repertoireId: 4 }, { repertoireId: 4 }]),
+    ).toEqual(new Set([4]));
+  });
+
+  it("drills the moves of every found unit, a shared move once and none of the Italian's", async () => {
+    const service = boot();
+    let state = await startAt(service, scandinavian, "all", "found");
+    // 1.e4, 2.exd5 and 2.e5; the Italian's 2.Nf3, 3.Bc4 and 4.c3 are not in this drill.
+    expect(drillOf(state)).toMatchObject({ level: "found", moves_left: 3 });
+    expect(state.queue_outcomes).toHaveLength(2);
+
+    expect(variationOf(state)).toEqual({ id: scandinavian, name: MIESES, drill: scandinavian });
+    expect(openingOf(state)).toBe(SCANDINAVIAN_GROUP);
+    state = await play(service, state, "e4");
+    expect(lineSan(state)).toEqual(["e4", "Nf6"]);
+    expect(whoPlayed(state)).toEqual(["student", "reply"]);
+    expect(variationOf(state)).toEqual({ id: alekhine, name: ALEKHINE_MODERN, drill: alekhine });
+    expect(openingOf(state)).toBe(ALEKHINE_GROUP);
+    expect(drillOf(state)).toMatchObject({ first_pass: true, answer: { san: "e5" } });
+    state = await play(service, state, "e5");
+    expect(state.status).toBe("solved");
+
+    // The next pass plays 1.e4 and Black's reply itself, then asks the other unit's move.
+    state = await next(service, state);
+    expect(lineSan(state)).toEqual(["e4", "d5"]);
+    expect(whoPlayed(state)).toEqual(["reply", "reply"]);
+    expect(variationOf(state)).toEqual({ id: scandinavian, name: MIESES, drill: scandinavian });
+    expect(openingOf(state)).toBe(SCANDINAVIAN_GROUP);
+    expect(drillOf(state).moves_left).toBe(2);
+  });
+
+  it("expects each unit's own move: another unit's move is wrong where the board names this one", async () => {
+    const service = boot();
+    let state = await startAt(service, scandinavian, "all", "found");
+    state = await play(service, state, "e4");
+    // Against 1...Nf6 the board names the Alekhine's 2.e5, and 2.d4 is nobody's move here.
+    state = await play(service, state, "d4");
+    expect(state.last_try).toMatchObject({ san: "d4", correct: false });
+    expect(state.input_enabled).toBe(true);
+    state = await play(service, state, "e5");
+    expect(state.last_try).toMatchObject({ san: "e5", correct: true });
+    state = await next(service, state);
+    // Against 1...d5 the same 2.e5 is legal and wrong: only 2.exd5 is the Scandinavian's move.
+    expect(openingOf(state)).toBe(SCANDINAVIAN_GROUP);
+    state = await play(service, state, "e5");
+    expect(state.last_try).toMatchObject({ san: "e5", correct: false });
+    expect(state.input_enabled).toBe(true);
+    state = await play(service, state, "exd5");
+    expect(state.last_try).toMatchObject({ san: "exd5", correct: true });
+    expect(state.status).toBe("failed");
+    expect(openingOf(state)).toBe(SCANDINAVIAN_GROUP);
+  });
+
+  it("serves exactly the moves the counts offered for its scope, whichever unit it starts from", async () => {
+    addCard("e4 Nf6", "e5", FUTURE, 2, { intervalHours: STABLE_HOURS });
+    const service = boot();
+    const units = [scandinavian, alekhine].map((id) => ({
+      variation: findDrillRepertoire(db, id) as NonNullable<ReturnType<typeof findDrillRepertoire>>,
+      moves: listRepertoireDrillMoves(db, id),
+    }));
+    const offered = repertoireScopeCounts(mergeRepertoireUnitMoves(units), now, introducedToday());
+    // 2.e5 is known and not due, so it is in all and not in due.
+    expect(offered).toEqual({ recommended: 2, due: 2, all: 3 });
+    for (const scope of ["recommended", "due", "all"] as const) {
+      expect(await foundLeft(service, scope)).toBe(offered[scope]);
+    }
+    expect(drillOf(await startAt(service, alekhine, "all", "found")).moves_left).toBe(3);
+  });
+
+  it("refuses a found drill started from a unit that is not found in games", async () => {
+    const service = boot();
+    expect(await code(startAt(service, italian, "all", "found"))).toBe("empty_queue");
+    // The Italian's own level still serves its moves: 1.e4 and 2.Nf3, with 3.Bc4 and 4.c3 behind
+    // the new 2.Nf3.
+    expect(drillOf(await startAt(service, italian, "all", "variation")).moves_left).toBe(2);
+  });
+
+  it("serves nothing for a found drill while no unit was built from a met opening", async () => {
+    db.prepare("DELETE FROM repertoire_game_reviews").run();
+    const service = boot();
+    expect(await code(startAt(service, scandinavian, "all", "found"))).toBe("empty_queue");
+    // The side's drill still covers the three units: 1.e4, 2.exd5 and one of the new sibling moves.
+    expect(drillOf(await startAt(service, scandinavian, "all", "side")).moves_left).toBe(3);
+  });
+
+  it("paces the new moves of two found units as siblings, one at a time", async () => {
+    const service = boot();
+    // 2.e5 is new and its sibling 2.exd5 holds a stable card: 2.e5 enters.
+    expect(await foundLeft(service, "due")).toBe(3);
+
+    // Shown but not stable, 2.e5 holds back every other new sibling, though 2.exd5 has its card.
+    db.prepare("DELETE FROM repertoire_cards").run();
+    addCard("", "e4", PAST, 2, { intervalHours: STABLE_HOURS });
+    addCard("e4 Nf6", "e5", PAST, 2, { intervalHours: 24 });
+    expect(await foundLeft(service, "all")).toBe(2);
+    // 2.exd5 is new and waits for 2.e5: the likeliest sibling is the one with the card.
+    expect(await foundLeft(service, "due")).toBe(2);
+
+    setCardInterval("e4 Nf6", "e5", STABLE_HOURS);
+    expect(await foundLeft(service, "due")).toBe(3);
+  });
+
+  it("counts the cards of every unit toward the day's limit, the Italian's included", async () => {
+    const hourAgo = new Date(T0.getTime() - HOUR_MS).toISOString();
+    // 1.e4 is the found units' card too: four cards from the Italian's unit and one of another line
+    // fill the day, so no new move of the found units enters until a day has passed.
+    for (const [line, san] of [
+      ["", "e4"],
+      ["e4 e5", "Nf3"],
+      ["e4 e5 Nf3 Nc6", "Bc4"],
+      ["e4 e5 Nf3 Nc6 Bc4 Bc5", "c3"],
+      ["e4 e5 Nf3 Nc6 Bc4 Bc5", "d3"],
+    ] as const) {
+      db.prepare("DELETE FROM repertoire_cards WHERE position_key = ? AND move_uci = ?").run(
+        placeOf(line, san).positionKey,
+        placeOf(line, san).uci,
+      );
+      addCard(line, san, PAST, 2, { intervalHours: STABLE_HOURS, introducedAt: hourAgo });
+    }
+    const service = boot();
+    expect(introducedToday()).toBe(5);
+    expect(await foundLeft(service, "all")).toBe(2);
+
+    now = new Date(T0.getTime() + 25 * HOUR_MS);
+    expect(introducedToday()).toBe(0);
+    expect(await foundLeft(service, "all")).toBe(3);
+  });
+
+  it("pauses a found drill on restart and resumes it on the same move, under the same unit", async () => {
+    const first = boot();
+    let state = await startAt(first, scandinavian, "all", "found");
+    state = await play(first, state, "e4");
+    const before = { ...state, activity_id: 0, served_at: "" };
+
+    const second = boot();
+    const paused = second.pausedTraining();
+    expect(paused).toMatchObject({ repertoire_id: scandinavian, scope: "all", level: "found" });
+    expect(PausedTrainingSchema.parse(paused)).toEqual(paused);
+    const resumed = training(await second.resumeTraining());
+    expect({ ...resumed, activity_id: 0, served_at: "" }).toEqual(before);
+    expect(variationOf(resumed)).toEqual({ id: alekhine, name: ALEKHINE_MODERN, drill: alekhine });
+    expect(openingOf(resumed)).toBe(ALEKHINE_GROUP);
+  });
+
+  it("starts from the start_training command's found level, in a frame the page accepts", async () => {
+    const app = buildApp({
+      hub: {
+        coach: new FakeCoach(db),
+        activity: boot(),
+        db,
+        allowedOrigins: ["http://localhost:5173"],
+      },
+    });
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    try {
+      const frames: { type: string; state?: unknown }[] = [];
+      const socket = await app.injectWS(
+        "/api/ws",
+        { headers: { origin: "http://localhost:5173", host: "localhost:5173" } },
+        { onInit: (ws) => ws.on("message", (data) => frames.push(JSON.parse(data.toString()))) },
+      );
+      socket.send(
+        JSON.stringify({
+          type: "start_training",
+          command_id: "c1",
+          mode: "repertoire",
+          repertoire_id: scandinavian,
+          scope: "due",
+          level: "found",
+        }),
+      );
+      let frame: unknown;
+      for (let i = 0; i < 200 && frame === undefined; i++) {
+        frame = frames.find((event) => event.type === "activity" && event.state);
+        if (frame === undefined) await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const event = ServerEventSchema.parse(frame);
+      if (event.type !== "activity") throw new Error(`expected activity, got ${event.type}`);
+      const state = training(event.state);
+      expect(drillOf(state)).toMatchObject({ level: "found", moves_left: 3 });
+      expect(state.item).toMatchObject({
+        kind: "repertoire",
+        variation_name: MIESES,
+        group_name: SCANDINAVIAN_GROUP,
+      });
+      socket.terminate();
+    } finally {
+      await app.close();
+    }
   });
 });

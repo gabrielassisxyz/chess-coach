@@ -119,11 +119,13 @@ export const PuzzleItemSchema = z.object({
 // One pass over a repertoire line: `fen` is the position it starts from, move 1. The queue
 // position counts passes, and `queue_length` grows when a missed move brings its line back.
 // `repertoire_id` and `variation_name` name the variation whose move is in play, which a drill over
-// a group or a side changes from move to move. The server always sends the name; a fixture need not.
+// a group, a side or the units found in games changes from move to move, and `group_name` the
+// opening that variation belongs to. The server always sends both names; a fixture need not.
 export const RepertoireItemSchema = z.object({
   kind: z.literal("repertoire"),
   repertoire_id: z.number().int().positive(),
   variation_name: z.string().min(1).optional(),
+  group_name: z.string().min(1).optional(),
   fen: z.string(),
   ...queuePosition,
 });

@@ -7,9 +7,10 @@ export const RepertoireScopeSchema = z.enum(REPERTOIRE_SCOPES);
 export type RepertoireScope = z.infer<typeof RepertoireScopeSchema>;
 
 // Where a line drill draws its moves from: one variation, every variation of that variation's
-// group, or every unit of its side, which the hub calls White openings. A move two variations
+// group, every unit of its side, which the hub calls White openings, or every unit built from an
+// opening the student's games met, which the hub calls Found in your games. A move two variations
 // share is served once.
-export const REPERTOIRE_LEVELS = ["variation", "group", "side"] as const;
+export const REPERTOIRE_LEVELS = ["variation", "group", "side", "found"] as const;
 export const RepertoireLevelSchema = z.enum(REPERTOIRE_LEVELS);
 export type RepertoireLevel = z.infer<typeof RepertoireLevelSchema>;
 
@@ -55,6 +56,13 @@ export const RepertoireSideSummarySchema = z.object({
 });
 export type RepertoireSideSummary = z.infer<typeof RepertoireSideSummarySchema>;
 
+// What a drill of the units found in games would serve: every unit whose id a met opening names,
+// a move two of them share counted once, and a move the drill would hold back left out.
+export const RepertoireFoundSummarySchema = z.object({
+  moves: RepertoireScopeCountsSchema,
+});
+export type RepertoireFoundSummary = z.infer<typeof RepertoireFoundSummarySchema>;
+
 // One of White's moves the book plays at a branch point. `variation_name` is the name a variation
 // built with this move gets, and `repertoire_id` the variation that already plays it there, if any.
 export const RepertoireBranchChoiceSchema = z.object({
@@ -73,12 +81,13 @@ export const RepertoireBranchSchema = z.object({
 });
 export type RepertoireBranch = z.infer<typeof RepertoireBranchSchema>;
 
-// The body of GET /api/repertoires. The server always sends the group and side counts and the
+// The body of GET /api/repertoires. The server always sends the group, side and found counts and the
 // branch points; a fixture need not carry them.
 export const RepertoiresResponseSchema = z.object({
   repertoires: z.array(RepertoireSummarySchema),
   groups: z.array(RepertoireGroupSummarySchema).optional(),
   sides: z.array(RepertoireSideSummarySchema).optional(),
+  found: RepertoireFoundSummarySchema.optional(),
   met: z.array(MetOpeningSchema),
   branches: z.array(RepertoireBranchSchema).optional(),
 });

@@ -85,6 +85,23 @@
   font-weight: 500;
 }
 
+/* The openings the student's games met: the units already built, each with the menu of any opening,
+ * then the openings still to add, then one set of starts that mixes every built one. Each block
+ * inside keeps the hairline above it that the same block has outside. */
+.repertoire-menu__found {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: stretch;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.repertoire-menu__found-starts {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
 /* The openings the student's games met that have no drill yet, under the drills they have: a name,
  * the line, how many games met it and an Add action. */
 .repertoire-menu__met {
@@ -333,18 +350,27 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The variation of the move in play, under the head of a line drill: in a drill of a group or a
- * side it is what says which of a position's moves is asked. */
+/* The opening and the variation of the move in play, under the head of a line drill: in a drill of
+ * a group, a side or the openings found in games they say which of a position's moves is asked.
+ * Each is a label and a name that stay together and wrap as a pair. */
 .repertoire-variation {
   display: flex;
   flex: none;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-1) var(--space-2);
+  gap: var(--space-1) var(--space-4);
   margin: 0;
   padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border);
   font-size: var(--text-xs);
+}
+
+.repertoire-variation__pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
 }
 
 .repertoire-variation__label {

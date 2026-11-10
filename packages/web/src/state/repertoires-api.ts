@@ -5,6 +5,7 @@ import {
   type RepertoireBranch,
   type RepertoireCoverage,
   RepertoireCoverageSchema,
+  type RepertoireFoundSummary,
   type RepertoireGroupSummary,
   type RepertoireScope,
   type RepertoireScopeCounts,
@@ -102,42 +103,81 @@ export interface OpeningMenu {
 export interface SideMenu {
   side: RepertoireSummary["side"];
   heading: string;
+  // The openings the student chose to build.
   openings: OpeningMenu[];
-  // The same for every opening of the side.
+  // The openings of the units built from an opening the student's games met, kept apart from the
+  // chosen ones under Found in your games.
+  found: OpeningMenu[];
+  // The same for every opening of the side, the found ones included.
   moves: RepertoireScopeCounts | null;
+  // What a drill of the found openings together would serve; null until the server has said.
+  foundMoves: RepertoireScopeCounts | null;
 }
 
 // The counts the server gives the levels above a variation; absent until the list has been read.
 export interface LevelCounts {
   groups?: readonly RepertoireGroupSummary[] | undefined;
   sides?: readonly RepertoireSideSummary[] | undefined;
+  found?: RepertoireFoundSummary | undefined;
 }
 
 const SIDES: readonly RepertoireSummary["side"][] = ["white", "black"];
+const NO_FOUND_IDS: ReadonlySet<number> = new Set();
 
-// The hub groups openings under the side the student plays, White first. An opening lists its
-// variations in the order the server gave them, and its due count adds theirs up.
-export function menuOf(list: readonly RepertoireSummary[], levels: LevelCounts = {}): SideMenu[] {
+// The units found in games are the ones a met opening names, and nothing else marks them: the
+// Italian, which the student chose, is never one. None is known until the met openings are read.
+export const foundIdsOf = (met: readonly MetOpening[] | null): ReadonlySet<number> =>
+  new Set(
+    (met ?? []).flatMap((entry) => (entry.repertoire_id === null ? [] : [entry.repertoire_id])),
+  );
+
+// An opening lists its variations in the order the server gave them, and its due count adds theirs up.
+function openingsOfSide(
+  entries: readonly RepertoireSummary[],
+  side: RepertoireSummary["side"],
+  levels: LevelCounts,
+): OpeningMenu[] {
+  const openings = new Map<string, OpeningMenu>();
+  for (const entry of entries) {
+    const opening = openings.get(entry.group_name) ?? {
+      name: entry.group_name,
+      due: 0,
+      variations: [],
+      moves:
+        levels.groups?.find((group) => group.side === side && group.group_name === entry.group_name)
+          ?.moves ?? null,
+    };
+    opening.due += entry.moves.due;
+    opening.variations.push(entry);
+    openings.set(entry.group_name, opening);
+  }
+  return [...openings.values()];
+}
+
+// The hub groups openings under the side the student plays, White first. The units built from an
+// opening the games met are set apart from the ones the student chose.
+export function menuOf(
+  list: readonly RepertoireSummary[],
+  levels: LevelCounts = {},
+  foundIds: ReadonlySet<number> = NO_FOUND_IDS,
+): SideMenu[] {
   return SIDES.flatMap((side): SideMenu[] => {
-    const openings = new Map<string, OpeningMenu>();
-    for (const entry of list.filter((candidate) => candidate.side === side)) {
-      const opening = openings.get(entry.group_name) ?? {
-        name: entry.group_name,
-        due: 0,
-        variations: [],
-        moves:
-          levels.groups?.find(
-            (group) => group.side === side && group.group_name === entry.group_name,
-          )?.moves ?? null,
-      };
-      opening.due += entry.moves.due;
-      opening.variations.push(entry);
-      openings.set(entry.group_name, opening);
-    }
-    if (openings.size === 0) return [];
+    const entries = list.filter((candidate) => candidate.side === side);
+    const openings = openingsOfSide(
+      entries.filter((entry) => !foundIds.has(entry.id)),
+      side,
+      levels,
+    );
+    const found = openingsOfSide(
+      entries.filter((entry) => foundIds.has(entry.id)),
+      side,
+      levels,
+    );
+    if (openings.length + found.length === 0) return [];
     const word = side === "white" ? "White" : "Black";
     const moves = levels.sides?.find((entry) => entry.side === side)?.moves ?? null;
-    return [{ side, heading: `${word} openings`, openings: [...openings.values()], moves }];
+    const foundMoves = levels.found?.moves ?? null;
+    return [{ side, heading: `${word} openings`, openings, found, moves, foundMoves }];
   });
 }
 
@@ -151,7 +191,12 @@ export const offersGroupStarts = (opening: OpeningMenu): boolean =>
   opening.moves !== null && opening.variations.length > 1;
 
 export const offersSideStarts = (side: SideMenu): boolean =>
-  side.moves !== null && side.openings.length > 1;
+  side.moves !== null && side.openings.length + side.found.length > 1;
+
+// Mixing is what the found openings have over the rest, so one added opening already gets a start
+// of its own. None is offered before there is one, or before the server has counted what it serves.
+export const offersFoundStarts = (side: SideMenu): boolean =>
+  side.foundMoves !== null && side.found.length > 0;
 
 export const branchKey = (line: readonly string[], san: string): string => [...line, san].join(" ");
 
