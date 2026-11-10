@@ -318,24 +318,35 @@ async function getCoverage(app: ReturnType<typeof buildApp>, id: number | string
   return response;
 }
 
+function addReplyWithoutAnswer(id: number, line: string[], san: string, reach: number): void {
+  upsertRepertoireReply(db, {
+    repertoireId: id,
+    ...placeOf(line, san),
+    ply: line.length + 1,
+    line,
+    reach,
+    openingName: null,
+    san,
+    share: reach,
+    source: "explorer",
+  });
+}
+
 // The classical line and a second branch, with Black's 4...d6 stored and no White move after it.
 function addVariationWithGap(): number {
   const id = addVariation("Classical Variation (4.c3)", [
     ["Bc5", "c3", "Nf6", "d4"],
     ["Nf6", "d3"],
   ]);
-  const line = [...SETUP, "Bc5", "c3"];
-  upsertRepertoireReply(db, {
-    repertoireId: id,
-    ...placeOf(line, "d6"),
-    ply: line.length + 1,
-    line,
-    reach: 0.3,
-    openingName: null,
-    san: "d6",
-    share: 0.3,
-    source: "explorer",
-  });
+  addReplyWithoutAnswer(id, [...SETUP, "Bc5", "c3"], "d6", 0.3);
+  return id;
+}
+
+// A second gap, likelier than the first and in the branch the walk meets after it, so that only
+// sorting the gaps puts the likelier one first.
+function addVariationWithTwoGaps(): number {
+  const id = addVariationWithGap();
+  addReplyWithoutAnswer(id, [...SETUP, "Nf6", "d3"], "d5", 0.45);
   return id;
 }
 
@@ -357,6 +368,15 @@ describe("GET /api/repertoires/:id/coverage", () => {
     // The lines end after 5.d4 (reach 1) and after 3...Nf6 4.d3 (0.5); the gap holds 0.3: 1.5 / 1.8.
     expect(body.covered_percent).toBe(83.3);
     expect(body.positions[body.start]?.line).toEqual(SETUP);
+  });
+
+  it("names the likeliest of two gaps the largest, though the walk meets the rarer one first", async () => {
+    const id = addVariationWithTwoGaps();
+    const body = RepertoireCoverageSchema.parse((await getCoverage(buildApp({ db }), id)).json());
+    const likelier = { line: [...SETUP, "Nf6", "d3", "d5"], incidence: 0.45, position: 5 };
+    const rarer = { line: [...SETUP, "Bc5", "c3", "d6"], incidence: 0.3, position: 3 };
+    expect(body.gaps).toEqual([likelier, rarer]);
+    expect(body.largest_gap).toEqual(likelier);
   });
 
   it("answers no scores for a variation whose moves carry no counts", async () => {
