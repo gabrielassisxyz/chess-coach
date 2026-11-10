@@ -15,6 +15,11 @@ import { PracticeHub, type PracticeHubProps } from "../src/components/PracticeHu
 import { type ServerApi, useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
 import { formatInterval, nextBatchParts, trainingView } from "../src/state/practice.js";
+import {
+  addOpeningToServer,
+  fetchRepertoireListFromServer,
+  fetchRepertoiresFromServer,
+} from "../src/state/repertoires-api.js";
 import { initialChatState } from "../src/state/transcript.js";
 import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
@@ -1295,5 +1300,49 @@ describe("the openings met in games", () => {
     const white = await whiteOpenings();
     const add = await within(white).findByRole("button", { name: "Add Scandinavian Defense" });
     expect((add as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("the calls behind the openings met in games", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const answering = (status: number, body: string) => {
+    const fetched = vi.fn(
+      async (_url: string, _init?: RequestInit) => new Response(body, { status }),
+    );
+    vi.stubGlobal("fetch", fetched);
+    return fetched;
+  };
+
+  it("posts the root to the repertoire source of the generator", async () => {
+    const fetched = answering(200, "{}");
+    await addOpeningToServer(["e4", "d5"]);
+    expect(fetched).toHaveBeenCalledTimes(1);
+    const [url, init] = fetched.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/openings/generate");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+    expect(JSON.parse(init.body as string)).toEqual({
+      sources: ["repertoire"],
+      root: ["e4", "d5"],
+    });
+  });
+
+  it("fails with the message the server gave when it refuses", async () => {
+    answering(400, JSON.stringify({ error: "invalid_root", message: "the root starts with 1.e4" }));
+    await expect(addOpeningToServer(["d4", "d5"])).rejects.toThrow("the root starts with 1.e4");
+  });
+
+  it("fails with the status when the answer has no message", async () => {
+    answering(502, "not json");
+    await expect(addOpeningToServer(["e4", "d5"])).rejects.toThrow("The server answered 502.");
+  });
+
+  it("reads the drills and the met openings from one answer", async () => {
+    const body = { repertoires: [], met: [scandinavian] };
+    answering(200, JSON.stringify(body));
+    await expect(fetchRepertoireListFromServer()).resolves.toEqual(body);
+    answering(200, JSON.stringify(body));
+    await expect(fetchRepertoiresFromServer()).resolves.toEqual([]);
   });
 });
