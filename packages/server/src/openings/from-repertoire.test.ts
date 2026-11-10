@@ -177,6 +177,7 @@ interface RepertoireTestRow {
   wins: number | null;
   draws: number | null;
   losses: number | null;
+  eval_depth: number | null;
 }
 
 let tmp: string;
@@ -435,7 +436,24 @@ describe("the repertoire tables", () => {
       "wins",
       "draws",
       "losses",
+      "eval_depth",
     ]);
+  });
+
+  it("stores the depth of a White move's evaluation, and null where none is given", () => {
+    const { id } = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "A",
+    });
+    insertRepertoireOwnMove(db, { ...newOwnMove(id, "deep", "c2c3"), evalDepth: 16 });
+    insertRepertoireOwnMove(db, { ...newOwnMove(id, "unknown", "d2d3"), evalDepth: null });
+    insertRepertoireOwnMove(db, newOwnMove(id, "left-out", "b2b4"));
+    const depthAt = (position: string): number | null | undefined =>
+      rowsOf(db).find((row) => row.position_key === position)?.eval_depth;
+    expect(depthAt("deep")).toBe(16);
+    expect(depthAt("unknown")).toBeNull();
+    expect(depthAt("left-out")).toBeNull();
   });
 
   it("allows one expected White move per repertoire and position", () => {

@@ -47,6 +47,8 @@ export interface NewRepertoireOwnMove extends NewRepertoireMove {
   cpLoss: number;
   /** The position after the move, in centipawns from White's side; a mate is 10000. */
   evalCp: number;
+  /** How deep the engine looked for `evalCp` and `cpLoss`; null, or left out, when it is not known. */
+  evalDepth?: number | null;
   results: RepertoireResultCounts | null;
 }
 
@@ -128,8 +130,8 @@ export function insertRepertoireOwnMove(db: Database, move: NewRepertoireOwnMove
   db.prepare(
     `INSERT INTO repertoire_positions
        (repertoire_id, kind, position_key, ply, line_san, move_uci, move_san, share, reach,
-        opening_name, source, cp_loss, eval_cp, wins, draws, losses)
-     VALUES (?, 'own', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        opening_name, source, cp_loss, eval_cp, eval_depth, wins, draws, losses)
+     VALUES (?, 'own', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     move.repertoireId,
     move.positionKey,
@@ -143,6 +145,7 @@ export function insertRepertoireOwnMove(db: Database, move: NewRepertoireOwnMove
     move.source,
     move.cpLoss,
     move.evalCp,
+    move.evalDepth ?? null,
     move.results?.wins ?? null,
     move.results?.draws ?? null,
     move.results?.losses ?? null,
