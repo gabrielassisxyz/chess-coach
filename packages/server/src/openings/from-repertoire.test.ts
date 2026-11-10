@@ -115,7 +115,16 @@ class RepertoireFakeEngine implements Searcher {
   readonly requests: SearchRequest[] = [];
   /** Names no move where Black is to move, as an engine that was never asked for replies would. */
   blindToBlack = false;
+  /** Leaves the depth out of every answer, as a searcher that does not report it would. */
+  silentAboutDepth = false;
   private readonly scripted = new Map<string, Array<{ moves: string[]; score: number }>>();
+  private readonly cutDepths = new Map<string, number>();
+
+  /** The search of this position runs into the cap: it answers with the lines written, at this depth. */
+  cutAt(line: string[], depthReached: number): this {
+    this.cutDepths.set(keyOf(line), depthReached);
+    return this;
+  }
 
   write(line: string[], scores: Array<[uci: string, score: number]>): this {
     this.scripted.set(
@@ -136,10 +145,16 @@ class RepertoireFakeEngine implements Searcher {
     if (this.blindToBlack && request.fen.split(" ")[1] === "b") {
       return { fen: request.fen, bestmove: null, lines: [] };
     }
-    const written = this.scripted.get(positionKey(request.fen));
+    const key = positionKey(request.fen);
     // Stockfish answers as many lines as MultiPV asks for, and too few would change White's pick.
-    const lines = (written ?? forwardMoveLines(request.fen)).slice(0, request.multipv ?? 1);
-    return { fen: request.fen, bestmove: lines[0]?.moves[0] ?? null, lines };
+    const lines = (this.scripted.get(key) ?? forwardMoveLines(request.fen)).slice(
+      0,
+      request.multipv ?? 1,
+    );
+    const answer = { fen: request.fen, bestmove: lines[0]?.moves[0] ?? null, lines };
+    if (this.silentAboutDepth) return answer;
+    const cutDepth = this.cutDepths.get(key);
+    return { ...answer, depth: cutDepth ?? request.depth, cutByTime: cutDepth !== undefined };
   }
 }
 
@@ -1086,6 +1101,120 @@ describe("generateRepertoire", () => {
   });
 });
 
+describe("a search the cap cuts", () => {
+  const SLOW = [...AFTER_C3, "Nf6"];
+  const ownRows = (): RepertoireTestRow[] => rowsOf(db).filter((row) => row.kind === "own");
+  const unmeasured = (rows: RepertoireTestRow[]): RepertoireTestRow[] =>
+    rows.map((row) => ({ ...row, eval_depth: null }));
+
+  it("stores depth 16 on every White move and none on a reply when nothing is cut", async () => {
+    writeItalianTree();
+    const result = await generate();
+    expect(ownRows().length).toBeGreaterThan(0);
+    for (const row of ownRows()) {
+      expect(row.eval_depth, `${row.move_san} at ply ${row.ply}`).toBe(16);
+    }
+    for (const row of rowsOf(db).filter((candidate) => candidate.kind === "reply")) {
+      expect(row.eval_depth).toBeNull();
+    }
+    expect(result).toMatchObject({ positionsCutByTime: 0, shallowestDepth: null });
+  });
+
+  it("completes a run through a slow position, stores every row and the depth the engine reached", async () => {
+    writeItalianTree();
+    // The same tree searched to the full depth, in a database of its own.
+    const baselineDb = openDatabase(join(tmp, "baseline"));
+    await generateRepertoire(baselineDb, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES);
+    const baseline = rowsOf(baselineDb);
+    baselineDb.close();
+
+    engine.cutAt(SLOW, 9);
+    const result = await generate();
+
+    const stored = rowsOf(db);
+    expect(baseline.length).toBeGreaterThan(10);
+    expect(unmeasured(stored)).toEqual(unmeasured(baseline));
+    expect(ownAt(SLOW)).toMatchObject({ move_san: "d4", eval_depth: 9 });
+    for (const row of ownRows().filter((candidate) => candidate.position_key !== keyOf(SLOW))) {
+      expect(row.eval_depth, `${row.move_san} at ply ${row.ply}`).toBe(16);
+    }
+    expect(result).toMatchObject({ positionsCutByTime: 1, shallowestDepth: 9, truncated: false });
+  });
+
+  it("counts the search of 3...Bc5 once, though it names the variation and stores the move", async () => {
+    writeItalianTree();
+    engine.cutAt(AFTER_BC5, 7);
+    const result = await generate();
+    expect(variationsOf(db)).toMatchObject([{ variation_name: "Classical Variation (4.c3)" }]);
+    expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "c3", cp_loss: 10, eval_depth: 7 });
+    expect(result).toMatchObject({ positionsCutByTime: 1, shallowestDepth: 7 });
+  });
+
+  it("reports the shallowest depth among the searches it cut", async () => {
+    writeItalianTree();
+    engine
+      .cutAt(AFTER_BC5, 12)
+      .cutAt(SLOW, 9)
+      .cutAt([...SETUP, "Nf6"], 14);
+    const result = await generate();
+    expect(result).toMatchObject({ positionsCutByTime: 3, shallowestDepth: 9 });
+  });
+
+  it.each([
+    { label: "the search after the move is the shallower", first: 16, second: 11, depth: 11 },
+    { label: "the search of the position is the shallower", first: 9, second: 12, depth: 9 },
+  ])(
+    "stores the shallower depth of the two searches behind a setup move outside the top lines: $label",
+    async ({ first, second, depth }) => {
+      writeItalianTree();
+      engine.write(BEFORE_BC4, [["f1b5", 40]]).write(SETUP, [["g8f6", 15]]);
+      if (first < 16) engine.cutAt(BEFORE_BC4, first);
+      engine.cutAt(SETUP, second);
+      const result = await generate();
+      expect(ownAt(BEFORE_BC4)).toMatchObject({ move_san: "Bc4", cp_loss: 55, eval_depth: depth });
+      expect(result.shallowestDepth).toBe(Math.min(first, second));
+      expect(result.positionsCutByTime).toBe(first < 16 ? 2 : 1);
+    },
+  );
+
+  it("counts a cut search of the engine's own reply, which has no evaluation to store a depth on", async () => {
+    writeItalianTree();
+    explorer.write(AFTER_CXD4, EXPLORER_RATINGS, { "Bb4+": 100 }, 150);
+    engine
+      .write(AFTER_CXD4, [
+        ["d7d5", 30],
+        ["c5b4", 10],
+      ])
+      .cutAt(AFTER_CXD4, 12);
+    const result = await generate();
+    expect(replyAt(AFTER_CXD4, "d5")).toMatchObject({ source: "engine" });
+    expect(result).toMatchObject({ positionsCutByTime: 1, shallowestDepth: 12 });
+    for (const row of ownRows()) expect(row.eval_depth).toBe(16);
+  });
+
+  it("stores null and counts no cut where the engine does not say how deep it looked", async () => {
+    writeItalianTree();
+    engine.silentAboutDepth = true;
+    const result = await generate();
+    expect(ownRows().length).toBeGreaterThan(0);
+    for (const row of ownRows()) expect(row.eval_depth).toBeNull();
+    expect(result).toMatchObject({ positionsCutByTime: 0, shallowestDepth: null });
+  });
+
+  it("keeps a stored depth and starts no search on a rerun", async () => {
+    writeItalianTree();
+    engine.cutAt(SLOW, 9);
+    await generate();
+    const stored = rowsOf(db);
+    const searches = engine.requests.length;
+    const second = await generate();
+    expect(engine.requests).toHaveLength(searches);
+    expect(rowsOf(db)).toEqual(stored);
+    expect(ownAt(SLOW)?.eval_depth).toBe(9);
+    expect(second).toMatchObject({ created: 0, positionsCutByTime: 0, shallowestDepth: null });
+  });
+});
+
 describe("a line the branching rule ends", () => {
   it("continues with the reply most played at the student's band, marked mainline", async () => {
     writeItalianTree();
@@ -1376,6 +1505,34 @@ describe("reply rows an earlier run left at ply 30", () => {
 });
 
 describe("POST /api/openings/generate with the repertoire source", () => {
+  it("answers and logs how many positions the cap cut and the shallowest depth reached", async () => {
+    writeItalianTree();
+    engine.cutAt([...AFTER_C3, "Nf6"], 9).cutAt(AFTER_BC5, 13);
+    const log = new RecordingLog();
+    const app = buildApp({
+      db,
+      log,
+      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateRepertoireOpenings: () =>
+        generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES),
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/openings/generate",
+      payload: { sources: ["repertoire"] },
+    });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      repertoire: { positionsCutByTime: 2, shallowestDepth: 9 },
+    });
+    expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+      sources: ["repertoire"],
+      result: { repertoire: { positionsCutByTime: 2, shallowestDepth: 9 } },
+    });
+    expect(log.named("openings.generate_failed")).toEqual([]);
+  });
+
   it("logs how many reply rows the run deleted at the depth limit", async () => {
     writeItalianTree();
     explorer.autoplay = true;
@@ -1521,6 +1678,20 @@ describe("the documentation of the repertoire source", () => {
     );
     expect(openings).toContain("`mainlineReplies`");
     expect(openings).toContain("`engineReplies`");
+  });
+
+  it("says under Openings that a search stops at the cap, and where the depth is stored and logged", () => {
+    const agents = readFileSync(join(repositoryRoot, "AGENTS.md"), "utf8");
+    const openings = /- \*\*Openings:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "";
+    for (const documented of [
+      "`capMs`",
+      "`eval_depth`",
+      "`positionsCutByTime`",
+      "`shallowestDepth`",
+    ]) {
+      expect(openings).toContain(documented);
+    }
+    expect(openings).not.toContain("`deadlineMs`");
   });
 
   it("never names a rating group the explorer does not have", () => {
