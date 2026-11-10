@@ -36,6 +36,28 @@ function api(overrides: Partial<ServerApi> = {}): ServerApi {
 }
 
 describe("Chat", () => {
+  it("names every icon button in the composer and header", () => {
+    const { container } = render(<Chat server={api()} />);
+    const expectTitles = (labels: string[]): void => {
+      const buttons = [...container.querySelectorAll<HTMLButtonElement>("button.icon-button")];
+      expect(buttons.map((button) => button.getAttribute("aria-label")).sort()).toEqual(
+        [...labels].sort(),
+      );
+      for (const button of buttons) {
+        expect(button.textContent?.trim()).toBe("");
+        expect(button.getAttribute("title"), button.getAttribute("aria-label") ?? "unnamed").toBe(
+          button.getAttribute("aria-label"),
+        );
+        expect(button.querySelector("svg")?.getAttribute("width")).toBe("20");
+        expect(button.querySelector("svg")?.getAttribute("height")).toBe("20");
+      }
+    };
+
+    expectTitles(["Collapse coach panel", "Dictate", "Voice conversation"]);
+    fireEvent.change(screen.getByLabelText("Message to the coach"), { target: { value: "e4" } });
+    expectTitles(["Collapse coach panel", "Dictate", "Send"]);
+  });
+
   it("renders a tool use as one folded line that unfolds to its raw result", () => {
     const result = [{ type: "text", text: '{"kind":"demo","fen":"x","turn":"black"}' }];
     render(

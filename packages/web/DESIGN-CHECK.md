@@ -109,6 +109,14 @@ same `Board`, including the read-only review and demo boards. Right-click drawin
 distinct arrow tokens and share the overlay with app arrows; they add no control, layout,
 motion or focus treatment. M1 and M2 still find no matches.
 
+The Play, Games and Practice columns were re-checked for icon controls in light and dark at
+390 px. In Chromium, Play's empty state, Games' load failure state and Practice's open puzzle
+had no horizontal overflow. Practice keeps the move controls together and wraps Explore,
+Flip board and settings together onto a second row. The icon-only buttons have matching
+visible and accessible names, and their icons render at 20 px. The base icon button remains
+32 px square on desktop; the quiet and board-gear variants keep their smaller desktop sizes,
+and phone icon controls are at least 44 px wide. M1 and M2 still find no matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph

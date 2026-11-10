@@ -11,12 +11,13 @@ export function BoardSettingsToggle({ open, onToggle }: BoardSettingsToggleProps
       type="button"
       className="icon-button board-gear"
       aria-label="Board settings"
+      title="Board settings"
       aria-expanded={open}
       onClick={onToggle}
     >
       <svg
-        width="16"
-        height="16"
+        width="20"
+        height="20"
         viewBox="0 0 16 16"
         fill="none"
         stroke="currentColor"

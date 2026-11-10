@@ -968,6 +968,17 @@
   height: 40px;
 }
 
+.board-bar__steps,
+.board-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.board-bar__actions {
+  margin-left: auto;
+}
+
 .board-bar__hint {
   margin-left: var(--space-2);
   color: var(--text-3);
@@ -975,11 +986,27 @@
 }
 
 .board-bar__scratch {
-  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  white-space: nowrap;
 }
 
-/* A narrow board column drops the key hint before the buttons would overflow the board. */
+/* A narrow board column hides the key hint and wraps the controls before they overflow. */
 @container (max-width: 440px) {
+  .board-bar {
+    flex-wrap: wrap;
+    height: auto;
+  }
+
+  .board-bar__steps,
+  .board-bar__actions {
+    flex-wrap: wrap;
+  }
+
   .board-bar__hint {
     display: none;
   }
@@ -1015,6 +1042,10 @@
 }
 
 @media (max-width: 899px) {
+  .icon-button--quiet {
+    width: 44px;
+  }
+
   .frame > .practice-item {
     border: 0;
     border-radius: 0;

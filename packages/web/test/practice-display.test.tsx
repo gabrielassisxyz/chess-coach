@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { TrainingActivity } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
+import { BoardSettingsToggle } from "../src/components/BoardSettings.js";
+import { Chat } from "../src/components/Chat.js";
 import type { ServerApi } from "../src/hooks/useServer.js";
 import { AUTO_NEXT_MS, Practice } from "../src/screens/Practice.js";
 import { BOARD_PREFS_STORAGE_KEY } from "../src/state/board-prefs.js";
@@ -9,6 +13,10 @@ import { initialChatState } from "../src/state/transcript.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
 import { motifCounts, progressOf } from "./practice-fixtures.js";
 import { serverApi } from "./server-api.js";
+
+interface HappyWindow {
+  happyDOM: { setViewport(size: { width: number; height: number }): void };
+}
 
 beforeEach(() => window.localStorage.clear());
 afterEach(() => {
@@ -103,6 +111,123 @@ const spyBoard: BoardFactory = (_element, config) => {
   return { set: (next: Seen) => seen.push(next), destroy: vi.fn() } as never;
 };
 const noMotifs = async () => [];
+
+function expectNamedIconButtons(container: HTMLElement, labels: string[]): void {
+  const buttons = [...container.querySelectorAll<HTMLButtonElement>("button.icon-button")].filter(
+    (button) => button.textContent?.trim() === "",
+  );
+  expect(buttons.map((button) => button.getAttribute("aria-label")).sort()).toEqual(
+    [...labels].sort(),
+  );
+  for (const button of buttons) {
+    expect(button.getAttribute("title"), button.getAttribute("aria-label") ?? "unnamed").toBe(
+      button.getAttribute("aria-label"),
+    );
+  }
+}
+
+describe("icon controls on a practice item", () => {
+  it("names every icon button in the board bar, chat composer, engine strip and settings panels", () => {
+    const server = api(puzzle());
+    const { container } = render(
+      <>
+        <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />
+        <Chat server={server} />
+        <BoardSettingsToggle open={false} onToggle={vi.fn()} />
+      </>,
+    );
+    const labels = [
+      "First move",
+      "Previous move",
+      "Next move",
+      "Last move",
+      "Flip board",
+      "Board and display settings",
+      "Engine settings",
+      "Board settings",
+      "Collapse coach panel",
+      "Dictate",
+      "Voice conversation",
+    ];
+    expectNamedIconButtons(container, labels);
+
+    fireEvent.click(screen.getByRole("button", { name: "Board and display settings" }));
+    expectNamedIconButtons(container, [...labels, "Close"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Engine settings" }));
+    expectNamedIconButtons(container, [...labels, "Close"]);
+  });
+
+  it("shows Explore as text and keeps its pressed state without an aria-label", () => {
+    render(<Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    const explore = screen.getByRole("button", { name: "Explore" });
+    expect(explore.textContent?.trim()).toBe("Explore");
+    expect(explore.hasAttribute("aria-label")).toBe(false);
+    expect(explore.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(explore);
+    expect(explore.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("draws 20 pixel icons in 32 pixel square buttons", () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(join(import.meta.dirname, "../src/styles/chat.css"), "utf8");
+    document.head.append(style);
+    try {
+      const { container } = render(
+        <>
+          <Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />
+          <BoardSettingsToggle open={false} onToggle={vi.fn()} />
+        </>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Board and display settings" }));
+      fireEvent.click(screen.getByRole("button", { name: "Engine settings" }));
+      const icons = container.querySelectorAll("button.icon-button > svg:first-of-type");
+      expect(icons.length).toBeGreaterThan(0);
+      for (const icon of icons) {
+        expect(icon.getAttribute("width")).toBe("20");
+        expect(icon.getAttribute("height")).toBe("20");
+      }
+      const step = screen.getByRole("button", { name: "First move" });
+      expect(getComputedStyle(step).width).toBe("32px");
+      expect(getComputedStyle(step).height).toBe("32px");
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("keeps icon button targets at least 44 pixels wide on a phone", () => {
+    const style = document.createElement("style");
+    style.textContent = ["chat.css", "practice.css"]
+      .map((file) => readFileSync(join(import.meta.dirname, "../src/styles", file), "utf8"))
+      .join("\n");
+    document.head.append(style);
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    (window as unknown as HappyWindow).happyDOM.setViewport({ width: 390, height: 844 });
+    try {
+      const server = api(puzzle());
+      render(
+        <>
+          <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />
+          <Chat server={server} />
+        </>,
+      );
+      for (const name of ["First move", "Engine settings", "Voice conversation"]) {
+        const button = screen.getByRole("button", { name });
+        expect(getComputedStyle(button).width, name).toBe("44px");
+        expect(getComputedStyle(button).minHeight, name).toBe("44px");
+      }
+      expect(getComputedStyle(screen.getByRole("button", { name: "Dictate" })).width).toBe("auto");
+    } finally {
+      (window as unknown as HappyWindow).happyDOM.setViewport({
+        width: originalWidth,
+        height: originalHeight,
+      });
+      style.remove();
+    }
+  });
+});
 
 describe("the Board & display popover", () => {
   it("opens from the bar, closes with Escape and with its own button", () => {

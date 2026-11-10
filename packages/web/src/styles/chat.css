@@ -359,7 +359,7 @@ body {
   border-radius: var(--radius-md);
 }
 
-.composer__dictate {
+.icon-button.composer__dictate {
   gap: var(--space-1);
   width: auto;
   padding: 0 6px;
