@@ -2,6 +2,7 @@ import { Chess } from "chess.js";
 import type { Database } from "../db/open.js";
 import {
   createRepertoireVariation,
+  deleteRepertoireRepliesAtPly,
   findFirstRepertoireVariation,
   findRepertoireOwnMove,
   insertRepertoireOwnMove,
@@ -35,6 +36,8 @@ import { pickItalianWhiteUci } from "./from-italian.js";
 import type { OpeningNames } from "./names.js";
 
 export const REPERTOIRE_GROUP_ITALIAN = "Italian Game";
+// A Black reply is stored only where White's answer fits under the limit, so a line ends on White's
+// 15th move at ply 29, never on a reply.
 export const REPERTOIRE_MAX_PLY = 30;
 export const REPERTOIRE_MIN_REACH = 1 / 50;
 const REPERTOIRE_SEARCH_LINES = 5;
@@ -64,6 +67,8 @@ export interface RepertoireResult {
   deepestPly: number;
   /** Rows this run added; running again over the same data adds none. */
   created: number;
+  /** Reply rows an earlier run left at the depth limit, with no White answer, that this run deleted. */
+  removedReplies: number;
   requests: number;
   cacheHits: number;
   /** True when the request budget ended the run early; running again resumes from the cache. */
@@ -194,6 +199,14 @@ class RepertoireWalk {
     this.minReach = options.minReach ?? REPERTOIRE_MIN_REACH;
   }
 
+  // Before the walk, so a position the walk reaches again by a shorter line is stored there instead
+  // of being found at the limit and left, and before the first count, so `created` never goes
+  // negative.
+  removeRepliesAtLimit(): number {
+    const stored = findFirstRepertoireVariation(this.db, "white", REPERTOIRE_GROUP_ITALIAN);
+    return stored ? deleteRepertoireRepliesAtPly(this.db, stored.id, this.maxPly) : 0;
+  }
+
   async run(): Promise<void> {
     const stored = findFirstRepertoireVariation(this.db, "white", REPERTOIRE_GROUP_ITALIAN);
     this.repertoireId = (stored ?? (await this.createVariation())).id;
@@ -265,7 +278,9 @@ class RepertoireWalk {
   }
 
   private async visitReplies(step: RepertoireStep, position: ExplorerPosition): Promise<void> {
-    if (step.ply > this.maxPly) return;
+    // White's answer sits one ply later. A reply stored where that answer cannot be would read as a
+    // gap in the coverage that no later run could fill.
+    if (step.ply + 1 > this.maxPly) return;
     for (const reply of this.repliesToKeep(step, position)) {
       upsertRepertoireReply(this.db, {
         ...this.placeOf(step, reply.reach),
@@ -388,8 +403,9 @@ function italianVariationCounts(db: Database): RepertoireCounts {
 
 /**
  * Builds the first Italian variation: one expected White move per position and every Black reply
- * common at the student's rating, from 1.e4 to ply 30, stored row by row so that a run the request
- * budget cuts short resumes by running again.
+ * common at the student's rating, from 1.e4 to White's 15th move, stored row by row so that a run
+ * the request budget cuts short resumes by running again. A reply is stored only where White's
+ * answer can be, and the replies an earlier run left at ply 30 without one are deleted first.
  */
 export async function generateRepertoire(
   db: Database,
@@ -402,6 +418,7 @@ export async function generateRepertoire(
 ): Promise<RepertoireResult> {
   const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
   const walk = new RepertoireWalk(db, engine, explorer, names, options);
+  const removedReplies = walk.removeRepliesAtLimit();
   const before = italianVariationCounts(db);
   let truncated = false;
   try {
@@ -418,6 +435,7 @@ export async function generateRepertoire(
     replies: after.replies,
     deepestPly: after.deepestPly,
     created: after.total - before.total,
+    removedReplies,
     requests: explorer.requests,
     cacheHits: explorer.cacheHits,
     truncated,
