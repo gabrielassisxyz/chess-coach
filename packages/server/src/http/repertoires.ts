@@ -1,12 +1,14 @@
 import type {
   RepertoireBranch,
   RepertoireCoverage,
+  RepertoireFoundSummary,
   RepertoireGroupSummary,
   RepertoireSideSummary,
   RepertoiresResponse,
 } from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
 import {
+  foundRepertoireIdsOf,
   mergeRepertoireUnitMoves,
   type RepertoireUnitMoves,
   repertoireIntroductionsInWindow,
@@ -72,11 +74,24 @@ function sideSummaries(
   }));
 }
 
+// The units found in games drill together, so they count together: a move two of them share is one
+// move here as it is one move in the drill, and the Italian, which no met opening names, is not in it.
+function foundSummary(
+  units: readonly RepertoireUnitMoves[],
+  foundIds: ReadonlySet<number>,
+  now: Date,
+  introducedInWindow: number,
+): RepertoireFoundSummary {
+  const found = units.filter((unit) => foundIds.has(unit.variation.id));
+  return { moves: repertoireScopeCounts(mergeRepertoireUnitMoves(found), now, introducedInWindow) };
+}
+
 // The counts come from the same selection the drill makes, so the menu never promises a number of
 // moves that starting the drill would not serve. `met` lists the openings the student's games
-// reached outside the stored line, each with the unit built from it, if any, and `branches` the
-// positions where the book offers White another move to build a variation from. The coverage of a
-// variation is read from its stored moves alone, so it never waits on the explorer or the engine.
+// reached outside the stored line, each with the unit built from it, if any, `found` counts the
+// drill of those units together, and `branches` lists the positions where the book offers White
+// another move to build a variation from. The coverage of a variation is read from its stored moves
+// alone, so it never waits on the explorer or the engine.
 export function registerRepertoireRoutes(
   app: FastifyInstance,
   db: Database,
@@ -95,6 +110,7 @@ export function registerRepertoireRoutes(
         moves: listRepertoireDrillMoves(db, variation.id),
       }),
     );
+    const met = listMetOpenings(db);
     return {
       repertoires: units.map(({ variation, moves }) => ({
         id: variation.id,
@@ -105,7 +121,8 @@ export function registerRepertoireRoutes(
       })),
       groups: groupSummaries(units, now, introducedInWindow),
       sides: sideSummaries(units, now, introducedInWindow),
-      met: listMetOpenings(db).map((opening) => ({
+      found: foundSummary(units, foundRepertoireIdsOf(met), now, introducedInWindow),
+      met: met.map((opening) => ({
         root: opening.root,
         opening_name: opening.openingName,
         games: opening.games,
