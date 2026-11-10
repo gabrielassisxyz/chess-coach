@@ -1,9 +1,13 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type MetOpening, RepertoiresResponseSchema } from "@chess-coach/shared";
+import {
+  type MetOpening,
+  RepertoireCoverageSchema,
+  RepertoiresResponseSchema,
+} from "@chess-coach/shared";
 import { Chess, type Move } from "chess.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
 import {
@@ -27,6 +31,7 @@ beforeEach(() => {
   db = openDatabase(tmp);
 });
 afterEach(() => {
+  vi.unstubAllGlobals();
   db.close();
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -301,5 +306,92 @@ describe("GET /api/repertoires met openings", () => {
     expect((await getMet())[0]?.repertoire_id).toBe(unit);
     db.prepare("DELETE FROM repertoires WHERE id = ?").run(unit);
     expect((await getMet())[0]).toMatchObject({ root: ["e4", "d5"], repertoire_id: null });
+  });
+});
+
+async function getCoverage(app: ReturnType<typeof buildApp>, id: number | string) {
+  const response = await app.inject({ method: "GET", url: `/api/repertoires/${id}/coverage` });
+  await app.close();
+  return response;
+}
+
+// The classical line and a second branch, with Black's 4...d6 stored and no White move after it.
+function addVariationWithGap(): number {
+  const id = addVariation("Classical Variation (4.c3)", [
+    ["Bc5", "c3", "Nf6", "d4"],
+    ["Nf6", "d3"],
+  ]);
+  const line = [...SETUP, "Bc5", "c3"];
+  upsertRepertoireReply(db, {
+    repertoireId: id,
+    ...placeOf(line, "d6"),
+    ply: line.length + 1,
+    line,
+    reach: 0.3,
+    openingName: null,
+    san: "d6",
+    share: 0.3,
+    source: "explorer",
+  });
+  return id;
+}
+
+describe("GET /api/repertoires/:id/coverage", () => {
+  it("returns the covered share, the gaps with their lines and the largest gap", async () => {
+    const id = addVariationWithGap();
+    const response = await getCoverage(buildApp({ db }), id);
+    expect(response.statusCode).toBe(200);
+    const body = RepertoireCoverageSchema.parse(response.json());
+    const gap = { line: [...SETUP, "Bc5", "c3", "d6"], incidence: 0.3, position: 3 };
+    expect(body).toMatchObject({
+      repertoire_id: id,
+      goal_one_in: 50,
+      rating_band: "0-1199",
+      gaps: [gap],
+      largest_gap: gap,
+      start: 2,
+    });
+    // The lines end after 5.d4 (reach 1) and 4...Nf6 5.d3 (0.5); the gap holds 0.3: 1.5 / 1.8.
+    expect(body.covered_percent).toBe(83.3);
+    expect(body.positions[body.start]?.line).toEqual(SETUP);
+  });
+
+  it("answers no scores for a variation whose moves carry no counts", async () => {
+    const id = addVariationWithGap();
+    const body = RepertoireCoverageSchema.parse((await getCoverage(buildApp({ db }), id)).json());
+    expect(body.scores).toEqual({ line_ends: 0, expected_score: null, soundness: null });
+  });
+
+  it("answers 404 for a variation that does not exist and for an id that is no positive integer", async () => {
+    addVariationWithGap();
+    for (const id of ["999", "0", "-3", "1.5", "abc"]) {
+      const response = await getCoverage(buildApp({ db }), id);
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({
+        error: "repertoire_not_found",
+        message: "no such repertoire",
+      });
+    }
+  });
+
+  it("serves the coverage without asking the explorer, the engine, the model or the network", async () => {
+    const id = addVariationWithGap();
+    const asked: string[] = [];
+    const refuse = (what: string) => async (): Promise<never> => {
+      asked.push(what);
+      throw new Error(`the coverage asked ${what}`);
+    };
+    vi.stubGlobal("fetch", () => refuse("the network")());
+    const app = buildApp({
+      db,
+      generateOpenings: refuse("the engine"),
+      generateExplorerOpenings: refuse("the explorer"),
+      generateItalianOpenings: refuse("the explorer"),
+      generateRepertoireOpenings: refuse("the explorer"),
+      generateRepertoireIdeas: refuse("the model"),
+    });
+    const response = await getCoverage(app, id);
+    expect(response.statusCode).toBe(200);
+    expect(asked).toEqual([]);
   });
 });
