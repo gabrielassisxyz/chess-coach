@@ -8,12 +8,12 @@ import { defaultMigrationsDir, runMigrations } from "./migrate.js";
 let tmp: string;
 let db: BetterSqlite3.Database;
 
-// A database as it stands at 021, opened the way the server opens it: with foreign keys enforced.
-function databaseAt021(): BetterSqlite3.Database {
-  const dir = join(tmp, "at-021");
+// A database as it stands at 022, opened the way the server opens it: with foreign keys enforced.
+function databaseAt022(): BetterSqlite3.Database {
+  const dir = join(tmp, "at-022");
   mkdirSync(dir);
   for (const name of readdirSync(defaultMigrationsDir)) {
-    if (name < "022") cpSync(join(defaultMigrationsDir, name), join(dir, name));
+    if (name < "023") cpSync(join(defaultMigrationsDir, name), join(dir, name));
   }
   const opened = new BetterSqlite3(join(tmp, "a.db"));
   opened.pragma("foreign_keys = ON");
@@ -33,7 +33,7 @@ interface StoredRow {
 }
 
 // Explicit ids with gaps, so a copy that lets SQLite number the rows again is caught.
-const ROWS_AT_021: StoredRow[] = [
+const ROWS_AT_022: StoredRow[] = [
   {
     id: 7,
     kind: "own",
@@ -66,7 +66,7 @@ const ROWS_AT_021: StoredRow[] = [
   },
 ];
 
-function storeRowsAt021(): void {
+function storeRowsAt022(): void {
   db.prepare(
     "INSERT INTO repertoires (id, side, group_name, variation_name) VALUES (4, 'white', 'Italian Game', 'Classical Variation (4.c3)')",
   ).run();
@@ -77,7 +77,7 @@ function storeRowsAt021(): void {
      VALUES (?, 4, ?, ?, ?, '["e4","e5"]', ?, 'x', 0.4, 0.2, 'Italian Game', 'An idea.', 'explorer',
        ?, ?, ?, ?, ?)`,
   );
-  for (const row of ROWS_AT_021) {
+  for (const row of ROWS_AT_022) {
     insert.run(
       row.id,
       row.kind,
@@ -108,21 +108,21 @@ const columnsOfPositions = (): Array<{
   }>;
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), "cc-mig022-"));
-  db = databaseAt021();
+  tmp = mkdtempSync(join(tmpdir(), "cc-mig023-"));
+  db = databaseAt022();
 });
 afterEach(() => {
   db.close();
   rmSync(tmp, { recursive: true, force: true });
 });
 
-describe("022_repertoire_eval_depth", () => {
+describe("023_repertoire_eval_depth", () => {
   it("keeps every stored row as it was and leaves its depth null", () => {
-    storeRowsAt021();
+    storeRowsAt022();
     const before = positions();
-    expect(before).toHaveLength(ROWS_AT_021.length);
+    expect(before).toHaveLength(ROWS_AT_022.length);
 
-    expect(runMigrations(db, defaultMigrationsDir)).toEqual(["022_repertoire_eval_depth.sql"]);
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("023_repertoire_eval_depth.sql");
 
     expect(positions()).toEqual(before.map((row) => ({ ...(row as object), eval_depth: null })));
     expect(db.prepare("SELECT id FROM repertoire_positions ORDER BY id").all()).toEqual([
@@ -149,7 +149,7 @@ describe("022_repertoire_eval_depth", () => {
   });
 
   it("stores a depth on a row written after it, and a row with none keeps null", () => {
-    storeRowsAt021();
+    storeRowsAt022();
     runMigrations(db, defaultMigrationsDir);
     db.prepare("UPDATE repertoire_positions SET eval_depth = 9 WHERE id = 7").run();
     expect(db.prepare("SELECT id, eval_depth FROM repertoire_positions ORDER BY id").all()).toEqual(
