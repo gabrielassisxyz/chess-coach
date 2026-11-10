@@ -4,6 +4,7 @@ import { repertoireRootText } from "@chess-coach/shared";
 import { Chess, type Move } from "chess.js";
 import type { Database } from "../db/open.js";
 import {
+  countRepertoireOwnMovesBySan,
   createRepertoireVariation,
   deleteRepertoireRepliesAtPly,
   findFirstRepertoireVariation,
@@ -19,6 +20,7 @@ import {
   type RepertoireRow,
   type RepertoireRowPlace,
   raiseRepertoireOwnMoveReach,
+  renameRepertoireVariation,
   repertoireCounts,
   repertoireHoldsMovesBeyondSetup,
   repertoireSetupLine,
@@ -42,7 +44,7 @@ import {
 } from "./explorer-client.js";
 import { MIN_POSITION_GAMES } from "./from-explorer.js";
 import { positionKey } from "./from-games.js";
-import { pickItalianWhiteUci } from "./from-italian.js";
+import { ITALIAN_CP_MARGIN, pickItalianWhiteUci } from "./from-italian.js";
 import { OPENING_TABLE_FILE, type OpeningNames, OpeningTableError } from "./names.js";
 import {
   checkRepertoireRoot,
@@ -110,6 +112,8 @@ export interface RepertoireResult {
   positionsCutByTime: number;
   /** The shallowest depth a search the cap stopped had reached; null when it stopped none. */
   shallowestDepth: number | null;
+  /** White moves this run stored where the unit already played a candidate, so the plan rule chose. */
+  planChoices: number;
 }
 
 interface RepertoirePlayedMove {
@@ -141,6 +145,14 @@ interface RepertoireOwnChoice extends RepertoireOwnScores {
   move: RepertoirePlayedMove;
   share: number | null;
   source: RepertoireMoveSource;
+  /** True where the unit already played one of the candidates, so the plan rule chose the move. */
+  byPlan: boolean;
+}
+
+/** What White's choice in one position is made from: the White band's games and the engine's lines. */
+interface RepertoireOwnSearch {
+  position: ExplorerPosition;
+  searched: SearchResult;
 }
 
 interface RepertoirePlayedOwnMove {
@@ -226,6 +238,30 @@ function repertoireShallowerDepth(
   return first === undefined || second === undefined ? undefined : Math.min(first, second);
 }
 
+/**
+ * The plan rule's candidates: the engine's lines within the margin of its best whose move, by SAN,
+ * the unit already plays most often, in the engine's order. Empty where it plays none of them, and
+ * the usual rule then decides. A unit that plays the same few moves against most replies is one the
+ * student can carry to the board; strong players adapt the move to each reply instead.
+ */
+function repertoirePlanLines(
+  fen: string,
+  lines: SearchResult["lines"],
+  usesBySan: ReadonlyMap<string, number>,
+): SearchResult["lines"] {
+  const best = lines[0];
+  if (!best) return [];
+  const candidates = lines.flatMap((line) => {
+    const uci = line.moves[0];
+    const san = uci ? repertoirePlayUci(fen, uci)?.san : undefined;
+    if (!san || best.score - line.score > ITALIAN_CP_MARGIN) return [];
+    return [{ line, uses: usesBySan.get(san) ?? 0 }];
+  });
+  const most = Math.max(0, ...candidates.map((candidate) => candidate.uses));
+  if (most === 0) return [];
+  return candidates.filter((candidate) => candidate.uses === most).map(({ line }) => line);
+}
+
 /** White's move in one position of a variation built at a branch point, whatever the data says. */
 interface RepertoireForcedMove {
   positionKey: string;
@@ -252,7 +288,10 @@ const ITALIAN_UNIT: RepertoireUnit = {
   forced: null,
 };
 
-/** A branch the data refuses: no Italian to branch from, a position it never reaches, its own move. */
+/**
+ * A branch the data refuses: no Italian to branch from, a position it never reaches, its own move,
+ * or a variation built at a branch point that already holds the name an answer gives another one.
+ */
 export class RepertoireBranchError extends Error {}
 
 export type RepertoireBranchCheck = { ok: true; branch: string[] } | { ok: false; reason: string };
@@ -405,14 +444,33 @@ function repertoireReplyText(naming: readonly string[]): string {
   return `${Math.ceil(naming.length / 2)}${dots}${naming.at(-1)}`;
 }
 
+// Only a variation built at a branch point can hold the name already, by forcing the same answer.
+// Taking the name would make the two one variation wherever a variation is found by its name.
+function renameUnitVariation(
+  db: Database,
+  groupName: string,
+  repertoireId: number,
+  name: string,
+): void {
+  const holder = findRepertoireVariationByName(db, "white", groupName, name);
+  if (holder?.id === repertoireId) return;
+  if (holder) {
+    throw new RepertoireBranchError(`${name} already names another variation of ${groupName}`);
+  }
+  renameRepertoireVariation(db, repertoireId, name);
+}
+
 class RepertoireWalk {
   private repertoireId = 0;
-  private readonly freshChoices = new Map<string, RepertoireOwnChoice | null>();
+  private readonly freshSearches = new Map<string, RepertoireOwnSearch>();
   private readonly maxPly: number;
   private readonly minGames: number;
   private readonly minReach: number;
+  /** The position after the line the variation is named by, where White's answer names it. */
+  private readonly namingStep: RepertoireStep;
   private cutSearches = 0;
   private shallowestCut: number | null = null;
+  private planChoiceCount = 0;
 
   constructor(
     private readonly db: Database,
@@ -425,6 +483,11 @@ class RepertoireWalk {
     this.maxPly = options.maxPly ?? REPERTOIRE_MAX_PLY;
     this.minGames = options.minGames ?? MIN_POSITION_GAMES;
     this.minReach = options.minReach ?? REPERTOIRE_MIN_REACH;
+    this.namingStep = replayRepertoireLine([...unit.naming]);
+  }
+
+  get planChoices(): number {
+    return this.planChoiceCount;
   }
 
   // Before the walk, so a position the walk reaches again by a shorter line is stored there instead
@@ -455,18 +518,36 @@ class RepertoireWalk {
         variationName: forced.variationName,
       });
     }
-    const step = replayRepertoireLine([...this.unit.naming]);
-    const choice = await this.freshOwnChoice(step);
+    // Nothing is stored yet, so the plan rule has no say in this first name; once the walk stores
+    // its answer here, the name follows that move.
+    const choice = await this.computeOwnChoice(this.namingStep);
     if (!choice) {
       const reply = repertoireReplyText(this.unit.naming);
       throw new Error(`the engine found no answer to ${reply} to name the variation`);
     }
-    const opening = this.names.ofGame([...step.fens, choice.move.after])?.name ?? null;
     return createRepertoireVariation(this.db, {
       side: "white",
       groupName: this.unit.groupName,
-      variationName: repertoireVariationName(this.unit, opening, choice.move.san),
+      variationName: this.variationNameAfter(choice.move),
     });
+  }
+
+  private variationNameAfter(move: RepertoirePlayedMove): string {
+    const opening = this.names.ofGame([...this.namingStep.fens, move.after])?.name ?? null;
+    return repertoireVariationName(this.unit, opening, move.san);
+  }
+
+  // The most common line is walked first and sets the plan, so the answer stored at the naming
+  // position can differ from the one the first name was given from. A forced variation is named by
+  // its forced move whatever happens elsewhere.
+  private followNamingMove(step: RepertoireStep, move: RepertoirePlayedMove): void {
+    if (this.unit.forced || positionKey(step.fen) !== positionKey(this.namingStep.fen)) return;
+    renameUnitVariation(
+      this.db,
+      this.unit.groupName,
+      this.repertoireId,
+      this.variationNameAfter(move),
+    );
   }
 
   private async visitOwn(step: RepertoireStep): Promise<void> {
@@ -493,10 +574,12 @@ class RepertoireWalk {
   }
 
   private async storeFreshOwnMove(step: RepertoireStep): Promise<RepertoirePlayedOwnMove | null> {
-    const choice = await this.freshOwnChoice(step);
+    const choice = await this.computeOwnChoice(step);
     if (!choice) return null;
     // Fetched even when the walk goes no deeper: the statistics read these counts with no network.
     const after = await this.explorer.position(choice.move.after, EXPLORER_RATINGS);
+    this.followNamingMove(step, choice.move);
+    if (choice.byPlan) this.planChoiceCount += 1;
     insertRepertoireOwnMove(this.db, {
       ...this.placeOf(step, step.reach),
       uci: choice.move.uci,
@@ -627,35 +710,55 @@ class RepertoireWalk {
     return move ? [{ move, share, reach, source: "explorer" }] : [];
   }
 
-  // Naming the variation decides the answer to 3...Bc5 before the walk reaches it, and the memo
-  // makes the walk store that same move later in the run. It lasts one run only: a run cut short
-  // before 3...Bc5 chooses again when resumed, and the stored move can then differ from the name.
-  private async freshOwnChoice(step: RepertoireStep): Promise<RepertoireOwnChoice | null> {
+  // Naming the variation looks at 3...Bc5 before the walk reaches it, so what the choice is made
+  // from is kept for the run and the position is searched once. The choice itself is made again
+  // when the move is stored, from the moves the plan rule finds stored by then.
+  private async ownSearch(step: RepertoireStep): Promise<RepertoireOwnSearch> {
     const key = positionKey(step.fen);
-    const known = this.freshChoices.get(key);
-    if (known !== undefined) return known;
-    const choice = await this.computeOwnChoice(step);
-    this.freshChoices.set(key, choice);
-    return choice;
+    const known = this.freshSearches.get(key);
+    if (known) return known;
+    const position = await this.explorer.position(step.fen, ITALIAN_WHITE_RATINGS);
+    const searched = await this.searchPosition(step.fen, REPERTOIRE_SEARCH_LINES);
+    this.freshSearches.set(key, { position, searched });
+    return { position, searched };
   }
 
   private async computeOwnChoice(step: RepertoireStep): Promise<RepertoireOwnChoice | null> {
-    const position = await this.explorer.position(step.fen, ITALIAN_WHITE_RATINGS);
-    const searched = await this.searchPosition(step.fen, REPERTOIRE_SEARCH_LINES);
+    const { position, searched } = await this.ownSearch(step);
     const setupSan = this.unit.fixed[step.ply - 1];
-    const forced =
-      this.unit.forced?.positionKey === positionKey(step.fen) ? this.unit.forced : null;
-    const uci = setupSan
-      ? repertoirePlaySan(step.fen, setupSan)?.uci
-      : (forced?.uci ??
-        pickItalianWhiteUci(step.fen, position, searched.lines, NO_SETUP_PREFERENCE_TURN));
-    if (!uci) return null;
-    const move = repertoirePlayUci(step.fen, uci);
-    const scores = await this.scoreOwnMove(step.fen, uci, searched);
+    const picked = setupSan
+      ? this.setupOwnPick(step, setupSan)
+      : this.ruledOwnPick(step, position, searched);
+    if (!picked) return null;
+    const move = repertoirePlayUci(step.fen, picked.uci);
+    const scores = await this.scoreOwnMove(step.fen, picked.uci, searched);
     if (!move || !scores) return null;
-    const share = repertoireShareOf(position, step.fen, uci);
+    const share = repertoireShareOf(position, step.fen, picked.uci);
     const source = setupSan ? "setup" : share === null ? "engine" : "explorer";
-    return { move, share, ...scores, source };
+    return { move, share, ...scores, source, byPlan: picked.byPlan };
+  }
+
+  private setupOwnPick(step: RepertoireStep, san: string): { uci: string; byPlan: false } | null {
+    const uci = repertoirePlaySan(step.fen, san)?.uci;
+    return uci ? { uci, byPlan: false } : null;
+  }
+
+  // A forced move is played whatever the data says. Elsewhere the candidate the unit already plays
+  // most often wins, ties going to the move the usual rule picks, which pickItalianWhiteUci gives
+  // when it is handed the tied lines alone; with no candidate played, the usual rule decides.
+  private ruledOwnPick(
+    step: RepertoireStep,
+    position: ExplorerPosition,
+    searched: SearchResult,
+  ): { uci: string; byPlan: boolean } | null {
+    const forced = this.unit.forced;
+    if (forced?.positionKey === positionKey(step.fen)) return { uci: forced.uci, byPlan: false };
+    const uses = countRepertoireOwnMovesBySan(this.db, this.repertoireId);
+    const planned = repertoirePlanLines(step.fen, searched.lines, uses);
+    const byPlan = planned.length > 0;
+    const lines = byPlan ? planned : searched.lines;
+    const uci = pickItalianWhiteUci(step.fen, position, lines, NO_SETUP_PREFERENCE_TURN);
+    return uci ? { uci, byPlan } : null;
   }
 
   private async searchPosition(fen: string, multipv: number): Promise<SearchResult> {
@@ -725,6 +828,70 @@ function unitVariationCounts(db: Database, unit: RepertoireUnit): RepertoireCoun
   return stored ? repertoireCounts(db, stored.id) : NO_REPERTOIRE_COUNTS;
 }
 
+/** What one run of the generator works with. */
+interface RepertoireRunDeps {
+  db: Database;
+  engine: Searcher;
+  explorer: CachedExplorer;
+  names: OpeningNames;
+  options: RepertoireOptions;
+}
+
+interface RepertoireWalkOutcome {
+  walk: RepertoireWalk;
+  removedReplies: number;
+  /** The unit's counts before the walk, which `created` is measured from. */
+  before: RepertoireCounts;
+  truncated: boolean;
+}
+
+async function walkRepertoireUnit(
+  deps: RepertoireRunDeps,
+  unit: RepertoireUnit,
+): Promise<RepertoireWalkOutcome> {
+  const walk = new RepertoireWalk(
+    deps.db,
+    deps.engine,
+    deps.explorer,
+    deps.names,
+    unit,
+    deps.options,
+  );
+  const removedReplies = walk.removeRepliesAtLimit();
+  const before = unitVariationCounts(deps.db, unit);
+  let truncated = false;
+  try {
+    await walk.run();
+  } catch (error) {
+    if (!(error instanceof ExplorerError && error.code === "budget")) throw error;
+    truncated = true;
+  }
+  return { walk, removedReplies, before, truncated };
+}
+
+function repertoireRunResult(
+  deps: RepertoireRunDeps,
+  unit: RepertoireUnit,
+  outcome: RepertoireWalkOutcome,
+): RepertoireResult {
+  const after = unitVariationCounts(deps.db, unit);
+  return {
+    variation: findUnitVariation(deps.db, unit)?.variation_name ?? null,
+    ownMoves: after.ownMoves,
+    replies: after.replies,
+    mainlineReplies: after.mainlineReplies,
+    engineReplies: after.engineReplies,
+    deepestPly: after.deepestPly,
+    created: after.total - outcome.before.total,
+    removedReplies: outcome.removedReplies,
+    requests: deps.explorer.requests,
+    cacheHits: deps.explorer.cacheHits,
+    truncated: outcome.truncated,
+    planChoices: outcome.walk.planChoices,
+    ...outcome.walk.searchOutcome(),
+  };
+}
+
 /**
  * Builds the first variation of a unit, the Italian unless `options.root` names another, or with
  * `options.branch` another variation of the Italian, whose White move is forced in one position: one
@@ -735,6 +902,8 @@ function unitVariationCounts(db: Database, unit: RepertoireUnit): RepertoireCoun
  * White's answer can be, and the replies an earlier run left at ply 30 without one are deleted first.
  * A search that is slow stops at the cap and keeps its best line, so a run never fails on one: the
  * depth reached is stored beside each White move's evaluation, and the result counts the cut searches.
+ * White's move follows the plan rule: among the engine's lines within the margin, the move the unit
+ * already plays most often.
  */
 export async function generateRepertoire(
   db: Database,
@@ -749,31 +918,8 @@ export async function generateRepertoire(
   if (options.root) assertGroupHoldsRoot(db, unit);
   assertBranchAddsVariation(db, unit);
   const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
-  const walk = new RepertoireWalk(db, engine, explorer, names, unit, options);
-  const removedReplies = walk.removeRepliesAtLimit();
-  const before = unitVariationCounts(db, unit);
-  let truncated = false;
-  try {
-    await walk.run();
-  } catch (error) {
-    if (!(error instanceof ExplorerError && error.code === "budget")) throw error;
-    truncated = true;
-  }
-  const after = unitVariationCounts(db, unit);
-  return {
-    variation: findUnitVariation(db, unit)?.variation_name ?? null,
-    ownMoves: after.ownMoves,
-    replies: after.replies,
-    mainlineReplies: after.mainlineReplies,
-    engineReplies: after.engineReplies,
-    deepestPly: after.deepestPly,
-    created: after.total - before.total,
-    removedReplies,
-    requests: explorer.requests,
-    cacheHits: explorer.cacheHits,
-    truncated,
-    ...walk.searchOutcome(),
-  };
+  const deps: RepertoireRunDeps = { db, engine, explorer, names, options };
+  return repertoireRunResult(deps, unit, await walkRepertoireUnit(deps, unit));
 }
 
 /** One of White's moves the book plays at a branch point. */

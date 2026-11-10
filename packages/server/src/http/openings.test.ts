@@ -107,6 +107,7 @@ describe("POST /api/openings/generate", () => {
       truncated: false,
       positionsCutByTime: 2,
       shallowestDepth: 11,
+      planChoices: 7,
     };
     const ideas = { considered: 40, generated: 38, rejected: 5, empty: 2 };
     const build = (calls: string[]) =>

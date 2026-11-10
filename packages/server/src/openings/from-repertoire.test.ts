@@ -293,7 +293,11 @@ function storeRepliesAtOldLimit(): number {
   return lineEnds.length;
 }
 
-/** The shares of 3.Bc4 and of 3...Bc5 at 1800 to 2499 are the ones measured on 2026-11-09. */
+/**
+ * The shares of 3.Bc4 and of 3...Bc5 at 1800 to 2499 are the ones measured on 2026-11-09. 3...Nf6 is
+ * walked first and stores 4.d3; against 3...Bc5 the engine puts 4.d3 55 cp under 4.O-O, past the
+ * plan rule's margin, so the White band's 4.c3 stands there. `writePlanWithinMargin` moves it back.
+ */
 function writeItalianTree(): void {
   explorer
     .write([], ITALIAN_WHITE_RATINGS, { e4: 5000 }, 10000)
@@ -335,8 +339,8 @@ function writeItalianTree(): void {
     .write(AFTER_BC5, [
       ["e1g1", 40],
       ["c2c3", 30],
-      ["d2d3", 20],
       ["b2b4", 0],
+      ["d2d3", -15],
     ])
     .write([...AFTER_C3, "Nf6"], [["d2d4", 35]])
     .write([...AFTER_C3, "Nf6", "d4", "exd4"], [["c3d4", 45]])
@@ -1108,8 +1112,13 @@ describe("generateRepertoire", () => {
       variationName: "Newest",
     });
     const result = await generate();
-    expect(result.variation).toBe("Oldest");
+    // The oldest stored no answer to 3...Bc5 yet, so it takes the name the one stored now gives.
+    expect(result.variation).toBe("Classical Variation (4.c3)");
     expect(new Set(rowsOf(db).map((row) => row.repertoire_id))).toEqual(new Set([oldest.id]));
+    expect(variationsOf(db)).toEqual([
+      { side: "white", group_name: "Italian Game", variation_name: "Classical Variation (4.c3)" },
+      { side: "white", group_name: "Italian Game", variation_name: "Newest" },
+    ]);
   });
 });
 
@@ -2132,6 +2141,18 @@ describe("the documentation of the repertoire source", () => {
     expect(openings).not.toContain("`deadlineMs`");
   });
 
+  it("says under Openings how the plan rule chooses White's move", () => {
+    const agents = readFileSync(join(repositoryRoot, "AGENTS.md"), "utf8");
+    const openings = /- \*\*Openings:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "";
+    for (const documented of [
+      "the plan rule",
+      "within 50 cp of its best, the move whose SAN the unit already plays most often is chosen",
+      "`planChoices`",
+    ]) {
+      expect(openings).toContain(documented);
+    }
+  });
+
   it("never names a rating group the explorer does not have", () => {
     const filesUnder = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -2203,12 +2224,12 @@ describe("a variation built at a branch point", () => {
     ]);
     expect(rowsOfVariation(first.id)).toEqual(before);
     const second = variationNamed("Giuoco Pianissimo (4.d3)");
-    // 4.d3 is the third most played move of the White band and the engine's third line.
+    // 4.d3 is the third most played move of the White band and the engine's fourth line.
     expect(ownOf(second.id, AFTER_BC5)).toMatchObject({
       move_san: "d3",
       source: "explorer",
-      cp_loss: 20,
-      eval_cp: 20,
+      cp_loss: 55,
+      eval_cp: -15,
     });
     expect(ownOf(second.id, AFTER_BC5)?.share).toBeCloseTo(0.138);
     for (const line of [[], SETUP.slice(0, 2), BEFORE_BC4, [...SETUP, "Nf6"]]) {
@@ -2348,6 +2369,171 @@ describe("a variation built at a branch point", () => {
       branch: D3_BRANCH,
     });
   });
+});
+
+// Against 3...Bc5 the engine puts 4.d3 this far from 4.O-O's 40 cp, 20 cp under by default: inside
+// the plan rule's margin, where `writeItalianTree` leaves it outside.
+function writePlanWithinMargin(d3Score = 20): void {
+  const lines: Array<[uci: string, score: number]> = [
+    ["e1g1", 40],
+    ["c2c3", 30],
+    ["d2d3", d3Score],
+    ["b2b4", 0],
+  ];
+  engine.write(
+    AFTER_BC5,
+    lines.sort((a, b) => b[1] - a[1]),
+  );
+}
+
+/**
+ * Stores the Italian's first variation with a White move of each SAN at a position no walk
+ * reaches, so the plan rule finds the unit playing them before the walk stores anything.
+ */
+function seedPlayedSans(sans: string[]): RepertoireRow {
+  const seeded = createRepertoireVariation(db, {
+    side: "white",
+    groupName: "Italian Game",
+    variationName: "Seeded",
+  });
+  for (const [index, san] of sans.entries()) {
+    insertRepertoireOwnMove(db, {
+      repertoireId: seeded.id,
+      positionKey: `seeded position ${index}`,
+      ply: 41,
+      line: [],
+      reach: 0,
+      openingName: null,
+      uci: `seeded ${index}`,
+      san,
+      share: null,
+      source: "engine",
+      cpLoss: 0,
+      evalCp: 0,
+      results: null,
+    });
+  }
+  return seeded;
+}
+
+describe("the plan rule", () => {
+  it("answers the next reply with the move the most common line stored, inside 50 cp, over a more played one", async () => {
+    writeItalianTree();
+    writePlanWithinMargin();
+    const result = await generate({}, BRANCH_FIXTURE_NAMES);
+    // 3...Nf6 is walked first; against 3...Bc5 the White band plays 4.c3 2.5 times as often as 4.d3.
+    expect(ownAt([...SETUP, "Nf6"])?.move_san).toBe("d3");
+    expect(ownAt(AFTER_BC5)).toMatchObject({
+      move_san: "d3",
+      source: "explorer",
+      cp_loss: 20,
+      eval_cp: 20,
+    });
+    expect(ownAt(AFTER_BC5)?.share).toBeCloseTo(0.138);
+    expect(rowsOf(db).some((row) => row.kind === "own" && row.move_san === "c3")).toBe(false);
+    // The variation is named after the answer stored, not the one the White band would give.
+    expect(result.variation).toBe("Giuoco Pianissimo (4.d3)");
+    expect(variationsOf(db)).toEqual([
+      { side: "white", group_name: "Italian Game", variation_name: "Giuoco Pianissimo (4.d3)" },
+    ]);
+  });
+
+  it.each([
+    { d3Score: -10, under: 50, answer: "d3" },
+    { d3Score: -11, under: 51, answer: "c3" },
+  ])(
+    "answers 3...Bc5 with 4.$answer where 4.d3 is $under cp under the engine's best",
+    async ({ d3Score, answer }) => {
+      writeItalianTree();
+      writePlanWithinMargin(d3Score);
+      await generate();
+      expect(ownAt([...SETUP, "Nf6"])?.move_san).toBe("d3");
+      expect(ownAt(AFTER_BC5)?.move_san).toBe(answer);
+    },
+  );
+
+  it("keeps the White band's move where the unit plays none of the candidates", async () => {
+    writeItalianTree();
+    await generate();
+    // Inside the margin against 3...Bc5 are 4.O-O, the engine's best, 4.c3 and 4.b4; the 3...Nf6
+    // line walked before it plays none of them.
+    const before = rowsAfter([...SETUP, "Nf6"]).filter((row) => row.kind === "own");
+    expect(before.length).toBeGreaterThan(5);
+    expect(before.filter((row) => ["O-O", "c3", "b4"].includes(row.move_san))).toEqual([]);
+    expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "c3", cp_loss: 10 });
+  });
+
+  it("gives a tie in the count to the move the usual rule picks, not to the engine's first", async () => {
+    writeItalianTree();
+    seedPlayedSans(["O-O", "c3"]);
+    await generate();
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("c3");
+  });
+
+  it("takes the engine's first where the unit plays it alone", async () => {
+    writeItalianTree();
+    seedPlayedSans(["O-O"]);
+    await generate();
+    expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "O-O", cp_loss: 0 });
+  });
+
+  it("plays the setup move whatever the plan rule would choose", async () => {
+    writeItalianTree();
+    // 3.Bb5 is the engine's best, inside the margin, and the unit already plays a Bb5.
+    seedPlayedSans(["Bb5"]);
+    await generate();
+    expect(ownAt(BEFORE_BC4)).toMatchObject({ move_san: "Bc4", source: "setup" });
+    expect(
+      rowsOf(db)
+        .filter((row) => row.ply <= 5)
+        .map((row) => row.move_san),
+    ).toEqual(SETUP);
+  });
+
+  it("plays a forced move whatever the plan rule would choose", async () => {
+    writeItalianTree();
+    writePlanWithinMargin();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    // The branch walks 3...Nf6 4.d3 first, so the plan rule would answer 3...Bc5 with 4.d3 too.
+    const result = await generateBranch([...AFTER_BC5, "b4"]);
+    const branched = variationNamed(result.variation ?? "");
+    expect(ownOf(branched.id, [...SETUP, "Nf6"])?.move_san).toBe("d3");
+    expect(ownOf(branched.id, AFTER_BC5)?.move_san).toBe("b4");
+  });
+
+  it.each([
+    { tree: "4.d3 inside the margin against 3...Bc5", within: true, planChoices: 1 },
+    { tree: "4.d3 outside it", within: false, planChoices: 0 },
+  ])(
+    "counts the choices the plan rule made in the answer and the log: $tree",
+    async ({ within, planChoices }) => {
+      writeItalianTree();
+      if (within) writePlanWithinMargin();
+      // Two replies and White's 4th move only: 3...Nf6 4.d3 first, then White's answer to 3...Bc5.
+      explorer.write(SETUP, EXPLORER_RATINGS, { Nf6: 60000, Bc5: 40000 }, 100000);
+      const log = new RecordingLog();
+      const app = buildApp({
+        db,
+        log,
+        generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+        generateRepertoireOpenings: () =>
+          generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES, {
+            maxPly: 7,
+          }),
+      });
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/openings/generate",
+        payload: { sources: ["repertoire"] },
+      });
+      await app.close();
+      expect(rowsOf(db).filter((row) => row.kind === "own" && row.ply === 7)).toHaveLength(2);
+      expect(response.json().repertoire).toMatchObject({ planChoices });
+      expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+        result: { repertoire: { planChoices } },
+      });
+    },
+  );
 });
 
 describe("checking a branch", () => {

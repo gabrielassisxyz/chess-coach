@@ -142,6 +142,31 @@ export function createRepertoireVariation(db: Database, repertoire: NewRepertoir
   };
 }
 
+export function renameRepertoireVariation(
+  db: Database,
+  repertoireId: number,
+  variationName: string,
+): void {
+  db.prepare("UPDATE repertoires SET variation_name = ? WHERE id = ?").run(
+    variationName,
+    repertoireId,
+  );
+}
+
+/** How many of a variation's White moves are written with each SAN. */
+export function countRepertoireOwnMovesBySan(
+  db: Database,
+  repertoireId: number,
+): Map<string, number> {
+  const rows = db
+    .prepare(
+      `SELECT move_san, COUNT(*) AS uses FROM repertoire_positions
+       WHERE repertoire_id = ? AND kind = 'own' GROUP BY move_san`,
+    )
+    .all(repertoireId) as Array<{ move_san: string; uses: number }>;
+  return new Map(rows.map((row) => [row.move_san, row.uses]));
+}
+
 export function findRepertoireOwnMove(
   db: Database,
   repertoireId: number,
