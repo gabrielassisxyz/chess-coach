@@ -120,6 +120,14 @@ export function introduceRepertoireCard(
   ).run(move.positionKey, move.uci, at, at);
 }
 
+/** How many cards were first shown after `since` (an ISO time), in any variation and any drill. */
+export function countRepertoireCardsIntroducedSince(db: Database, since: string): number {
+  const row = db
+    .prepare("SELECT COUNT(*) AS introduced FROM repertoire_cards WHERE introduced_at > ?")
+    .get(since) as { introduced: number };
+  return row.introduced;
+}
+
 export function findRepertoireCard(
   db: Database,
   move: { positionKey: string; uci: string },
