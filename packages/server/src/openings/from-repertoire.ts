@@ -875,17 +875,16 @@ export interface RepertoireBranchListing {
 function branchChoiceListing(
   db: Database,
   names: OpeningNames,
-  place: { line: string[]; positionKey: string },
+  step: RepertoireStep,
   choice: RepertoireBookChoice,
 ): RepertoireBranchChoiceListing {
-  const step = replayRepertoireLine(place.line);
   const after = repertoirePlayUci(step.fen, choice.uci);
   const opening = after ? (names.ofGame([...step.fens, after.after])?.name ?? null) : null;
-  const unit: RepertoireUnit = { ...ITALIAN_UNIT, naming: place.line };
+  const unit: RepertoireUnit = { ...ITALIAN_UNIT, naming: step.line };
   const variationName = repertoireVariationName(unit, opening, choice.san);
   const holder =
     findRepertoireVariationPlaying(db, "white", unit.groupName, {
-      positionKey: place.positionKey,
+      positionKey: positionKey(step.fen),
       uci: choice.uci,
     }) ?? findRepertoireVariationByName(db, "white", unit.groupName, variationName);
   return { san: choice.san, variationName, repertoireId: holder?.id ?? null };
@@ -907,13 +906,13 @@ export function listRepertoireBranches(
   const listed = book.flatMap((branch): RepertoireBranchListing[] => {
     const place = findRepertoireOwnPlace(db, first.id, branch.positionKey);
     if (!place) return [];
-    const at = { line: place.line, positionKey: branch.positionKey };
+    const step = replayRepertoireLine(place.line);
     return [
       {
         groupName: REPERTOIRE_GROUP_ITALIAN,
         line: place.line,
         reach: place.reach,
-        choices: branch.choices.map((choice) => branchChoiceListing(db, names, at, choice)),
+        choices: branch.choices.map((choice) => branchChoiceListing(db, names, step, choice)),
       },
     ];
   });
