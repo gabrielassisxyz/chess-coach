@@ -22,6 +22,7 @@ export interface StoredPuzzle {
   id: string;
   fen: string;
   solution: string[];
+  openingName: string | null;
   // The library's difficulty rating; null for a puzzle generated without one (opening drills).
   rating: number | null;
 }
@@ -312,15 +313,24 @@ export function listPuzzles(
 
 export function getPuzzle(db: Database, id: string): StoredPuzzle | null {
   const row = db
-    .prepare("SELECT id, fen, solution_uci, difficulty_rating FROM puzzles WHERE id = ?")
+    .prepare(
+      "SELECT id, fen, solution_uci, difficulty_rating, opening_name FROM puzzles WHERE id = ?",
+    )
     .get(id) as
-    | { id: string; fen: string; solution_uci: string; difficulty_rating: number | null }
+    | {
+        id: string;
+        fen: string;
+        solution_uci: string;
+        difficulty_rating: number | null;
+        opening_name: string | null;
+      }
     | undefined;
   if (!row) return null;
   return {
     id: row.id,
     fen: row.fen,
     solution: JSON.parse(row.solution_uci) as string[],
+    openingName: row.opening_name,
     rating: row.difficulty_rating,
   };
 }
@@ -329,10 +339,15 @@ export interface PuzzleHeader {
   motif: string;
   difficulty: string;
   explanation: string;
+  openingName: string | null;
 }
 
 export function getPuzzleHeader(db: Database, id: string): PuzzleHeader | null {
-  const row = db.prepare("SELECT motif, difficulty, explanation FROM puzzles WHERE id = ?").get(id);
+  const row = db
+    .prepare(
+      "SELECT motif, difficulty, explanation, opening_name AS openingName FROM puzzles WHERE id = ?",
+    )
+    .get(id);
   return (row as PuzzleHeader | undefined) ?? null;
 }
 
@@ -392,6 +407,7 @@ export interface GeneratedPuzzle {
   solutionUci: string[];
   solutionSan: string[];
   explanation: string;
+  openingName?: string | null;
 }
 
 export function getPuzzleExplanation(db: Database, id: string): string | null {
@@ -405,8 +421,8 @@ export function getPuzzleExplanation(db: Database, id: string): string | null {
 export function insertGeneratedPuzzle(db: Database, puzzle: GeneratedPuzzle): boolean {
   const info = db
     .prepare(
-      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, opening_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO NOTHING`,
     )
     .run(
@@ -418,11 +434,21 @@ export function insertGeneratedPuzzle(db: Database, puzzle: GeneratedPuzzle): bo
       JSON.stringify(puzzle.solutionUci),
       JSON.stringify(puzzle.solutionSan),
       puzzle.explanation,
+      puzzle.openingName ?? null,
     );
   return info.changes === 1;
 }
 
 // The row keeps its id, so the attempts that point at it survive a refresh.
-export function setPuzzleExplanation(db: Database, id: string, explanation: string): void {
-  db.prepare("UPDATE puzzles SET explanation = ? WHERE id = ?").run(explanation, id);
+export function refreshGeneratedPuzzle(
+  db: Database,
+  id: string,
+  explanation: string,
+  openingName: string | null,
+): void {
+  db.prepare("UPDATE puzzles SET explanation = ?, opening_name = ? WHERE id = ?").run(
+    explanation,
+    openingName,
+    id,
+  );
 }

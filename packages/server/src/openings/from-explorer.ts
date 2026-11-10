@@ -16,6 +16,7 @@ import {
   gamesOf,
 } from "./explorer-client.js";
 import { MAX_OPENING_PLY, MIN_CLEAR_GAP_CP, positionKey, puzzleId } from "./from-games.js";
+import type { OpeningNames } from "./names.js";
 
 export const EXPLORER_SOURCE = "lichess-explorer";
 export const REPERTOIRE_TURNS = 3;
@@ -57,6 +58,7 @@ interface Step {
   line: string[];
   /** Share of the opponent's last move among its siblings, in percent; null before any opponent move. */
   share: number | null;
+  openingName: string | null;
 }
 
 const explorerPuzzleId = (key: string): string =>
@@ -170,6 +172,7 @@ class ExplorerWalk {
     private readonly explorer: CachedExplorer,
     private readonly color: Color,
     options: ExplorerOptions,
+    private readonly names?: OpeningNames,
   ) {
     this.minGames = options.minGames ?? MIN_POSITION_GAMES;
     this.maxPly = options.maxPly ?? MAX_OPENING_PLY;
@@ -182,15 +185,19 @@ class ExplorerWalk {
     // No repertoire, no tree: the drill never teaches an opening the student does not play.
     if (this.repertoire.byTurn.size === 0) return;
     const start = new Chess().fen();
-    await this.visit({ fen: start, ply: 1, line: [], share: null });
+    await this.visit({ fen: start, ply: 1, line: [], share: null, openingName: null });
   }
 
   private async visit(step: Step): Promise<void> {
     if (step.ply > this.maxPly) return;
+    const named = {
+      ...step,
+      openingName: this.names?.ofPosition(step.fen)?.name ?? step.openingName,
+    };
     const key = positionKey(step.fen);
     const studentToMove = (step.ply % 2 === 1) === (this.color === "white");
-    if (studentToMove) await this.visitStudent(step, key);
-    else await this.visitOpponent(step);
+    if (studentToMove) await this.visitStudent(named, key);
+    else await this.visitOpponent(named);
   }
 
   private async visitOpponent(step: Step): Promise<void> {
@@ -204,6 +211,7 @@ class ExplorerWalk {
         ply: step.ply + 1,
         line: [...step.line, reply.san],
         share: Math.round((gamesOf(reply) / total) * 100),
+        openingName: step.openingName,
       });
     }
   }
@@ -221,6 +229,7 @@ class ExplorerWalk {
       ply: step.ply + 1,
       line: [...step.line, move.san],
       share: null,
+      openingName: step.openingName,
     });
   }
 
@@ -260,6 +269,7 @@ class ExplorerWalk {
       solutionUci: [best],
       solutionSan: [move.san],
       explanation: `Played by ${step.share}% of opponents at ${EXPLORER_BAND_LABEL} after ${lineText(step.line)}. Best: ${move.san}.`,
+      openingName: step.openingName,
     });
     if (inserted) this.result.created += 1;
   }
@@ -277,6 +287,7 @@ export async function generateExplorerPuzzles(
   cacheDir: string,
   clock: ExplorerClock,
   options: ExplorerOptions = {},
+  names?: OpeningNames,
 ): Promise<ExplorerResult> {
   const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
   const colors: Color[] = options.color ? [options.color] : ["white", "black"];
@@ -289,7 +300,7 @@ export async function generateExplorerPuzzles(
     truncated: false,
   };
   for (const color of colors) {
-    const walk = new ExplorerWalk(db, engine, explorer, color, options);
+    const walk = new ExplorerWalk(db, engine, explorer, color, options, names);
     try {
       await walk.run();
     } catch (error) {

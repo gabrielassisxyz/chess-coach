@@ -10,9 +10,10 @@ import { type Database, openDatabase } from "../db/open.js";
 import { insertGeneratedPuzzle, listPuzzles } from "../db/puzzles.js";
 import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
 import { importFinishedGame } from "../import/pgn.js";
-import { ExplorerError } from "./explorer-client.js";
+import { ExplorerError, type ExplorerFetcher } from "./explorer-client.js";
 import { generateExplorerPuzzles } from "./from-explorer.js";
 import { positionKey, puzzleId } from "./from-games.js";
+import { parseOpeningTable } from "./names.js";
 
 const WHITE_ONE =
   '[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 1-0';
@@ -34,6 +35,30 @@ const AFTER_E4_E5 = fenAfter("e4", "e5");
 const AFTER_E4_C5 = fenAfter("e4", "c5");
 const AFTER_D4_D5 = fenAfter("d4", "d5");
 const AFTER_E4_D5 = fenAfter("e4", "d5");
+const AFTER_ITALIAN = fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4");
+
+const italianNames = parseOpeningTable(
+  `eco\tname\tpgn\tuci\tepd\nC50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${positionKey(AFTER_ITALIAN)}\n`,
+);
+
+class ItalianPathExplorer implements ExplorerFetcher {
+  private readonly replies = new Map([
+    [positionKey(fenAfter("e4")), "e5"],
+    [positionKey(fenAfter("e4", "e5", "Nf3")), "Nc6"],
+    [positionKey(AFTER_ITALIAN), "Bc5"],
+  ]);
+
+  async fetch(fen: string): Promise<string> {
+    const san = this.replies.get(positionKey(fen));
+    if (!san) return JSON.stringify({ white: 0, draws: 0, black: 0, moves: [] });
+    return JSON.stringify({
+      white: 500,
+      draws: 0,
+      black: 500,
+      moves: [{ san, white: 500, draws: 0, black: 500 }],
+    });
+  }
+}
 
 const BEST_BY_KEY: Record<string, string> = {
   [positionKey(AFTER_E4_E5)]: "g1f3",
@@ -98,6 +123,7 @@ const rows = () =>
     solution_uci: string;
     solution_san: string;
     explanation: string;
+    opening_name: string | null;
   }>;
 
 const run = (options: Parameters<typeof generateExplorerPuzzles>[5] = {}) =>
@@ -114,6 +140,25 @@ function seedWhite(): void {
 }
 
 describe("generateExplorerPuzzles", () => {
+  it("keeps the Italian name on a drill past its last named position", async () => {
+    addGame(WHITE_TWO, "white", "italian");
+    const result = await generateExplorerPuzzles(
+      db,
+      engine,
+      new ItalianPathExplorer(),
+      cacheDir,
+      clock,
+      { color: "white", repertoireTurns: 3, maxPly: 7 },
+      italianNames,
+    );
+    expect(result.created).toBe(1);
+    expect(rows()).toMatchObject([
+      {
+        fen: fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"),
+        opening_name: "Italian Game",
+      },
+    ]);
+  });
   it("expands the student's first move into the replies played at the band", async () => {
     seedWhite();
     const result = await run({ color: "white" });

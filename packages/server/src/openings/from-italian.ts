@@ -19,6 +19,7 @@ import {
 import type { ExplorerResult } from "./from-explorer.js";
 import { chooseReplies, MAX_OPPONENT_REPLIES, MIN_POSITION_GAMES } from "./from-explorer.js";
 import { positionKey } from "./from-games.js";
+import type { OpeningNames } from "./names.js";
 
 export const ITALIAN_SOURCE = "italian-explorer";
 export const ITALIAN_MOTIF = "opening-italian";
@@ -43,6 +44,7 @@ interface ItalianStep {
   ply: number;
   line: string[];
   share: number | null;
+  openingName: string | null;
 }
 
 export const italianPuzzleId = (key: string): string =>
@@ -135,6 +137,7 @@ class ItalianWalk {
     private readonly engine: Searcher,
     private readonly explorer: CachedExplorer,
     options: ItalianOptions,
+    private readonly names?: OpeningNames,
   ) {
     this.minGames = options.minGames ?? MIN_POSITION_GAMES;
     this.maxPly = options.maxPly ?? ITALIAN_MAX_PLY;
@@ -142,13 +145,17 @@ class ItalianWalk {
   }
 
   async run(): Promise<void> {
-    await this.visit({ fen: new Chess().fen(), ply: 1, line: [], share: null });
+    await this.visit({ fen: new Chess().fen(), ply: 1, line: [], share: null, openingName: null });
   }
 
   private async visit(step: ItalianStep): Promise<void> {
     if (step.ply > this.maxPly) return;
-    if (step.ply % 2 === 1) await this.visitWhite(step);
-    else await this.visitBlack(step);
+    const named = {
+      ...step,
+      openingName: this.names?.ofPosition(step.fen)?.name ?? step.openingName,
+    };
+    if (step.ply % 2 === 1) await this.visitWhite(named);
+    else await this.visitBlack(named);
   }
 
   private async visitBlack(step: ItalianStep): Promise<void> {
@@ -162,6 +169,7 @@ class ItalianWalk {
         ply: step.ply + 1,
         line: [...step.line, reply.san],
         share: Math.round((gamesOf(reply) / total) * 100),
+        openingName: step.openingName,
       });
     }
   }
@@ -184,6 +192,7 @@ class ItalianWalk {
       ply: step.ply + 1,
       line: [...step.line, move.san],
       share: step.share,
+      openingName: step.openingName,
     });
   }
 
@@ -198,6 +207,7 @@ class ItalianWalk {
       solutionUci: [best],
       solutionSan: [san],
       explanation: italianExplanation(step.line, step.share, san),
+      openingName: step.openingName,
     });
     if (inserted) this.result.created += 1;
   }
@@ -214,9 +224,10 @@ export async function generateItalianPuzzles(
   cacheDir: string,
   clock: ExplorerClock,
   options: ItalianOptions = {},
+  names?: OpeningNames,
 ): Promise<ExplorerResult> {
   const explorer = new CachedExplorer(fetcher, cacheDir, clock, options.maxRequests);
-  const walk = new ItalianWalk(db, engine, explorer, options);
+  const walk = new ItalianWalk(db, engine, explorer, options, names);
   try {
     await walk.run();
   } catch (error) {

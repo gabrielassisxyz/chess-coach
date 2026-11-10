@@ -360,6 +360,13 @@
   min-width: 0;
 }
 
+.practice-item__opening-name {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
 .practice-item__title {
   margin: 0;
   font-size: var(--text-sm);

@@ -91,7 +91,7 @@ const activity = new ActivityService({
   },
   log,
 });
-const generateOpenings = () => generateOpeningPuzzles(db, pool.evaluation);
+const generateOpenings = () => generateOpeningPuzzles(db, pool.evaluation, openingNames);
 const generateExplorerOpenings = () =>
   generateExplorerPuzzles(
     db,
@@ -99,6 +99,8 @@ const generateExplorerOpenings = () =>
     httpExplorerFetcher(resolveLichessToken(db)),
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
+    {},
+    openingNames,
   );
 const generateItalianOpenings = () =>
   generateItalianPuzzles(
@@ -107,6 +109,8 @@ const generateItalianOpenings = () =>
     httpExplorerFetcher(resolveLichessToken(db)),
     join(dataDir(), "explorer-cache"),
     systemExplorerClock,
+    {},
+    openingNames,
   );
 const generateRepertoireOpenings = (root?: readonly string[]) =>
   generateRepertoire(

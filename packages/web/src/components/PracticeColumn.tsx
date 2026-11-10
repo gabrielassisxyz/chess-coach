@@ -365,6 +365,9 @@ export function PracticeColumn(props: PracticeColumnProps) {
             </button>
           )}
         </div>
+        {heading.openingName ? (
+          <p className="practice-item__opening-name">{heading.openingName}</p>
+        ) : null}
         <Segments training={training} />
       </header>
       {drill ? null : <Ratings training={training} view={view} />}

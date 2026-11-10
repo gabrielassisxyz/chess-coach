@@ -1,17 +1,23 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TrainingActivitySchema } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { TrainingRun } from "../activity/training.js";
 import { listMoves, setGrading } from "../db/games.js";
 import { type Database, openDatabase } from "../db/open.js";
+import { insertGeneratedPuzzle } from "../db/puzzles.js";
+import { findOpenTrainingRun } from "../db/training.js";
 import { classifyCpLoss } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
 import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
 import { importFinishedGame } from "../import/pgn.js";
 import { contentDir } from "../paths.js";
 import { seedPuzzles } from "../puzzles/seed.js";
+import { ReviewDesk } from "../srs/review.js";
 import { generateOpeningPuzzles, MIN_CLEAR_GAP_CP } from "./from-games.js";
+import { parseOpeningTable } from "./names.js";
 
 const WHITE_ONE =
   '[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O 9. h3 Nb8 10. d4 Nbd7 1-0';
@@ -21,6 +27,21 @@ const BLACK_ONE =
   '[Result "0-1"]\n\n1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 5. e3 O-O 6. Nf3 h6 7. Bh4 b6 8. Bxf6 Bxf6 9. cxd5 exd5 10. Bd3 Bb7 0-1';
 
 const fenKey = (fen: string): string => fen.split(" ").slice(0, 4).join(" ");
+
+function fenAfter(...sans: string[]): string {
+  const game = new Chess();
+  for (const san of sans) game.move(san);
+  return game.fen();
+}
+
+const italianNames = parseOpeningTable(
+  [
+    "eco\tname\tpgn\tuci\tepd",
+    `B00\tKing's Pawn Game\t1. e4\te2e4\t${fenKey(fenAfter("e4"))}`,
+    `C50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${fenKey(fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4"))}`,
+    "",
+  ].join("\n"),
+);
 
 /** Answers every position with its first two legal moves, a fixed gap apart unless told otherwise. */
 class FakeEngine implements Searcher {
@@ -75,6 +96,7 @@ const rows = () =>
     solution_uci: string;
     solution_san: string;
     explanation: string;
+    opening_name: string | null;
   }>;
 
 function seedFixtureGames(): void {
@@ -151,6 +173,84 @@ describe("generateOpeningPuzzles", () => {
     expect(second.searched).toHaveLength(7);
     const third = await generateOpeningPuzzles(db, new FakeEngine());
     expect(third).toEqual({ positions: 17, created: 0, updated: 0 });
+  });
+
+  it("stores the deepest named position before each drill, even after the line leaves it", async () => {
+    addGame(WHITE_TWO, "white", "italian");
+    await generateOpeningPuzzles(db, new FakeEngine(), italianNames);
+    expect(rows().find((row) => row.fen === new Chess().fen())?.opening_name).toBeNull();
+    expect(rows().find((row) => row.fen === fenAfter("e4", "e5"))?.opening_name).toBe(
+      "King's Pawn Game",
+    );
+    expect(
+      rows().find((row) => row.fen === fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"))
+        ?.opening_name,
+    ).toBe("Italian Game");
+    expect(
+      rows().find(
+        (row) => row.fen === fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"),
+      )?.opening_name,
+    ).toBe("Italian Game");
+  });
+
+  it("fills names on existing own-games rows without changing their ids or searching", async () => {
+    addGame(WHITE_TWO, "white", "italian");
+    await generateOpeningPuzzles(db, new FakeEngine());
+    const ids = rows().map((row) => row.id);
+    expect(rows().every((row) => row.opening_name === null)).toBe(true);
+    const engine = new FakeEngine();
+    const result = await generateOpeningPuzzles(db, engine, italianNames);
+    expect(result.created).toBe(0);
+    expect(result.updated).toBeGreaterThan(0);
+    expect(engine.searched).toEqual([]);
+    expect(rows().map((row) => row.id)).toEqual(ids);
+    expect(
+      rows().find((row) => row.fen === fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"))
+        ?.opening_name,
+    ).toBe("Italian Game");
+  });
+
+  it("serves the stored name on the practice item", async () => {
+    addGame(WHITE_TWO, "white", "italian");
+    await generateOpeningPuzzles(db, new FakeEngine(), italianNames);
+    const target = rows().find(
+      (row) => row.fen === fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"),
+    );
+    if (!target) throw new Error("Italian drill was not generated");
+    const run = TrainingRun.beginWith(
+      { db, desk: new ReviewDesk({ db }) },
+      { kind: "puzzle", id: target.id },
+    );
+    const item = TrainingActivitySchema.parse(run.state(1)).item;
+    expect(item).toMatchObject({ kind: "puzzle", opening_name: "Italian Game" });
+  });
+
+  it("keeps the opening name when a practice run resumes", () => {
+    insertGeneratedPuzzle(db, {
+      id: "own:named",
+      source: "own-games",
+      motif: "opening-white",
+      difficulty: "beginner",
+      fen: new Chess().fen(),
+      solutionUci: ["e2e4"],
+      solutionSan: ["e4"],
+      explanation: "Best: e4.",
+      openingName: "Italian Game",
+    });
+    const deps = { db, desk: new ReviewDesk({ db }) };
+    const started = TrainingRun.begin(deps, { mode: "openings", color: "white" });
+    expect(started.state(1).item).toMatchObject({ opening_name: "Italian Game" });
+    const stored = findOpenTrainingRun(db);
+    if (!stored) throw new Error("practice run was not stored");
+    expect(TrainingRun.resume(deps, stored).state(2).item).toMatchObject({
+      opening_name: "Italian Game",
+    });
+  });
+
+  it("migrates puzzles with a nullable opening name", () => {
+    const columns = db.pragma("table_info(puzzles)") as Array<{ name: string; notnull: number }>;
+    const column = columns.find((row) => row.name === "opening_name");
+    expect(column?.notnull).toBe(0);
   });
 
   it("ignores games that are not graded and plies past move 15", async () => {

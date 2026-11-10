@@ -14,6 +14,7 @@ import {
   italianPuzzleId,
   pickItalianWhiteUci,
 } from "./from-italian.js";
+import { type OpeningNames, parseOpeningTable } from "./names.js";
 
 const START_FEN = new Chess().fen();
 
@@ -22,6 +23,11 @@ function fenAfter(...sans: string[]): string {
   for (const san of sans) game.move(san);
   return game.fen();
 }
+
+const AFTER_ITALIAN = fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4");
+const italianNames = parseOpeningTable(
+  `eco\tname\tpgn\tuci\tepd\nC50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${positionKey(AFTER_ITALIAN)}\n`,
+);
 
 /** Returns the same five lines every time, so each move-choice case controls the scores. */
 class ScriptedItalianSearcher implements Searcher {
@@ -42,12 +48,24 @@ class ItalianFixtureExplorer {
     ),
   ) as Record<string, unknown>;
 
-  constructor(private readonly clock: FakeClock) {}
+  constructor(
+    private readonly clock: FakeClock,
+    private readonly extraReplies: ReadonlyMap<string, string> = new Map(),
+  ) {}
 
   async fetch(fen: string, ratings?: string): Promise<string> {
     const key = positionKey(fen);
     this.calls.push({ key, ratings });
     this.clock.advance(1100);
+    const reply = this.extraReplies.get(key);
+    if (reply) {
+      return JSON.stringify({
+        white: 500,
+        draws: 0,
+        black: 500,
+        moves: [{ san: reply, white: 500, draws: 0, black: 500 }],
+      });
+    }
     return JSON.stringify(this.answers[key] ?? { white: 0, draws: 0, black: 0, moves: [] });
   }
 }
@@ -170,17 +188,29 @@ describe("generateItalianPuzzles", () => {
       fen: string;
       solution_uci: string;
       explanation: string;
+      opening_name: string | null;
     }>;
 
   const run = (
     explorer: ItalianFixtureExplorer,
     engine: Searcher,
     options: Parameters<typeof generateItalianPuzzles>[5] = {},
+    names?: OpeningNames,
   ) =>
-    generateItalianPuzzles(db, engine, explorer, cacheDir, clock, {
-      maxPly: 4,
-      ...options,
-    });
+    generateItalianPuzzles(db, engine, explorer, cacheDir, clock, { maxPly: 4, ...options }, names);
+
+  it("keeps the Italian name on a White drill past its last named position", async () => {
+    const explorer = new ItalianFixtureExplorer(
+      clock,
+      new Map([[positionKey(AFTER_ITALIAN), "Bc5"]]),
+    );
+    await run(explorer, new ItalianWalkEngine(), { maxPly: 7 }, italianNames);
+    expect(
+      rows().find((row) => row.fen === fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"))
+        ?.opening_name,
+    ).toBe("Italian Game");
+    expect(rows().find((row) => row.fen === START_FEN)?.opening_name).toBeNull();
+  });
 
   it("stores every White node as an italian puzzle with the expected shape", async () => {
     const explorer = new ItalianFixtureExplorer(clock);

@@ -1,14 +1,11 @@
 import { createHash } from "node:crypto";
 import { Chess } from "chess.js";
 import type { Database } from "../db/open.js";
-import {
-  getPuzzleExplanation,
-  insertGeneratedPuzzle,
-  setPuzzleExplanation,
-} from "../db/puzzles.js";
+import { getPuzzleHeader, insertGeneratedPuzzle, refreshGeneratedPuzzle } from "../db/puzzles.js";
 import { EVALUATION_DEPTH } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
 import type { Searcher } from "../engine/uci.js";
+import type { OpeningNames } from "./names.js";
 
 export const OPENING_SOURCE = "own-games";
 export const MAX_OPENING_PLY = 30;
@@ -28,6 +25,7 @@ interface OpeningPosition {
   color: "white" | "black";
   bestMoveUci: string | null;
   games: Set<number>;
+  openingName: string | null;
 }
 
 interface StudentPlyRow {
@@ -35,6 +33,7 @@ interface StudentPlyRow {
   fen_before: string;
   best_move_uci: string | null;
   player_color: "white" | "black";
+  is_player: number;
 }
 
 // Placement, side, castling and en passant: the move counters differ between games reaching one position.
@@ -43,17 +42,25 @@ export const positionKey = (fen: string): string => fen.split(" ").slice(0, 4).j
 export const puzzleId = (key: string): string =>
   `own:${createHash("sha256").update(key).digest("hex").slice(0, 16)}`;
 
-function collectPositions(db: Database): OpeningPosition[] {
+function collectPositions(db: Database, names?: OpeningNames): OpeningPosition[] {
   const rows = db
     .prepare(
-      `SELECT m.game_id, m.fen_before, m.best_move_uci, g.player_color
+      `SELECT m.game_id, m.fen_before, m.best_move_uci, m.is_player, g.player_color
        FROM moves m JOIN games g ON g.id = m.game_id
-       WHERE g.grading = 'done' AND m.is_player = 1 AND m.ply <= ?
+       WHERE g.grading = 'done' AND m.ply <= ?
        ORDER BY m.game_id, m.ply`,
     )
     .all(MAX_OPENING_PLY) as StudentPlyRow[];
   const byKey = new Map<string, OpeningPosition>();
+  let currentGame: number | null = null;
+  let openingName: string | null = null;
   for (const row of rows) {
+    if (row.game_id !== currentGame) {
+      currentGame = row.game_id;
+      openingName = null;
+    }
+    openingName = names?.ofPosition(row.fen_before)?.name ?? openingName;
+    if (!row.is_player) continue;
     const key = positionKey(row.fen_before);
     const seen = byKey.get(key);
     if (seen) {
@@ -67,6 +74,7 @@ function collectPositions(db: Database): OpeningPosition[] {
       color: row.player_color,
       bestMoveUci: row.best_move_uci,
       games: new Set([row.game_id]),
+      openingName,
     });
   }
   return [...byKey.values()];
@@ -84,11 +92,18 @@ function pvSan(fen: string, moves: string[]): string {
   return shown.join(" ");
 }
 
-// A position already stored keeps its engine verdict: only the game count moves, so a re-run costs no search.
-function refreshCount(db: Database, position: OpeningPosition, stored: string): boolean {
-  const text = stored.replace(GAME_COUNT_PREFIX, `From ${position.games.size} of your games.`);
-  if (text === stored) return false;
-  setPuzzleExplanation(db, puzzleId(position.key), text);
+// A stored position keeps its engine verdict and attempts while its count and line name catch up.
+function refreshExistingOpeningPuzzle(
+  db: Database,
+  position: OpeningPosition,
+  stored: { explanation: string; openingName: string | null },
+): boolean {
+  const text = stored.explanation.replace(
+    GAME_COUNT_PREFIX,
+    `From ${position.games.size} of your games.`,
+  );
+  if (text === stored.explanation && position.openingName === stored.openingName) return false;
+  refreshGeneratedPuzzle(db, puzzleId(position.key), text, position.openingName);
   return true;
 }
 
@@ -116,14 +131,15 @@ async function clearBestMove(
 export async function generateOpeningPuzzles(
   db: Database,
   engine: Searcher,
+  names?: OpeningNames,
 ): Promise<GenerationResult> {
-  const positions = collectPositions(db);
+  const positions = collectPositions(db, names);
   const result: GenerationResult = { positions: positions.length, created: 0, updated: 0 };
   for (const position of positions) {
     const id = puzzleId(position.key);
-    const stored = getPuzzleExplanation(db, id);
+    const stored = getPuzzleHeader(db, id);
     if (stored !== null) {
-      if (refreshCount(db, position, stored)) result.updated += 1;
+      if (refreshExistingOpeningPuzzle(db, position, stored)) result.updated += 1;
       continue;
     }
     const found = await clearBestMove(engine, position);
@@ -138,6 +154,7 @@ export async function generateOpeningPuzzles(
       solutionUci: [found.best],
       solutionSan: [san],
       explanation: explanationFor(position.games.size, san, found.line),
+      openingName: position.openingName,
     });
     if (inserted) result.created += 1;
   }

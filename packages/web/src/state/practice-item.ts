@@ -30,6 +30,7 @@ const sideWord = (side: "white" | "black"): string => (side === "white" ? "White
 export interface ItemHeading {
   title: string;
   tag: string | null;
+  openingName: string | null;
 }
 
 // The tag names only what the student already knows: the motif they chose, the colour of an
@@ -37,12 +38,17 @@ export interface ItemHeading {
 export function headingOf(training: TrainingActivity, runMotif: string | null): ItemHeading {
   const { item, mode } = training;
   const title = `${KIND_WORD[mode]} ${item.position_in_queue} of ${item.queue_length}`;
-  if (item.kind !== "puzzle") return { title, tag: null };
-  if (mode === "openings") return { title, tag: `As ${sideWord(training.orientation)}` };
-  if (runMotif === OPENING_MOTIFS.italian) return { title, tag: "Italian Opening" };
-  if (runMotif) return { title, tag: motifLabel(runMotif) };
+  if (item.kind !== "puzzle") return { title, tag: null, openingName: null };
+  const openingName = item.opening_name ?? null;
+  if (mode === "openings") {
+    return { title, tag: `As ${sideWord(training.orientation)}`, openingName };
+  }
+  if (runMotif === OPENING_MOTIFS.italian) {
+    return { title, tag: "Italian Opening", openingName };
+  }
+  if (runMotif) return { title, tag: motifLabel(runMotif), openingName };
   const ended = training.status === "solved" || training.status === "failed";
-  return { title, tag: ended ? motifLabel(item.motif) : null };
+  return { title, tag: ended ? motifLabel(item.motif) : null, openingName };
 }
 
 // The line pinned over the conversation: which item is on the board and which side the student
