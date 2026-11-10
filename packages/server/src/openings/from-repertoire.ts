@@ -4,6 +4,7 @@ import {
   createRepertoireVariation,
   deleteRepertoireRepliesAtPly,
   findFirstRepertoireVariation,
+  findRepertoireContinuations,
   findRepertoireOwnMove,
   insertRepertoireOwnMove,
   type RepertoireCounts,
@@ -13,6 +14,7 @@ import {
   type RepertoireRowPlace,
   raiseRepertoireOwnMoveReach,
   repertoireCounts,
+  type StoredRepertoireContinuation,
   type StoredRepertoireOwnMove,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
@@ -64,6 +66,10 @@ export interface RepertoireResult {
   variation: string | null;
   ownMoves: number;
   replies: number;
+  /** The replies stored past the coverage goal as the most played one at the student's rating. */
+  mainlineReplies: number;
+  /** The replies stored past the coverage goal as the engine's best, where the explorer lacked games. */
+  engineReplies: number;
   deepestPly: number;
   /** Rows this run added; running again over the same data adds none. */
   created: number;
@@ -169,6 +175,10 @@ function repertoireShareOf(position: ExplorerPosition, fen: string, uci: string)
   const listed = position.moves.find((move) => repertoirePlaySan(fen, move.san)?.uci === uci);
   return listed && total > 0 ? gamesOf(listed) / total : null;
 }
+
+// Ties go to the alphabet so that two runs over one answer rank the same.
+const rankRepertoireByGames = (moves: ExplorerMove[]): ExplorerMove[] =>
+  [...moves].sort((a, b) => gamesOf(b) - gamesOf(a) || a.san.localeCompare(b.san));
 
 const repertoireResultsOf = (position: ExplorerPosition): RepertoireResultCounts | null =>
   gamesOf(position) > 0
@@ -281,7 +291,13 @@ class RepertoireWalk {
     // White's answer sits one ply later. A reply stored where that answer cannot be would read as a
     // gap in the coverage that no later run could fill.
     if (step.ply + 1 > this.maxPly) return;
-    for (const reply of this.repliesToKeep(step, position)) {
+    const branching = this.repliesToKeep(step, position);
+    // Where no reply is common enough to prepare for, the line still goes on with one, so that the
+    // student can memorize it to the end. Reach keeps its usual product, which puts that reply under
+    // the goal, so it is not a requirement.
+    const replies =
+      branching.length > 0 ? branching : await this.continuationReplies(step, position);
+    for (const reply of replies) {
       upsertRepertoireReply(this.db, {
         ...this.placeOf(step, reply.reach),
         uci: reply.move.uci,
@@ -314,10 +330,54 @@ class RepertoireWalk {
   private popularReplies(step: RepertoireStep, position: ExplorerPosition): RepertoireKeptReply[] {
     const total = gamesOf(position);
     if (total === 0) return [];
-    const ranked = [...position.moves].sort(
-      (a, b) => gamesOf(b) - gamesOf(a) || a.san.localeCompare(b.san),
-    );
+    const ranked = rankRepertoireByGames(position.moves);
     return ranked.flatMap((candidate) => this.keptReply(step, candidate, total));
+  }
+
+  private async continuationReplies(
+    step: RepertoireStep,
+    position: ExplorerPosition,
+  ): Promise<RepertoireKeptReply[]> {
+    const stored = findRepertoireContinuations(this.db, this.repertoireId, positionKey(step.fen));
+    if (stored.length > 0) return stored.flatMap((row) => this.storedContinuation(step, row));
+    const fresh = this.mostPlayedReply(step, position) ?? (await this.engineReply(step));
+    return fresh ? [fresh] : [];
+  }
+
+  private storedContinuation(
+    step: RepertoireStep,
+    stored: StoredRepertoireContinuation,
+  ): RepertoireKeptReply[] {
+    const move = repertoirePlayUci(step.fen, stored.move_uci);
+    const share = stored.share;
+    return move ? [{ move, share, reach: step.reach * (share ?? 0), source: stored.source }] : [];
+  }
+
+  // The position's own count decides, not the reply's: with the games to say what is played, the
+  // most played reply is the one to memorize even when it holds a small share of them.
+  private mostPlayedReply(
+    step: RepertoireStep,
+    position: ExplorerPosition,
+  ): RepertoireKeptReply | null {
+    const total = gamesOf(position);
+    if (total < this.minGames) return null;
+    for (const candidate of rankRepertoireByGames(position.moves)) {
+      const move = repertoirePlaySan(step.fen, candidate.san);
+      if (!move) continue;
+      const share = gamesOf(candidate) / total;
+      return { move, share, reach: step.reach * share, source: "mainline" };
+    }
+    return null;
+  }
+
+  // There is no share to multiply by and no evidence that anyone plays it, so its reach is 0: it can
+  // never count as a requirement, and a line that reaches the same position through played moves
+  // takes the place over. A mated or stalemated side has no best move, which ends the line.
+  private async engineReply(step: RepertoireStep): Promise<RepertoireKeptReply | null> {
+    const searched = await this.searchPosition(step.fen, 1);
+    const uci = searched.lines[0]?.moves[0];
+    const move = uci ? repertoirePlayUci(step.fen, uci) : null;
+    return move ? { move, share: null, reach: 0, source: "engine" } : null;
   }
 
   private keptReply(
@@ -394,7 +454,14 @@ class RepertoireWalk {
   }
 }
 
-const NO_REPERTOIRE_COUNTS: RepertoireCounts = { ownMoves: 0, replies: 0, deepestPly: 0, total: 0 };
+const NO_REPERTOIRE_COUNTS: RepertoireCounts = {
+  ownMoves: 0,
+  replies: 0,
+  mainlineReplies: 0,
+  engineReplies: 0,
+  deepestPly: 0,
+  total: 0,
+};
 
 function italianVariationCounts(db: Database): RepertoireCounts {
   const stored = findFirstRepertoireVariation(db, "white", REPERTOIRE_GROUP_ITALIAN);
@@ -404,8 +471,9 @@ function italianVariationCounts(db: Database): RepertoireCounts {
 /**
  * Builds the first Italian variation: one expected White move per position and every Black reply
  * common at the student's rating, from 1.e4 to White's 15th move, stored row by row so that a run
- * the request budget cuts short resumes by running again. A reply is stored only where White's
- * answer can be, and the replies an earlier run left at ply 30 without one are deleted first.
+ * the request budget cuts short resumes by running again. Where no reply is common enough, the line
+ * continues with a single one, the most played or else the engine's. A reply is stored only where
+ * White's answer can be, and the replies an earlier run left at ply 30 without one are deleted first.
  */
 export async function generateRepertoire(
   db: Database,
@@ -433,6 +501,8 @@ export async function generateRepertoire(
       findFirstRepertoireVariation(db, "white", REPERTOIRE_GROUP_ITALIAN)?.variation_name ?? null,
     ownMoves: after.ownMoves,
     replies: after.replies,
+    mainlineReplies: after.mainlineReplies,
+    engineReplies: after.engineReplies,
     deepestPly: after.deepestPly,
     created: after.total - before.total,
     removedReplies,
