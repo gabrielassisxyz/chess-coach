@@ -5,7 +5,6 @@ import {
   loadFixture,
   replayFixture,
 } from "../../test/support/fake-engine-process.js";
-import { REPERTOIRE_SEARCH_DEADLINE_MS } from "../openings/from-repertoire.js";
 import { type SearchRequest, UciEngine } from "./uci.js";
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -69,6 +68,39 @@ describe("UciEngine search", () => {
     await engine.search({ fen: START, movetime: 30 });
     expect(processes[0]?.sent).toContain("go movetime 30");
   });
+
+  it("reports the depth the engine reached and that no cap cut the search", async () => {
+    const { spawner } = scriptedSpawner(opening);
+    const engine = new UciEngine(spawner, FAST);
+    await engine.start();
+    const result = await engine.search({ fen: START, depth: 16 });
+    expect(result).toMatchObject({ bestmove: "e2e4", depth: 16, cutByTime: false });
+  });
+
+  it("reports the shallowest depth among the lines of a MultiPV search", async () => {
+    const { spawner } = scriptedSpawner(({ emit }) => {
+      emit("info depth 12 multipv 1 score cp 30 pv e2e4");
+      emit("info depth 11 multipv 2 score cp 20 pv d2d4");
+      emit("bestmove e2e4");
+    });
+    const engine = new UciEngine(spawner, FAST);
+    await engine.start();
+    const result = await engine.search({ fen: START, depth: 12, multipv: 2 });
+    expect(result.lines).toHaveLength(2);
+    expect(result.depth).toBe(11);
+  });
+
+  it("reports no depth when a line carries none", async () => {
+    const { spawner } = scriptedSpawner(({ emit }) => {
+      emit("info score cp 30 pv e2e4");
+      emit("bestmove e2e4");
+    });
+    const engine = new UciEngine(spawner, FAST);
+    await engine.start();
+    const result = await engine.search({ fen: START, depth: 12 });
+    expect(result.lines).toHaveLength(1);
+    expect(result.depth).toBeUndefined();
+  });
 });
 
 describe("UciEngine search deadline", () => {
@@ -101,13 +133,147 @@ describe("UciEngine search deadline", () => {
     });
   }
 
-  it("keeps 5 s when the request gives no deadline", () => expectTimeoutAfter({}, 5000));
+  it("keeps 5 s when the request gives no cap", () => expectTimeoutAfter({}, 5000));
 
-  it("adds the slack to a movetime when the request gives no deadline", () =>
+  it("adds the slack to a movetime when the request gives no cap", () =>
     expectTimeoutAfter({ movetime: 1000 }, 6000));
 
-  it("waits the repertoire generator's 30 s when the request carries it", () =>
-    expectTimeoutAfter({ deadlineMs: REPERTOIRE_SEARCH_DEADLINE_MS }, 30_000));
+  it("gives a capped search the slack after its cap to answer the stop", () =>
+    expectTimeoutAfter({ capMs: 30_000 }, 35_000));
+});
+
+/** The base fake ignores `stop`; this one answers it the way the test says. */
+function stoppableEngine(
+  onGo: (request: GoRequest) => void,
+  onStop: (emit: (line: string) => void) => void,
+): FakeEngineProcess {
+  const fake = new FakeEngineProcess(onGo);
+  const send = fake.send.bind(fake);
+  fake.send = (line) => {
+    send(line);
+    if (line === "stop") queueMicrotask(() => onStop((out) => fake.emit(out)));
+  };
+  return fake;
+}
+
+const layerMove = (layer: number): string => (layer % 2 === 1 ? "e2e4" : "d2d4");
+
+/**
+ * An engine that completes one more layer every `layerMs`. Layer N says `score cp 10N` and a move
+ * that alternates with N, so the line an answer carries names the layer it came from. A stop is
+ * answered with the last layer completed, as Stockfish does.
+ */
+function layeredEngine(layerMs: number): FakeEngineProcess {
+  const pending: Array<ReturnType<typeof setTimeout>> = [];
+  let completed = 0;
+  return stoppableEngine(
+    ({ command, emit }) => {
+      const depth = Number(/depth (\d+)/.exec(command)?.[1]);
+      for (let layer = 1; layer <= depth; layer++) {
+        const line = `info depth ${layer} seldepth ${layer + 1} multipv 1 score cp ${layer * 10} pv ${layerMove(layer)}`;
+        pending.push(
+          setTimeout(() => {
+            completed = layer;
+            emit(line);
+          }, layer * layerMs),
+        );
+      }
+      pending.push(setTimeout(() => emit(`bestmove ${layerMove(depth)}`), depth * layerMs));
+    },
+    (emit) => {
+      for (const timer of pending) clearTimeout(timer);
+      emit(`bestmove ${layerMove(completed)}`);
+    },
+  );
+}
+
+describe("UciEngine search cap", () => {
+  const CAP_MS = 30_000;
+  const stopsSentTo = (fake: FakeEngineProcess): number =>
+    fake.sent.filter((line) => line === "stop").length;
+
+  async function startFaked(fake: FakeEngineProcess): Promise<UciEngine> {
+    vi.useFakeTimers();
+    const engine = new UciEngine(() => fake);
+    await engine.start();
+    return engine;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("answers at the cap with the best line of the deepest layer completed, and that depth", async () => {
+    // Four seconds a layer: layer 7 is done at 28 s and layer 8 would be done at 32 s.
+    const fake = layeredEngine(4000);
+    const engine = await startFaked(fake);
+    const search = engine.search({ fen: START, depth: 16, capMs: CAP_MS });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(CAP_MS - 1);
+    expect(stopsSentTo(fake)).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await search;
+    expect(stopsSentTo(fake)).toBe(1);
+    expect(result).toMatchObject({ fen: START, bestmove: "e2e4", depth: 7, cutByTime: true });
+    expect(result.lines).toEqual([{ moves: ["e2e4"], score: 70 }]);
+  });
+
+  it("leaves the engine usable after a stop", async () => {
+    const fake = layeredEngine(4000);
+    const engine = await startFaked(fake);
+    const first = engine.search({ fen: START, depth: 16, capMs: CAP_MS });
+    await vi.advanceTimersByTimeAsync(CAP_MS);
+    expect((await first).cutByTime).toBe(true);
+    const second = engine.search({ fen: START, depth: 2, capMs: CAP_MS });
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(await second).toMatchObject({ bestmove: "d2d4", depth: 2, cutByTime: false });
+    expect(stopsSentTo(fake)).toBe(1);
+  });
+
+  it("reports the shallowest depth when the stop leaves the lines a layer apart", async () => {
+    const fake = stoppableEngine(
+      () => {},
+      (emit) => {
+        emit("info depth 8 seldepth 9 multipv 1 score cp 80 pv d2d4");
+        emit("info depth 7 seldepth 9 multipv 2 score cp 70 pv e2e4");
+        emit("bestmove d2d4");
+      },
+    );
+    const engine = await startFaked(fake);
+    const search = engine.search({ fen: START, depth: 16, multipv: 2, capMs: CAP_MS });
+    await vi.advanceTimersByTimeAsync(CAP_MS);
+    const result = await search;
+    expect(result.lines).toEqual([
+      { moves: ["d2d4"], score: 80 },
+      { moves: ["e2e4"], score: 70 },
+    ]);
+    expect(result).toMatchObject({ bestmove: "d2d4", depth: 7, cutByTime: true });
+  });
+
+  it("sends no stop to an engine that finishes before the cap, and none later", async () => {
+    const fake = layeredEngine(1000);
+    const engine = await startFaked(fake);
+    const search = engine.search({ fen: START, depth: 16, capMs: CAP_MS });
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(await search).toMatchObject({ bestmove: "d2d4", depth: 16, cutByTime: false });
+    // A cap timer left running would send its stop to the idle engine now.
+    await vi.advanceTimersByTimeAsync(2 * CAP_MS);
+    expect(stopsSentTo(fake)).toBe(0);
+  });
+
+  it("never stops a search that has no cap: it fails at the slack instead", async () => {
+    const fake = layeredEngine(4000);
+    const engine = await startFaked(fake);
+    const search = engine.search({ fen: START, depth: 16 }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await search).toMatchObject({
+      name: "EngineFault",
+      reason: "timeout",
+      message: "no answer within 5000 ms",
+    });
+    expect(stopsSentTo(fake)).toBe(0);
+    expect(fake.killed).toBe(true);
+  });
 });
 
 describe("UciEngine faults", () => {

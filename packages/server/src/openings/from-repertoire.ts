@@ -43,9 +43,10 @@ export const REPERTOIRE_GROUP_ITALIAN = "Italian Game";
 export const REPERTOIRE_MAX_PLY = 30;
 export const REPERTOIRE_MIN_REACH = 1 / 50;
 const REPERTOIRE_SEARCH_LINES = 5;
-// One timeout would end the walk at the same position on every rerun, and a batch can afford to
-// wait for a slow position where a live game cannot.
-export const REPERTOIRE_SEARCH_DEADLINE_MS = 30_000;
+// A search still short of its depth at the cap is stopped and keeps its best line so far. Failing
+// would end the walk at the same position on every rerun, and a batch can afford to wait for a slow
+// position where a live game cannot.
+export const REPERTOIRE_SEARCH_CAP_MS = 30_000;
 
 // The opening is chosen rather than scored, so these plies are played whatever the data says, and
 // reach starts counting after them: a reply that leaves earlier is out of scope for this unit.
@@ -425,7 +426,7 @@ class RepertoireWalk {
       fen,
       depth: EVALUATION_DEPTH,
       multipv,
-      deadlineMs: REPERTOIRE_SEARCH_DEADLINE_MS,
+      capMs: REPERTOIRE_SEARCH_CAP_MS,
     });
   }
 

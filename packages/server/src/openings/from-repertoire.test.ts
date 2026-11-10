@@ -849,32 +849,32 @@ describe("generateRepertoire", () => {
     },
   );
 
-  it("searches every White position at depth 16 for five lines within 30 s", async () => {
+  it("searches every White position at depth 16 for five lines, capped at 30 s", async () => {
     writeItalianTree();
     await generate();
     const whiteSearches = engine.requests.filter((request) => request.fen.split(" ")[1] === "w");
     expect(whiteSearches.length).toBeGreaterThan(0);
     for (const request of whiteSearches) {
-      expect(request).toMatchObject({ depth: 16, multipv: 5, deadlineMs: 30_000 });
+      expect(request).toMatchObject({ depth: 16, multipv: 5, capMs: 30_000 });
     }
   });
 
-  it("searches every reply of its own at depth 16 for one line within 30 s", async () => {
+  it("searches every reply of its own at depth 16 for one line, capped at 30 s", async () => {
     writeItalianTree();
     await generate();
     const replySearches = engine.requests.filter((request) => request.fen.split(" ")[1] === "b");
     expect(replySearches.length).toBeGreaterThan(0);
     for (const request of replySearches) {
-      expect(request).toMatchObject({ depth: 16, multipv: 1, deadlineMs: 30_000 });
+      expect(request).toMatchObject({ depth: 16, multipv: 1, capMs: 30_000 });
     }
   });
 
-  it("scores a setup move outside the top lines at depth 16 within 30 s as well", async () => {
+  it("scores a setup move outside the top lines at depth 16, capped at 30 s as well", async () => {
     writeItalianTree();
     engine.write(BEFORE_BC4, [["f1b5", 40]]).write(SETUP, [["g8f6", 15]]);
     await generate();
     const reply = engine.requests.find((request) => positionKey(request.fen) === keyOf(SETUP));
-    expect(reply).toMatchObject({ depth: 16, multipv: 1, deadlineMs: 30_000 });
+    expect(reply).toMatchObject({ depth: 16, multipv: 1, capMs: 30_000 });
   });
 
   it("stores result counts for every White move whose next position has games", async () => {
