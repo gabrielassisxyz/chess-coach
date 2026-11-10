@@ -328,6 +328,25 @@ describe("choosing the moves of a repertoire drill", () => {
     );
     expect(due).toHaveLength(REPERTOIRE_RECOMMENDED_SIZE + 1);
   });
+
+  it("reads each variation's own card where two variations play different moves in one position", () => {
+    const parting = (san: string): FixtureRow[] => [
+      ...SETUP_ROWS,
+      ["e4 e5 Nf3 Nc6 Bc4", "Bc5", 1],
+      ["e4 e5 Nf3 Nc6 Bc4 Bc5", san, 1],
+    ];
+    const classical = addVariation("Classical", parting("c3"));
+    const pianissimo = addVariation("Pianissimo", parting("d3"));
+    addCard("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3", PAST);
+    addCard("e4 e5 Nf3 Nc6 Bc4 Bc5", "d3", FUTURE);
+    const afterBc5 = (repertoireId: number) =>
+      listRepertoireDrillMoves(db, repertoireId)
+        .filter((move) => move.line.at(-1) === "Bc5")
+        .map((move) => ({ san: move.san, due: move.card?.next_review_at }));
+
+    expect(afterBc5(classical)).toEqual([{ san: "c3", due: PAST }]);
+    expect(afterBc5(pianissimo)).toEqual([{ san: "d3", due: FUTURE }]);
+  });
 });
 
 describe("a repertoire drill", () => {
