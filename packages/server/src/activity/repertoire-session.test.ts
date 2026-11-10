@@ -15,7 +15,7 @@ import { FakeCoach } from "../../test/fakes/fake-coach.js";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
 import { buildApp } from "../app.js";
 import type { Clock } from "../clock.js";
-import { createCoachSession } from "../db/chat.js";
+import { appendChatMessage, createCoachSession } from "../db/chat.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { listRepertoireDrillMoves, type RepertoireDrillMove } from "../db/repertoire-cards.js";
 import {
@@ -779,17 +779,10 @@ describe("a repertoire drill", () => {
     }
   });
 
-  it("refuses a drill without a repertoire or a scope, of an unknown repertoire, or with nothing due", async () => {
+  it("refuses a drill with nothing due in its scope, and serves every move for all", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS, () => false);
     const service = boot();
-    expect(await code(service.startTraining({ mode: "repertoire", scope: "due" }))).toBe(
-      "empty_queue",
-    );
-    expect(await code(service.startTraining({ mode: "repertoire", repertoireId: id }))).toBe(
-      "empty_queue",
-    );
-    expect(await code(start(service, id + 1, "all"))).toBe("empty_queue");
     expect(await code(start(service, id, "due"))).toBe("empty_queue");
     expect(await code(start(service, id, "recommended"))).toBe("empty_queue");
     expect((await start(service, id, "all")).repertoire?.moves_left).toBe(6);
@@ -1106,5 +1099,86 @@ describe("the run of a repertoire drill", () => {
     expect(await code(second.resumeTraining())).toBe("empty_queue");
     await second.discardTraining();
     expect(second.pausedTraining()).toBeNull();
+  });
+});
+
+describe("refusing a repertoire command", () => {
+  it("refuses a drill without a repertoire or a scope, or of an unknown repertoire, while moves are due", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS);
+    const service = boot();
+    const unchosen = {
+      code: "empty_queue",
+      message: expect.stringContaining("choose a repertoire and a scope"),
+    };
+    await expect(service.startTraining({ mode: "repertoire", scope: "due" })).rejects.toMatchObject(
+      unchosen,
+    );
+    await expect(
+      service.startTraining({ mode: "repertoire", repertoireId: id }),
+    ).rejects.toMatchObject(unchosen);
+    await expect(start(service, id + 1, "due")).rejects.toMatchObject({
+      code: "empty_queue",
+      message: `repertoire ${id + 1} does not exist`,
+    });
+    expect(service.current()).toBeNull();
+    expect(runEnds()).toEqual([]);
+  });
+
+  it("refuses an illegal try and keeps no row of it", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    const state = await start(service, id, "due");
+    expect(await code(service.trainingTry("e2e5", state.activity_id))).toBe("illegal_move");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM training_tries").get()).toEqual({ n: 0 });
+    expect(training(service.current())).toMatchObject({ tries: 0, input_enabled: true });
+  });
+
+  it("refuses a scratch move, a rating, and every step taken out of turn", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    let state = await start(service, id, "due");
+    const at = state.activity_id;
+    expect(await code(service.trainingExplore({ kind: "move", uci: "e2e4" }, at))).toBe(
+      "not_exploring",
+    );
+    expect(await code(service.rateCard("repertoire", 4, at))).toBe("exposure_unknown");
+    expect(await code(service.nextTrainingItem(at))).toBe("item_unfinished");
+
+    state = await play(service, state, "e4");
+    expect(state.input_enabled).toBe(false);
+    expect(await code(service.trainingTry("e7e5", at))).toBe("item_finished");
+    expect(await code(service.trainingHint(at))).toBe("item_finished");
+    expect(await code(service.trainingShowSolution(at))).toBe("item_finished");
+
+    state = await next(service, state);
+    expect(drillOf(state).result).toEqual({ practised: 1, first_try_right: 1 });
+    expect(await code(service.nextTrainingItem(at))).toBe("item_finished");
+  });
+
+  it("ties a chat line to the open pass, and none to the pass once it is over", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    const session = createCoachSession(db, { promptVersion: "v" });
+    const say = (text: string): number => {
+      const row = appendChatMessage(
+        db,
+        session.id,
+        { role: "user", kind: "text", contentJson: JSON.stringify({ text }) },
+        clock,
+      );
+      service.linkUserMessage(row.id);
+      return row.id;
+    };
+    const state = await start(service, id, "due");
+    const during = say("why not d4 first?");
+    await play(service, state, "e4");
+    say("that one I knew");
+    expect(db.prepare("SELECT message_id FROM item_messages").all()).toEqual([
+      { message_id: during },
+    ]);
   });
 });
