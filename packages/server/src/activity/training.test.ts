@@ -290,7 +290,7 @@ describe("a puzzle item", () => {
     expect(rows()).toEqual([]);
     const done = training(await activity.trainingTry("a1c1"));
     expect(done).toMatchObject({ status: "solved", input_enabled: false, expected: null });
-    expect(rows().map((r) => r.type)).toEqual(["puzzle_result"]);
+    expect(rows()).toEqual([]);
     const attempts = db.prepare("SELECT solved FROM puzzle_attempts").all();
     expect(attempts).toEqual([{ solved: 1 }]);
   });
@@ -634,7 +634,7 @@ describe("exploration", () => {
     expect(db.prepare("SELECT answer_uci, correct FROM training_items").all()).toEqual([
       { answer_uci: "a1c1", correct: 1 },
     ]);
-    expect(rows().map((r) => r.type)).toEqual(["puzzle_result"]);
+    expect(rows()).toEqual([]);
   });
 
   it("hands the coach what was written, what was tried and the wrong answer", async () => {
@@ -1433,5 +1433,82 @@ describe("an opening drill of one family", () => {
       state = training(await restarted.nextTrainingItem(state.activity_id));
     }
     expect(served).toEqual(order);
+  });
+});
+
+describe("a puzzle solved first try", () => {
+  it("writes no notification and does not wake the coach", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, flushed, rows } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const done = training(await activity.trainingTry("a1a8"));
+    expect(done).toMatchObject({ status: "solved", coach_comment: "offered" });
+    expect(rows()).toEqual([]);
+    expect(flushed).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT first_try FROM puzzle_attempts").get()).toEqual({ first_try: 1 });
+  });
+
+  it("still writes one notification and wakes the coach after a wrong try, a hint or a give-up", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, flushed, rows } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("a1a2");
+    const missed = training(await activity.trainingTry("a1a8"));
+    expect(missed.coach_comment).toBeNull();
+    expect(rows()).toMatchObject([{ type: "puzzle_result", first_try: false }]);
+    expect(flushed).toHaveBeenCalledTimes(1);
+    await activity.endTraining();
+
+    for (const how of ["hint", "give_up"] as const) {
+      const again = setup();
+      await again.activity.startTraining({ mode: "puzzles", motif: "fork" });
+      if (how === "hint") {
+        await again.activity.trainingHint();
+        await again.activity.trainingTry("a1a8");
+      } else {
+        await again.activity.trainingShowSolution();
+      }
+      expect(again.flushed).toHaveBeenCalledTimes(1);
+      expect(again.rows().filter((r) => r.type === "puzzle_result")).toHaveLength(1);
+      await again.activity.endTraining();
+    }
+  });
+
+  it("writes the requested row once when the student asks, with the solution", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const { activity, flushed, notes } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("b5c7");
+    await activity.trainingTry("a1c1");
+    const asked = training(await activity.trainingAskCoach());
+    expect(asked.coach_comment).toBe("requested");
+    expect(notes()).toHaveLength(1);
+    expect(notes()[0]).toMatchObject({
+      type: "puzzle_result",
+      requested: true,
+      first_try: true,
+      solution_san: ["Nxc7+", "Kf8", "Rc1"],
+    });
+    expect(flushed).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a second ask, a stale activity and an ask with no ended item", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, notes } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    expect(await code(activity.trainingAskCoach(start.activity_id))).toBe("not_in_training");
+    await activity.trainingTry("a1a8", start.activity_id);
+    expect(await code(activity.trainingAskCoach(start.activity_id + 1))).toBe("stale_activity");
+    await activity.trainingAskCoach(start.activity_id);
+    expect(await code(activity.trainingAskCoach(start.activity_id))).toBe("already_requested");
+    expect(notes()).toHaveLength(1);
+  });
+
+  it("refuses an ask about a card or a missed puzzle", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingTry("d2d4");
+    expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
   });
 });

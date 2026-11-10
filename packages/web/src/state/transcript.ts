@@ -240,10 +240,12 @@ export type ChatAction =
   | { type: "dismiss_error" };
 
 // A practice item whose notification the coach has not answered yet: solved or failed with
-// the queue still open. A rated card or a finished queue owes no reply.
+// the queue still open. A rated card or a finished queue owes no reply, nor does a first-try
+// solve until the student asks for the coach's comment.
 function endedItemKey(activity: ActivityState | null): string | null {
   if (activity?.kind !== "training" || activity.summary !== null) return null;
   if (activity.status !== "solved" && activity.status !== "failed") return null;
+  if (activity.coach_comment === "offered") return null;
   return `${activity.served_at}#${activity.item.position_in_queue}`;
 }
 

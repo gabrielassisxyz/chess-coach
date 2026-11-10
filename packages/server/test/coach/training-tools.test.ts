@@ -75,7 +75,7 @@ describe("serve_puzzle", () => {
   it("reports the same puzzle_result row a queued puzzle would", async () => {
     const { fake, call, db } = setup();
     await call("serve_puzzle", { puzzle_id: "forks:0" });
-    await fake.activity.trainingTry("f4e5");
+    await fake.activity.trainingShowSolution();
     const rows = db
       .prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification'")
       .all();

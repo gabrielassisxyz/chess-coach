@@ -232,6 +232,10 @@ export interface PuzzleResultNotification {
   tries?: number;
   gave_up?: boolean;
   reasoning?: TrainingReasoning;
+  /** Set on a row written when the student asked for the comment of a first-try solve. */
+  requested?: boolean;
+  /** The whole solution in SAN, on a requested row, since the student's moves were not explained. */
+  solution_san?: string[];
 }
 
 /** Row content written once when a training queue ends. */
@@ -298,6 +302,13 @@ function puzzleVerdict(result: PuzzleResultNotification, played: string): string
   }
   if (result.solved && result.first_try === false) {
     return [`The student solved ${puzzle} after ${result.tries ?? 0} wrong tries.`, position];
+  }
+  if (result.solved && result.requested) {
+    return [
+      `The student solved ${puzzle} on the first try, with no hint, and asked for your comment on it.`,
+      position,
+      `Solution: ${(result.solution_san ?? []).join(" ")}`,
+    ];
   }
   if (result.solved) return [`The student solved ${puzzle}.`];
   return [

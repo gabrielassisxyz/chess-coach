@@ -760,6 +760,11 @@ export class RepertoireSession implements PracticeRunPort {
     });
   }
 
+  /** A repertoire drill never stays quiet, so there is no comment to ask for. */
+  askCoach(): void {
+    throw new ActivityError("not_in_training", "this drill has no quiet item to ask about");
+  }
+
   /** The first call gives the stored idea, the second the move; either fails the move. */
   hint(): void {
     const { ask, state } = this.requireAsk();

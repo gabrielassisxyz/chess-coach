@@ -83,6 +83,12 @@ export function whyChipOf(training: TrainingActivity): WhyChip | null {
   };
 }
 
+// A puzzle solved first try without a hint leaves the coach silent; this is the button's label and
+// whether it is on offer. It is gone once pressed, since the server then reports `requested`.
+export const ASK_COACH_LABEL = "Pedir comentário do coach";
+export const coachCommentOffered = (training: TrainingActivity): boolean =>
+  training.coach_comment === "offered";
+
 export const movesOf = (training: TrainingActivity): PlayedMove[] => training.moves ?? [];
 export const wrongTriesOf = (training: TrainingActivity): WrongTry[] => training.wrong_tries ?? [];
 

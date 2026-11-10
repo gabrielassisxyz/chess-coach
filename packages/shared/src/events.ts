@@ -147,6 +147,7 @@ export const ErrorCodeSchema = z.enum([
   "no_paused_training",
   "unknown_opening",
   "engine_unavailable",
+  "already_requested",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
@@ -352,6 +353,14 @@ export const HintCommandSchema = z.object({
   activity_id: activityId,
 });
 
+// Asks the coach to comment on the ended item that was solved first try, which stays quiet until
+// asked. Sent as its own command because a say would not tell the coach which position was solved.
+export const AskCoachAboutItemCommandSchema = z.object({
+  type: z.literal("ask_coach_about_item"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
 // Asks the engine about a position shown on the board, refused while a training item is open.
 export const MAX_ANALYSIS_LINES = 5;
 export const MIN_ANALYSIS_DEPTH = 8;
@@ -431,6 +440,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   TryMoveCommandSchema,
   ShowSolutionCommandSchema,
   HintCommandSchema,
+  AskCoachAboutItemCommandSchema,
   RateCardCommandSchema,
   NextTrainingItemCommandSchema,
   EndTrainingCommandSchema,

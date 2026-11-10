@@ -499,7 +499,7 @@ describe("per-tab conversations", () => {
       },
     });
     await activity.startTraining({ mode: "puzzles", motif: "fork" });
-    await activity.trainingTry("a1a8");
+    await activity.trainingShowSolution();
     await activity.endTraining();
     await activity.newGame({ color: "white" });
     await activity.resign();

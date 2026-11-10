@@ -269,6 +269,10 @@ export class ActivityService {
     return this.stepTraining(expectedActivityId, "trainingHint", (run) => run.hint());
   }
 
+  trainingAskCoach(expectedActivityId?: number): Promise<ActivityState> {
+    return this.stepTraining(expectedActivityId, "trainingAskCoach", (run) => run.askCoach());
+  }
+
   trainingExplore(
     input: { kind: ExplorationKind; uci?: string },
     expectedActivityId?: number,
