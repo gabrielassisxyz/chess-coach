@@ -419,6 +419,7 @@ describe("practice notification pointer", () => {
     expect(summary("srs")).toContain("4 of 5 review cards solved, 1 failed.");
     expect(summary("openings")).toContain("4 of 5 opening positions solved, 1 failed.");
     expect(summary("openings")).not.toContain("puzzles solved");
+    expect(summary("repertoire")).toContain("4 of 5 repertoire moves solved, 1 failed.");
   });
 });
 

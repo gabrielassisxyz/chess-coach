@@ -71,6 +71,7 @@ import { SrsError } from "../srs/errors.js";
 import type { ReviewDesk } from "../srs/review.js";
 import { ActivityError } from "./errors.js";
 import { Exploration } from "./exploration.js";
+import type { RepertoireTryJudge } from "./repertoire-session.js";
 
 export type DeskPort = Pick<
   ReviewDesk,
@@ -90,6 +91,23 @@ export interface TrainingDeps {
   onNotification?: () => void;
   /** Shuffle source for puzzle queues; defaults to Math.random, tests inject a seed. */
   shuffleRandom?: (() => number) | undefined;
+  /** Names the other opening a good but unexpected repertoire move reaches; without it none is. */
+  repertoireJudge?: RepertoireTryJudge | undefined;
+}
+
+/** What the activity service drives on the practice queue or drill that is on the board. */
+export interface PracticeRunPort {
+  readonly runId: number | null;
+  state(activityId: number): TrainingActivity;
+  explore(kind: ExplorationKind, uci?: string): void;
+  linkMessage(messageId: number): void;
+  /** A repertoire try may wait on the engine for its flag; every other step is synchronous. */
+  tryMove(uci: string): void | Promise<void>;
+  showSolution(): void;
+  hint(): void;
+  rate(exposureId: string, quality: number): void;
+  next(): void;
+  end(): void;
 }
 
 export interface TrainingInput {
@@ -106,8 +124,11 @@ type QueueEntry =
   | { kind: "card"; cardId: number }
   | { kind: "puzzle"; id: string; motif: string; difficulty: string };
 
+// A repertoire pass is served by RepertoireSession, never by a queue.
+type QueueItem = Exclude<TrainingItem, { kind: "repertoire" }>;
+
 interface Served {
-  item: TrainingItem;
+  item: QueueItem;
   status: TrainingStatus;
   fen: string;
   orientation: PlayerColor;
@@ -239,7 +260,7 @@ const THEME_OF_MOTIF: Readonly<Record<string, string>> = {
   checkmate: "mate",
 };
 
-export class TrainingRun {
+export class TrainingRun implements PracticeRunPort {
   private position = 0;
   private solved = 0;
   private failed = 0;

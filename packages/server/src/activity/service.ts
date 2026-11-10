@@ -3,6 +3,7 @@ import type {
   ActivityState,
   PausedTraining,
   PromotionPiece,
+  RepertoireScope,
   TrainingMode,
 } from "@chess-coach/shared";
 import { Chess } from "chess.js";
@@ -20,9 +21,11 @@ import type { GameService, TurnReport } from "../game/service.js";
 import type { GameSnapshot } from "../game/snapshot.js";
 import { type Log, type LogFields, silentLog } from "../log.js";
 import { ActivityError } from "./errors.js";
+import { RepertoireSession } from "./repertoire-session.js";
 import { demoState, liveGameState, reviewState } from "./state.js";
 import {
   type DrillSize,
+  type PracticeRunPort,
   pausedTrainingOf,
   type TrainingDeps,
   type TrainingItemRef,
@@ -71,7 +74,7 @@ export class ActivityService {
   private demo: DemoBoard | null = null;
   private underneath: Underneath | null = null;
   private review: ReviewData | null = null;
-  private run: TrainingRun | null = null;
+  private run: PracticeRunPort | null = null;
   private readonly chains = new Map<ActivityKind, Promise<unknown>>();
   private readonly listeners = new Set<StateListener>();
 
@@ -186,12 +189,18 @@ export class ActivityService {
     motif?: string;
     color?: PlayerColor;
     size?: DrillSize;
+    repertoireId?: number;
+    scope?: RepertoireScope;
   }): Promise<ActivityState> {
     return this.enqueue("training", async () => {
       if (!this.trainingDeps) {
         throw new ActivityError("not_in_training", "training is not available");
       }
-      const run = TrainingRun.begin({ ...this.trainingDeps, db: this.db }, input);
+      const deps = { ...this.trainingDeps, db: this.db };
+      const run =
+        input.mode === "repertoire"
+          ? RepertoireSession.begin(deps, input)
+          : TrainingRun.begin(deps, input);
       this.leaveSideBoards();
       this.run = run;
       return this.logServed(this.publish(run.state(this.nextId++), "startTraining"));
@@ -323,7 +332,8 @@ export class ActivityService {
   /** The practice queue that is open but not on the board, or null. */
   pausedTraining(): PausedTraining | null {
     const row = this.pausedRun();
-    return row ? pausedTrainingOf(row) : null;
+    if (!row) return null;
+    return row.mode === "repertoire" ? RepertoireSession.pausedOf(row) : pausedTrainingOf(row);
   }
 
   // The student asked for it from the hub, so it replaces whatever the board shows, as a start does.
@@ -331,7 +341,10 @@ export class ActivityService {
     return this.enqueue("training", async () => {
       const deps = this.requireTrainingDeps();
       const row = this.requirePausedRun();
-      const run = TrainingRun.resume(deps, row);
+      const run =
+        row.mode === "repertoire"
+          ? RepertoireSession.resume(deps, row)
+          : TrainingRun.resume(deps, row);
       this.leaveSideBoards();
       this.run = run;
       return this.logServed(this.publish(run.state(this.nextId++), "resumeTraining"));
@@ -375,11 +388,22 @@ export class ActivityService {
   private stepTraining(
     expectedActivityId: number | undefined,
     cause: string,
-    step: (run: TrainingRun) => void,
+    step: (run: PracticeRunPort) => void | Promise<void>,
   ): Promise<ActivityState> {
     return this.enqueue("training", async () => {
       const run = this.requireTraining(expectedActivityId);
-      step(run);
+      // A step that does not wait publishes in the same turn it changed the run, so no command for
+      // another board can come in between. One that waited on the engine finds the board as it is
+      // now: if the student left the drill meanwhile, the change stays with the paused run and the
+      // board that replaced it is not taken back.
+      const pending = step(run);
+      if (pending) {
+        await pending;
+        if (this.run !== run) {
+          if (this.state) return this.state;
+          throw new ActivityError("not_in_training", "the drill left the board during its step");
+        }
+      }
       return this.publish(run.state((this.state as ActivityState).activity_id), cause);
     });
   }
@@ -395,7 +419,7 @@ export class ActivityService {
     return state;
   }
 
-  private requireTraining(expected: number | undefined): TrainingRun {
+  private requireTraining(expected: number | undefined): PracticeRunPort {
     this.checkFresh(expected);
     if (this.state?.kind !== "training" || !this.run) {
       throw new ActivityError("not_in_training", "no training is on the board");
