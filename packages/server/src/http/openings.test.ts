@@ -96,6 +96,8 @@ describe("POST /api/openings/generate", () => {
       variation: "Classical Variation (4.c3)",
       ownMoves: 40,
       replies: 60,
+      mainlineReplies: 12,
+      engineReplies: 3,
       deepestPly: 28,
       created: 100,
       removedReplies: 0,
