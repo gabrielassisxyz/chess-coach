@@ -1,9 +1,11 @@
 import type { PromotionPiece, TrainingActivity } from "@chess-coach/shared";
 import type { DrawShape } from "@lichess-org/chessground/draw";
+import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { boardOf, trainingView } from "../state/practice.js";
 import {
   isLegalIn,
+  legalMovesIn,
   localBoard,
   movesOf,
   positionAfter,
@@ -63,7 +65,7 @@ export function usePracticeBoard(
   const open = view.open;
   const activityId = training.activity_id;
   const moves = movesOf(training);
-  const tip = moves.length;
+  const itemTip = moves.length;
   const servedKey = `${training.served_at}:${training.item.position_in_queue}`;
 
   const [scratch, setScratch] = useState(false);
@@ -89,7 +91,7 @@ export function usePracticeBoard(
 
   const lastTry = training.last_try;
   const drill = training.repertoire ?? null;
-  const badgeKey = `${servedKey}:${lastTry?.uci ?? ""}:${training.tries}:${tip}:${training.status}`;
+  const badgeKey = `${servedKey}:${lastTry?.uci ?? ""}:${training.tries}:${itemTip}:${training.status}`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: the key names the try the mark is for
   useEffect(() => {
     // A repertoire drill answers a miss with the piece going back and nothing else.
@@ -109,7 +111,9 @@ export function usePracticeBoard(
     return () => clearTimeout(timer);
   }, [badgeKey]);
 
-  const shownPly = scratch ? tip : Math.min(viewPly ?? tip, tip);
+  const tip =
+    itemTip + (scratch ? (open ? training.exploring.line_san.length : localUcis.length) : 0);
+  const shownPly = Math.min(viewPly ?? tip, tip);
   const stepping = shownPly < tip;
   const step = useCallback(
     (to: number): void => {
@@ -120,7 +124,7 @@ export function usePracticeBoard(
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.ctrlKey || event.metaKey || event.altKey || typing(event.target) || scratch) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || typing(event.target)) return;
       if (event.key === "ArrowLeft") {
         event.preventDefault();
         step(shownPly - 1);
@@ -133,7 +137,7 @@ export function usePracticeBoard(
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [scratch, shownPly, step]);
+  }, [shownPly, step]);
 
   const explored = training.exploring.line_san.length > 0;
   const toggleScratch = useCallback((): void => {
@@ -156,35 +160,42 @@ export function usePracticeBoard(
   }, [open, send, activityId]);
 
   const local = scratch && !open ? localBoard(training.fen, localUcis) : null;
+  const shownLocal =
+    local && stepping && shownPly >= itemTip
+      ? localBoard(training.fen, localUcis.slice(0, shownPly - itemTip))
+      : local;
 
   const move = useCallback(
     (from: string, to: string, promotion?: PromotionPiece): void => {
-      if (stepping) return;
+      if (stepping && (!scratch || shownPly < itemTip)) return;
       const uci = `${from}${to}${promotion ?? ""}`;
       if (scratch && open) {
-        send({ type: "explore", kind: "move", uci, activity_id: activityId });
+        for (let ply = shownPly; ply < tip; ply += 1) {
+          if (!send({ type: "explore", kind: "undo", activity_id: activityId })) return;
+        }
+        if (send({ type: "explore", kind: "move", uci, activity_id: activityId })) {
+          setViewPly(null);
+        }
         return;
       }
       if (scratch) {
-        if (local && isLegalIn(local.fen, uci)) setLocalUcis((line) => [...line, uci]);
+        if (shownLocal && isLegalIn(shownLocal.fen, uci)) {
+          setLocalUcis((line) => [...line.slice(0, shownPly - itemTip), uci]);
+          setViewPly(null);
+        }
         return;
       }
       send({ type: "try_move", uci, activity_id: activityId });
     },
-    [stepping, scratch, open, send, activityId, local],
+    [stepping, scratch, shownPly, itemTip, open, send, activityId, tip, shownLocal],
   );
 
+  const itemLastUci = moves.at(-1)?.uci;
+  const itemLastMove = itemLastUci
+    ? { from: itemLastUci.slice(0, 2), to: itemLastUci.slice(2, 4) }
+    : null;
   let activity: TrainingActivity;
-  if (local) {
-    activity = {
-      ...training,
-      fen: local.fen,
-      turn: local.turn,
-      last_move: local.lastMove,
-      legal_moves: local.legalMoves,
-      input_enabled: true,
-    };
-  } else if (stepping) {
+  if (stepping && (!scratch || shownPly < itemTip)) {
     const position = positionAfter(
       startFenOf(training),
       moves.map((played) => played.uci),
@@ -196,6 +207,31 @@ export function usePracticeBoard(
       last_move: position.lastMove,
       legal_moves: [],
       input_enabled: false,
+    };
+  } else if (scratch && open && stepping) {
+    const board = new Chess(training.fen);
+    let lastMove = itemLastMove;
+    for (const san of training.exploring.line_san.slice(0, shownPly - itemTip)) {
+      const played = board.move(san);
+      lastMove = { from: played.from, to: played.to };
+    }
+    const fen = board.fen();
+    activity = {
+      ...training,
+      fen,
+      turn: board.turn() === "w" ? "white" : "black",
+      last_move: lastMove,
+      legal_moves: legalMovesIn(fen),
+      input_enabled: true,
+    };
+  } else if (shownLocal) {
+    activity = {
+      ...training,
+      fen: shownLocal.fen,
+      turn: shownLocal.turn,
+      last_move: shownLocal.lastMove ?? (shownPly === itemTip ? itemLastMove : null),
+      legal_moves: shownLocal.legalMoves,
+      input_enabled: true,
     };
   } else {
     activity = boardOf(training);
