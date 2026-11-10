@@ -11,6 +11,7 @@ export type ActivityErrorCode =
   | "invalid_ply"
   | "illegal_move"
   | "invalid_position"
+  | "invalid_line"
   | "not_in_training"
   | "empty_queue"
   | "item_unfinished"

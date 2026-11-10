@@ -129,6 +129,7 @@ export const ErrorCodeSchema = z.enum([
   "nothing_to_undo",
   "invalid_elo",
   "invalid_position",
+  "invalid_line",
   "not_in_training",
   "empty_queue",
   "item_unfinished",
@@ -266,6 +267,14 @@ export const LeaveDemoCommandSchema = z.object({
   type: z.literal("leave_demo"),
   command_id: commandId,
   activity_id: activityId,
+});
+
+// A click on a coach's line card in Practice; the server replays the line before showing it.
+export const ShowLineCommandSchema = z.object({
+  type: z.literal("show_line"),
+  command_id: commandId,
+  fen: z.string().min(1).max(120),
+  moves: z.array(z.string().min(2).max(10)).max(100),
 });
 
 export const NewGameCommandSchema = z.object({
@@ -430,6 +439,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   OpenGameCommandSchema,
   SelectReviewPlyCommandSchema,
   LeaveDemoCommandSchema,
+  ShowLineCommandSchema,
   NewGameCommandSchema,
   ResignCommandSchema,
   AbortCommandSchema,

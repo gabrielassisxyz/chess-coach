@@ -60,6 +60,28 @@ interface DemoBoard {
   played: string[];
 }
 
+interface PendingLine {
+  run: PracticeRunPort;
+  startFen: string;
+  chess: Chess;
+  played: string[];
+}
+
+export type LineOffer =
+  | { offered: false; state: ActivityState }
+  | { offered: true; fen: string; moves: string[] };
+
+function parseDemoFen(fen: string): Chess {
+  try {
+    return new Chess(fen);
+  } catch (error) {
+    throw new ActivityError(
+      "invalid_position",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 interface ReviewData {
   game: GameRecord;
   moves: MoveRecord[];
@@ -73,6 +95,7 @@ export class ActivityService {
   private state: ActivityState | null = null;
   private nextId = 1;
   private demo: DemoBoard | null = null;
+  private pendingLine: PendingLine | null = null;
   private underneath: Underneath | null = null;
   private review: ReviewData | null = null;
   private run: PracticeRunPort | null = null;
@@ -97,35 +120,77 @@ export class ActivityService {
   }
 
   startDemo(fen: string): Promise<ActivityState> {
-    return this.enqueue("demo", async () => {
-      this.refuseOverLiveGame();
-      this.refuseOverOpenTrainingItem();
-      let chess: Chess;
-      try {
-        chess = new Chess(fen);
-      } catch (error) {
-        throw new ActivityError(
-          "invalid_position",
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-      // A demo started over a demo still returns to what was under the first one.
-      if (this.state?.kind !== "demo") this.underneath = this.underneathOf(this.state);
-      this.demo = { chess, played: [] };
-      return this.publishDemo(this.nextId++, "startDemo");
-    });
+    return this.enqueue("demo", async () => this.beginDemo(fen));
   }
 
   demoMove(san: string, expectedActivityId?: number): Promise<ActivityState> {
+    return this.enqueue("demo", async () => this.playDemoMove(san, expectedActivityId));
+  }
+
+  private beginDemo(fen: string, moves: string[] = [], cause = "startDemo"): ActivityState {
+    this.refuseOverLiveGame();
+    this.refuseOverOpenTrainingItem();
+    const chess = parseDemoFen(fen);
+    for (const san of moves) chess.move(san);
+    // A demo started over a demo still returns to what was under the first one.
+    if (this.state?.kind !== "demo") this.underneath = this.underneathOf(this.state);
+    this.demo = { chess, played: [...moves] };
+    return this.publishDemo(this.nextId++, cause);
+  }
+
+  private playDemoMove(san: string, expectedActivityId?: number): ActivityState {
+    const demo = this.requireDemo(expectedActivityId);
+    try {
+      demo.chess.move(san);
+    } catch {
+      throw new ActivityError("illegal_move", `${san} is not legal in the demo position`);
+    }
+    demo.played.push(san);
+    return this.publishDemo((this.state as ActivityState).activity_id, "demoMove");
+  }
+
+  // The coach's show_position. In Practice, once the item has ended, the board stays on the run and
+  // the line is held until the student opens it from a chat card; everywhere else it is a demo.
+  offerOrStartDemo(fen: string): Promise<LineOffer> {
     return this.enqueue("demo", async () => {
-      const demo = this.requireDemo(expectedActivityId);
+      if (!this.itemEndedInTraining()) return { offered: false, state: this.beginDemo(fen) };
+      const chess = parseDemoFen(fen);
+      this.pendingLine = { run: this.run as PracticeRunPort, startFen: fen, chess, played: [] };
+      return { offered: true, fen, moves: [] };
+    });
+  }
+
+  // The coach's make_move: on the pending line when one is offered, on the demo board otherwise.
+  offerOrPlayMove(san: string): Promise<LineOffer> {
+    return this.enqueue("demo", async () => {
+      const pending = this.pendingLine;
+      if (!pending || pending.run !== this.run || !this.itemEndedInTraining()) {
+        return { offered: false, state: this.playDemoMove(san) };
+      }
       try {
-        demo.chess.move(san);
+        pending.chess.move(san);
       } catch {
         throw new ActivityError("illegal_move", `${san} is not legal in the demo position`);
       }
-      demo.played.push(san);
-      return this.publishDemo((this.state as ActivityState).activity_id, "demoMove");
+      pending.played.push(san);
+      return { offered: true, fen: pending.startFen, moves: [...pending.played] };
+    });
+  }
+
+  // The student's click on a line card: the line is replayed from scratch, so nothing the client
+  // sends is trusted, then shown as a demo over the run.
+  openLine(fen: string, moves: string[]): Promise<ActivityState> {
+    return this.enqueue("demo", async () => {
+      try {
+        const check = new Chess(fen);
+        for (const san of moves) check.move(san);
+      } catch (error) {
+        throw new ActivityError(
+          "invalid_line",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      return this.beginDemo(fen, moves, "openLine");
     });
   }
 
@@ -513,6 +578,13 @@ export class ActivityService {
     }
   }
 
+  // True while Practice is on the board and its current item, or the whole queue, has ended.
+  private itemEndedInTraining(): boolean {
+    if (this.state?.kind !== "training" || !this.run) return false;
+    if (this.state.summary !== null) return true;
+    return this.state.status !== "prompt" && this.state.status !== "in_progress";
+  }
+
   private requireDemo(expected: number | undefined): DemoBoard {
     this.checkFresh(expected);
     if (this.state?.kind !== "demo" || !this.demo) {
@@ -566,6 +638,7 @@ export class ActivityService {
   private leaveSideBoards(): void {
     this.run = null;
     this.demo = null;
+    this.pendingLine = null;
     this.underneath = null;
   }
 

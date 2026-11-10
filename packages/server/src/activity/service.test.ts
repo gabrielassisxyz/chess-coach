@@ -490,3 +490,100 @@ describe("demo over training", () => {
     expect(back).toMatchObject({ kind: "live_game", game_id: gameId });
   });
 });
+
+describe("a coach line offered in Practice", () => {
+  async function solvedCard() {
+    addTrainingCard();
+    const harness = setupTraining();
+    await harness.activity.startTraining({ mode: "srs" });
+    await harness.activity.trainingTry("d2d4");
+    return harness;
+  }
+
+  it("holds the line and leaves the board on the run once the item has ended", async () => {
+    const { activity } = await solvedCard();
+    const before = activity.current();
+    const offer = await activity.offerOrStartDemo(DEMO_FEN);
+    expect(offer).toEqual({ offered: true, fen: DEMO_FEN, moves: [] });
+    expect(activity.current()).toEqual(before);
+  });
+
+  it("checks each move on the pending line and keeps the activity unchanged", async () => {
+    const { activity } = await solvedCard();
+    const before = activity.current();
+    await activity.offerOrStartDemo(DEMO_FEN);
+    await activity.offerOrPlayMove("e4");
+    const offer = await activity.offerOrPlayMove("e5");
+    expect(offer).toEqual({ offered: true, fen: DEMO_FEN, moves: ["e4", "e5"] });
+    await expect(activity.offerOrPlayMove("Qh8")).rejects.toMatchObject({
+      code: "illegal_move",
+      message: "Qh8 is not legal in the demo position",
+    });
+    expect(activity.current()).toEqual(before);
+  });
+
+  it("refuses an invalid FEN without starting a line", async () => {
+    const { activity } = await solvedCard();
+    await expect(activity.offerOrStartDemo("not a fen")).rejects.toMatchObject({
+      code: "invalid_position",
+    });
+    await expect(activity.offerOrPlayMove("e4")).rejects.toMatchObject({ code: "not_in_demo" });
+  });
+
+  it("is refused while the item is open, as a demo is", async () => {
+    addTrainingCard();
+    const { activity } = setupTraining();
+    await activity.startTraining({ mode: "srs" });
+    const before = activity.current();
+    await expect(activity.offerOrStartDemo(DEMO_FEN)).rejects.toMatchObject({
+      code: "training_item_open",
+    });
+    expect(activity.current()).toEqual(before);
+  });
+
+  it("starts a demo as before outside Practice", async () => {
+    const { activity } = setup([]);
+    const offer = await activity.offerOrStartDemo(DEMO_FEN);
+    expect(offer).toMatchObject({ offered: false, state: { kind: "demo" } });
+    const moved = await activity.offerOrPlayMove("e4");
+    expect(moved).toMatchObject({ offered: false, state: { kind: "demo" } });
+  });
+});
+
+describe("show_line", () => {
+  it("opens the line as a demo with the moves played and returns to the run", async () => {
+    addTrainingCard();
+    const { activity } = setupTraining();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingTry("d2d4");
+    const run = activity.current();
+    const demo = await activity.openLine(DEMO_FEN, ["e4", "e5", "Nf3"]);
+    expect(demo).toMatchObject({ kind: "demo", returns_to: "training" });
+    if (demo.kind !== "demo") throw new Error("expected demo");
+    expect(demo.moves_played).toEqual(["e4", "e5", "Nf3"]);
+    const back = await activity.leaveDemo(demo.activity_id);
+    expect(back).toMatchObject({ kind: "training" });
+    expect(back?.kind === "training" && run?.kind === "training" && back.item).toEqual(
+      run?.kind === "training" ? run.item : null,
+    );
+  });
+
+  it("refuses an illegal move or FEN with invalid_line and changes nothing", async () => {
+    addTrainingCard();
+    const { activity } = setupTraining();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingTry("d2d4");
+    const before = activity.current();
+    await expect(activity.openLine(DEMO_FEN, ["e4", "e4"])).rejects.toMatchObject({
+      code: "invalid_line",
+    });
+    await expect(activity.openLine("not a fen", [])).rejects.toMatchObject({
+      code: "invalid_line",
+    });
+    expect(activity.current()).toEqual(before);
+  });
+
+  it("is carried in the shared wire contract", () => {
+    expect(ErrorCodeSchema.safeParse("invalid_line").success).toBe(true);
+  });
+});
