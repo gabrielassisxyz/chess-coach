@@ -7,7 +7,7 @@ import { registerClientLogRoute } from "./http/client-log.js";
 import { type ConnectionRoutesOptions, registerConnectionRoutes } from "./http/connections.js";
 import { registerGameRoutes } from "./http/games.js";
 import { type ImportRoutesOptions, registerImportRoutes } from "./http/import.js";
-import { registerOpeningRoutes } from "./http/openings.js";
+import { registerOpeningDrillRoutes, registerOpeningRoutes } from "./http/openings.js";
 import { registerProgressRoutes } from "./http/progress.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
 import { registerRepertoireRoutes } from "./http/repertoires.js";
@@ -91,6 +91,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   if (options.db) {
     registerCardRoutes(app, options.db);
     registerGameRoutes(app, options.db, options.openingNames ?? NO_OPENING_NAMES);
+    registerOpeningDrillRoutes(app, options.db);
     registerProgressRoutes(app, options.db);
     registerPuzzleRoutes(app, options.db);
     registerRepertoireRoutes(app, options.db, {

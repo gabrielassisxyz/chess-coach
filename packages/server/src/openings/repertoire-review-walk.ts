@@ -98,6 +98,40 @@ export function walkGameAgainstRepertoire(
   return { followed, passes, ending: { kind: "game_over" } };
 }
 
+/** A unit a game can be compared with: the moves it is rooted at, as UCI from the first ply. */
+export interface RootedUnit {
+  id: number;
+  root: readonly string[];
+  lookup: RepertoireLookup;
+}
+
+// A game plays the opening a unit teaches when the unit's root is the start of its moves, whatever
+// either side did after it.
+const gameReachesRoot = (moves: readonly MoveRecord[], root: readonly string[]): boolean =>
+  root.every((uci, index) => moves[index]?.uci === uci);
+
+/**
+ * Walks a game against every unit whose root it reaches and keeps the one it followed for the most
+ * plies. Variations of one opening share a root, so a tie goes to the lowest id, whatever the order
+ * the units come in. Null when the game reaches no unit's root.
+ */
+export function walkLongestFollowedUnit<Unit extends RootedUnit>(
+  moves: readonly MoveRecord[],
+  units: readonly Unit[],
+): { unit: Unit; walk: GameWalk } | null {
+  let longest: { unit: Unit; walk: GameWalk } | null = null;
+  for (const unit of units) {
+    if (!gameReachesRoot(moves, unit.root)) continue;
+    const walk = walkGameAgainstRepertoire(moves, unit.lookup);
+    const beatsLongest =
+      longest === null ||
+      walk.followed > longest.walk.followed ||
+      (walk.followed === longest.walk.followed && unit.id < longest.unit.id);
+    if (beatsLongest) longest = { unit, walk };
+  }
+  return longest;
+}
+
 export function gameVerdictOf(walk: GameWalk, startPly: number): GameVerdict {
   const { ending } = walk;
   if (walk.followed < startPly) {

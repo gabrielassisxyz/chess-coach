@@ -550,6 +550,62 @@ describe("the plain listing and imported puzzles", () => {
   });
 });
 
+describe("listPuzzles by stored opening name", () => {
+  function addNamed(id: string, motif: string, openingName: string | null): void {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, opening_name)
+       VALUES (?, 'own-games', ?, 'beginner', '8/8/8/8/8/8/8/K6k w - - 0 1', '["a1a2"]', '["Ka2"]', 'why', ?)`,
+    ).run(id, motif, openingName);
+  }
+
+  const idsOf = (openingNames: readonly (string | null)[]): string[] =>
+    listPuzzles(db, { motif: "opening-white", openingNames, limit: 50 }, seededRandom(1))
+      .puzzles.map((puzzle) => puzzle.id)
+      .sort();
+
+  beforeEach(() => {
+    addNamed("own:italian", "opening-white", "Italian Game");
+    addNamed("own:piano", "opening-white", "Italian Game: Giuoco Piano");
+    addNamed("own:ruy", "opening-white", "Ruy Lopez");
+    addNamed("own:bare", "opening-white", null);
+    addNamed("own:black", "opening-black", "Italian Game");
+  });
+
+  it("serves the positions carrying one of the names, of the motif asked for", () => {
+    expect(idsOf(["Italian Game"])).toEqual(["own:italian"]);
+    expect(idsOf(["Italian Game", "Italian Game: Giuoco Piano"])).toEqual([
+      "own:italian",
+      "own:piano",
+    ]);
+  });
+
+  it("serves the positions with no name for null, alone or beside names", () => {
+    expect(idsOf([null])).toEqual(["own:bare"]);
+    expect(idsOf(["Ruy Lopez", null])).toEqual(["own:bare", "own:ruy"]);
+  });
+
+  it("counts the matching positions in the total", () => {
+    const listing = listPuzzles(db, {
+      motif: "opening-white",
+      openingNames: ["Italian Game", "Italian Game: Giuoco Piano"],
+      limit: 1,
+    });
+    expect(listing.total).toBe(2);
+    expect(listing.puzzles).toHaveLength(1);
+  });
+
+  it("serves nothing for an empty list, instead of failing on the forced index", () => {
+    expect(listPuzzles(db, { motif: "opening-white", openingNames: [] })).toEqual({
+      total: 0,
+      puzzles: [],
+    });
+  });
+
+  it("keeps serving every position of the motif when no name is given", () => {
+    expect(listPuzzles(db, { motif: "opening-white", limit: 50 }).puzzles).toHaveLength(4);
+  });
+});
+
 describe("getPuzzle and recordPuzzleAttempt", () => {
   it("reads the solution back as a list", () => {
     expect(getPuzzle(db, "forks:0")?.solution).toEqual(["b5c7", "e8f8", "a1c1"]);

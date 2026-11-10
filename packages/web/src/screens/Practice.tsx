@@ -1,6 +1,7 @@
 import type {
   ActivityState,
   DemoActivity,
+  OpeningDrillColor,
   RepertoireLevel,
   RepertoireScope,
   TrainingActivity,
@@ -25,6 +26,7 @@ import { useBoardPrefs } from "../state/board-prefs.js";
 import { useBoardTheme } from "../state/board-theme.js";
 import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
 import { serviceNotice } from "../state/health.js";
+import { type FetchOpeningDrills, fetchOpeningDrillsFromServer } from "../state/openings-api.js";
 import {
   clearLastSession,
   DEFAULT_DRILL_SIZE,
@@ -58,17 +60,25 @@ export interface PracticeProps {
   // The whole repertoire answer the openings menu reads its levels and branch points from; the
   // server's by default.
   fetchRepertoireList?: FetchRepertoireList | undefined;
+  // The drills from the student's games, grouped by opening family; the server's by default.
+  fetchOpeningDrills?: FetchOpeningDrills;
   fetchHealth?: FetchHealth | undefined;
 }
 
 const ANY_MOTIF = "";
 
+// The opening a drill named is gone from the list the page holds, which only a reload refreshes.
+const UNKNOWN_OPENING_TEXT =
+  "That opening has no positions to drill any more. Reload the page to see the current list.";
+
 interface Starting {
   mode: TrainingMode;
-  // A repertoire start puts its scope here, where a puzzle start puts its motif.
+  // A repertoire start puts its scope here, where a puzzle start puts its motif, and an opening
+  // drill its colour.
   motif: string;
   repertoireId?: number;
   level?: RepertoireLevel;
+  opening?: string;
   errorsBefore: number;
 }
 
@@ -86,7 +96,9 @@ function useStartOutcome(server: ServerApi, size: DrillSize) {
     } else if (server.errorCount > starting.errorsBefore) {
       setStarting(null);
       setFailure(
-        startFailureText(starting.mode, starting.motif, server.lastErrorCode, server.lastError),
+        server.lastErrorCode === "unknown_opening"
+          ? UNKNOWN_OPENING_TEXT
+          : startFailureText(starting.mode, starting.motif, server.lastErrorCode, server.lastError),
       );
     }
   }, [starting, server.connection, server.errorCount, server.lastErrorCode, server.lastError]);
@@ -101,6 +113,15 @@ function useStartOutcome(server: ServerApi, size: DrillSize) {
           : { mode, ...(motif === ANY_MOTIF ? {} : { motif }) };
     if (server.send({ type: "start_training", ...command, size })) {
       setStarting({ mode, motif, errorsBefore: server.errorCount });
+    } else {
+      setFailure(OFFLINE_START_TEXT);
+    }
+  };
+  // An opening drill of one family serves at the chosen size like any other queue of puzzles.
+  const beginOpening = (color: OpeningDrillColor, opening: string): void => {
+    setFailure(null);
+    if (server.send({ type: "start_training", mode: "openings", color, opening, size })) {
+      setStarting({ mode: "openings", motif: color, opening, errorsBefore: server.errorCount });
     } else {
       setFailure(OFFLINE_START_TEXT);
     }
@@ -133,7 +154,7 @@ function useStartOutcome(server: ServerApi, size: DrillSize) {
       setFailure(OFFLINE_START_TEXT);
     }
   };
-  return { starting, failure, begin, beginRepertoire };
+  return { starting, failure, begin, beginRepertoire, beginOpening };
 }
 
 // The login card clears once the student has checked again, and returns on the next auth failure.
@@ -153,20 +174,23 @@ function Hub({
   fetchProgress,
   fetchRepertoires,
   fetchRepertoireList,
+  fetchOpeningDrills,
   fetchHealth,
   lastSession,
 }: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress" | "fetchRepertoires">> &
+  Required<Pick<PracticeProps, "fetchOpeningDrills">> &
   Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList"> & {
     lastSession: LastSession | null;
   }) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
   const repertoires = useLoaded(fetchRepertoires);
+  const openingDrills = useLoaded(fetchOpeningDrills);
   const [size, setSize] = useState<DrillSize>(DEFAULT_DRILL_SIZE);
   const [retries, setRetries] = useState(0);
   const notice = serviceNotice(useHealth(retries, fetchHealth ? { fetchHealth } : {}));
   const login = useCoachLogin(server);
-  const { starting, failure, begin, beginRepertoire } = useStartOutcome(server, size);
+  const { starting, failure, begin, beginRepertoire, beginOpening } = useStartOutcome(server, size);
   const engineMissing = notice?.reason === "stockfish_missing";
 
   return (
@@ -196,6 +220,8 @@ function Hub({
         onSize={setSize}
         onStart={begin}
         onStartRepertoire={beginRepertoire}
+        openingDrills={openingDrills}
+        onStartOpening={beginOpening}
         lastSession={lastSession}
         fetchRepertoireList={fetchRepertoireList}
       />
@@ -396,6 +422,7 @@ export function Practice({
   fetchProgress = fetchProgressFromServer,
   fetchRepertoires = fetchRepertoiresFromServer,
   fetchRepertoireList,
+  fetchOpeningDrills = fetchOpeningDrillsFromServer,
   fetchHealth,
 }: PracticeProps) {
   const sessionTraining = trainingOf(server.activity);
@@ -471,6 +498,7 @@ export function Practice({
           fetchProgress={fetchProgress}
           fetchRepertoires={fetchRepertoires}
           fetchRepertoireList={fetchRepertoireList}
+          fetchOpeningDrills={fetchOpeningDrills}
           fetchHealth={fetchHealth}
           lastSession={lastSession}
         />

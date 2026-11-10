@@ -9,6 +9,7 @@ import {
   TrainingStatusSchema,
   TrainingSummarySchema,
 } from "./activity.js";
+import { MAX_OPENING_FAMILY_LENGTH } from "./openings.js";
 import { RepertoireLevelSchema, RepertoireScopeSchema } from "./repertoires.js";
 
 // The wire contract between server and browser. Every frame is validated on arrival by the side
@@ -144,6 +145,7 @@ export const ErrorCodeSchema = z.enum([
   "not_exploring",
   "illegal_exploration",
   "no_paused_training",
+  "unknown_opening",
   "engine_unavailable",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
@@ -300,13 +302,16 @@ export const UndoCommandSchema = z.object({
 });
 
 // A repertoire drill names its repertoire and scope, and a level that widens it to that repertoire's
-// group or side; without one it drills that variation alone. The other modes ignore all three.
+// group or side; without one it drills that variation alone. The other modes ignore all three. An
+// opening drill may name one opening family of its colour, or UNNAMED_OPENING for the positions with
+// no name; without one it drills every position of the colour. The other modes ignore `opening`.
 export const StartTrainingCommandSchema = z.object({
   type: z.literal("start_training"),
   command_id: commandId,
   mode: TrainingModeSchema,
   motif: z.string().min(1).max(64).optional(),
   color: z.enum(["white", "black"]).optional(),
+  opening: z.string().min(1).max(MAX_OPENING_FAMILY_LENGTH).optional(),
   size: z.union([z.literal(5), z.literal(10), z.literal(20)]).optional(),
   repertoire_id: z.number().int().positive().optional(),
   scope: RepertoireScopeSchema.optional(),

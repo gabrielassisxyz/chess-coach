@@ -327,6 +327,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
           mode: command.mode,
           ...(command.motif === undefined ? {} : { motif: command.motif }),
           ...(command.color === undefined ? {} : { color: command.color }),
+          ...(command.opening === undefined ? {} : { opening: command.opening }),
           ...(command.size === undefined ? {} : { size: command.size }),
           ...(command.repertoire_id === undefined ? {} : { repertoireId: command.repertoire_id }),
           ...(command.scope === undefined ? {} : { scope: command.scope }),
