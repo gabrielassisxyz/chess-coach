@@ -1,11 +1,14 @@
-import type {
-  ActivityState,
-  DemoActivity,
-  MetOpening,
-  PausedTraining,
-  RepertoireSummary,
-  RepertoiresResponse,
-  TrainingActivity,
+import {
+  type ActivityState,
+  type DemoActivity,
+  type MetOpening,
+  type OpeningDrill,
+  type OpeningDrillsResponse,
+  type PausedTraining,
+  type RepertoireSummary,
+  type RepertoiresResponse,
+  type TrainingActivity,
+  UNNAMED_OPENING,
 } from "@chess-coach/shared";
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -279,24 +282,6 @@ describe("the hub", () => {
     });
   });
 
-  it("drills the openings per colour from the motif counts, disabling a colour with none", async () => {
-    const server = api(null);
-    render(<Practice server={server} {...hubProps} />);
-    const card = await screen.findByRole("region", { name: "Openings" });
-    expect(within(card).getByText("Common positions")).toBeTruthy();
-    await within(card).findByText("12 positions");
-    expect(
-      (within(card).getByRole("button", { name: "Drill as Black" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    fireEvent.click(within(card).getByRole("button", { name: "Drill as White" }));
-    expect(server.send).toHaveBeenCalledWith({
-      type: "start_training",
-      mode: "openings",
-      color: "white",
-      size: 10,
-    });
-  });
-
   it("shows the Italian row with its count and starts it as a puzzles drill", async () => {
     const server = api(null);
     const motifs = async () => [
@@ -370,7 +355,7 @@ describe("a hub with a problem", () => {
     render(<Practice server={api(null)} {...hubProps} fetchHealth={fetchHealth} />);
     const card = await screen.findByRole("alert", { name: "Engine missing" });
     expect(card.textContent).toContain("Stockfish isn't running");
-    for (const name of ["Review 4 cards", "Start any motif", "Drill as White", "Drill as Black"]) {
+    for (const name of ["Review 4 cards", "Start any motif"]) {
       const button = await screen.findByRole("button", { name });
       expect((button as HTMLButtonElement).disabled).toBe(true);
     }
@@ -1783,5 +1768,324 @@ describe("the variation of the move in play", () => {
       />,
     );
     expect(screen.queryByTestId("item-variation")).toBeNull();
+  });
+});
+
+const drill = (
+  opening: string,
+  positions: number,
+  attempts = 0,
+  firstTry = 0,
+  repertoireId: number | null = null,
+): OpeningDrill => ({
+  opening,
+  positions,
+  attempts_30d: attempts,
+  first_try_30d: firstTry,
+  repertoire_id: repertoireId,
+});
+
+const readyDrills = (value: OpeningDrillsResponse) => ({ status: "ready" as const, value });
+
+// Italian Game has a menu, Scandinavian Defense was met in games and has none yet, and the rest have
+// neither. The student also plays the Sicilian as Black, and each colour has positions with no name.
+const gameDrills: OpeningDrillsResponse = {
+  white: [
+    drill("Italian Game", 12, 3, 2, 3),
+    drill("Sicilian Defense", 9, 6, 4),
+    drill("Scandinavian Defense", 4),
+    drill(UNNAMED_OPENING, 5, 2, 1),
+  ],
+  black: [drill("Sicilian Defense", 8, 4, 1), drill(UNNAMED_OPENING, 2)],
+};
+
+const blackOpenings = (): Promise<HTMLElement> =>
+  screen.findByRole("region", { name: "Black openings" });
+
+function renderDrills(props: Partial<PracticeHubProps> = {}) {
+  const onStartOpening = vi.fn();
+  renderHub({
+    openingDrills: readyDrills(gameDrills),
+    onStartOpening,
+    fetchRepertoireList: async () => listing([scandinavian]),
+    ...props,
+  });
+  return onStartOpening;
+}
+
+const plainRows = async (white: HTMLElement, side = "White"): Promise<HTMLElement[]> =>
+  within(
+    await within(white).findByRole("list", { name: `Positions from your games as ${side}` }),
+  ).getAllByRole("listitem");
+
+describe("the opening drills from your games", () => {
+  it("shows an opening once: in its menu, on its row of games met, or on a row of its own", async () => {
+    renderDrills();
+    const white = await whiteOpenings();
+    const [sicilian, other] = (await plainRows(white)) as [HTMLElement, HTMLElement];
+
+    // Italian Game has a menu, so its drill is a line there and no row of its own.
+    const italian = within(white)
+      .getByRole("heading", { name: "Italian Game" })
+      .closest(".repertoire-menu__opening") as HTMLElement;
+    expect(within(italian).getByText("Positions from your games (12)")).toBeTruthy();
+    expect(within(italian).getByText("67% · 2 of 3")).toBeTruthy();
+    expect(within(white).getAllByText("Italian Game")).toHaveLength(1);
+
+    // Scandinavian Defense was met in games and has no menu: its drill joins that row.
+    const met = within(white).getByRole("list", { name: "Openings met in your games" });
+    const metRow = within(met).getByRole("listitem");
+    expect(within(metRow).getByText("Scandinavian Defense")).toBeTruthy();
+    expect(within(metRow).getByText("Positions from your games (4)")).toBeTruthy();
+    expect(within(white).getAllByText("Scandinavian Defense")).toHaveLength(1);
+
+    // The others have a row each, the unnamed positions last.
+    expect(within(sicilian).getByText("Sicilian Defense")).toBeTruthy();
+    expect(within(sicilian).getByText("9 positions")).toBeTruthy();
+    expect(within(sicilian).getByText("67% · 4 of 6")).toBeTruthy();
+    expect(within(other).getByText("Other positions")).toBeTruthy();
+    expect(within(other).getByText("5 positions")).toBeTruthy();
+    expect(within(other).getByText("50% · 1 of 2")).toBeTruthy();
+    expect(within(white).getAllByText("Sicilian Defense")).toHaveLength(1);
+    expect(await plainRows(white)).toHaveLength(2);
+  });
+
+  it("lists Black's families under a Black openings heading, apart from White's", async () => {
+    renderDrills();
+    const black = await blackOpenings();
+    expect(within(black).getByRole("heading", { name: "Black openings" })).toBeTruthy();
+    const [sicilian, other] = (await plainRows(black, "Black")) as [HTMLElement, HTMLElement];
+    expect(within(sicilian).getByText("Sicilian Defense")).toBeTruthy();
+    expect(within(sicilian).getByText("8 positions")).toBeTruthy();
+    expect(within(sicilian).getByText("25% · 1 of 4")).toBeTruthy();
+    expect(within(other).getByText("Other positions")).toBeTruthy();
+    expect(within(other).getByText("2 positions")).toBeTruthy();
+    // The Sicilian appears once in each colour, and Black has no menu to hold it.
+    expect(within(black).getAllByText("Sicilian Defense")).toHaveLength(1);
+    expect(within(black).queryByRole("heading", { name: "Italian Game" })).toBeNull();
+  });
+
+  it("shows a family with no attempt in the last 30 days with its positions and no rate", async () => {
+    renderDrills();
+    const white = await whiteOpenings();
+    const black = await blackOpenings();
+    const [, blackOther] = (await plainRows(black, "Black")) as [HTMLElement, HTMLElement];
+    expect(within(blackOther).getByText("2 positions")).toBeTruthy();
+    expect(blackOther.textContent).not.toContain("%");
+    const metRow = within(
+      within(white).getByRole("list", { name: "Openings met in your games" }),
+    ).getByRole("listitem");
+    const metLine = within(metRow).getByText("Positions from your games (4)").parentElement;
+    expect(metLine?.textContent).not.toContain("%");
+    expect(within(metRow).getByText("3 games")).toBeTruthy();
+  });
+
+  it("starts the drill of the family whose button is pressed", async () => {
+    const onStartOpening = renderDrills();
+    const white = await whiteOpenings();
+    await plainRows(white);
+    for (const name of [
+      "Drill Italian Game as White",
+      "Drill Scandinavian Defense as White",
+      "Drill Sicilian Defense as White",
+      "Drill other positions as White",
+    ]) {
+      fireEvent.click(within(white).getByRole("button", { name }));
+    }
+    const black = await blackOpenings();
+    fireEvent.click(within(black).getByRole("button", { name: "Drill Sicilian Defense as Black" }));
+    fireEvent.click(within(black).getByRole("button", { name: "Drill other positions as Black" }));
+    expect(onStartOpening.mock.calls).toEqual([
+      ["white", "Italian Game"],
+      ["white", "Scandinavian Defense"],
+      ["white", "Sicilian Defense"],
+      ["white", UNNAMED_OPENING],
+      ["black", "Sicilian Defense"],
+      ["black", UNNAMED_OPENING],
+    ]);
+  });
+
+  it("marks the drill that is starting and holds every other start until it has", async () => {
+    renderDrills({ starting: { mode: "openings", motif: "white", opening: "Sicilian Defense" } });
+    const white = await whiteOpenings();
+    await plainRows(white);
+    const mine = within(white).getByRole("button", { name: "Starting Sicilian Defense as White" });
+    expect(mine.textContent).toBe("Starting");
+    for (const button of within(white).getAllByRole("button", { name: /^Drill / })) {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+    }
+    // The same family as Black is another drill, so it is not the one starting.
+    const black = await blackOpenings();
+    expect(
+      within(black).getByRole("button", { name: "Drill Sicilian Defense as Black" }),
+    ).toBeTruthy();
+  });
+
+  it("disables the starts while the engine is missing", async () => {
+    renderDrills({ engineMissing: true });
+    const white = await whiteOpenings();
+    await plainRows(white);
+    const buttons = [
+      ...within(white).getAllByRole("button", { name: /^Drill / }),
+      ...within(await blackOpenings()).getAllByRole("button", { name: /^Drill / }),
+    ];
+    // The Italian line, the Scandinavian row of games met and two rows of White, then two of Black.
+    expect(buttons).toHaveLength(6);
+    for (const button of buttons) expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("lists the drills of the openings met in games as rows of their own while that list is unread", async () => {
+    renderDrills({
+      fetchRepertoireList: async (): Promise<RepertoiresResponse> => {
+        throw new Error("down");
+      },
+    });
+    const white = await whiteOpenings();
+    const rows = await plainRows(white);
+    // Nothing is met as far as the page knows, so Scandinavian Defense is a row like the others.
+    expect(rows).toHaveLength(3);
+    expect(within(white).getAllByText("Scandinavian Defense")).toHaveLength(1);
+  });
+
+  it("holds the rows back until the openings met in games have been read", async () => {
+    let read: (value: RepertoiresResponse) => void = noop;
+    renderDrills({
+      fetchRepertoireList: () =>
+        new Promise<RepertoiresResponse>((resolve) => {
+          read = resolve;
+        }),
+    });
+    const white = await whiteOpenings();
+    await settle();
+    expect(within(white).queryByRole("list", { name: /^Positions from your games/ })).toBeNull();
+    expect(within(white).queryByText("Positions from your games (12)")).toBeNull();
+    await act(async () => read(listing([scandinavian])));
+    expect(await plainRows(white)).toHaveLength(2);
+    expect(within(white).getByText("Positions from your games (12)")).toBeTruthy();
+  });
+
+  it("puts the drills of a colour with no stored opening in a card of their own", async () => {
+    renderDrills({ repertoires: { status: "ready", value: [] } });
+    const white = await whiteOpenings();
+    expect(within(white).getByText(/No opening is stored yet/)).toBeTruthy();
+    const rows = await plainRows(white);
+    expect(rows).toHaveLength(4);
+    expect(screen.getAllByRole("region", { name: "White openings" })).toHaveLength(1);
+    expect(within(white).getAllByText("Italian Game")).toHaveLength(1);
+  });
+
+  it("lists no drill until they are read, and says so when they could not be", async () => {
+    const fetchRepertoireList = async () => listing([]);
+    renderHub({ openingDrills: { status: "loading" }, onStartOpening: noop, fetchRepertoireList });
+    const white = await whiteOpenings();
+    await settle();
+    expect(within(white).queryByRole("list", { name: /^Positions from your games/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Black openings" })).toBeNull();
+    cleanup();
+
+    renderHub({ openingDrills: { status: "failed" }, onStartOpening: noop, fetchRepertoireList });
+    const openings = await screen.findByRole("region", { name: "Openings" });
+    expect(within(openings).getByRole("status").textContent).toBe(
+      "The positions from your games could not be loaded. Reload the page to try again.",
+    );
+    expect(screen.queryByRole("region", { name: "Black openings" })).toBeNull();
+  });
+
+  it("offers the colours no row of the whole drill, only the families", async () => {
+    renderDrills();
+    await plainRows(await whiteOpenings());
+    expect(screen.queryByRole("button", { name: /^Drill as / })).toBeNull();
+    expect(screen.queryByText("Common positions")).toBeNull();
+  });
+});
+
+describe("starting an opening drill from the screen", () => {
+  const readDrills = async () => gameDrills;
+
+  it("sends the colour, the family and the drill size", async () => {
+    const server = api(null);
+    render(
+      <Practice
+        server={server}
+        {...hubProps}
+        fetchRepertoires={async () => repertoireList}
+        fetchRepertoireList={async () => listing([scandinavian])}
+        fetchOpeningDrills={readDrills}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "20" }));
+    // The loading card is replaced once the list has loaded, so the menu is found by what it holds.
+    await screen.findByRole("heading", { name: "Italian Game" });
+    const white = screen.getByRole("region", { name: "White openings" });
+    await plainRows(white);
+    fireEvent.click(within(white).getByRole("button", { name: "Drill Sicilian Defense as White" }));
+    expect(server.send).toHaveBeenLastCalledWith({
+      type: "start_training",
+      mode: "openings",
+      color: "white",
+      opening: "Sicilian Defense",
+      size: 20,
+    });
+  });
+
+  it("sends the unnamed entry of a colour as UNNAMED_OPENING, at the default size", async () => {
+    const server = api(null);
+    render(
+      <Practice
+        server={server}
+        {...hubProps}
+        fetchRepertoires={async () => repertoireList}
+        fetchRepertoireList={async () => listing([scandinavian])}
+        fetchOpeningDrills={readDrills}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Italian Game" });
+    fireEvent.click(
+      within(await blackOpenings()).getByRole("button", { name: "Drill other positions as Black" }),
+    );
+    expect(server.send).toHaveBeenCalledTimes(1);
+    expect(server.send).toHaveBeenCalledWith({
+      type: "start_training",
+      mode: "openings",
+      color: "black",
+      opening: UNNAMED_OPENING,
+      size: 10,
+    });
+  });
+
+  it("tells the student to reload when the opening is no longer in the drill", async () => {
+    const server = api(null);
+    const props = {
+      ...hubProps,
+      fetchRepertoires: async () => repertoireList,
+      fetchRepertoireList: async () => listing([scandinavian]),
+      fetchOpeningDrills: readDrills,
+    };
+    const view = render(<Practice server={server} {...props} />);
+    // The loading card is replaced once the list has loaded, so the menu is found by what it holds.
+    await screen.findByRole("heading", { name: "Italian Game" });
+    const white = screen.getByRole("region", { name: "White openings" });
+    await plainRows(white);
+    fireEvent.click(within(white).getByRole("button", { name: "Drill Sicilian Defense as White" }));
+    expect(
+      within(white).getByRole("button", { name: "Starting Sicilian Defense as White" }),
+    ).toBeTruthy();
+
+    const refused: ServerApi = {
+      ...server,
+      errorCount: 1,
+      lastErrorCode: "unknown_opening",
+      lastError: "no white opening drill is named Sicilian Defense",
+    };
+    view.rerender(<Practice server={refused} {...props} />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(
+      "That opening has no positions to drill any more. Reload the page to see the current list.",
+    );
+    expect(
+      within(await whiteOpenings()).getByRole("button", {
+        name: "Drill Sicilian Defense as White",
+      }),
+    ).toBeTruthy();
   });
 });

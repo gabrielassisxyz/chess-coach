@@ -1,4 +1,6 @@
 import type {
+  OpeningDrillColor,
+  OpeningDrillsResponse,
   PausedTraining,
   ProgressResponse,
   RepertoireLevel,
@@ -8,6 +10,7 @@ import type {
 } from "@chess-coach/shared";
 import { type ReactNode, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
+import type { OpeningDrillControls } from "../state/openings-api.js";
 import {
   DRILL_SIZES,
   type DrillSize,
@@ -20,7 +23,6 @@ import {
   motifRows,
   NONE,
   nextBatchParts,
-  openingCount,
   percent,
   resumeLabelOf,
 } from "../state/practice.js";
@@ -41,18 +43,23 @@ export interface PracticeHubProps {
   repertoires: Loaded<RepertoireSummary[]>;
   engineMissing: boolean;
   // A repertoire start carries its scope in `motif`, names its repertoire and, above one
-  // variation, its level.
+  // variation, its level. An opening drill carries its colour in `motif` and the family it drills.
   starting: {
     mode: TrainingMode;
     motif: string;
     repertoireId?: number;
     level?: RepertoireLevel | undefined;
+    opening?: string | undefined;
   } | null;
   failure: string | null;
   size: DrillSize;
   onSize(size: DrillSize): void;
   onStart(mode: TrainingMode, motif: string): void;
   onStartRepertoire(repertoireId: number, scope: RepertoireScope, level?: RepertoireLevel): void;
+  // The drills from the student's games, grouped by opening, and what starts one of them. Without
+  // them, or until they are read, the hub lists none.
+  openingDrills?: Loaded<OpeningDrillsResponse> | undefined;
+  onStartOpening?: ((color: OpeningDrillColor, opening: string) => void) | undefined;
   now?: Date;
   lastSession?: LastSession | null;
   // The openings met in games and the call that builds a drill for one; the server's by default.
@@ -70,8 +77,6 @@ interface StartProps {
   idle: string;
   disabled?: boolean;
 }
-
-const sideName = (color: "white" | "black"): string => (color === "white" ? "White" : "Black");
 
 function motifNote(motifs: Loaded<MotifCount[]>): string | null {
   if (motifs.status === "loading") return "Loading motifs.";
@@ -109,6 +114,21 @@ function ItalianRow({
       {empty ? <span className="practice__card-note">Generate the Italian drill first</span> : null}
     </div>
   );
+}
+
+// The controls of the drills from the student's games, once they are read and something can start them.
+function drillControlsOf(props: PracticeHubProps): OpeningDrillControls | undefined {
+  const { openingDrills, onStartOpening, starting, engineMissing } = props;
+  if (openingDrills?.status !== "ready" || !onStartOpening) return undefined;
+  const mine = starting?.mode === "openings" && starting.opening !== undefined;
+  return {
+    drills: openingDrills.value,
+    engineMissing,
+    starting: mine
+      ? { color: starting.motif as OpeningDrillColor, opening: starting.opening as string }
+      : null,
+    onStart: onStartOpening,
+  };
 }
 
 export function PracticeHub(props: PracticeHubProps) {
@@ -217,32 +237,16 @@ export function PracticeHub(props: PracticeHubProps) {
         addOpening={props.addOpening}
         addVariation={props.addVariation}
         fetchCoverage={props.fetchCoverage}
+        openingDrills={drillControlsOf(props)}
       />
 
       <section className="practice__card" aria-label="Openings">
         <h3 className="practice__card-title">Openings</h3>
-        <p className="practice__card-note">
-          Best move in the positions that actually occur in your games
-        </p>
-        <p className="practice__card-note">Common positions</p>
-        {(["white", "black"] as const).map((color) => {
-          const count = openingCount(counts, color);
-          const known = motifs.status === "ready";
-          return (
-            <div className="practice__opening" key={color}>
-              <span className="practice__opening-side">As {sideName(color)}</span>
-              <span className="practice__opening-count">
-                {known ? (count === 0 ? NONE : `${count} positions`) : ""}
-              </span>
-              {startButton({
-                mode: "openings",
-                motif: color,
-                idle: `Drill as ${sideName(color)}`,
-                disabled: known && count === 0,
-              })}
-            </div>
-          );
-        })}
+        {props.openingDrills?.status === "failed" ? (
+          <p className="practice__card-note" role="status">
+            The positions from your games could not be loaded. Reload the page to try again.
+          </p>
+        ) : null}
         <p className="practice__card-note">Italian Opening</p>
         <ItalianRow counts={counts} known={motifs.status === "ready"} startButton={startButton} />
         {engineMissing ? <p className="practice__card-note">{NEEDS_ENGINE}</p> : null}
