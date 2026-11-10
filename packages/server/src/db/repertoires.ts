@@ -499,3 +499,31 @@ export function repertoireHoldsMovesBeyondSetup(db: Database, repertoireId: numb
       .get(repertoireId) !== undefined
   );
 }
+
+/** A unit and the line it is rooted at, as UCI moves from the first ply. */
+export interface RepertoireUnitRoot {
+  repertoire: RepertoireRow;
+  root: string[];
+}
+
+/**
+ * The units of a side that games can be compared with, oldest first, each with its setup rows as the
+ * root. A run cut short at the start stores only the start of its root, which would claim every game
+ * that begins the same way, so a unit counts once a run got past its setup. A unit with no setup row
+ * has no root to match.
+ */
+export function listRepertoireUnitRoots(db: Database, side: RepertoireSide): RepertoireUnitRoot[] {
+  const units = db
+    .prepare("SELECT * FROM repertoires WHERE side = ? ORDER BY id")
+    .all(side) as RepertoireRow[];
+  const setup = db.prepare(
+    "SELECT move_uci FROM repertoire_positions WHERE repertoire_id = ? AND source = 'setup' ORDER BY ply",
+  );
+  return units.flatMap((repertoire) => {
+    if (!repertoireHoldsMovesBeyondSetup(db, repertoire.id)) return [];
+    const root = (setup.all(repertoire.id) as Array<{ move_uci: string }>).map(
+      (row) => row.move_uci,
+    );
+    return root.length === 0 ? [] : [{ repertoire, root }];
+  });
+}

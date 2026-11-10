@@ -6,6 +6,7 @@ import type { Database } from "../db/open.js";
 import { rateRepertoireCardFromGame } from "../db/repertoire-cards.js";
 import {
   findFirstRepertoireVariation,
+  listRepertoireUnitRoots,
   type RepertoireRow,
   repertoireCounts,
 } from "../db/repertoires.js";
@@ -31,9 +32,11 @@ import {
   type GameVerdict,
   type GameWalk,
   gameVerdictOf,
+  type RootedUnit,
   repertoireLookupOf,
   repertoireStartPly,
   walkGameAgainstRepertoire,
+  walkLongestFollowedUnit,
 } from "./repertoire-review-walk.js";
 
 /** The `source` of every position a played game added, so they can be told from generated ones. */
@@ -64,6 +67,8 @@ export interface GameReviewDeps {
 
 export interface GameReviewResult {
   gameId: number;
+  /** The unit the game was compared with, and the one its review row names. */
+  repertoireId: number;
   outcome: GameReviewOutcome;
   /** Cards rated as passed. */
   passed: number;
@@ -100,12 +105,25 @@ interface GameReviewPlan {
   notification: RepertoireReviewNotification | null;
 }
 
+/** The reviews of games against one unit. */
 interface GameReviewRun {
   deps: GameReviewDeps;
   variation: RepertoireRow;
   sources: GameReviewSources;
   /** The ply of the last fixed move: a game that makes it has reached the variation. */
   startPly: number;
+}
+
+interface ReviewUnit extends RootedUnit {
+  run: GameReviewRun;
+}
+
+/** What a game is compared with: the units whose root it can reach, and the Italian where it reaches none. */
+interface GameReviewRoster {
+  /** Shared by every unit, so a run counts its requests and cache hits together. */
+  explorer: CachedExplorer;
+  fallback: GameReviewRun;
+  units: ReviewUnit[];
 }
 
 function planOfVerdict(
@@ -163,8 +181,8 @@ async function planGameReview(
   run: GameReviewRun,
   game: GameRecord,
   moves: readonly MoveRecord[],
+  walk: GameWalk,
 ): Promise<GameReviewPlan> {
-  const walk = walkGameAgainstRepertoire(moves, run.sources.lookup);
   const verdict = gameVerdictOf(walk, run.startPly);
   const plan = planOfVerdict(run, walk, verdict, moves);
   const addition =
@@ -312,6 +330,7 @@ function writeGameReview(
     const notified = writeNotification(run, plan, now);
     return {
       gameId: game.id,
+      repertoireId: run.variation.id,
       outcome: plan.outcome,
       passed: plan.passes.length,
       failed: plan.failure ? 1 : 0,
@@ -321,21 +340,28 @@ function writeGameReview(
   })();
 }
 
-// Compares one graded game with the repertoire and applies what it shows, once: the student's
+// Compares one graded game with the unit it reached and applies what it shows, once: the student's
 // moves that match are rated as passed, the move they replaced is rated as failed, and a Black
-// reply the repertoire lacks is stored with White's answer. Null when it was reviewed before.
+// reply the unit lacks is stored with White's answer. Only the unit chosen is planned and written:
+// choosing is a walk over stored rows, where a plan asks the explorer and the engine. A game that
+// reaches no unit's root is written against the Italian, as not reached. Null when it was reviewed
+// before, which keeps the row of a game graded before its unit existed as it was.
 async function reviewGameWithin(
-  run: GameReviewRun,
+  roster: GameReviewRoster,
   gameId: number,
 ): Promise<GameReviewResult | null> {
-  const game = getGame(run.deps.db, gameId);
-  if (!game || isGameReviewed(run.deps.db, gameId)) return null;
-  const moves = listMoves(run.deps.db, gameId);
-  const plan =
-    game.playerColor === run.variation.side
-      ? await planGameReview(run, game, moves)
-      : otherSidePlan();
-  return writeGameReview(run, game, plan);
+  const { fallback } = roster;
+  const { db } = fallback.deps;
+  const game = getGame(db, gameId);
+  if (!game || isGameReviewed(db, gameId)) return null;
+  if (game.playerColor !== fallback.variation.side) {
+    return writeGameReview(fallback, game, otherSidePlan());
+  }
+  const moves = listMoves(db, gameId);
+  const chosen = walkLongestFollowedUnit(moves, roster.units);
+  const run = chosen?.unit.run ?? fallback;
+  const walk = chosen?.walk ?? walkGameAgainstRepertoire(moves, run.sources.lookup);
+  return writeGameReview(run, game, await planGameReview(run, game, moves, walk));
 }
 
 // Games the grader finished and the review has not seen. A game played on the Play tab is born
@@ -381,21 +407,28 @@ function tally(summary: GameReviewSummary, result: GameReviewResult): void {
   if (result.notified) summary.notified += 1;
 }
 
-// Nothing to compare with until the generator has stored a variation and its first move.
-function beginRun(deps: GameReviewDeps): GameReviewRun | null {
-  const variation = findFirstRepertoireVariation(deps.db, "white", REPERTOIRE_GROUP_ITALIAN);
-  if (!variation || repertoireCounts(deps.db, variation.id).total === 0) return null;
-  return {
+// Nothing to compare with until the generator has stored the Italian and its first move: it is where
+// a game that reaches no other unit is written, and the games the Black side plays.
+function beginRun(deps: GameReviewDeps): GameReviewRoster | null {
+  const italian = findFirstRepertoireVariation(deps.db, "white", REPERTOIRE_GROUP_ITALIAN);
+  if (!italian || repertoireCounts(deps.db, italian.id).total === 0) return null;
+  const explorer = new CachedExplorer(deps.fetcher, deps.cacheDir, deps.explorerClock);
+  const runOf = (variation: RepertoireRow): GameReviewRun => ({
     deps,
     variation,
     sources: {
-      explorer: new CachedExplorer(deps.fetcher, deps.cacheDir, deps.explorerClock),
+      explorer,
       engine: deps.engine,
       names: deps.names,
       lookup: repertoireLookupOf(deps.db, variation.id),
     },
     startPly: repertoireStartPly(deps.db, variation.id),
-  };
+  });
+  const units = listRepertoireUnitRoots(deps.db, "white").map(({ repertoire, root }) => {
+    const run = runOf(repertoire);
+    return { id: repertoire.id, root, lookup: run.sources.lookup, run };
+  });
+  return { explorer, fallback: runOf(italian), units };
 }
 
 /** Reviews one game; null when it was reviewed before or the repertoire is not built yet. */
@@ -403,8 +436,8 @@ export async function reviewRepertoireGame(
   deps: GameReviewDeps,
   gameId: number,
 ): Promise<GameReviewResult | null> {
-  const run = beginRun(deps);
-  const result = run ? await reviewGameWithin(run, gameId) : null;
+  const roster = beginRun(deps);
+  const result = roster ? await reviewGameWithin(roster, gameId) : null;
   if (result?.notified) deps.onNotification?.();
   return result;
 }
@@ -414,7 +447,7 @@ function summaryFields(summary: GameReviewSummary, explorer: CachedExplorer) {
   return {
     reviewed: summary.reviewed,
     ...outcomes,
-    // How many of the games that could reach the Italian did, whichever way they then went.
+    // How many of the games that could reach a unit did, whichever way they then went.
     reached_start:
       outcomes.in_book + outcomes.departed + outcomes.reply_added + outcomes.reply_not_stored,
     passed_moves: summary.passedMoves,
@@ -434,18 +467,19 @@ function summaryFields(summary: GameReviewSummary, explorer: CachedExplorer) {
 export async function reviewRepertoireGames(deps: GameReviewDeps): Promise<GameReviewSummary> {
   const log = deps.log ?? silentLog;
   const summary = emptySummary();
-  const run = beginRun(deps);
-  if (!run) {
+  const roster = beginRun(deps);
+  if (!roster) {
     log.info("repertoire.review_skipped", { reason: "no_repertoire" });
     return summary;
   }
   for (const gameId of listGamesToReview(deps.db)) {
     try {
-      const result = await reviewGameWithin(run, gameId);
+      const result = await reviewGameWithin(roster, gameId);
       if (!result) continue;
       tally(summary, result);
       log.info("repertoire.game_reviewed", {
         game_id: gameId,
+        repertoire_id: result.repertoireId,
         outcome: result.outcome,
         passed_moves: result.passed,
         failed_moves: result.failed,
@@ -456,7 +490,7 @@ export async function reviewRepertoireGames(deps: GameReviewDeps): Promise<GameR
       log.error("repertoire.review_failed", error, { game_id: gameId });
     }
   }
-  log.info("repertoire.review", summaryFields(summary, run.sources.explorer));
+  log.info("repertoire.review", summaryFields(summary, roster.explorer));
   if (summary.notified > 0) deps.onNotification?.();
   return summary;
 }
