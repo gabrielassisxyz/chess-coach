@@ -3,13 +3,14 @@ import type {
   CoveragePosition,
   CoverageReply,
   CoverageScores,
+  CoverageSource,
   CoverageStatus,
   RepertoireCoverage,
 } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import type { Database } from "../db/open.js";
 import { findDrillRepertoire } from "../db/repertoire-cards.js";
-import type { RepertoireMoveSource, RepertoireResultCounts } from "../db/repertoires.js";
+import type { RepertoireResultCounts } from "../db/repertoires.js";
 import { applyUci } from "../engine/moves.js";
 import { EXPLORER_BAND_LABEL } from "./explorer-client.js";
 import { MIN_POSITION_GAMES } from "./from-explorer.js";
@@ -41,7 +42,7 @@ interface StoredReply {
   uci: string;
   san: string;
   reach: number;
-  source: RepertoireMoveSource;
+  source: CoverageSource;
 }
 
 interface StoredTree {
@@ -59,7 +60,8 @@ interface StoredRowSql {
   move_uci: string;
   move_san: string;
   reach: number;
-  source: RepertoireMoveSource;
+  // The generator's union lacks 'game', which the game review writes with SQL of its own.
+  source: CoverageSource;
   cp_loss: number | null;
   wins: number | null;
   draws: number | null;
@@ -136,7 +138,12 @@ function statusOf(next: number | null, incidence: number): CoverageStatus {
 
 interface WalkNode {
   own: StoredOwn;
+  /** The move before this one on the likeliest line that reaches it; null for the first move. */
   parent: number | null;
+  /** The chance of the reply through which `parent` leads here. */
+  parentReach: number;
+  /** The position after White's move, where Black's replies are stored; null if the move no longer plays. */
+  afterWhite: string | null;
   /** Centipawns conceded beyond the allowance by White's moves from move 1 through this one. */
   concession: number;
   replies: CoverageReply[];
@@ -153,31 +160,46 @@ interface Answer {
   finished: boolean;
 }
 
+interface WalkEdge {
+  from: number;
+  to: number;
+  reach: number;
+}
+
 const orderedByIncidence = (replies: readonly StoredReply[]): StoredReply[] =>
   [...replies].sort((a, b) => b.reach - a.reach || a.id - b.id);
 
 // Walks the stored moves from the first one, in the order a student would meet them. A position
-// reached by two move orders is walked once, by the first the walk meets, and the other reply
-// points at it; the same goes for a way back to a position the walk is still inside.
+// reached by two move orders is walked once, and the other reply points at it; the same goes for a
+// way back to a position the walk is still inside. Each position then takes its parent, and so its
+// concession, from the likeliest line that reaches it, which is the line the generator keeps for it.
 class StoredTreeWalk {
   private readonly nodes: WalkNode[] = [];
+  private readonly edges: WalkEdge[] = [];
   private readonly indexOf = new Map<number, number>();
   private readonly insideNow = new Set<number>();
+  private readonly conceded = new Map<number, number>();
 
   constructor(private readonly tree: StoredTree) {}
 
   run(): WalkNode[] {
     const first = this.tree.ownAt.get(START_KEY);
-    if (first) this.visit(first, null, 0);
+    if (!first) return this.nodes;
+    this.visit(first, null, 1);
+    this.adoptLikeliestParents();
+    for (const index of this.nodes.keys()) this.concessionAt(index);
     return this.nodes;
   }
 
-  private visit(own: StoredOwn, parent: number | null, conceded: number): number {
+  private visit(own: StoredOwn, parent: number | null, viaReach: number): number {
     const index = this.nodes.length;
+    const afterWhite = keyAfter(own.positionKey, own.uci);
     const node: WalkNode = {
       own,
       parent,
-      concession: conceded + Math.max(0, own.cpLoss - CONCESSION_ALLOWANCE_CP),
+      parentReach: viaReach,
+      afterWhite,
+      concession: 0,
       replies: [],
       answered: [],
       lineEnd: false,
@@ -186,7 +208,6 @@ class StoredTreeWalk {
     this.nodes.push(node);
     this.indexOf.set(own.id, index);
     this.insideNow.add(own.id);
-    const afterWhite = keyAfter(own.positionKey, own.uci);
     if (afterWhite !== null) this.visitReplies(node, index, afterWhite);
     this.insideNow.delete(own.id);
     this.settle(node);
@@ -195,24 +216,21 @@ class StoredTreeWalk {
 
   private visitReplies(node: WalkNode, index: number, afterWhite: string): void {
     for (const reply of orderedByIncidence(this.tree.repliesAt.get(afterWhite) ?? [])) {
-      const answer = this.answerTo(afterWhite, reply, index, node.concession);
+      const answer = this.answerTo(afterWhite, reply, index);
       node.replies.push(coverageReplyOf(reply, answer?.index ?? null));
-      if (answer?.finished) node.answered.push(answer.index);
+      if (!answer?.finished) continue;
+      node.answered.push(answer.index);
+      this.edges.push({ from: index, to: answer.index, reach: reply.reach });
     }
   }
 
-  private answerTo(
-    afterWhite: string,
-    reply: StoredReply,
-    from: number,
-    conceded: number,
-  ): Answer | null {
+  private answerTo(afterWhite: string, reply: StoredReply, from: number): Answer | null {
     const key = keyAfter(afterWhite, reply.uci);
     const answer = key === null ? undefined : this.tree.ownAt.get(key);
     if (!answer) return null;
     const known = this.indexOf.get(answer.id);
     if (known !== undefined) return { index: known, finished: !this.insideNow.has(answer.id) };
-    return { index: this.visit(answer, from, conceded), finished: true };
+    return { index: this.visit(answer, from, reply.reach), finished: true };
   }
 
   // A line ends at the deepest White move whose position has enough games. This move is that end
@@ -223,6 +241,35 @@ class StoredTreeWalk {
       node.answered.length === 0 || node.answered.some((index) => this.nodes[index]?.weakToEnd);
     node.lineEnd = enough && reachesEnd;
     node.weakToEnd = !enough && reachesEnd;
+  }
+
+  private adoptLikeliestParents(): void {
+    for (const edge of this.edges) {
+      const child = this.nodes[edge.to];
+      if (!child || child.parent === null || edge.reach <= child.parentReach) continue;
+      if (this.isOnLineTo(edge.from, edge.to)) continue;
+      child.parent = edge.from;
+      child.parentReach = edge.reach;
+    }
+  }
+
+  // Whether `move` is `index` or one of the moves before it, so that taking `index` as its parent
+  // would make the line loop.
+  private isOnLineTo(index: number, move: number): boolean {
+    for (let at: number | null = index; at !== null; at = this.nodes[at]?.parent ?? null) {
+      if (at === move) return true;
+    }
+    return false;
+  }
+
+  private concessionAt(index: number): number {
+    const known = this.conceded.get(index);
+    const node = this.nodes[index];
+    if (known !== undefined || !node) return known ?? 0;
+    const before = node.parent === null ? 0 : this.concessionAt(node.parent);
+    node.concession = before + Math.max(0, node.own.cpLoss - CONCESSION_ALLOWANCE_CP);
+    this.conceded.set(index, node.concession);
+    return node.concession;
   }
 }
 
@@ -239,15 +286,18 @@ function coverageReplyOf(reply: StoredReply, next: number | null): CoverageReply
 
 const positionLine = (node: WalkNode): string[] => [...node.own.line, node.own.san];
 
+// Two White moves can lead to one position, and Black's replies there are stored once: a gap is
+// listed by the first move that reaches it, not once for each.
 function gapsOf(nodes: readonly WalkNode[]): CoverageGap[] {
+  const listed = new Set<string>();
   const gaps = nodes.flatMap((node, position) =>
     node.replies
       .filter((reply) => reply.status === "gap")
-      .map((reply) => ({
-        line: [...positionLine(node), reply.san],
-        incidence: reply.incidence,
-        position,
-      })),
+      .filter((reply) => !listed.has(`${node.afterWhite}|${reply.san}`))
+      .map((reply) => {
+        listed.add(`${node.afterWhite}|${reply.san}`);
+        return { line: [...positionLine(node), reply.san], incidence: reply.incidence, position };
+      }),
   );
   return gaps.sort((a, b) => b.incidence - a.incidence || a.line.length - b.line.length);
 }
@@ -325,7 +375,6 @@ function startOf(nodes: readonly WalkNode[]): number {
 function positionOf(node: WalkNode): CoveragePosition {
   return {
     line: positionLine(node),
-    incidence: clampUnit(node.own.reach),
     parent: node.parent,
     replies: node.replies,
   };

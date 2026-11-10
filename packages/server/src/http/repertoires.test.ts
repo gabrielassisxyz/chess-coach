@@ -15,7 +15,9 @@ import {
   insertRepertoireOwnMove,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
+import { UciEngine } from "../engine/uci.js";
 import { importFinishedGame } from "../import/pgn.js";
+import { CachedExplorer } from "../openings/explorer-client.js";
 import { positionKey } from "../openings/from-games.js";
 
 // The route reads the system clock, so a card is due or not by a wide margin either way.
@@ -31,6 +33,7 @@ beforeEach(() => {
   db = openDatabase(tmp);
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   db.close();
   rmSync(tmp, { recursive: true, force: true });
@@ -351,7 +354,7 @@ describe("GET /api/repertoires/:id/coverage", () => {
       largest_gap: gap,
       start: 2,
     });
-    // The lines end after 5.d4 (reach 1) and 4...Nf6 5.d3 (0.5); the gap holds 0.3: 1.5 / 1.8.
+    // The lines end after 5.d4 (reach 1) and after 3...Nf6 4.d3 (0.5); the gap holds 0.3: 1.5 / 1.8.
     expect(body.covered_percent).toBe(83.3);
     expect(body.positions[body.start]?.line).toEqual(SETUP);
   });
@@ -374,24 +377,19 @@ describe("GET /api/repertoires/:id/coverage", () => {
     }
   });
 
-  it("serves the coverage without asking the explorer, the engine, the model or the network", async () => {
+  it("serves the coverage without asking the network, the explorer or the engine", async () => {
     const id = addVariationWithGap();
-    const asked: string[] = [];
-    const refuse = (what: string) => async (): Promise<never> => {
-      asked.push(what);
-      throw new Error(`the coverage asked ${what}`);
+    const refuse = (asked: string) => (): never => {
+      throw new Error(`the coverage asked ${asked}`);
     };
-    vi.stubGlobal("fetch", () => refuse("the network")());
-    const app = buildApp({
-      db,
-      generateOpenings: refuse("the engine"),
-      generateExplorerOpenings: refuse("the explorer"),
-      generateItalianOpenings: refuse("the explorer"),
-      generateRepertoireOpenings: refuse("the explorer"),
-      generateRepertoireIdeas: refuse("the model"),
-    });
-    const response = await getCoverage(app, id);
+    const network = vi.fn(refuse("the network"));
+    vi.stubGlobal("fetch", network);
+    const explorer = vi
+      .spyOn(CachedExplorer.prototype, "position")
+      .mockImplementation(refuse("the explorer"));
+    const engine = vi.spyOn(UciEngine.prototype, "search").mockImplementation(refuse("the engine"));
+    const response = await getCoverage(buildApp({ db }), id);
     expect(response.statusCode).toBe(200);
-    expect(asked).toEqual([]);
+    expect([network, explorer, engine].map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0]);
   });
 });

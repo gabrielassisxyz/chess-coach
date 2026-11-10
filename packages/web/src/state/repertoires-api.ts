@@ -149,7 +149,7 @@ export const COVERAGE_STATUS_TEXT: Record<CoverageStatus, string> = {
   not_required: "Not required",
 };
 
-export const NO_SCORE_TEXT = "Not enough games";
+const NO_SCORE_TEXT = "Not enough games";
 
 // How often a game reaches a position, as "1 in N". The whole number stays on its own side of the
 // goal, so a position that needs no answer never reads as common as one that does; one no game is

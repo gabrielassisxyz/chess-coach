@@ -66,7 +66,8 @@ interface OwnSpec {
 
 interface ReplySpec {
   reach: number;
-  source?: RepertoireMoveSource;
+  // 'game' is what the game review writes with SQL of its own, outside the generator's union.
+  source?: RepertoireMoveSource | "game";
 }
 
 // Writes the rows a generator run leaves, one call to a row, with every number a test reads set by
@@ -114,7 +115,7 @@ class StoredVariation {
       openingName: null,
       san,
       share: spec.source === "engine" ? null : spec.reach,
-      source: spec.source ?? "explorer",
+      source: (spec.source ?? "explorer") as RepertoireMoveSource,
     });
     return this;
   }
@@ -242,6 +243,86 @@ describe("the walk of the stored moves", () => {
     ).toEqual([
       ["Nf6", "mainline", 0.008, "covered"],
       ["d6", "engine", 0, "covered"],
+    ]);
+  });
+});
+
+describe("what the walk does with rows that more than one line reaches", () => {
+  // 3...Bc5 4.c3 Nf6 5.d3 and 3...Nf6 4.d3 Bc5 5.c3 make one position, so Black's replies in it are
+  // stored once and both of White's last moves lead to them. 3...h6 4.d3 is a line of its own.
+  function whiteMoveOrders(): StoredVariation {
+    const viaC3 = [...GIUOCO, "c3", "Nf6"];
+    const viaD3 = [...TWO_KNIGHTS, "d3", "Bc5"];
+    const together = [...viaC3, "d3"];
+    return new StoredVariation()
+      .setup()
+      .reply(SETUP, "Bc5", { reach: 0.4 })
+      .reply(SETUP, "Nf6", { reach: 0.4 })
+      .reply(SETUP, "h6", { reach: 0.2 })
+      .own(GIUOCO, "c3", { reach: 0.4 })
+      .own(TWO_KNIGHTS, "d3", { reach: 0.4 })
+      .own([...SETUP, "h6"], "d3", { reach: 0.2 })
+      .reply([...GIUOCO, "c3"], "Nf6", { reach: 0.2 })
+      .reply([...TWO_KNIGHTS, "d3"], "Bc5", { reach: 0.2 })
+      .own(viaC3, "d3", { reach: 0.2 })
+      .own(viaD3, "c3", { reach: 0.2 })
+      .reply(together, "d6", { reach: 0.1 })
+      .reply(together, "a6", { reach: 0.06 });
+  }
+
+  it("lists a reply with no answer once, however many White moves lead to its position", () => {
+    const coverage = whiteMoveOrders().coverage();
+    const together = [...GIUOCO, "c3", "Nf6", "d3"];
+    expect(coverage.gaps).toEqual([
+      { line: [...together, "d6"], incidence: 0.1, position: 4 },
+      { line: [...together, "a6"], incidence: 0.06, position: 4 },
+    ]);
+    // Only 3...h6 4.d3 (0.2) is prepared; the gaps hold 0.1 + 0.06, so 0.2 / 0.36 = 55.6 percent.
+    expect(coverage.covered_percent).toBe(55.6);
+  });
+
+  it("shows the replies of that position from either line", () => {
+    const positions = whiteMoveOrders().coverage().positions;
+    const reached = positions.filter((position) => position.replies[0]?.san === "d6");
+    expect(reached.map((position) => position.line.slice(-1))).toEqual([["d3"], ["c3"]]);
+    expect(reached.map((position) => position.replies.map((reply) => reply.status))).toEqual([
+      ["gap", "gap"],
+      ["gap", "gap"],
+    ]);
+  });
+
+  it("takes the path to a position from the likelier of the lines that reach it", () => {
+    // 3...Bc5 4.c3 Nf6 and 3...Nf6 4.c3 Bc5 make one position. The walk meets the first line first,
+    // but games take the second 36 times in 100 and the first 5, and the position keeps that line.
+    // 4.c3 gives up 100 centipawns after 3...Bc5 and none after 3...Nf6.
+    const slow = [...GIUOCO, "c3"];
+    const likely = [...TWO_KNIGHTS, "c3"];
+    const stored = new StoredVariation()
+      .setup()
+      .reply(SETUP, "Bc5", { reach: 0.5 })
+      .reply(SETUP, "Nf6", { reach: 0.4 })
+      .own(GIUOCO, "c3", { reach: 0.5, cp: 100 })
+      .own(TWO_KNIGHTS, "c3", { reach: 0.4, cp: 0 })
+      .reply(slow, "Nf6", { reach: 0.05 })
+      .reply(likely, "Bc5", { reach: 0.36 })
+      .own([...likely, "Bc5"], "d3", { reach: 0.36 });
+    const coverage = stored.coverage();
+    const reached = coverage.positions.findIndex((position) => position.line.at(-1) === "d3");
+    const parent = coverage.positions[reached]?.parent ?? null;
+    expect(coverage.positions[parent ?? 0]?.line).toEqual(likely);
+    expect(coverage.positions[reached]?.line.slice(0, likely.length)).toEqual(likely);
+    expect(coverage.scores).toMatchObject({ line_ends: 1, soundness: 99 });
+  });
+
+  it("reads a reply a played game added, which the review stores under a source of its own", () => {
+    const stored = branching()
+      .reply(AFTER_C3, "d6", { reach: 0.03, source: "game" })
+      .reply(AFTER_C3, "a6", { reach: 0.025, source: "game" })
+      .own([...AFTER_C3, "d6"], "d4", { reach: 0.03 });
+    const replies = stored.coverage().positions[3]?.replies;
+    expect(replies?.map((reply) => [reply.san, reply.source, reply.status])).toEqual([
+      ["d6", "game", "covered"],
+      ["a6", "game", "gap"],
     ]);
   });
 });

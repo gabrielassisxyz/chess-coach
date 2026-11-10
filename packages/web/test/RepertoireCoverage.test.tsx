@@ -38,19 +38,16 @@ const SETUP = ["e4", "e5", "Nf3", "Nc6", "Bc4"];
 const POSITIONS: CoveragePosition[] = [
   {
     line: ["e4"],
-    incidence: 1,
     parent: null,
     replies: [reply({ san: "e5", incidence: 1, source: "setup", next: 1 })],
   },
   {
     line: ["e4", "e5", "Nf3"],
-    incidence: 1,
     parent: 0,
     replies: [reply({ san: "Nc6", incidence: 1, source: "setup", next: 2 })],
   },
   {
     line: SETUP,
-    incidence: 1,
     parent: 1,
     replies: [
       reply({ san: "Bc5", incidence: 0.4, next: 3 }),
@@ -62,7 +59,6 @@ const POSITIONS: CoveragePosition[] = [
   },
   {
     line: [...SETUP, "Bc5", "c3"],
-    incidence: 0.4,
     parent: 2,
     replies: [reply({ san: "Nf6", incidence: 0.2 })],
   },

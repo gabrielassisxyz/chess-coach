@@ -47,8 +47,9 @@ export const COVERAGE_STATUSES = ["covered", "gap", "not_required"] as const;
 export const CoverageStatusSchema = z.enum(COVERAGE_STATUSES);
 export type CoverageStatus = z.infer<typeof CoverageStatusSchema>;
 
-// How a stored reply entered the variation, as the generator names it.
-export const CoverageSourceSchema = z.enum(["setup", "explorer", "mainline", "engine"]);
+// How a stored reply entered the variation: fixed by the opening, popular in the explorer, past the
+// goal as the most played or as the engine's, or added by a game the student played.
+export const CoverageSourceSchema = z.enum(["setup", "explorer", "mainline", "engine", "game"]);
 export type CoverageSource = z.infer<typeof CoverageSourceSchema>;
 
 // One of Black's replies in a position. `incidence` is the chance a game reaches the position the
@@ -64,10 +65,9 @@ export const CoverageReplySchema = z.object({
 export type CoverageReply = z.infer<typeof CoverageReplySchema>;
 
 // A position with Black to move, reached by White's move of the repertoire. `line` is the moves
-// from move 1 through that White move, `parent` the position it was first reached from.
+// from move 1 through that White move, `parent` the position before it on that line.
 export const CoveragePositionSchema = z.object({
   line: z.array(z.string().min(1)).min(1),
-  incidence: z.number().min(0).max(1),
   parent: z.number().int().nonnegative().nullable(),
   replies: z.array(CoverageReplySchema),
 });

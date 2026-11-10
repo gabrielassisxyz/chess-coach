@@ -63,9 +63,10 @@ function Facts({ coverage }: { coverage: Coverage }) {
         prepared, not at a reply with no answer.
       </p>
       <p className="practice__card-note repertoire-coverage__note">
-        Expected score is White's result at {band} where your lines end, weighted by how often each
-        line arises. Soundness runs from 1 to 99: each move may give up 10 centipawns without
-        counting against its line, and lines that give up 200 or more on average score 1.
+        Expected score is White's result at {band} at the deepest move of each line that has 200
+        games or more, weighted by how often the line arises. Soundness runs from 1 to 99: each move
+        may give up 10 centipawns without counting against its line, and lines that give up 200 or
+        more on average score 1.
       </p>
     </>
   );
