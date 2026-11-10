@@ -169,7 +169,16 @@ screens were built to are in the design probe's spec (token layer and interactio
   openings, a held move saying where it is in place of the button. Every button is 44 px under
   900 px, M1 and M2 print nothing, and the building, built and refused states read as the met
   openings' do. The variation row under the drill's head is text on the type scale in the two
-  text tokens, with a hairline below it like the head's.
+  text tokens, with a hairline below it like the head's. The Practice cells were read once more
+  for the drills from the student's games, grouped by opening family: a line inside an opening's
+  menu, a line under an opening met in games, and for the families with neither a block of rows
+  with a hairline above it like each opening has, inside the White openings card or, for Black, a
+  Black openings card of such rows alone. Each is a name, a count and a first-try rate in the
+  secondary text token (the cell stays empty for a family with no attempt in 30 days) and a Drill
+  button that is 44 px under 900 px. M1 and M2 print nothing for it, the rows wait for the openings
+  met in games so none moves onto a met row after it has shown, a start refused because the
+  family is gone says to reload, in the error tone like every refusal, and a list that could not
+  be read is one plain sentence in the Openings card that says to reload.
 - **The coverage view** opens under a variation of the openings menu, from its Coverage button,
   and has a column of its own in the checklist. Its cells were read against the markup,
   `repertoire.css` and the 899 px block: a hairline above it as each opening in the menu has,

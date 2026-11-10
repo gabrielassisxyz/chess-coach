@@ -131,6 +131,56 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The drills from the student's games, one opening at a time: a line inside an opening's menu or under
+ * an opening met in games, and a block of rows for the openings that have neither. A name, how many
+ * positions, the first-try rate of the last 30 days (empty with no attempt) and a Drill button. */
+.repertoire-menu__drills {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: stretch;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.repertoire-menu__drill-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repertoire-menu__drill-row,
+.repertoire-menu__drill-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* A line inside the menu has no count of its own, since its name carries it. */
+.repertoire-menu__drill-line {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+/* Under a met opening the line takes the row's whole width, below the name and the Add action. */
+.repertoire-menu__met-row > .repertoire-menu__drill-line {
+  grid-column: 1 / -1;
+}
+
+.repertoire-menu__drill-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.repertoire-menu__drill-count,
+.repertoire-menu__drill-rate {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
 /* The coverage of one variation, opened under it: four facts, the replies with no answer, and Black's
  * replies in one position. A hairline above it, like each opening in the menu, not a card of its own. */
 .repertoire-coverage {
@@ -321,6 +371,8 @@
 @media (max-width: 899px) {
   .repertoire-menu__starts .button,
   .repertoire-menu__met-row .button,
+  .repertoire-menu__drill-row .button,
+  .repertoire-menu__drill-line .button,
   .repertoire-coverage .button {
     min-height: 44px;
   }
@@ -332,5 +384,19 @@
   .repertoire-menu__met-row .button {
     grid-column: 1 / -1;
     justify-self: start;
+  }
+
+  /* The name takes a line, the count and the rate share the next, and the button follows them. */
+  .repertoire-menu__drill-row,
+  .repertoire-menu__drill-line {
+    grid-template-columns: auto minmax(0, 1fr);
+    justify-items: start;
+  }
+
+  .repertoire-menu__drill-row .repertoire-menu__drill-name,
+  .repertoire-menu__drill-line .repertoire-menu__drill-name,
+  .repertoire-menu__drill-row .button,
+  .repertoire-menu__drill-line .button {
+    grid-column: 1 / -1;
   }
 }

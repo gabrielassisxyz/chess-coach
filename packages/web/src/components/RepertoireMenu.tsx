@@ -1,5 +1,6 @@
 import {
   type MetOpening,
+  type OpeningDrillColor,
   REPERTOIRE_SCOPES,
   type RepertoireBranch,
   type RepertoireBranchChoice,
@@ -10,8 +11,9 @@ import {
   type RepertoiresResponse,
   repertoireRootText,
 } from "@chess-coach/shared";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { type Loaded, useLoaded } from "../hooks/useLoaded.js";
+import { type OpeningDrillControls, placeDrills } from "../state/openings-api.js";
 import {
   type AddedOpening,
   type AddOpening,
@@ -37,6 +39,7 @@ import {
   SCOPE_LABEL,
   type SideMenu,
 } from "../state/repertoires-api.js";
+import { DrillRows, type DrillSlots, drillSlotsOf } from "./OpeningDrills.js";
 import { RepertoireCoverage } from "./RepertoireCoverage.js";
 
 // The start in flight: the repertoire it names, its scope, and the level it widens to.
@@ -61,6 +64,9 @@ export interface RepertoireMenuProps {
   addVariation?: AddVariation | undefined;
   // Where a variation's coverage comes from when it is opened; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
+  // The drills from the student's games, once read: each joins the opening that has its name, else
+  // the met opening it belongs to, else gets a row of its own. Without them the menu shows none.
+  openingDrills?: OpeningDrillControls | undefined;
 }
 
 type MenuActions = Pick<RepertoireMenuProps, "busy" | "starting" | "onStart">;
@@ -426,6 +432,7 @@ function Opening({
   addVariation,
   fetchCoverage,
   variationName,
+  drillLine,
   ...actions
 }: {
   opening: OpeningMenu;
@@ -433,6 +440,7 @@ function Opening({
   addVariation: AddVariation;
   fetchCoverage: FetchCoverage | undefined;
   variationName(id: number): string | null;
+  drillLine: ReactNode;
 } & MenuActions) {
   const anchor = levelAnchorOf(opening.variations);
   return (
@@ -468,6 +476,7 @@ function Opening({
         addVariation={addVariation}
         variationName={variationName}
       />
+      {drillLine}
     </div>
   );
 }
@@ -477,11 +486,13 @@ function MetRow({
   disabled,
   adding,
   onAdd,
+  drillLine,
 }: {
   entry: MetOpening;
   disabled: boolean;
   adding: boolean;
   onAdd(entry: MetOpening): void;
+  drillLine: ReactNode;
 }) {
   const name = metNameOf(entry);
   return (
@@ -502,6 +513,7 @@ function MetRow({
       >
         {adding ? "Building" : "Add"}
       </button>
+      {drillLine}
     </li>
   );
 }
@@ -512,10 +524,12 @@ function MetOpenings({
   adds,
   busy,
   addOpening,
+  metLine,
 }: {
   adds: OpeningAdds;
   busy: boolean;
   addOpening: AddOpening;
+  metLine: DrillSlots["metLine"];
 }) {
   const entries = metToAdd(adds.met ?? [], adds.unfinished);
   const running = adds.adding?.origin === "met";
@@ -549,6 +563,7 @@ function MetOpenings({
                 disabled={busy || adds.adding !== null}
                 adding={adds.adding?.key === metRootKey(entry.root)}
                 onAdd={add}
+                drillLine={metLine(metRootKey(entry.root))}
               />
             ))}
           </ul>
@@ -559,14 +574,60 @@ function MetOpenings({
   );
 }
 
-function Note({ text }: { text: string }) {
+function Note({ text, children }: { text: string; children?: ReactNode }) {
   return (
     <section className="practice__card" aria-label="White openings">
       <h3 className="practice__card-title">White openings</h3>
       <p className="practice__card-note" role="status">
         {text}
       </p>
+      {children}
     </section>
+  );
+}
+
+const COLORS: readonly OpeningDrillColor[] = ["white", "black"];
+
+// A colour whose openings have no stored drill is a card of drills alone, since nothing above them
+// could hold them. Nothing is drawn for a colour with no positions.
+function DrillOnlyCard({
+  color,
+  controls,
+  busy,
+}: {
+  color: OpeningDrillColor;
+  controls: OpeningDrillControls | undefined;
+  busy: boolean;
+}) {
+  const drills = controls?.drills[color] ?? [];
+  if (!controls || drills.length === 0) return null;
+  const heading = `${color === "white" ? "White" : "Black"} openings`;
+  const { rows } = drillSlotsOf(color, controls, busy, placeDrills(drills, new Set(), []));
+  return (
+    <section className="practice__card" aria-label={heading}>
+      <h3 className="practice__card-title">{heading}</h3>
+      {rows}
+    </section>
+  );
+}
+
+// Where the drills of a side go. They wait for the met openings to be read, so a row never shows and
+// then moves onto a met opening that arrives after it.
+function drillSlotsOfSide(
+  side: SideMenu,
+  adds: OpeningAdds,
+  busy: boolean,
+  controls: OpeningDrillControls | undefined,
+): DrillSlots | null {
+  const metSettled = side.side !== "white" || adds.met !== null || adds.unreadable;
+  if (!controls || !metSettled) return null;
+  const met = side.side === "white" ? metToAdd(adds.met ?? [], adds.unfinished) : [];
+  const names = new Set(side.openings.map((opening) => opening.name));
+  return drillSlotsOf(
+    side.side,
+    controls,
+    busy,
+    placeDrills(controls.drills[side.side], names, met),
   );
 }
 
@@ -576,6 +637,7 @@ function Side({
   addOpening,
   addVariation,
   fetchCoverage,
+  openingDrills,
   ...actions
 }: {
   side: SideMenu;
@@ -583,7 +645,9 @@ function Side({
   addOpening: AddOpening;
   addVariation: AddVariation;
   fetchCoverage: FetchCoverage | undefined;
+  openingDrills: OpeningDrillControls | undefined;
 } & MenuActions) {
+  const slots = drillSlotsOfSide(side, adds, actions.busy, openingDrills);
   const variations = side.openings.flatMap((opening) => opening.variations);
   const anchor = levelAnchorOf(variations);
   const variationName = (id: number): string | null =>
@@ -609,12 +673,19 @@ function Side({
           addVariation={addVariation}
           fetchCoverage={fetchCoverage}
           variationName={variationName}
+          drillLine={slots?.menuLine(opening.name) ?? null}
           {...actions}
         />
       ))}
       {side.side === "white" ? (
-        <MetOpenings adds={adds} busy={actions.busy} addOpening={addOpening} />
+        <MetOpenings
+          adds={adds}
+          busy={actions.busy}
+          addOpening={addOpening}
+          metLine={slots?.metLine ?? (() => null)}
+        />
       ) : null}
+      {slots?.rows}
     </section>
   );
 }
@@ -631,6 +702,7 @@ export function RepertoireMenu({
   addOpening = addOpeningToServer,
   addVariation = addVariationToServer,
   fetchCoverage,
+  openingDrills,
 }: RepertoireMenuProps) {
   const adds = useOpeningAdds(fetchList);
   if (repertoires.status === "loading") return <Note text="Loading openings." />;
@@ -639,8 +711,23 @@ export function RepertoireMenu({
   }
   const levels = { groups: adds.listing?.groups, sides: adds.listing?.sides };
   const sides = menuOf(adds.built ?? repertoires.value, levels);
-  if (sides.length === 0)
-    return <Note text="No opening is stored yet. Generate the Italian repertoire first." />;
+  if (sides.length === 0) {
+    return (
+      <>
+        <Note text="No opening is stored yet. Generate the Italian repertoire first.">
+          {openingDrills ? (
+            <DrillRows
+              color="white"
+              drills={openingDrills.drills.white}
+              controls={openingDrills}
+              busy={busy}
+            />
+          ) : null}
+        </Note>
+        <DrillOnlyCard color="black" controls={openingDrills} busy={busy} />
+      </>
+    );
+  }
   return (
     <>
       {sides.map((side) => (
@@ -651,10 +738,14 @@ export function RepertoireMenu({
           addOpening={addOpening}
           addVariation={addVariation}
           fetchCoverage={fetchCoverage}
+          openingDrills={openingDrills}
           busy={busy}
           starting={starting}
           onStart={onStart}
         />
+      ))}
+      {COLORS.filter((color) => !sides.some((side) => side.side === color)).map((color) => (
+        <DrillOnlyCard key={color} color={color} controls={openingDrills} busy={busy} />
       ))}
     </>
   );

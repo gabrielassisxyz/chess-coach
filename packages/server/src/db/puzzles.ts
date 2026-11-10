@@ -1,3 +1,5 @@
+import { openingFamilyOf } from "@chess-coach/shared";
+import type { PlayerColor } from "./games.js";
 import type { Database } from "./open.js";
 
 export const DEFAULT_PUZZLE_LIMIT = 10;
@@ -31,6 +33,9 @@ export interface PuzzleFilter {
   motif?: string | undefined;
   difficulty?: string | undefined;
   theme?: string | undefined;
+  // The stored opening names to serve, null being the positions that have none. An empty list
+  // matches nothing.
+  openingNames?: readonly (string | null)[] | undefined;
   limit?: number | undefined;
   ratingAround?: undefined;
 }
@@ -274,6 +279,9 @@ export function listPuzzles(
     const puzzles = sampleAroundRating(db, filter, randomSource);
     return { total: puzzles.length, puzzles };
   }
+  // Answered here and not in SQL: a condition that is false whatever the row leaves SQLite no way
+  // to use the forced index, and it refuses the query.
+  if (filter.openingNames?.length === 0) return { total: 0, puzzles: [] };
   const where: string[] = [LIBRARY_ONLY];
   const params: string[] = [];
   if (filter.motif !== undefined) {
@@ -287,6 +295,15 @@ export function listPuzzles(
   if (filter.theme !== undefined) {
     where.push("p.id IN (SELECT puzzle_id FROM puzzle_themes WHERE theme = ?)");
     params.push(filter.theme);
+  }
+  if (filter.openingNames !== undefined) {
+    const named = filter.openingNames.filter((name): name is string => name !== null);
+    const options = [
+      ...(named.length > 0 ? [`p.opening_name IN (${named.map(() => "?").join(", ")})`] : []),
+      ...(filter.openingNames.includes(null) ? ["p.opening_name IS NULL"] : []),
+    ];
+    where.push(`(${options.join(" OR ")})`);
+    params.push(...named);
   }
   const clause = `WHERE ${where.join(" AND ")}`;
   const ranked = db
@@ -396,6 +413,88 @@ export function listMotifs(db: Database): MotifCount[] {
        WHERE ${LIBRARY_ONLY} GROUP BY motif ORDER BY motif`,
     )
     .all() as MotifCount[];
+}
+
+/** The attempts a drill tally counts: those made from `from` to `to`, both ISO instants, inclusive. */
+export interface AttemptWindow {
+  from: string;
+  to: string;
+}
+
+/** One opening family of a colour's drill, or the positions with no name (`family` null). */
+export interface OpeningFamilyTally {
+  family: string | null;
+  positions: number;
+  attempts: number;
+  firstTry: number;
+}
+
+function drillMotif(color: PlayerColor): string {
+  return `opening-${color}`;
+}
+
+// Most positions first, so the bulk of the drill leads; the unnamed ones come last whatever their
+// number, since they are the leftovers and not an opening.
+function byPositionsThenName(a: OpeningFamilyTally, b: OpeningFamilyTally): number {
+  if (a.family === null || b.family === null)
+    return Number(a.family === null) - Number(b.family === null);
+  return b.positions - a.positions || a.family.localeCompare(b.family);
+}
+
+/**
+ * What the opening drill of a colour holds per family: its positions, and the attempts and the
+ * first-try solves made on them inside the window. A family is read from each stored opening name
+ * by the shared rule, so a rule change cannot split the hub's rows from the drill they start.
+ */
+export function listOpeningFamilies(
+  db: Database,
+  color: PlayerColor,
+  window: AttemptWindow,
+): OpeningFamilyTally[] {
+  const rows = db
+    .prepare(
+      `SELECT p.opening_name AS openingName, COUNT(DISTINCT p.id) AS positions,
+              COUNT(a.id) AS attempts, COALESCE(SUM(a.first_try), 0) AS firstTry
+       FROM puzzles p
+       LEFT JOIN puzzle_attempts a
+         ON a.puzzle_id = p.id AND a.attempted_at >= @from AND a.attempted_at <= @to
+       WHERE p.motif = @motif
+       GROUP BY p.opening_name`,
+    )
+    .all({ motif: drillMotif(color), ...window }) as {
+    openingName: string | null;
+    positions: number;
+    attempts: number;
+    firstTry: number;
+  }[];
+  const families = new Map<string | null, OpeningFamilyTally>();
+  for (const { openingName, ...counts } of rows) {
+    const family = openingFamilyOf(openingName);
+    const tally = families.get(family) ?? { family, positions: 0, attempts: 0, firstTry: 0 };
+    tally.positions += counts.positions;
+    tally.attempts += counts.attempts;
+    tally.firstTry += counts.firstTry;
+    families.set(family, tally);
+  }
+  return [...families.values()].sort(byPositionsThenName);
+}
+
+/**
+ * The stored opening names that make up one family of a colour's drill, null being a position with
+ * no name; empty when the colour has no such family. The family a start names is matched here, so
+ * the browser's text never reaches a query: only names the database already holds do.
+ */
+export function openingNamesOfFamily(
+  db: Database,
+  color: PlayerColor,
+  family: string | null,
+): (string | null)[] {
+  const rows = db
+    .prepare("SELECT DISTINCT opening_name AS openingName FROM puzzles WHERE motif = ?")
+    .all(drillMotif(color)) as { openingName: string | null }[];
+  return rows
+    .map((row) => row.openingName)
+    .filter((openingName) => openingFamilyOf(openingName) === family);
 }
 
 export interface GeneratedPuzzle {
