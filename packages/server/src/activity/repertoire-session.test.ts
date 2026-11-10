@@ -39,6 +39,7 @@ import {
   REPERTOIRE_NO_IDEA,
   REPERTOIRE_RECOMMENDED_SIZE,
   type RepertoireTryJudge,
+  repertoireIntroductionsInWindow,
   repertoireScopeCounts,
   selectRepertoireDrillMoves,
 } from "./repertoire-session.js";
@@ -366,6 +367,9 @@ const code = async (run: Promise<unknown>): Promise<string> => {
 
 const label = (move: RepertoireDrillMove): string => `${move.line.at(-1) ?? "start"} ${move.san}`;
 
+// The number a drill and the menu both read: every card shown in the last day, in any unit.
+const introducedToday = (): number => repertoireIntroductionsInWindow(db, now);
+
 // White's move in the wide fixture, by the number of moves played before it.
 const WIDE_ANSWERS: Record<number, string> = { 0: "e4", 2: "Nf3", 4: "Bc4", 6: "d3" };
 
@@ -425,12 +429,13 @@ describe("choosing the moves of a repertoire drill", () => {
       ...WIDE_REPLIES.map(([reply]) => `${reply} d3`),
     ];
 
-    expect(selectRepertoireDrillMoves(moves, "all", now).map(label)).toEqual(order);
+    const served = (scope: RepertoireScope): string[] =>
+      selectRepertoireDrillMoves(moves, scope, now, introducedToday()).map(label);
+
+    expect(served("all")).toEqual(order);
     const due = order.filter((move) => move !== "Nc6 Bc4");
-    expect(selectRepertoireDrillMoves(moves, "due", now).map(label)).toEqual(due);
-    expect(selectRepertoireDrillMoves(moves, "recommended", now).map(label)).toEqual(
-      due.slice(0, REPERTOIRE_RECOMMENDED_SIZE),
-    );
+    expect(served("due")).toEqual(due);
+    expect(served("recommended")).toEqual(due.slice(0, REPERTOIRE_RECOMMENDED_SIZE));
     expect(due).toHaveLength(REPERTOIRE_RECOMMENDED_SIZE + 1);
   });
 
@@ -483,7 +488,9 @@ const THREE_SIBLING_ROWS: FixtureRow[] = [
 ];
 
 const servedBy = (id: number, scope: RepertoireScope): string[] =>
-  selectRepertoireDrillMoves(listRepertoireDrillMoves(db, id), scope, now).map(label);
+  selectRepertoireDrillMoves(listRepertoireDrillMoves(db, id), scope, now, introducedToday()).map(
+    label,
+  );
 
 // What each scope serves and what the menu counts, from literal lists. The counts are the sizes of
 // those lists, so a waiting move left out of one and left in the other fails here.
@@ -491,7 +498,7 @@ function expectServed(id: number, due: string[], all: string[]): void {
   expect(servedBy(id, "due")).toEqual(due);
   expect(servedBy(id, "recommended")).toEqual(due);
   expect(servedBy(id, "all")).toEqual(all);
-  expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now)).toEqual({
+  expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday())).toEqual({
     recommended: due.length,
     due: due.length,
     all: all.length,
@@ -568,7 +575,9 @@ describe("pacing the new moves of a repertoire", () => {
     const service = boot();
     // The setup and 4.d3 are served; the waiting 4.c3 and both 5.d4 are in no scope.
     const offered = { recommended: 1, due: 1, all: 4 };
-    expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now)).toEqual(offered);
+    expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday())).toEqual(
+      offered,
+    );
     for (const scope of ["recommended", "due", "all"] as const) {
       expect(drillOf(await start(service, id, scope)).moves_left).toBe(offered[scope]);
     }
@@ -634,6 +643,33 @@ describe("pacing the new moves of a repertoire", () => {
         expectServed(id, enters, all);
       },
     );
+
+    // No move of the Italian's, so a drill of it covers none of the day's cards.
+    const QUEENS_GAMBIT_ROWS: FixtureRow[] = [
+      ["", "d4", 1],
+      ["d4", "d5", 1],
+      ["d4 d5", "c4", 1],
+    ];
+
+    it("counts the cards of every unit, so a drill of another unit serves no new move past the limit", async () => {
+      addUnitKnownSince([1, 1, 1, 1, 1]);
+      const queens = addVariation("Queen's Gambit", QUEENS_GAMBIT_ROWS, "Queen's Pawn Game");
+      const service = boot();
+
+      for (const scope of ["recommended", "due", "all"] as const) {
+        await expect(start(service, queens, scope)).rejects.toMatchObject({ code: "empty_queue" });
+      }
+      expect(
+        repertoireScopeCounts(listRepertoireDrillMoves(db, queens), now, introducedToday()),
+      ).toEqual({ recommended: 0, due: 0, all: 0 });
+
+      // A day on, the five have left the window and 1.d4 enters.
+      now = new Date(T0.getTime() + 25 * HOUR_MS);
+      expect(drillOf(await start(service, queens, "due"))).toMatchObject({
+        answer: { san: "d4" },
+        moves_left: 1,
+      });
+    });
   });
 });
 
@@ -1482,10 +1518,12 @@ describe("merging the moves of several variations", () => {
       moves: listRepertoireDrillMoves(db, id),
     }));
     const dueInGroup = (): string[][] =>
-      selectRepertoireDrillMoves(mergeRepertoireUnitMoves(units), "due", now).map((move) => [
-        label(move),
-        move.variation.variation_name,
-      ]);
+      selectRepertoireDrillMoves(
+        mergeRepertoireUnitMoves(units),
+        "due",
+        now,
+        introducedToday(),
+      ).map((move) => [label(move), move.variation.variation_name]);
 
     // Both new at equal reach: the older variation's 4.c3 enters and 4.d3 waits.
     expect(dueInGroup()).toEqual([["Bc5 c3", CLASSICAL]]);

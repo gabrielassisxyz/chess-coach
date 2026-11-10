@@ -9,6 +9,7 @@ import type { FastifyInstance } from "fastify";
 import {
   mergeRepertoireUnitMoves,
   type RepertoireUnitMoves,
+  repertoireIntroductionsInWindow,
   repertoireScopeCounts,
 } from "../activity/repertoire-session.js";
 import { type Clock, systemClock } from "../clock.js";
@@ -39,6 +40,7 @@ const sameGroup = (a: RepertoireUnitMoves, b: RepertoireUnitMoves): boolean =>
 function groupSummaries(
   units: readonly RepertoireUnitMoves[],
   now: Date,
+  introducedInWindow: number,
 ): RepertoireGroupSummary[] {
   const firsts = units.filter(
     (unit, index) => units.findIndex((other) => sameGroup(other, unit)) === index,
@@ -49,17 +51,23 @@ function groupSummaries(
     moves: repertoireScopeCounts(
       mergeRepertoireUnitMoves(units.filter((unit) => sameGroup(unit, first))),
       now,
+      introducedInWindow,
     ),
   }));
 }
 
-function sideSummaries(units: readonly RepertoireUnitMoves[], now: Date): RepertoireSideSummary[] {
+function sideSummaries(
+  units: readonly RepertoireUnitMoves[],
+  now: Date,
+  introducedInWindow: number,
+): RepertoireSideSummary[] {
   const sides = [...new Set(units.map((unit) => unit.variation.side))];
   return sides.map((side) => ({
     side,
     moves: repertoireScopeCounts(
       mergeRepertoireUnitMoves(units.filter((unit) => unit.variation.side === side)),
       now,
+      introducedInWindow,
     ),
   }));
 }
@@ -80,6 +88,7 @@ export function registerRepertoireRoutes(
 
   app.get("/api/repertoires", async (): Promise<RepertoiresResponse> => {
     const now = clock.now();
+    const introducedInWindow = repertoireIntroductionsInWindow(db, now);
     const units = listDrillRepertoires(db).map(
       (variation): RepertoireUnitMoves => ({
         variation,
@@ -92,10 +101,10 @@ export function registerRepertoireRoutes(
         side: variation.side,
         group_name: variation.group_name,
         variation_name: variation.variation_name,
-        moves: repertoireScopeCounts(moves, now),
+        moves: repertoireScopeCounts(moves, now, introducedInWindow),
       })),
-      groups: groupSummaries(units, now),
-      sides: sideSummaries(units, now),
+      groups: groupSummaries(units, now, introducedInWindow),
+      sides: sideSummaries(units, now, introducedInWindow),
       met: listMetOpenings(db).map((opening) => ({
         root: opening.root,
         opening_name: opening.openingName,

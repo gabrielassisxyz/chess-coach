@@ -16,6 +16,7 @@ import { type Clock, systemClock } from "../clock.js";
 import type { TrainingSummaryNotification } from "../coach/notify.js";
 import { appendChatMessage } from "../db/chat.js";
 import {
+  countRepertoireCardsIntroducedSince,
   findDrillRepertoire,
   findRepertoireCard,
   introduceRepertoireCard,
@@ -177,12 +178,11 @@ function hasNewMoveEarlierInLine(
   return false;
 }
 
-// Counted over the moves the drill covers, so a drill of one unit and the menu entry that offers it
-// read the same cards.
-function repertoireIntroductionsInWindow(moves: readonly RepertoireDrillMove[], now: Date): number {
-  const since = now.getTime() - REPERTOIRE_NEW_MOVE_WINDOW_MS;
-  return moves.filter((move) => move.card !== null && Date.parse(move.card.introduced_at) > since)
-    .length;
+// The day's limit is the student's whole load, so it counts every card shown in the window, in any
+// unit and at any level: a drill of each of two units would otherwise be allowed the limit apiece.
+export function repertoireIntroductionsInWindow(db: TrainingDeps["db"], now: Date): number {
+  const since = new Date(now.getTime() - REPERTOIRE_NEW_MOVE_WINDOW_MS);
+  return countRepertoireCardsIntroducedSince(db, since.toISOString());
 }
 
 // The new moves that may enter now: the likeliest of each group of siblings that nothing holds
@@ -190,7 +190,7 @@ function repertoireIntroductionsInWindow(moves: readonly RepertoireDrillMove[], 
 // again, so a likelier sibling it leaves out never lets a less likely one in behind it.
 function repertoireNewMovesMayEnter<T extends RepertoireDrillMove>(
   ordered: readonly T[],
-  now: Date,
+  introducedInWindow: number,
 ): Set<T> {
   const blocked = repertoireMovesBlockedBySibling(ordered);
   const newPaths = new Set(
@@ -207,25 +207,32 @@ function repertoireNewMovesMayEnter<T extends RepertoireDrillMove>(
     groupsWithALeader.add(key);
     leaders.push(move);
   }
-  const room = REPERTOIRE_NEW_MOVES_PER_DAY - repertoireIntroductionsInWindow(ordered, now);
+  const room = REPERTOIRE_NEW_MOVES_PER_DAY - introducedInWindow;
   return new Set(leaders.slice(0, Math.max(0, room)));
 }
 
 // Every move with a card stays, as it always has; a new move enters only as far as the pacing
 // allows, one sibling at a time and a few a day, so the student learns one branch before the next.
-function admitRepertoireMoves<T extends RepertoireDrillMove>(moves: readonly T[], now: Date): T[] {
+function admitRepertoireMoves<T extends RepertoireDrillMove>(
+  moves: readonly T[],
+  introducedInWindow: number,
+): T[] {
   const ordered = [...moves].sort(compareRepertoireLineOrder);
-  const entering = repertoireNewMovesMayEnter(ordered, now);
+  const entering = repertoireNewMovesMayEnter(ordered, introducedInWindow);
   return ordered.filter((move) => move.card !== null || entering.has(move));
 }
 
-/** The moves a drill of this scope serves, in line order. A new move is due once it may enter. */
+/**
+ * The moves a drill of this scope serves, in line order. A new move is due once it may enter.
+ * `introducedInWindow` is `repertoireIntroductionsInWindow`, whichever moves the drill covers.
+ */
 export function selectRepertoireDrillMoves<T extends RepertoireDrillMove>(
   moves: readonly T[],
   scope: RepertoireScope,
   now: Date,
+  introducedInWindow: number,
 ): T[] {
-  const served = admitRepertoireMoves(moves, now);
+  const served = admitRepertoireMoves(moves, introducedInWindow);
   if (scope === "all") return served;
   const due = served.filter((move) => isRepertoireMoveDue(move, now));
   return scope === "due" ? due : due.slice(0, REPERTOIRE_RECOMMENDED_SIZE);
@@ -235,8 +242,9 @@ export function selectRepertoireDrillMoves<T extends RepertoireDrillMove>(
 export function repertoireScopeCounts(
   moves: readonly RepertoireDrillMove[],
   now: Date,
+  introducedInWindow: number,
 ): RepertoireScopeCounts {
-  const served = admitRepertoireMoves(moves, now);
+  const served = admitRepertoireMoves(moves, introducedInWindow);
   const due = served.filter((move) => isRepertoireMoveDue(move, now)).length;
   return { recommended: Math.min(due, REPERTOIRE_RECOMMENDED_SIZE), due, all: served.length };
 }
@@ -494,6 +502,7 @@ export class RepertoireSession implements PracticeRunPort {
       mergeRepertoireUnitMoves(listLevelUnitMoves(deps.db, repertoire, level)),
       scope,
       now,
+      repertoireIntroductionsInWindow(deps.db, now),
     );
     if (moves.length === 0) {
       const what =
