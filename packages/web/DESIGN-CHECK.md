@@ -154,6 +154,11 @@ screens were built to are in the design probe's spec (token layer and interactio
   only, though every board honours the stored preferences.
 - **The Practice hub** was not part of the puzzle redesign and keeps its three older cards.
   The openings menu for the repertoire line drill is a fourth, built on the same card rules;
-  its Practice cells were re-read against the markup and `repertoire.css` and hold.
+  its Practice cells were re-read against the markup and `repertoire.css` and hold. So were the
+  cells for the list of openings met in the student's games, under White openings: a block with a
+  hairline top border like each opening above it, rows of a name, a mono line and a count, and an
+  Add button that is 44 px under 900 px. M1 and M2 print nothing for it, its states (reading
+  failed, building, built, refused) are each a sentence that says what to do next, and a refusal
+  is the only one in the error tone.
 - **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
   and a model setting exist.
