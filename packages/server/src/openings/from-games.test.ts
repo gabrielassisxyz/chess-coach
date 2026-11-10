@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TrainingActivitySchema } from "@chess-coach/shared";
@@ -278,5 +278,43 @@ describe("generateOpeningPuzzles", () => {
     seedPuzzles(db, contentDir());
     seedPuzzles(db, contentDir());
     expect(rows()).toEqual(before);
+  });
+});
+
+describe("seedPuzzles with opening names", () => {
+  it("names only exact opening_db positions and updates previously seeded rows", () => {
+    const root = join(tmp, "seed-content");
+    mkdirSync(join(root, "puzzles"), { recursive: true });
+    const namedFen = fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4");
+    const laterFen = fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5");
+    const entry = (fen: string, move: string, source: string) => ({
+      fen,
+      solution_moves: [move],
+      solution_san: [],
+      motif: "opening",
+      difficulty: "beginner",
+      explanation: "Find the move.",
+      source,
+    });
+    writeFileSync(
+      join(root, "puzzles", "seed.json"),
+      JSON.stringify([
+        entry(namedFen, "f8c5", "opening_db"),
+        entry(laterFen, "c2c3", "opening_db"),
+        entry(namedFen, "f8c5", "test"),
+      ]),
+    );
+
+    expect(seedPuzzles(db, root)).toEqual({ inserted: 3, updated: 0, unchanged: 0 });
+    const secondSeed = seedPuzzles(db, root, italianNames);
+    const seeded = db
+      .prepare("SELECT id, opening_name FROM puzzles WHERE id LIKE 'seed:%' ORDER BY id")
+      .all();
+    expect(seeded).toEqual([
+      { id: "seed:0", opening_name: "Italian Game" },
+      { id: "seed:1", opening_name: null },
+      { id: "seed:2", opening_name: null },
+    ]);
+    expect(secondSeed).toEqual({ inserted: 0, updated: 1, unchanged: 2 });
   });
 });
