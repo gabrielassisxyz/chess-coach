@@ -42,6 +42,8 @@ export interface GameReviewAddition {
   reply: AddedMove;
   /** Null when the position after the reply already holds a White move of the repertoire. */
   answer: AddedAnswer | null;
+  /** White's move after the reply, whether it was added now or was already stored. */
+  answerSan: string;
 }
 
 export interface GameReviewSources {
@@ -144,7 +146,8 @@ export async function planGameReviewAddition(
     reach: (parent?.reach ?? 0) * (share ?? 0),
     openingName: openingNameAfter(sources.names, moves, move.ply - 1),
   };
-  if (sources.lookup.ownMoveAt(positionKey(move.fenAfter))) return { reply, answer: null };
+  const stored = sources.lookup.ownMoveAt(positionKey(move.fenAfter));
+  if (stored) return { reply, answer: null, answerSan: stored.move_san };
   const answer = await chooseWhiteAnswer(sources, move, reply, moves);
-  return answer ? { reply, answer } : null;
+  return answer ? { reply, answer, answerSan: answer.san } : null;
 }

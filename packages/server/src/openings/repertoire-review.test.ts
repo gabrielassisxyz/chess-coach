@@ -6,6 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeClock } from "../../test/fakes/fake-explorer.js";
 import type { Clock } from "../clock.js";
 import {
+  type CoachNotification,
+  type RepertoireReviewNotification,
+  renderNotifications,
+} from "../coach/notify.js";
+import { createCoachSession, listUndeliveredNotifications } from "../db/chat.js";
+import {
   type GradingState,
   listMoves,
   type PlayerColor,
@@ -280,6 +286,8 @@ let engine: ReviewFakeEngine;
 let logs: RecordingLog;
 let repertoireId: number;
 let gameCounter: number;
+let coachSessionId: number;
+let wakes: number;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "cc-review-"));
@@ -291,6 +299,8 @@ beforeEach(() => {
   engine = new ReviewFakeEngine();
   logs = new RecordingLog();
   gameCounter = 0;
+  wakes = 0;
+  coachSessionId = createCoachSession(db, { promptVersion: "v", tab: "games" }).id;
   repertoireId = createRepertoireVariation(db, {
     side: "white",
     groupName: "Italian Game",
@@ -392,7 +402,17 @@ const deps = (): GameReviewDeps => ({
   names: NAMES,
   clock: appClock,
   log: logs,
+  notifications: { sessionId: () => coachSessionId },
+  onNotification: () => {
+    wakes += 1;
+  },
 });
+
+/** The messages waiting for the coach's games conversation, in the order they were written. */
+const noticesOf = (): RepertoireReviewNotification[] =>
+  listUndeliveredNotifications(db, coachSessionId).map(
+    (message) => JSON.parse(message.contentJson) as RepertoireReviewNotification,
+  );
 
 const positionsOf = (): PositionRow[] =>
   db.prepare("SELECT * FROM repertoire_positions ORDER BY id").all() as PositionRow[];
@@ -436,7 +456,13 @@ describe("a game that follows the repertoire", () => {
     seedRepertoire();
     const id = addGame(MAIN_LINE);
     const result = await reviewRepertoireGame(deps(), id);
-    expect(result).toEqual({ gameId: id, outcome: "in_book", passed: 6, failed: 0, added: 0 });
+    expect(result).toMatchObject({
+      gameId: id,
+      outcome: "in_book",
+      passed: 6,
+      failed: 0,
+      added: 0,
+    });
     expect(cardsOf().map((card) => card.reviews)).toEqual([1, 1, 1, 1, 1, 1]);
     expect(reviewOf(id)).toMatchObject({
       outcome: "in_book",
@@ -452,7 +478,13 @@ describe("a game that follows the repertoire", () => {
     const id = addGame([...AFTER_NF6, "d3", "d6", "O-O"], { cpLoss: { 9: 20 } });
     const before = positionsOf();
     const result = await reviewRepertoireGame(deps(), id);
-    expect(result).toEqual({ gameId: id, outcome: "departed", passed: 4, failed: 1, added: 0 });
+    expect(result).toMatchObject({
+      gameId: id,
+      outcome: "departed",
+      passed: 4,
+      failed: 1,
+      added: 0,
+    });
     for (const [prefix, san] of [
       [[], "e4"],
       [["e4", "e5"], "Nf3"],
@@ -503,7 +535,13 @@ describe("a game that follows the repertoire", () => {
     const before = positionsOf();
     const id = addGame([...SETUP, "h6", "d3"]);
     const result = await reviewRepertoireGame(deps(), id);
-    expect(result).toEqual({ gameId: id, outcome: "in_book", passed: 3, failed: 0, added: 0 });
+    expect(result).toMatchObject({
+      gameId: id,
+      outcome: "in_book",
+      passed: 3,
+      failed: 0,
+      added: 0,
+    });
     expect(positionsOf()).toEqual(before);
     expect(explorer.calls).toEqual([]);
     expect(engine.requests).toEqual([]);
@@ -525,7 +563,13 @@ describe("a Black reply the repertoire lacks", () => {
     writeH6Answers();
     const id = addGame([...SETUP, "h6", "c3", "Nf6", "d4"]);
     const result = await reviewRepertoireGame(deps(), id);
-    expect(result).toEqual({ gameId: id, outcome: "reply_added", passed: 3, failed: 0, added: 2 });
+    expect(result).toMatchObject({
+      gameId: id,
+      outcome: "reply_added",
+      passed: 3,
+      failed: 0,
+      added: 2,
+    });
     const added = positionsOf().filter((row) => row.source === REPERTOIRE_GAME_SOURCE);
     expect(added).toHaveLength(2);
     // The reply is stored although its share is far under 1 in 50 and its games under 200.
@@ -633,7 +677,7 @@ describe("a Black reply the repertoire lacks", () => {
     const before = positionsOf();
     const id = addGame(BLACKBURNE);
     const result = await reviewRepertoireGame(deps(), id);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       gameId: id,
       outcome: "reply_not_stored",
       passed: 7,
@@ -687,7 +731,13 @@ describe("a game that never reaches the variation", () => {
     const before = snapshot();
     const id = addGame(scenario.line);
     const result = await reviewRepertoireGame(deps(), id);
-    expect(result).toEqual({ gameId: id, outcome: "not_reached", passed: 0, failed: 0, added: 0 });
+    expect(result).toMatchObject({
+      gameId: id,
+      outcome: "not_reached",
+      passed: 0,
+      failed: 0,
+      added: 0,
+    });
     expect(positionsOf()).toEqual(before.positions);
     expect(cardsOf()).toEqual([]);
     expect(explorer.calls).toEqual([]);
@@ -883,6 +933,226 @@ describe("the review hook after grading", () => {
     const caughtUp = await reviewRepertoireGames(deps());
     expect(caughtUp.outcomes.reply_added).toBe(1);
     expect(reviewOf(needsExplorer)).toMatchObject({ outcome: "reply_added" });
+  });
+});
+
+describe("a move that leaves the repertoire but is sound", () => {
+  const EVANS = [...AFTER_BC5, "b4"];
+
+  it("is reported by the other book name it reaches, and its card still fails", async () => {
+    seedRepertoire();
+    const id = addGame([...EVANS, "Bxb4"], { cpLoss: { 7: 25 } });
+    await reviewRepertoireGame(deps(), id);
+    expect(noticesOf()).toEqual([
+      expect.objectContaining({
+        outcome: "departed",
+        alternative_opening: "Italian Game: Evans Gambit",
+      }),
+    ]);
+    expect(cardAt(AFTER_BC5, "c3")).toMatchObject({
+      reviews: 1,
+      repetitions: 0,
+      interval_hours: 4,
+    });
+    expect(cardAt(AFTER_BC5, "b4")).toBeUndefined();
+    const [notice] = noticesOf();
+    expect(renderNotifications([notice as CoachNotification])).toMatch(
+      /Evans Gambit.*Do not call it a mistake/s,
+    );
+  });
+
+  it.each([
+    { why: "a loss of 50 cp is within the margin", cpLoss: 50, named: true },
+    { why: "a loss of 51 cp is past it", cpLoss: 51, named: false },
+    { why: "the grader never rated the move", cpLoss: null, named: false },
+  ])(
+    "names the other opening only when it is close to the best: $why",
+    async ({ cpLoss, named }) => {
+      seedRepertoire();
+      const id = addGame([...EVANS, "Bxb4"], cpLoss === null ? {} : { cpLoss: { 7: cpLoss } });
+      await reviewRepertoireGame(deps(), id);
+      const [notice] = noticesOf();
+      expect(notice).toMatchObject({
+        outcome: "departed",
+        alternative_opening: named ? "Italian Game: Evans Gambit" : null,
+      });
+      expect(cardAt(AFTER_BC5, "c3")).toMatchObject({ repetitions: 0 });
+    },
+  );
+
+  it("is not reported when the position it reaches has no book name", async () => {
+    seedRepertoire();
+    await reviewRepertoireGame(deps(), addGame([...AFTER_NF6, "d3"], { cpLoss: { 9: 10 } }));
+    expect(noticesOf()[0]).toMatchObject({ outcome: "departed", alternative_opening: null });
+  });
+
+  it("is not reported when it reaches the name the expected line already has", async () => {
+    seedRepertoire();
+    const sameName = parseOpeningTable(
+      [
+        "eco\tname\tpgn\tuci\tepd",
+        `C50\tItalian Game\t-\t-\t${keyOf(SETUP)}`,
+        `C53\tItalian Game: Classical Variation\t-\t-\t${keyOf(AFTER_C3)}`,
+        `C53\tItalian Game: Classical Variation\t-\t-\t${keyOf([...AFTER_BC5, "d3"])}`,
+      ].join("\n"),
+    );
+    const id = addGame([...AFTER_BC5, "d3", "Nf6"], { cpLoss: { 7: 10 } });
+    await reviewRepertoireGame({ ...deps(), names: sameName }, id);
+    expect(noticesOf()[0]).toMatchObject({ outcome: "departed", alternative_opening: null });
+  });
+});
+
+describe("what the coach is told about a game", () => {
+  const texts = (): string[] =>
+    noticesOf().map((notice) => renderNotifications([notice as CoachNotification]));
+
+  it("names the last move followed and the move expected where the student left", async () => {
+    seedRepertoire();
+    await reviewRepertoireGame(deps(), addGame([...AFTER_NF6, "d3", "d6"]));
+    expect(noticesOf()).toEqual([
+      expect.objectContaining({
+        type: "repertoire_review",
+        outcome: "departed",
+        group: "Italian Game",
+        variation: "Classical Variation (4.c3)",
+        followed_to: { ply: 8, san: "Nf6" },
+        expected: { ply: 9, san: "d4" },
+        played: { ply: 9, san: "d3" },
+      }),
+    ]);
+    const [text] = texts();
+    expect(text).toContain("followed it through 4... Nf6");
+    expect(text).toContain("played 5. d3 where the repertoire expects 5. d4");
+    expect(text).not.toContain("Do not call it a mistake");
+  });
+
+  it("names the opening a game became when it left before the variation started", async () => {
+    seedRepertoire();
+    await reviewRepertoireGame(deps(), addGame(["e4", "c5", "Nf3"]));
+    expect(noticesOf()).toEqual([
+      expect.objectContaining({
+        outcome: "not_reached",
+        followed_to: { ply: 1, san: "e4" },
+        left: { ply: 2, san: "c5" },
+        opening: "Sicilian Defense",
+      }),
+    ]);
+    const [text] = texts();
+    expect(text).toContain("never reached the Italian Game");
+    expect(text).toContain("left the line at 1... c5 and became the Sicilian Defense");
+    expect(text).toContain("Nothing in the repertoire changed");
+  });
+
+  it("says a game that ended before the variation started became the opening it had reached", async () => {
+    seedRepertoire();
+    await reviewRepertoireGame(deps(), addGame(["e4", "e5", "Nf3"]));
+    expect(noticesOf()[0]).toMatchObject({ outcome: "not_reached", left: null });
+    expect(texts()[0]).toContain("ended before the line began, as the King's Pawn Game");
+  });
+
+  it("names the reply that was added and the answer it was given", async () => {
+    seedRepertoire();
+    writeH6Answers();
+    await reviewRepertoireGame(deps(), addGame([...SETUP, "h6", "c3"]));
+    expect(noticesOf()).toEqual([
+      expect.objectContaining({
+        outcome: "reply_added",
+        followed_to: { ply: 5, san: "Bc4" },
+        reply: { ply: 6, san: "h6" },
+        answer: { ply: 7, san: "d3" },
+      }),
+    ]);
+    expect(texts()[0]).toContain("Black then replied 3... h6, which the repertoire did not have");
+    expect(texts()[0]).toContain("added with the answer 4. d3");
+  });
+
+  it("names the answer a position already held when the reply is stored alone", async () => {
+    seedRepertoire();
+    const whiteAnswer = stepsOf([...SETUP, "h6", "d3"])[6] as LineStep;
+    insertRepertoireOwnMove(db, {
+      repertoireId,
+      positionKey: whiteAnswer.keyBefore,
+      ply: 7,
+      line: [...SETUP, "h6"],
+      reach: 0.3,
+      openingName: null,
+      uci: "d2d3",
+      san: "d3",
+      share: null,
+      source: "explorer",
+      cpLoss: 0,
+      evalCp: 20,
+      results: null,
+    });
+    await reviewRepertoireGame(deps(), addGame([...SETUP, "h6", "c3"]));
+    expect(noticesOf()[0]).toMatchObject({ outcome: "reply_added", answer: { ply: 7, san: "d3" } });
+  });
+
+  it("says nothing was added when no answer could follow the reply", async () => {
+    seedLine(BLACKBURNE, 0.01, 13);
+    await reviewRepertoireGame(deps(), addGame(BLACKBURNE));
+    expect(noticesOf()[0]).toMatchObject({
+      outcome: "reply_not_stored",
+      reply: { ply: 14, san: "Nf3#" },
+    });
+    expect(texts()[0]).toContain("no answer could follow it, so nothing was added");
+  });
+
+  it("says a game that stayed in the repertoire to its end followed all of it", async () => {
+    seedRepertoire();
+    await reviewRepertoireGame(deps(), addGame(MAIN_LINE));
+    expect(noticesOf()[0]).toMatchObject({
+      outcome: "in_book",
+      followed_to: { ply: 11, san: "cxd4" },
+    });
+    expect(texts()[0]).toContain("Every move of the game stayed in the repertoire");
+    expect(texts()[0]).toContain("followed it through 6. cxd4");
+  });
+
+  it("writes one message per game with the review, and wakes the coach once per run", async () => {
+    seedRepertoire();
+    addGame([...AFTER_NF6, "d3"]);
+    addGame(["e4", "c5"]);
+    addGame(MAIN_LINE);
+    const summary = await reviewRepertoireGames(deps());
+    expect(summary.notified).toBe(3);
+    expect(noticesOf().map((notice) => notice.outcome)).toEqual([
+      "departed",
+      "not_reached",
+      "in_book",
+    ]);
+    expect(wakes).toBe(1);
+    // Folded into one message, each game keeps its own account.
+    const folded = renderNotifications(noticesOf());
+    expect(folded).toContain("Several updates arrived");
+    expect(folded.match(/was compared with the student's Italian Game repertoire/g)).toHaveLength(
+      3,
+    );
+  });
+
+  it("writes no message for a game played as Black or when nobody is listening", async () => {
+    seedRepertoire();
+    addGame(MAIN_LINE, { color: "black" });
+    expect((await reviewRepertoireGames(deps())).notified).toBe(0);
+    addGame(MAIN_LINE);
+    const { notifications: _sink, ...quiet } = deps();
+    expect((await reviewRepertoireGames(quiet)).notified).toBe(0);
+    expect(noticesOf()).toEqual([]);
+    expect(wakes).toBe(0);
+  });
+
+  it("writes no message for a review that failed, and wakes nobody", async () => {
+    seedRepertoire();
+    explorer.failAt(
+      SETUP,
+      EXPLORER_RATINGS,
+      new ExplorerError("upstream", "the explorer answered 500"),
+    );
+    addGame([...SETUP, "h6", "c3"]);
+    const summary = await reviewRepertoireGames(deps());
+    expect(summary.failed).toBe(1);
+    expect(noticesOf()).toEqual([]);
+    expect(wakes).toBe(0);
   });
 });
 

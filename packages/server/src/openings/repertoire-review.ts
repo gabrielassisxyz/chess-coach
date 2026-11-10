@@ -1,4 +1,6 @@
 import { type Clock, systemClock } from "../clock.js";
+import type { RepertoireReviewNotification } from "../coach/notify.js";
+import { appendChatMessage } from "../db/chat.js";
 import { type GameRecord, getGame, listMoves, type MoveRecord } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import { rateRepertoireCardFromGame } from "../db/repertoire-cards.js";
@@ -8,6 +10,7 @@ import {
   repertoireCounts,
 } from "../db/repertoires.js";
 import type { Searcher } from "../engine/uci.js";
+import type { NotificationSink } from "../game/notifications.js";
 import { type Log, silentLog } from "../log.js";
 import { CachedExplorer, type ExplorerClock, type ExplorerFetcher } from "./explorer-client.js";
 import { positionKey } from "./from-games.js";
@@ -21,6 +24,7 @@ import {
   openingNameAfter,
   planGameReviewAddition,
 } from "./repertoire-review-addition.js";
+import { repertoireReviewNotice } from "./repertoire-review-message.js";
 import {
   type CardMove,
   type GameReviewStoredMove,
@@ -52,6 +56,10 @@ export interface GameReviewDeps {
   names: OpeningNames;
   clock?: Clock;
   log?: Log;
+  /** Where the coach's message about each game is written; without it nothing is said. */
+  notifications?: NotificationSink;
+  /** Called once after a run that wrote messages, so the coach reads them. */
+  onNotification?: () => void;
 }
 
 export interface GameReviewResult {
@@ -63,6 +71,8 @@ export interface GameReviewResult {
   failed: number;
   /** Positions added to the repertoire. */
   added: number;
+  /** Whether a message for the coach was written with the review. */
+  notified: boolean;
 }
 
 export interface GameReviewSummary {
@@ -72,6 +82,7 @@ export interface GameReviewSummary {
   passedMoves: number;
   failedMoves: number;
   addedPositions: number;
+  notified: number;
   /** Games whose review threw: they stay unreviewed and the next run tries them again. */
   failed: number;
 }
@@ -85,6 +96,8 @@ interface GameReviewPlan {
   expected: GameReviewStoredMove | null;
   openingName: string | null;
   addition: GameReviewAddition | null;
+  /** The coach's message about the game; null when nobody is told or the game is not the repertoire's. */
+  notification: RepertoireReviewNotification | null;
 }
 
 interface GameReviewRun {
@@ -100,7 +113,7 @@ function planOfVerdict(
   walk: GameWalk,
   verdict: GameVerdict,
   moves: readonly MoveRecord[],
-): Omit<GameReviewPlan, "addition"> {
+): Omit<GameReviewPlan, "addition" | "notification"> {
   const { names } = run.sources;
   const base = {
     followed: walk.followed,
@@ -148,16 +161,36 @@ function planOfVerdict(
 
 async function planGameReview(
   run: GameReviewRun,
+  game: GameRecord,
   moves: readonly MoveRecord[],
 ): Promise<GameReviewPlan> {
   const walk = walkGameAgainstRepertoire(moves, run.sources.lookup);
   const verdict = gameVerdictOf(walk, run.startPly);
   const plan = planOfVerdict(run, walk, verdict, moves);
-  if (verdict.kind !== "reply_missing") return { ...plan, addition: null };
-  const addition = await planGameReviewAddition(run.sources, verdict.move, verdict.parent, moves);
-  return addition
-    ? { ...plan, addition }
-    : { ...plan, outcome: "reply_not_stored", addition: null };
+  const addition =
+    verdict.kind === "reply_missing"
+      ? await planGameReviewAddition(run.sources, verdict.move, verdict.parent, moves)
+      : null;
+  const notification = run.deps.notifications
+    ? repertoireReviewNotice({
+        gameId: game.id,
+        group: run.variation.group_name,
+        variation: run.variation.variation_name,
+        moves,
+        followed: walk.followed,
+        openingName: plan.openingName,
+        verdict,
+        addition,
+        names: run.sources.names,
+      })
+    : null;
+  const unanswered = verdict.kind === "reply_missing" && addition === null;
+  return {
+    ...plan,
+    outcome: unanswered ? "reply_not_stored" : plan.outcome,
+    addition,
+    notification,
+  };
 }
 
 const otherSidePlan = (): GameReviewPlan => ({
@@ -169,6 +202,7 @@ const otherSidePlan = (): GameReviewPlan => ({
   expected: null,
   openingName: null,
   addition: null,
+  notification: null,
 });
 
 // A White move carries the engine's scores, a Black reply does not.
@@ -240,6 +274,20 @@ function insertGameReview(
     );
 }
 
+// Written inside the review's transaction, so a game is told to the coach exactly once, and a
+// restart before the coach reads it finds the row still undelivered.
+function writeNotification(run: GameReviewRun, plan: GameReviewPlan, now: Date): boolean {
+  const sink = run.deps.notifications;
+  if (!sink || !plan.notification) return false;
+  appendChatMessage(
+    run.deps.db,
+    sink.sessionId(),
+    { role: "user", kind: "notification", contentJson: JSON.stringify(plan.notification) },
+    { now: () => now },
+  );
+  return true;
+}
+
 const isGameReviewed = (db: Database, gameId: number): boolean =>
   db.prepare("SELECT 1 FROM repertoire_game_reviews WHERE game_id = ?").get(gameId) !== undefined;
 
@@ -260,12 +308,14 @@ function writeGameReview(
     const replyId = reply ? insertAddedMove(db, run.variation.id, reply, null) : null;
     const answerId = answer ? insertAddedMove(db, run.variation.id, answer, answer) : null;
     insertGameReview(run, game, plan, now, { replyId, answerId });
+    const notified = writeNotification(run, plan, now);
     return {
       gameId: game.id,
       outcome: plan.outcome,
       passed: plan.passes.length,
       failed: plan.failure ? 1 : 0,
       added: (replyId === null ? 0 : 1) + (answerId === null ? 0 : 1),
+      notified,
     };
   })();
 }
@@ -281,7 +331,9 @@ async function reviewGameWithin(
   if (!game || isGameReviewed(run.deps.db, gameId)) return null;
   const moves = listMoves(run.deps.db, gameId);
   const plan =
-    game.playerColor === run.variation.side ? await planGameReview(run, moves) : otherSidePlan();
+    game.playerColor === run.variation.side
+      ? await planGameReview(run, game, moves)
+      : otherSidePlan();
   return writeGameReview(run, game, plan);
 }
 
@@ -314,6 +366,7 @@ function emptySummary(): GameReviewSummary {
     passedMoves: 0,
     failedMoves: 0,
     addedPositions: 0,
+    notified: 0,
     failed: 0,
   };
 }
@@ -324,6 +377,7 @@ function tally(summary: GameReviewSummary, result: GameReviewResult): void {
   summary.passedMoves += result.passed;
   summary.failedMoves += result.failed;
   summary.addedPositions += result.added;
+  if (result.notified) summary.notified += 1;
 }
 
 // Nothing to compare with until the generator has stored a variation and its first move.
@@ -349,7 +403,9 @@ export async function reviewRepertoireGame(
   gameId: number,
 ): Promise<GameReviewResult | null> {
   const run = beginRun(deps);
-  return run ? reviewGameWithin(run, gameId) : null;
+  const result = run ? await reviewGameWithin(run, gameId) : null;
+  if (result?.notified) deps.onNotification?.();
+  return result;
 }
 
 function summaryFields(summary: GameReviewSummary, explorer: CachedExplorer) {
@@ -363,6 +419,7 @@ function summaryFields(summary: GameReviewSummary, explorer: CachedExplorer) {
     passed_moves: summary.passedMoves,
     failed_moves: summary.failedMoves,
     added_positions: summary.addedPositions,
+    notified: summary.notified,
     failed: summary.failed,
     requests: explorer.requests,
     cache_hits: explorer.cacheHits,
@@ -399,5 +456,6 @@ export async function reviewRepertoireGames(deps: GameReviewDeps): Promise<GameR
     }
   }
   log.info("repertoire.review", summaryFields(summary, run.sources.explorer));
+  if (summary.notified > 0) deps.onNotification?.();
   return summary;
 }

@@ -93,6 +93,7 @@ export function renderNotifications(items: CoachNotification[]): string {
   for (const end of ends) parts.push(renderEnd(end));
   for (const item of items) if (isTrainingRow(item)) parts.push(renderOne(item));
   for (const item of items) if (item.type === "difficulty_change") parts.push(renderOne(item));
+  for (const item of items) if (item.type === "repertoire_review") parts.push(renderOne(item));
   for (const question of questions) parts.push(renderPlyQuestion(question));
   return parts.join("\n\n");
 }
@@ -241,11 +242,44 @@ export interface TrainingSummaryNotification {
   failed: number;
 }
 
+/** One move of a reviewed game, by its ply: the coach reads it as "12. Nf3" or "12... Nf6". */
+export interface ReviewedPly {
+  ply: number;
+  san: string;
+}
+
+interface RepertoireReviewBase {
+  type: "repertoire_review";
+  game_id: number;
+  /** The repertoire the game was compared with: its group, then the variation it belongs to. */
+  group: string;
+  variation: string;
+  /** The last move of the game that the repertoire held; null when not even the first. */
+  followed_to: ReviewedPly | null;
+}
+
+/** Row content written when an imported game was compared with the student's repertoire. */
+export type RepertoireReviewNotification = RepertoireReviewBase &
+  (
+    | { outcome: "in_book" }
+    | {
+        outcome: "departed";
+        expected: ReviewedPly;
+        played: ReviewedPly;
+        /** Set when the move is sound and reaches another named opening than the expected line. */
+        alternative_opening: string | null;
+      }
+    | { outcome: "reply_added"; reply: ReviewedPly; answer: ReviewedPly }
+    | { outcome: "reply_not_stored"; reply: ReviewedPly }
+    | { outcome: "not_reached"; left: ReviewedPly | null; opening: string | null }
+  );
+
 export type CoachNotification =
   | NotificationContent
   | SrsAnswerNotification
   | PuzzleResultNotification
-  | TrainingSummaryNotification;
+  | TrainingSummaryNotification
+  | RepertoireReviewNotification;
 
 type TrainingRow = SrsAnswerNotification | PuzzleResultNotification | TrainingSummaryNotification;
 
@@ -296,6 +330,57 @@ export function renderTrainingSummary(summary: TrainingSummaryNotification): str
   ].join("\n");
 }
 
+const reviewLabel = (move: ReviewedPly): string => label(move.ply, move.san);
+
+function reviewFollowed(review: RepertoireReviewNotification): string {
+  return review.followed_to
+    ? `They followed it through ${reviewLabel(review.followed_to)}.`
+    : "They did not follow it at all.";
+}
+
+function reviewFinding(review: RepertoireReviewNotification): string[] {
+  switch (review.outcome) {
+    case "in_book":
+      return [`Every move of the game stayed in the repertoire. ${reviewFollowed(review)}`];
+    case "departed": {
+      const lines = [
+        `${reviewFollowed(review)} Then they played ${reviewLabel(review.played)} where the repertoire expects ${reviewLabel(review.expected)}. That move was marked as missed, so it comes back in practice.`,
+      ];
+      if (review.alternative_opening) {
+        lines.push(
+          `The move is sound, close to the engine's best, and reaches ${review.alternative_opening}. Do not call it a mistake: name that opening and say it is another line than the one being memorized.`,
+        );
+      }
+      return lines;
+    }
+    case "reply_added":
+      return [
+        `${reviewFollowed(review)} Black then replied ${reviewLabel(review.reply)}, which the repertoire did not have. It was added with the answer ${reviewLabel(review.answer)}, so it comes up in practice.`,
+      ];
+    case "reply_not_stored":
+      return [
+        `${reviewFollowed(review)} Black then replied ${reviewLabel(review.reply)}, which the repertoire does not have, and no answer could follow it, so nothing was added.`,
+      ];
+    case "not_reached": {
+      const became = review.opening ? ` and became the ${review.opening}` : "";
+      const left = review.left
+        ? `It left the line at ${reviewLabel(review.left)}${became}.`
+        : `It ended before the line began${review.opening ? `, as the ${review.opening}` : ""}.`;
+      return [
+        `The game never reached the ${review.group}. ${left} Nothing in the repertoire changed.`,
+      ];
+    }
+  }
+}
+
+export function renderRepertoireReview(review: RepertoireReviewNotification): string {
+  return [
+    `Game ${review.game_id} was compared with the student's ${review.group} repertoire, the ${review.variation}.`,
+    ...reviewFinding(review),
+    "Tell the student this briefly, in two sentences at most.",
+  ].join("\n");
+}
+
 function renderOne(item: CoachNotification): string {
   switch (item.type) {
     case "turn":
@@ -312,5 +397,7 @@ function renderOne(item: CoachNotification): string {
       return renderTrainingSummary(item);
     case "difficulty_change":
       return renderDifficultyChange(item);
+    case "repertoire_review":
+      return renderRepertoireReview(item);
   }
 }
