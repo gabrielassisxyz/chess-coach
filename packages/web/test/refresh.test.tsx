@@ -1,6 +1,7 @@
 import type { ActivityState } from "@chess-coach/shared";
-import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Chat } from "../src/components/Chat.js";
 import { useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
 import { createFakeSocket, FakeSocket } from "./fake-socket.js";
@@ -33,6 +34,59 @@ const transcript = [
     role: "assistant",
     kind: "text",
     content: { text: "Let me look." },
+    created_at: "t",
+  },
+];
+
+const LINE_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+// A practice conversation where the coach offered a line: show_position, two moves, then its words.
+const offeredLineRows = [
+  { id: 1, seq: 1, role: "user", kind: "text", content: { text: "why?" }, created_at: "t" },
+  {
+    id: 2,
+    seq: 2,
+    role: "assistant",
+    kind: "tool_use",
+    content: { toolUseId: "u1", name: "mcp__chess__show_position", input: { fen: LINE_FEN } },
+    created_at: "t",
+  },
+  {
+    id: 3,
+    seq: 3,
+    role: "user",
+    kind: "tool_result",
+    content: {
+      toolUseId: "u1",
+      output: JSON.stringify({ offered: true, start_fen: LINE_FEN, moves: [] }),
+    },
+    created_at: "t",
+  },
+  {
+    id: 4,
+    seq: 4,
+    role: "assistant",
+    kind: "tool_use",
+    content: { toolUseId: "u2", name: "mcp__chess__make_move", input: { san: "e4" } },
+    created_at: "t",
+  },
+  {
+    id: 5,
+    seq: 5,
+    role: "user",
+    kind: "tool_result",
+    content: {
+      toolUseId: "u2",
+      output: JSON.stringify({ offered: true, start_fen: LINE_FEN, moves: ["e4"] }),
+    },
+    created_at: "t",
+  },
+  {
+    id: 6,
+    seq: 6,
+    role: "assistant",
+    kind: "text",
+    content: { text: "Abra a linha abaixo." },
     created_at: "t",
   },
 ];
@@ -206,5 +260,25 @@ describe("browser refresh", () => {
   it("restores an empty board when no activity is open", () => {
     const server = refreshInto(null);
     expect(server.activity).toBeNull();
+  });
+
+  it("rebuilds the coach's offered line card from the stored tool calls", () => {
+    const view = renderHook(() =>
+      useServer({ url: "ws://test/api/ws", createSocket: createFakeSocket, tab: "practice" }),
+    );
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: offeredLineRows },
+        activity: null,
+      }),
+    );
+    render(<Chat server={view.result.current} />);
+    expect(screen.getAllByTestId("line-card")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Show line on board" }));
+    expect(FakeSocket.latest.sent).toContainEqual(
+      expect.objectContaining({ type: "show_line", fen: LINE_FEN, moves: ["e4"] }),
+    );
   });
 });

@@ -56,6 +56,7 @@ export type ActivityPort = Pick<
   | "openGame"
   | "selectReviewPly"
   | "leaveDemo"
+  | "openLine"
   | "newGame"
   | "resign"
   | "abort"
@@ -290,6 +291,9 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         return;
       case "select_review_ply":
         await activity.selectReviewPly(command.game_id, command.ply, command.activity_id);
+        return;
+      case "show_line":
+        await activity.openLine(command.fen, command.moves);
         return;
       case "leave_demo":
         await activity.leaveDemo(command.activity_id);

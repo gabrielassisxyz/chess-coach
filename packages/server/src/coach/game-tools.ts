@@ -3,7 +3,7 @@ import type { ActivityMove, ActivityState } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { z } from "zod";
 import { ActivityError } from "../activity/errors.js";
-import type { ActivityService } from "../activity/service.js";
+import type { ActivityService, LineOffer } from "../activity/service.js";
 import type { PlayerMoveEvaluation, StudentColor } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
 import { MATE_SCORE_CP } from "../engine/parse.js";
@@ -23,7 +23,7 @@ export type SrsEvaluator = (
 // so a test can hand in a fake with only these methods.
 export interface CoachWorld {
   game: Pick<GameService, "snapshot" | "resign">;
-  activity: Pick<ActivityService, "current" | "startDemo" | "demoMove" | "newGame">;
+  activity: Pick<ActivityService, "current" | "offerOrStartDemo" | "offerOrPlayMove" | "newGame">;
   training: Pick<ActivityService, "startTrainingItem" | "current">;
   analyze(fen: string): Promise<SearchResult>;
   evaluateMove: SrsEvaluator;
@@ -64,6 +64,17 @@ const isFen = (value: string): boolean => {
 };
 
 const fenSchema = z.string().min(1).max(120).refine(isFen, "not a valid FEN");
+
+function offerView(offer: LineOffer): ToolResult {
+  if (!offer.offered) return ok(stateSummary(offer.state));
+  return ok({
+    offered: true,
+    message:
+      "The line is offered to the student as a card under your message; the board stays on the practice. Add moves with make_move and tell the student to open the line below.",
+    start_fen: offer.fen,
+    moves: offer.moves,
+  });
+}
 
 function compactMove(move: ActivityMove): Record<string, unknown> {
   if (!move.is_player) return { ply: move.ply, san: move.san, by: "engine" };
@@ -185,15 +196,15 @@ export function buildGameTools(world: CoachWorld): SdkMcpToolDefinition<any>[] {
     ),
     tool(
       "show_position",
-      "Put a position on the student's board as a demo. The live game is kept underneath and comes back when the demo ends. Never call while a practice item is open; after it ends, a demo may show the refutation of the student's wrong try.",
+      "Put a position on the student's board as a demo. The live game is kept underneath and comes back when the demo ends. Never call while a practice item is open. In Practice, after the item ends, the line is not put on the board: it is offered to the student as a card under your message, and make_move adds the moves to it.",
       { fen: fenSchema },
-      async ({ fen }) => guarded(async () => ok(stateSummary(await world.activity.startDemo(fen)))),
+      async ({ fen }) => guarded(async () => offerView(await world.activity.offerOrStartDemo(fen))),
     ),
     tool(
       "make_move",
-      "Play one move, in SAN, on the demo board. Refused with not_in_demo when no demo is on the board.",
+      "Play one move, in SAN, on the demo board, or on the line offered in Practice. Refused with not_in_demo when neither is there.",
       { san: z.string().min(2).max(10) },
-      async ({ san }) => guarded(async () => ok(stateSummary(await world.activity.demoMove(san)))),
+      async ({ san }) => guarded(async () => offerView(await world.activity.offerOrPlayMove(san))),
     ),
     tool(
       "analyze",
