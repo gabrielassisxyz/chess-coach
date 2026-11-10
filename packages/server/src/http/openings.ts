@@ -37,6 +37,8 @@ const generateBody = z
     root: z.unknown(),
     // The same for a branch, which answers invalid_branch.
     branch: z.unknown(),
+    // And for the rebuild flag, which answers invalid_rebuild.
+    rebuild: z.unknown(),
   })
   .partial()
   .nullish();
@@ -60,6 +62,16 @@ function checkedBranch(
     return { ok: false, reason: "a branch is a line of the Italian Game and takes no root" };
   }
   return checkRepertoireBranch(body?.branch);
+}
+
+// A rebuild deletes stored rows and cards, so only a real true asks for one, and only the
+// repertoire source reads the flag.
+function checkedRebuild(
+  sources: string[] | undefined,
+  rebuild: unknown,
+): { ok: true; rebuild: boolean } | { ok: false } {
+  if (!isGiven(rebuild) || !sources?.includes("repertoire")) return { ok: true, rebuild: false };
+  return typeof rebuild === "boolean" ? { ok: true, rebuild } : { ok: false };
 }
 
 const DRILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -102,6 +114,7 @@ export function registerOpeningRoutes(
   generateRepertoire?: (
     root?: readonly string[],
     branch?: readonly string[],
+    rebuild?: boolean,
   ) => Promise<RepertoireResult>,
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>,
   log: Log = silentLog,
@@ -128,11 +141,18 @@ export function registerOpeningRoutes(
     if (root && !root.ok) {
       return reply.code(400).send({ error: "invalid_root", message: root.reason });
     }
-    // Only a root or a branch that passed is logged, and the generator is handed the line as the
-    // board wrote it.
+    const rebuild = checkedRebuild(sources, body.data?.rebuild);
+    if (!rebuild.ok) {
+      return reply
+        .code(400)
+        .send({ error: "invalid_rebuild", message: "rebuild is true or false" });
+    }
+    // Only a root, a branch or a rebuild that passed is logged, and the generator is handed the line
+    // as the board wrote it.
     const lineFields = {
       ...(root?.ok ? { root: root.root } : {}),
       ...(branch?.ok ? { branch: branch.branch } : {}),
+      ...(rebuild.rebuild ? { rebuild: true } : {}),
     };
     if (sources?.includes("explorer") && !generateFromExplorer) {
       return reply.code(404).send({ error: "explorer_unavailable", message: "not configured" });
@@ -198,9 +218,11 @@ export function registerOpeningRoutes(
         explorerRunning = true;
         const rootLine = root?.ok ? root.root : undefined;
         const branchLine = branch?.ok ? branch.branch : undefined;
-        out.repertoire = await generateRepertoire(rootLine, branchLine).finally(() => {
-          explorerRunning = false;
-        });
+        out.repertoire = await generateRepertoire(rootLine, branchLine, rebuild.rebuild).finally(
+          () => {
+            explorerRunning = false;
+          },
+        );
       }
       if (writesIdeas && generateRepertoireIdeas)
         out.repertoireIdeas = await generateRepertoireIdeas();
