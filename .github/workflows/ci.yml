@@ -11,7 +11,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Edit runs and build runs need groups of their own: in one shared group, a title or body
+  # edit made while a push is being built cancels that build, and its own run skips `ci`, so
+  # the head commit shows no failure and no completed build either.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && 'text' || 'build' }}
   cancel-in-progress: true
 
 permissions:
