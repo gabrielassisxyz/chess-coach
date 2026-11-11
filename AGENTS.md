@@ -384,6 +384,23 @@
 4. This spec updated if behavior, setup, or release flow changed, and any hurdle it gained
    is classified, not just appended.
 
+## Compliance audits
+
+An audit of closed beads (the `beads-compliance-and-completion-verification` skill) writes to
+`beads_compliance_audit/`, which `.git/info/exclude` keeps out of git. Here it also follows these
+rules:
+
+- **The gate's evidence is GitHub's.** A "Done when: `bin/ci` passes" criterion is checked against
+  the `ci` job of the pull request's last head commit, and of the push run on `main`, read with
+  `gh`: the job must have concluded `success` on that commit, not been skipped or cancelled. One
+  local `bin/ci` run on a machine the audit is loading proves nothing either way.
+- **A gap is real when the student can reach it.** Before a behaviour gap is filed or a bead is
+  called false-closed, the audit traces the path from the screen to the failing state. A probe that
+  shows a server state the screen never keeps is a test gap at most.
+- **Lanes follow the skill's tier table.** An audit runs as many lanes as the skill gives for its
+  size, two or three for about thirty beads: each lane is a fresh context, and their mutation runs
+  share one machine.
+
 ## Common hurdles
 
 | hurdle | class | gate |
