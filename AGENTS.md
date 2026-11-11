@@ -39,6 +39,12 @@
   call (`explorer.real.test.ts`, needs `LICHESS_API_TOKEN`). `CHESS_COACH_LICHESS_GAMES=1` does it for one
   game of a public account's Lichess export (the last test of `lichess.test.ts`; the export needs no token,
   and `LICHESS_API_TOKEN` is sent when set).
+- **Test scratch directories:** the server tests build every scratch path with `os.tmpdir()`, which
+  the package's vitest setup (`packages/server/test/support/temp-root.ts`) points at one root per
+  run, `chess-coach-tests-<pid>-*`, removed when the run ends; the next run removes a root that a
+  killed run left. The root sits under `TMPDIR` when it is set, else on the build disk when the
+  machine has the one `bin/ci` uses for Node's compile cache, else in the system temporary
+  directory. A test never hard-codes a temporary path: `test/temp-root.test.ts` fails if one does.
 - **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
   proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
   Stockfish missing, engine fault, dropped socket, restart per game phase, undelivered
