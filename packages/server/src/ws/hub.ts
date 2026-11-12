@@ -173,6 +173,7 @@ function sanLineOf(fen: string, moves: readonly string[]): string[] {
 }
 
 // UCI scores are from the side to move; the event carries White's view, which the page flips.
+// The depth is the one the lines reached, the one asked for only when the searcher does not say.
 function analysisEventOf(
   command: AnalyseCommand,
   depth: number,
@@ -184,8 +185,9 @@ function analysisEventOf(
     type: "analysis",
     command_id: command.command_id,
     fen: command.fen,
-    depth,
+    depth: result.depth ?? depth,
     requested_lines: lines,
+    ...(result.cutByTime ? { cutByTime: true } : {}),
     lines: result.lines.map((line) => ({
       moves: line.moves,
       san: sanLineOf(command.fen, line.moves),
@@ -412,7 +414,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
             fen: command.fen,
             depth,
             multipv: lines,
-            movetime: ANALYSIS_BUDGET_MS,
+            capMs: ANALYSIS_BUDGET_MS,
           });
         } catch (error) {
           // A newer request took the lane; it answers, this one says nothing.
