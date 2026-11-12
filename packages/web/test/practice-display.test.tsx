@@ -1,9 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TrainingActivity } from "@chess-coach/shared";
+import type { Config } from "@lichess-org/chessground/config";
+import type { DrawShape } from "@lichess-org/chessground/draw";
+import type { Key } from "@lichess-org/chessground/types";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { Chess, type Square } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BoardFactory } from "../src/components/Board.js";
+import { type BoardFactory, MOVE_PAUSE_MS } from "../src/components/Board.js";
 import { BoardSettingsToggle } from "../src/components/BoardSettings.js";
 import { Chat } from "../src/components/Chat.js";
 import type { ServerApi } from "../src/hooks/useServer.js";
@@ -11,7 +15,13 @@ import { AUTO_NEXT_MS, Practice } from "../src/screens/Practice.js";
 import { BOARD_PREFS_STORAGE_KEY } from "../src/state/board-prefs.js";
 import { initialChatState } from "../src/state/transcript.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
-import { motifCounts, progressOf } from "./practice-fixtures.js";
+import {
+  ITALIAN_APPROACH,
+  motifCounts,
+  progressOf,
+  repertoireActivity,
+  repertoireList,
+} from "./practice-fixtures.js";
 import { serverApi } from "./server-api.js";
 
 interface HappyWindow {
@@ -104,13 +114,53 @@ interface Seen {
   coordinatesOnSquares?: unknown;
   coordinates?: unknown;
   highlight?: { lastMove?: unknown };
+  fen?: string;
+  lastMove?: unknown;
+  movable?: { color?: unknown };
 }
 const seen: Seen[] = [];
+// Where the board reads chessground back, the spy answers as chessground would: the pieces of the
+// last fen it was handed or of a drop since, and the hand drawings, which a new fen clears.
+const drawn = {
+  fen: START_FEN,
+  shapes: [] as DrawShape[],
+  move: undefined as ((from: Key, to: Key) => void) | undefined,
+};
 const spyBoard: BoardFactory = (_element, config) => {
-  seen.push(config as Seen);
-  return { set: (next: Seen) => seen.push(next), destroy: vi.fn() } as never;
+  const take = (next: Config): void => {
+    seen.push(next as Seen);
+    if (!next.fen) return;
+    drawn.fen = next.fen;
+    drawn.shapes = [];
+  };
+  drawn.move = config.events?.move as typeof drawn.move;
+  take(config);
+  return {
+    set: take,
+    getFen: () => drawn.fen.split(" ")[0],
+    setShapes: (shapes: DrawShape[]) => {
+      drawn.shapes = shapes;
+    },
+    state: {
+      drawable: {
+        get shapes() {
+          return drawn.shapes;
+        },
+      },
+    },
+    destroy: vi.fn(),
+  } as never;
 };
 const noMotifs = async () => [];
+
+// A drop as chessground makes it: the piece lands on the square, then the board hears of the move.
+function drop(from: Square, to: Square): void {
+  const board = new Chess(drawn.fen);
+  const piece = board.remove(from);
+  if (piece) board.put(piece, to);
+  drawn.fen = board.fen();
+  act(() => drawn.move?.(from, to));
+}
 
 function expectNamedIconButtons(container: HTMLElement, labels: string[]): void {
   const buttons = [...container.querySelectorAll<HTMLButtonElement>("button.icon-button")].filter(
@@ -363,6 +413,216 @@ describe("jump to the next puzzle automatically", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+const AFTER_E5 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
+const AFTER_D4 = "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1";
+const AFTER_NC6 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+
+// What the server publishes once e4 was right and the puzzle answered e5.
+const answeredWithE5 = (): TrainingActivity =>
+  puzzle({
+    status: "in_progress",
+    fen: AFTER_E5,
+    last_move: { from: "e7", to: "e5" },
+    legal_moves: legalMovesOf(AFTER_E5),
+    exploring: { fen: AFTER_E5, line_san: [], trail: [] },
+    last_try: { uci: "e2e4", san: "e4", correct: true },
+    moves: [
+      { ply: 0, uci: "e2e4", san: "e4", by: "student" },
+      { ply: 1, uci: "e7e5", san: "e5", by: "reply" },
+    ],
+  });
+
+// What the server publishes once d4 was wrong: the position stays and the try is counted.
+const missedWithD4 = (): TrainingActivity =>
+  puzzle({
+    tries: 1,
+    last_try: { uci: "d2d4", san: "d4", correct: false },
+    wrong_tries: [{ ply: 0, uci: "d2d4", san: "d4" }],
+  });
+
+const listedRepertoires = async () => repertoireList;
+
+function renderItem(activity: TrainingActivity) {
+  const server = api(activity);
+  const view = render(
+    <Practice
+      server={server}
+      createBoard={spyBoard}
+      fetchMotifs={noMotifs}
+      fetchRepertoires={listedRepertoires}
+    />,
+  );
+  const publish = (next: TrainingActivity): ServerApi => {
+    const updated = api(next);
+    view.rerender(
+      <Practice
+        server={updated}
+        createBoard={spyBoard}
+        fetchMotifs={noMotifs}
+        fetchRepertoires={listedRepertoires}
+      />,
+    );
+    return updated;
+  };
+  return { server, publish };
+}
+
+const wait = (ms: number): void => {
+  act(() => {
+    vi.advanceTimersByTime(ms);
+  });
+};
+const badgeKind = (): string | null =>
+  screen.queryByTestId("square-badge")?.getAttribute("data-kind") ?? null;
+const sentTries = (server: ServerApi): unknown[] =>
+  vi
+    .mocked(server.send)
+    .mock.calls.map(([command]) => command)
+    .filter((command) => command.type === "try_move");
+
+describe("the pause after a try", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("leaves a wrong move on its square with the cross for the pause, then puts it back", () => {
+    const { publish } = renderItem(puzzle());
+    drop("d2", "d4");
+    publish(missedWithD4());
+    expect(seen.at(-1)).toMatchObject({ fen: AFTER_D4, lastMove: ["d2", "d4"] });
+    expect(seen.at(-1)?.movable?.color).toBeUndefined();
+    expect(badgeKind()).toBe("cross");
+
+    wait(MOVE_PAUSE_MS - 1);
+    expect(seen.at(-1)?.fen).toBe(AFTER_D4);
+    expect(badgeKind()).toBe("cross");
+
+    wait(1);
+    expect(seen.at(-1)).toMatchObject({ fen: START_FEN, movable: { color: "white" } });
+  });
+
+  it("keeps the student's drawings when the wrong move goes back", () => {
+    const arrow = { orig: "e2", dest: "e4", brush: "green" } as DrawShape;
+    const { publish } = renderItem(puzzle());
+    drawn.shapes = [arrow];
+    drop("d2", "d4");
+    publish(missedWithD4());
+    wait(MOVE_PAUSE_MS);
+    expect(seen.at(-1)?.fen).toBe(START_FEN);
+    expect(drawn.shapes).toEqual([arrow]);
+  });
+
+  it("shows the student's move for the pause before the reply it got", () => {
+    const { publish } = renderItem(puzzle());
+    drop("e2", "e4");
+    publish(answeredWithE5());
+    expect(seen.at(-1)).toMatchObject({ fen: AFTER_E4, lastMove: ["e2", "e4"] });
+    expect(seen.at(-1)?.movable?.color).toBeUndefined();
+
+    wait(MOVE_PAUSE_MS - 1);
+    expect(seen.at(-1)).toMatchObject({ fen: AFTER_E4, lastMove: ["e2", "e4"] });
+
+    wait(1);
+    expect(seen.at(-1)).toMatchObject({
+      fen: AFTER_E5,
+      lastMove: ["e7", "e5"],
+      movable: { color: "white" },
+    });
+  });
+
+  it("plays the moves after a right answer in a line drill one at a time, ending on the published position", () => {
+    const asked = repertoireActivity();
+    const board = new Chess(asked.fen);
+    board.move("c3");
+    const afterC3 = board.fen();
+    board.move("Nf6");
+    const afterNf6 = board.fen();
+    const answered = repertoireActivity({
+      sans: [...ITALIAN_APPROACH, "c3", "Nf6", "d4"],
+      training: { status: "in_progress", last_try: { uci: "c2c3", san: "c3", correct: true } },
+    });
+    const line = (answered.moves ?? []).map((move) =>
+      move.san === "c3" ? { ...move, by: "student" as const } : move,
+    );
+    const { publish } = renderItem(asked);
+    drop("c2", "c3");
+    publish({ ...answered, moves: line });
+    expect(seen.at(-1)).toMatchObject({ fen: afterC3, lastMove: ["c2", "c3"] });
+
+    wait(MOVE_PAUSE_MS - 1);
+    expect(seen.at(-1)?.fen).toBe(afterC3);
+    wait(1);
+    expect(seen.at(-1)).toMatchObject({ fen: afterNf6, lastMove: ["g8", "f6"] });
+    expect(seen.at(-1)?.movable?.color).toBeUndefined();
+
+    wait(MOVE_PAUSE_MS - 1);
+    expect(seen.at(-1)?.fen).toBe(afterNf6);
+    wait(1);
+    expect(seen.at(-1)).toMatchObject({ fen: answered.fen, lastMove: ["d2", "d4"] });
+    const settled = seen.length;
+    wait(MOVE_PAUSE_MS * 3);
+    expect(seen.length).toBe(settled);
+  });
+
+  it("refuses drops until the pause is over, after a wrong move and before a reply", () => {
+    for (const [from, to, state] of [
+      ["d2", "d4", missedWithD4()],
+      ["e2", "e4", answeredWithE5()],
+    ] as const) {
+      const { publish } = renderItem(puzzle());
+      drop(from, to);
+      const server = publish(state);
+      expect(seen.at(-1)?.movable?.color).toBeUndefined();
+      // Chessground refuses a drop without a movable colour; one that reached the board's
+      // callback all the same is refused there.
+      drop("g1", "f3");
+      wait(MOVE_PAUSE_MS - 1);
+      drop("g1", "f3");
+      expect(sentTries(server)).toEqual([]);
+
+      wait(1);
+      drop("g1", "f3");
+      expect(sentTries(server)).toEqual([{ type: "try_move", uci: "g1f3", activity_id: 4 }]);
+      cleanup();
+    }
+  });
+
+  it("shows a new item at once and drops the pause it arrived in", () => {
+    const { publish } = renderItem(puzzle());
+    drop("e2", "e4");
+    publish(answeredWithE5());
+    expect(seen.at(-1)?.fen).toBe(AFTER_E4);
+
+    const next = puzzle({
+      fen: AFTER_NC6,
+      legal_moves: legalMovesOf(AFTER_NC6),
+      exploring: { fen: AFTER_NC6, line_san: [], trail: [] },
+      served_at: "2026-03-01T00:01:00.000Z",
+      item: {
+        kind: "puzzle",
+        puzzle_id: "f2",
+        motif: "fork",
+        difficulty: "easy",
+        fen: AFTER_NC6,
+        cursor: 0,
+        reply_uci: null,
+        position_in_queue: 3,
+        queue_length: 10,
+      },
+    });
+    seen.length = 0;
+    publish(next);
+    expect(seen.at(-1)).toMatchObject({ fen: AFTER_NC6, movable: { color: "white" } });
+
+    wait(MOVE_PAUSE_MS * 2);
+    expect(seen.map((config) => config.fen).filter((fen) => fen !== AFTER_NC6)).toEqual([]);
   });
 });
 

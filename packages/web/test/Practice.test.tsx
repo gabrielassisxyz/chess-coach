@@ -13,7 +13,7 @@ import {
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BoardFactory } from "../src/components/Board.js";
+import { type BoardFactory, MOVE_PAUSE_MS } from "../src/components/Board.js";
 import { PracticeHub, type PracticeHubProps } from "../src/components/PracticeHub.js";
 import { type ServerApi, useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
@@ -619,18 +619,26 @@ describe("grading on drop", () => {
     expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "explore" }));
   });
 
-  it("says Not that move after a wrong try and puts the piece back on the served square", () => {
-    boards.length = 0;
-    const { rerender } = render(
-      <Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
-    expect(screen.getByRole("status").textContent).toBe("Your move");
-    const before = boards.length;
-    const missed = puzzle({ tries: 1, last_try: { uci: "e2e4", san: "e4", correct: false } });
-    rerender(<Practice server={api(missed)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByRole("status").textContent).toBe("Not that move");
-    expect(boards.length).toBeGreaterThan(before);
-    expect(boards.at(-1)).toEqual({ movableColor: "white", fen: START_FEN, hint: {} });
+  it("says Not that move after a wrong try and puts the piece back on the served square after the pause", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      boards.length = 0;
+      const { rerender } = render(
+        <Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+      );
+      expect(screen.getByRole("status").textContent).toBe("Your move");
+      const before = boards.length;
+      const missed = puzzle({ tries: 1, last_try: { uci: "e2e4", san: "e4", correct: false } });
+      rerender(<Practice server={api(missed)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      expect(screen.getByRole("status").textContent).toBe("Not that move");
+      act(() => {
+        vi.advanceTimersByTime(MOVE_PAUSE_MS);
+      });
+      expect(boards.length).toBeGreaterThan(before);
+      expect(boards.at(-1)).toEqual({ movableColor: "white", fen: START_FEN, hint: {} });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("drops the try-again line once a right try moves the puzzle on", () => {
@@ -1254,6 +1262,130 @@ describe("explore mode", () => {
     (boardMove as (from: string, to: string) => void)("d2", "d4");
     expect(server.send).toHaveBeenCalledWith({ type: "try_move", uci: "d2d4", activity_id: 4 });
     expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "explore" }));
+  });
+});
+
+const AFTER_NF3 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2";
+
+describe("what the board shows at once, with no pause", () => {
+  const stepButton = (name: string): HTMLButtonElement =>
+    screen.getByRole("button", { name }) as HTMLButtonElement;
+  const repliedE5 = () => puzzleAfterE5({ last_try: { uci: "e2e4", san: "e4", correct: true } });
+
+  // Each case renders `from`, hands the board `drop`, publishes `to`, and expects no set() after.
+  function settlesAtOnce(from: TrainingActivity, drop: [string, string], to: TrainingActivity) {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      boards.length = 0;
+      const { rerender } = render(
+        <Practice server={api(from)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+      );
+      dropOnPracticeBoard(...drop);
+      rerender(<Practice server={api(to)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      const shown = boards.at(-1);
+      const settled = boards.length;
+      act(() => {
+        vi.advanceTimersByTime(MOVE_PAUSE_MS * 3);
+      });
+      expect(boards.length).toBe(settled);
+      return shown;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it("shows the move that solves a puzzle at once", () => {
+    const solvedNow = puzzleAfterE5({
+      status: "solved",
+      fen: AFTER_NF3,
+      turn: "black",
+      last_move: { from: "g1", to: "f3" },
+      legal_moves: [],
+      input_enabled: false,
+      exploring: { fen: AFTER_NF3, line_san: [], trail: [] },
+      last_try: { uci: "g1f3", san: "Nf3", correct: true },
+      moves: [...playedE4E5, { ply: 2, uci: "g1f3", san: "Nf3", by: "student" }],
+    });
+    expect(settlesAtOnce(puzzleAfterE5(), ["g1", "f3"], solvedNow)).toEqual({
+      movableColor: undefined,
+      fen: AFTER_NF3,
+      hint: {},
+    });
+  });
+
+  it("shows the move that answers a card at once", () => {
+    const right = card({
+      status: "solved",
+      fen: AFTER_E4,
+      turn: "black",
+      input_enabled: false,
+      legal_moves: [],
+      last_move: { from: "e2", to: "e4" },
+      exploring: { fen: AFTER_E4, line_san: [], trail: [] },
+      last_try: { uci: "e2e4", san: "e4", correct: true },
+      moves: [{ ply: 0, uci: "e2e4", san: "e4", by: "student" }],
+    });
+    expect(settlesAtOnce(card(), ["e2", "e4"], right)).toEqual({
+      movableColor: undefined,
+      fen: AFTER_E4,
+      hint: {},
+    });
+  });
+
+  it("shows a move explored on an open item at once", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      boards.length = 0;
+      const server = api(puzzle());
+      const { rerender } = render(
+        <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+      );
+      fireEvent.click(stepButton("Explore"));
+      dropOnPracticeBoard("e2", "e4");
+      expect(server.send).toHaveBeenCalledWith({
+        type: "explore",
+        kind: "move",
+        uci: "e2e4",
+        activity_id: 4,
+      });
+      const explored = puzzle({
+        turn: "black",
+        last_move: { from: "e2", to: "e4" },
+        legal_moves: legalMovesOf(AFTER_E4),
+        exploring: { fen: AFTER_E4, line_san: ["e4"], trail: [] },
+      });
+      rerender(<Practice server={api(explored)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      expect(boards.at(-1)).toEqual({ movableColor: "both", fen: AFTER_E4, hint: {} });
+      const settled = boards.length;
+      act(() => {
+        vi.advanceTimersByTime(MOVE_PAUSE_MS * 3);
+      });
+      expect(boards.length).toBe(settled);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves a pause for Explore and for a step back through the moves", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      boards.length = 0;
+      const { rerender } = render(
+        <Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+      );
+      dropOnPracticeBoard("e2", "e4");
+      rerender(
+        <Practice server={api(repliedE5())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+      );
+      expect(boards.at(-1)?.fen).toBe(AFTER_E4);
+      fireEvent.click(stepButton("First move"));
+      expect(boards.at(-1)).toEqual({ movableColor: undefined, fen: START_FEN, hint: {} });
+      fireEvent.click(stepButton("Last move"));
+      fireEvent.click(stepButton("Explore"));
+      expect(boards.at(-1)).toEqual({ movableColor: "both", fen: AFTER_E5, hint: {} });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

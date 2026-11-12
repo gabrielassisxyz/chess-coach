@@ -381,6 +381,7 @@ function Item({
             bothSides={board.bothSides}
             hintSquare={board.hintSquare}
             line={board.line}
+            pause={board.pause}
             orientation={board.orientation}
             badge={board.badge}
             prefs={prefs}

@@ -2,6 +2,8 @@ import type { PromotionPiece, TrainingActivity } from "@chess-coach/shared";
 import type { DrawShape } from "@lichess-org/chessground/draw";
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { MOVE_PAUSE_MS, type MovePause } from "../components/Board.js";
+import { positionsAlong } from "../state/play.js";
 import { boardOf, trainingView } from "../state/practice.js";
 import {
   isLegalIn,
@@ -15,7 +17,8 @@ import { shownMoveOf } from "../state/repertoire-drill.js";
 import type { ServerApi } from "./useServer.js";
 
 // How long the right or wrong mark stays on the destination square; the final right mark stays.
-export const BADGE_MS = 500;
+// As long as the pause, so a wrong move's cross lasts while the piece rests where it landed.
+export const BADGE_MS = MOVE_PAUSE_MS;
 
 const NO_SHAPES: readonly DrawShape[] = [];
 
@@ -29,6 +32,8 @@ export interface PracticeBoard {
   activity: TrainingActivity;
   bothSides: boolean;
   line: readonly string[] | null;
+  // What the board shows before the state the last try produced; null off the graded tip.
+  pause: MovePause | null;
   hintSquare: string | null;
   // The arrow a repertoire drill draws for the move it shows: the answer of a new move, or the
   // move a second hint asked for.
@@ -54,6 +59,30 @@ function typing(target: EventTarget | null): boolean {
   );
 }
 
+const servedKeyOf = (training: TrainingActivity): string =>
+  `${training.served_at}:${training.item.position_in_queue}`;
+
+// The positions the board passes through before the state a try produced: the wrong move where it
+// landed, or the student's right move and every move played after it but the last, which is the
+// state itself. None when the state is not a new try on the same item, when nothing answered a
+// right move, and for a miss in a line drill, whose piece goes straight back.
+function pauseAfterTry(before: TrainingActivity, after: TrainingActivity): MovePause | null {
+  const lastTry = after.last_try;
+  if (!lastTry || servedKeyOf(before) !== servedKeyOf(after)) return null;
+  const played = movesOf(after);
+  const key = `${servedKeyOf(after)}:${after.tries}:${played.length}`;
+  if (!lastTry.correct) {
+    if (after.repertoire || after.tries !== before.tries + 1) return null;
+    const landed = positionsAlong(boardOf(after).fen, [lastTry.uci]);
+    return landed.length === 1 ? { key, steps: landed } : null;
+  }
+  const from = movesOf(before).length;
+  if (played[from]?.uci !== lastTry.uci) return null;
+  const ucis = played.map((move) => move.uci);
+  const steps = positionsAlong(startFenOf(after), ucis).slice(from, -1);
+  return steps.length > 0 && steps.length === played.length - from - 1 ? { key, steps } : null;
+}
+
 // Everything the board does on Practice besides grading: stepping back through the item's moves,
 // free moves (through the server while the item is open, on the client once it ended), the
 // mark on the destination square, and the orientation.
@@ -66,7 +95,18 @@ export function usePracticeBoard(
   const activityId = training.activity_id;
   const moves = movesOf(training);
   const itemTip = moves.length;
-  const servedKey = `${training.served_at}:${training.item.position_in_queue}`;
+  const servedKey = servedKeyOf(training);
+
+  // Each state the server sends replaces the pause, so a newer one, a new item among them, is
+  // shown at once. Kept in state, since the pause is worked out against the state before it.
+  const [tracked, setTracked] = useState<{ training: TrainingActivity; pause: MovePause | null }>(
+    () => ({ training, pause: null }),
+  );
+  let pause = tracked.pause;
+  if (tracked.training !== training) {
+    pause = pauseAfterTry(tracked.training, training);
+    setTracked({ training, pause });
+  }
 
   const [scratch, setScratch] = useState(false);
   const [localUcis, setLocalUcis] = useState<string[]>([]);
@@ -255,6 +295,7 @@ export function usePracticeBoard(
     activity,
     bothSides: scratch,
     line: atTip && training.gave_up ? training.solution_line : null,
+    pause: !scratch && !stepping ? pause : null,
     hintSquare: atTip ? training.hint_square : null,
     answerShapes: atTip ? answerShapes : NO_SHAPES,
     orientation: flipped

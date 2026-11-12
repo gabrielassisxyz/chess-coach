@@ -28,7 +28,18 @@ import { PromotionChooser } from "./PromotionChooser.js";
 export type BoardFactory = (element: HTMLElement, config: Config) => Api;
 
 export const LINE_STEP_MS = 600;
+// How long each position of a pause stays on the board. It is a reading pause, not an animation,
+// so the animation setting leaves it alone.
+export const MOVE_PAUSE_MS = 600;
 const NO_SHAPES: readonly DrawShape[] = [];
+
+// Positions shown before the activity's own after a try: the wrong move where it landed, or the
+// student's move and the replies before the last. `key` names the try, so the same pause handed
+// over again is not replayed.
+export interface MovePause {
+  key: string;
+  steps: readonly LineStep[];
+}
 
 export interface BoardProps {
   activity: ActivityState;
@@ -40,6 +51,9 @@ export interface BoardProps {
   // UCI moves played one by one from the activity's position, LINE_STEP_MS apart; the board then
   // stays on the last one. A new line, or a new position under it, starts again from the first.
   line?: readonly string[] | null | undefined;
+  // Shown one step every MOVE_PAUSE_MS before the activity; drops are refused until the last step
+  // has given way to it.
+  pause?: MovePause | null | undefined;
   // Origin square of the expected move after a hint; rendered with the hint highlight.
   hintSquare?: string | null | undefined;
   // Which side is at the bottom; the activity's own orientation unless the student flipped it.
@@ -94,6 +108,7 @@ function toConfig(
   orientation: Color,
   prefs: BoardPrefs,
   shapes: readonly DrawShape[],
+  pausing: boolean,
 ): Config {
   const last = shown ?? activity.last_move;
   const lastMove = last ? [last.from, last.to] : [];
@@ -121,7 +136,7 @@ function toConfig(
       free: false,
       // chessground's merge assigns undefined, which is how a disabled board drops the colour;
       // its typings do not admit it.
-      color: (activity.input_enabled
+      color: (activity.input_enabled && !pausing
         ? bothSides
           ? "both"
           : activity.orientation
@@ -155,6 +170,25 @@ function useLinePlayback(fen: string, line: readonly string[] | null): LineStep 
     return () => clearTimeout(timer);
   }, [key, count, steps.length]);
   return count > 0 ? (steps[count - 1] ?? null) : null;
+}
+
+// The step of `pause` on the board right now: the first at once, the next every MOVE_PAUSE_MS,
+// then none, which hands the board back to the activity. A pause taken away and handed back with
+// the same key carries on where it was.
+function useMovePause(pause: MovePause | null): LineStep | null {
+  const key = pause && pause.steps.length > 0 ? pause.key : null;
+  const length = pause?.steps.length ?? 0;
+  const [passed, setPassed] = useState<{ key: string | null; count: number }>({
+    key: null,
+    count: 0,
+  });
+  const count = passed.key === key ? passed.count : 0;
+  useEffect(() => {
+    if (key === null || count >= length) return;
+    const timer = setTimeout(() => setPassed({ key, count: count + 1 }), MOVE_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [key, count, length]);
+  return key === null ? null : (pause?.steps[count] ?? null);
 }
 
 // The mark sits on the square's centre, so it reads from the piece that just landed there.
@@ -199,6 +233,7 @@ export function Board({
   syncToken = 0,
   bothSides = false,
   line = null,
+  pause = null,
   hintSquare = null,
   orientation,
   badge = null,
@@ -213,11 +248,23 @@ export function Board({
   const localMove = useRef<{ activityId: number; from: Key; to: Key } | null>(null);
   const [pending, setPending] = useState<PendingPromotion | null>(null);
   const [resync, setResync] = useState(0);
-  const shown = useLinePlayback(activity.fen, line);
+  const played = useLinePlayback(activity.fen, line);
+  const paused = useMovePause(pause);
+  const shown = paused ?? played;
+  const pausing = paused !== null;
 
   // Chessground callbacks are registered once at creation, so they read the latest props here.
-  const latest = useRef({ activity, onMove, bothSides, hintSquare, facing, prefs, shapes });
-  latest.current = { activity, onMove, bothSides, hintSquare, facing, prefs, shapes };
+  const latest = useRef({
+    activity,
+    onMove,
+    bothSides,
+    hintSquare,
+    facing,
+    prefs,
+    shapes,
+    pausing,
+  });
+  latest.current = { activity, onMove, bothSides, hintSquare, facing, prefs, shapes, pausing };
 
   useEffect(() => {
     const element = elementRef.current;
@@ -233,13 +280,17 @@ export function Board({
         latest.current.facing,
         latest.current.prefs,
         latest.current.shapes,
+        false,
       ),
       draggable: { enabled: false },
       premovable: { enabled: false },
       selectable: { enabled: true },
       events: {
         move: (from, to) => {
-          const { activity: current, onMove: send } = latest.current;
+          const { activity: current, onMove: send, pausing: waiting } = latest.current;
+          // A drop that reached the board before the pause took its colour away; the next step
+          // puts the piece back.
+          if (waiting) return;
           localMove.current = { activityId: current.activity_id, from, to };
           const pieces = promotionsFor(current.legal_moves, from, to);
           if (pieces) setPending({ from, to, pieces });
@@ -261,28 +312,47 @@ export function Board({
   useEffect(() => {
     const api = apiRef.current;
     if (!api) return;
-    const config = toConfig(activity, bothSides, shown, hintSquare, facing, prefs, shapes);
+    const config = toConfig(activity, bothSides, shown, hintSquare, facing, prefs, shapes, pausing);
     const positionKey = `${activity.activity_id} ${shown?.fen ?? activity.fen}`;
     const previous = appliedPosition.current;
     const positionChanged = previous?.key !== positionKey;
     const needsResync = previous?.syncToken !== syncToken || previous?.resync !== resync;
     const move = localMove.current;
+    // The move the board now shows as last: a pause step's, else the activity's own, unless a
+    // line is playing over it.
+    const echoed =
+      paused ??
+      (played === null && activity.last_move ? { fen: activity.fen, ...activity.last_move } : null);
     const localEcho =
       positionChanged &&
       !needsResync &&
-      shown === null &&
+      echoed !== null &&
       move?.activityId === activity.activity_id &&
-      activity.last_move?.from === move.from &&
-      activity.last_move?.to === move.to &&
-      api.getFen() === activity.fen.split(" ")[0];
+      echoed.from === move.from &&
+      echoed.to === move.to &&
+      api.getFen() === echoed.fen.split(" ")[0];
     // Chessground clears user shapes whenever set() receives a fen, even if the fen is unchanged.
     const keepDrawings = (!positionChanged && !needsResync) || localEcho;
     const handDrawn = keepDrawings ? (api.state?.drawable.shapes.slice() ?? []) : [];
     api.set(config);
     if (handDrawn.length) api.setShapes(handDrawn);
-    appliedPosition.current = { key: positionKey, syncToken, resync };
-    if (positionChanged || needsResync) localMove.current = null;
-  }, [activity, bothSides, hintSquare, facing, prefs, shapes, syncToken, resync, shown?.fen]);
+    // A pause step is only shown: what follows it is compared with the position before it, so a
+    // wrong move going back keeps the drawings it found there.
+    const key = pausing && previous ? previous.key : positionKey;
+    appliedPosition.current = { key, syncToken, resync };
+    if (!pausing && (positionChanged || needsResync)) localMove.current = null;
+  }, [
+    activity,
+    bothSides,
+    hintSquare,
+    facing,
+    prefs,
+    shapes,
+    syncToken,
+    resync,
+    shown?.fen,
+    pausing,
+  ]);
 
   const choose = (piece: PromotionPiece): void => {
     if (!pending) return;
