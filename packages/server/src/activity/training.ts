@@ -752,6 +752,9 @@ export class TrainingRun implements PracticeRunPort {
     this.closeItem(s, s.tries.at(-1)?.uci ?? null, result.correct && !s.hinted);
     s.gaveUp = gaveUp;
     this.attachReasoning(s);
+    // A right answer stays on the board, as a puzzle's last move does. A card given up keeps the
+    // prompt position instead: `solution_line` is played from `fen`, so the client animates it.
+    if (!gaveUp) s.fen = fenAfter(s.fen, [result.expected_uci]);
     s.explore.restart(s.fen);
     s.status = gaveUp ? "failed" : "solved";
     s.expected = gaveUp ? { uci: result.expected_uci, san: result.expected_san } : null;

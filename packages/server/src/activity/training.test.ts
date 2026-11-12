@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ActivityState, type TrainingActivity, UNNAMED_OPENING } from "@chess-coach/shared";
+import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
 import { START_FEN } from "../../test/fixture-game.js";
@@ -21,6 +22,10 @@ import { ActivityService } from "./service.js";
 const T0 = new Date("2026-03-01T00:00:00.000Z");
 const BACK_RANK = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1";
 const FORK = "r2qk2r/pQp1ppbp/6p1/1N3P2/2p2B2/8/PPn2P1P/R4K1R w kq - 2 14";
+// What a finished item leaves on the board: 1.d4 from the start for the card, the fork puzzle once
+// its last move a1c1 is played.
+const FEN_AFTER_D4_FROM_START = "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1";
+const FORK_PUZZLE_SOLVED_FEN = "r2q1k1r/pQN1ppbp/6p1/5P2/2p2B2/8/PPn2P1P/2R2K1R b - - 2 15";
 
 let tmp: string;
 let db: Database;
@@ -234,6 +239,60 @@ describe("a card item", () => {
     });
   });
 
+  it("leaves the piece on its new square after a right answer, for the board and for exploration", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const state = training(await activity.trainingTry("d2d4"));
+    expect(state).toMatchObject({
+      status: "solved",
+      fen: FEN_AFTER_D4_FROM_START,
+      turn: "black",
+      last_move: { from: "d2", to: "d4" },
+      exploring: { fen: FEN_AFTER_D4_FROM_START, line_san: [] },
+    });
+  });
+
+  it("keeps the piece there after a wrong try before the right one, and once the card is rated", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    const served = training(await activity.startTraining({ mode: "srs" }));
+    await activity.trainingTry("e2e4");
+    const solved = training(await activity.trainingTry("d2d4"));
+    expect(solved).toMatchObject({
+      fen: FEN_AFTER_D4_FROM_START,
+      exploring: { fen: FEN_AFTER_D4_FROM_START },
+    });
+    const rated = training(
+      await activity.rateCard((served.item as { exposure_id: string }).exposure_id, 4),
+    );
+    expect(rated).toMatchObject({
+      status: "rated",
+      fen: FEN_AFTER_D4_FROM_START,
+      last_move: { from: "d2", to: "d4" },
+    });
+  });
+
+  // `solution_line` is the UCI moves from `fen`, which the board plays one by one: a given-up card
+  // that published the position after its move would have the board play it a second time.
+  it("keeps the prompt position under a card given up, so its solution line plays from it", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    const served = training(await activity.startTraining({ mode: "srs" }));
+    const state = training(await activity.trainingShowSolution());
+    expect(state).toMatchObject({
+      fen: served.fen,
+      exploring: { fen: served.fen },
+      last_move: null,
+      solution_line: ["d2d4"],
+    });
+    const board = new Chess(state.fen);
+    for (const uci of state.solution_line ?? []) {
+      board.move({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
+    }
+    expect(board.fen()).toBe(FEN_AFTER_D4_FROM_START);
+  });
+
   it("logs the item served, the answer and the rating", async () => {
     addCard("d2d4");
     const log = new RecordingLog();
@@ -293,6 +352,20 @@ describe("a puzzle item", () => {
     expect(rows()).toEqual([]);
     const attempts = db.prepare("SELECT solved FROM puzzle_attempts").all();
     expect(attempts).toEqual([{ solved: 1 }]);
+  });
+
+  it("leaves the last move on the board for the board and for exploration once it is solved", async () => {
+    addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("b5c7");
+    const done = training(await activity.trainingTry("a1c1"));
+    expect(done).toMatchObject({
+      status: "solved",
+      fen: FORK_PUZZLE_SOLVED_FEN,
+      last_move: { from: "a1", to: "c1" },
+      exploring: { fen: FORK_PUZZLE_SOLVED_FEN, line_san: [] },
+    });
   });
 
   it("keeps the puzzle open at the same step on a wrong try and records nothing final", async () => {
@@ -589,7 +662,7 @@ describe("exploration", () => {
     const done = training(await activity.trainingTry("d2d4"));
     expect(done).toMatchObject({
       status: "solved",
-      exploring: { fen: START_FEN, line_san: [] },
+      exploring: { fen: FEN_AFTER_D4_FROM_START, line_san: [] },
       legal_moves: [],
     });
     expect(db.prepare("SELECT answer_uci, correct, answered_at FROM training_items").all()).toEqual(
