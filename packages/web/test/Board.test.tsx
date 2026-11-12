@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { TrainingActivity } from "@chess-coach/shared";
 import { Chessground } from "@lichess-org/chessground";
 import type { Api } from "@lichess-org/chessground/api";
 import type { Config } from "@lichess-org/chessground/config";
@@ -7,9 +8,65 @@ import { Chess } from "chess.js";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board, type BoardFactory } from "../src/components/Board.js";
-import { legalMovesOf, liveGame } from "./fixtures.js";
+import { boardOf } from "../src/state/practice.js";
+import { legalMovesOf, liveGame, START_FEN } from "./fixtures.js";
 
 const PROMOTION_FEN = "8/P6k/8/8/8/8/8/K7 w - - 0 1";
+const CARD_FEN_AFTER_D4 = "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1";
+
+// A card review served on the start position whose right move is 1.d4.
+function cardReview(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
+  return {
+    kind: "training",
+    activity_id: 4,
+    orientation: "white",
+    fen: START_FEN,
+    turn: "white",
+    last_move: null,
+    legal_moves: legalMovesOf(START_FEN),
+    input_enabled: true,
+    pending: "none",
+    mode: "srs",
+    item: {
+      kind: "card",
+      card_id: 7,
+      exposure_id: "ex-1",
+      prompt_fen: START_FEN,
+      student_color: "white",
+      rating_preview: { "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 72 },
+      position_in_queue: 1,
+      queue_length: 3,
+    },
+    status: "prompt",
+    served_at: "2026-03-01T00:00:00.000Z",
+    exposure_id: "ex-1",
+    expected: null,
+    exploring: { fen: START_FEN, line_san: [], trail: [] },
+    tries: 0,
+    last_try: null,
+    gave_up: false,
+    solution_line: null,
+    suggested_quality: null,
+    hint_square: null,
+    summary: null,
+    ...overrides,
+  };
+}
+
+// What the server publishes once 1.d4 is played: the position after it and the move as the last one.
+function solvedCardReview(): TrainingActivity {
+  return cardReview({
+    status: "solved",
+    fen: CARD_FEN_AFTER_D4,
+    turn: "black",
+    last_move: { from: "d2", to: "d4" },
+    legal_moves: [],
+    input_enabled: false,
+    exploring: { fen: CARD_FEN_AFTER_D4, line_san: [], trail: [] },
+    last_try: { uci: "d2d4", san: "d4", correct: true },
+    moves: [{ ply: 0, uci: "d2d4", san: "d4", by: "student" }],
+  });
+}
 
 // Counts what the component creates and destroys, and keeps the config it handed over.
 class RecordingBoard {
@@ -182,6 +239,28 @@ describe("Board lifecycle", () => {
     );
     unmount();
     expect(recorder.live).toBe(0);
+  });
+});
+
+describe("Board on a solved card", () => {
+  it("is handed the position after the right move, with the piece on its new square", () => {
+    const recorder = new RecordingBoard();
+    const { rerender } = render(
+      <Board activity={boardOf(cardReview())} onMove={vi.fn()} createBoard={recorder.factory} />,
+    );
+    rerender(
+      <Board
+        activity={boardOf(solvedCardReview())}
+        onMove={vi.fn()}
+        createBoard={recorder.factory}
+      />,
+    );
+    const last = recorder.sets.at(-1);
+    expect(last?.fen).toBe(CARD_FEN_AFTER_D4);
+    expect(last?.lastMove).toEqual(["d2", "d4"]);
+    const shown = new Chess(last?.fen);
+    expect(shown.get("d4")).toEqual({ type: "p", color: "w" });
+    expect(shown.get("d2")).toBeUndefined();
   });
 });
 
@@ -420,6 +499,29 @@ describe("Board click-to-move", () => {
       />,
     );
     expect(api.state.drawable.shapes).toEqual(handDrawn);
+  });
+
+  it("leaves a piece the student dropped on its new square when the card is solved", async () => {
+    let api!: Api;
+    const createBoard: BoardFactory = (element, config) => {
+      api = Chessground(element, { ...config, trustAllEvents: true });
+      return api;
+    };
+    const onMove = vi.fn();
+    const { container, rerender } = render(
+      <Board activity={boardOf(cardReview())} onMove={onMove} createBoard={createBoard} />,
+    );
+    const board = container.querySelector("cg-board") as HTMLElement;
+    click(board, "d2");
+    click(board, "d4");
+    await settle();
+    expect(onMove).toHaveBeenCalledWith("d2", "d4");
+    rerender(
+      <Board activity={boardOf(solvedCardReview())} onMove={onMove} createBoard={createBoard} />,
+    );
+    expect(api.getFen()).toBe(CARD_FEN_AFTER_D4.split(" ")[0]);
+    expect(api.state.pieces.get("d4")).toMatchObject({ role: "pawn", color: "white" });
+    expect(api.state.pieces.has("d2")).toBe(false);
   });
 
   it("sends exactly one move for a piece click then a legal square click", async () => {
