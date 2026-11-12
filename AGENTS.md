@@ -30,7 +30,12 @@
 - **Data:** one SQLite file, `data/chess-coach.db`, under the repository root and git-ignored.
   `CHESS_COACH_DATA_DIR` moves it, `CHESS_COACH_CONTENT_DIR` moves the teaching content
   (`content/`). Puzzles are seeded from `content/puzzles` at every server start.
-- **Test:** `pnpm test` (vitest, per package). Opt-in flags, off by default and never in
+- **Test:** `pnpm test` (vitest, per package). `bin/ci` runs the packages' tests one after the other, and
+  each package's vitest uses half the hardware threads (`maxWorkers: "50%"`) instead of all but one: with
+  both suites at a worker per thread beside other load, 100 ms tests ran past vitest's 5 s limit and turned
+  the gate red with nothing wrong in the code. `packages/server/test/gate-concurrency.test.ts` holds both
+  settings.
+  Opt-in flags, off by default and never in
   `bin/ci`: `CHESS_COACH_STOCKFISH=1` runs the real-engine grading suite
   (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
   Claude session probe (`test:sdk`, stdin closed); `CHESS_COACH_RECORD=<file>` records the SDK

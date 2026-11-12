@@ -20,7 +20,8 @@ const apiPort = process.env.CHESS_COACH_API_PORT ?? "3210";
 
 export default defineConfig({
   plugins: [react()],
-  test: { environment: "happy-dom" },
+  // Half the hardware threads, as in the server package's vitest config, which says why.
+  test: { environment: "happy-dom", maxWorkers: "50%" },
   server: {
     // "localhost" resolves to ::1 here and proxies dial 127.0.0.1, so the address is
     // explicit; CHESS_COACH_WEB_HOST binds another one, a tailnet address for instance.

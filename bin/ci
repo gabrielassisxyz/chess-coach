@@ -26,7 +26,11 @@ build_root=/mnt/build
 echo "==> install";    pnpm install --frozen-lockfile
 echo "==> typecheck";  pnpm run typecheck
 echo "==> lint";       pnpm run lint
-echo "==> test";       pnpm run test
+# One package at a time: pnpm starts the workspace's packages together, so the web and server
+# suites each took a worker per thread and together ran nearly twice as many workers as the
+# machine has threads. Beside any other load, tests of about 100 ms then ran past vitest's 5 s
+# limit. --stream keeps the "packages/<name> test:" prefix on every line, as in a concurrent run.
+echo "==> test";       pnpm -r --workspace-concurrency=1 --stream run test
 echo "==> build";      pnpm run build
 echo "==> audit";      pnpm audit --audit-level=high
 echo "==> gitleaks";   gitleaks git --no-banner --redact .
