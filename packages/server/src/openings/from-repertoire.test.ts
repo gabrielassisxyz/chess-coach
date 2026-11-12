@@ -3113,6 +3113,7 @@ describe("the style points", () => {
       },
     );
 
+    // 28 walks of the unit in one test: beside other load it has run past the 5 s a test gets by default.
     it("never plays a move more than 50 cp under the engine's best, whatever the points", async () => {
       // 4.a4 is 60 cp under, and first for students on how often they play it and how well it scores.
       writeStyleChoice();
@@ -3120,7 +3121,7 @@ describe("the style points", () => {
       expect(answers).toHaveLength(28);
       expect(answers).not.toContain("a4");
       expect(new Set(answers)).toEqual(new Set(["O-O", "c3", "d3", "b4"]));
-    });
+    }, 30_000);
   });
 
   describe("the opening and the stored moves", () => {
