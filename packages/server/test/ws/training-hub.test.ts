@@ -1,20 +1,22 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClientCommandSchema, ServerEventSchema } from "@chess-coach/shared";
+import { ANALYSIS_BUDGET_MS, ClientCommandSchema, ServerEventSchema } from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActivityService } from "../../src/activity/service.js";
 import { buildApp } from "../../src/app.js";
 import { createCoachSession } from "../../src/db/chat.js";
 import { type Database, openDatabase } from "../../src/db/open.js";
 import { EngineFault } from "../../src/engine/errors.js";
-import { AnalyzeSuperseded } from "../../src/engine/pool.js";
+import { AnalyzeSuperseded, EnginePool } from "../../src/engine/pool.js";
+import type { SearchRequest, SearchResult } from "../../src/engine/uci.js";
 import { GameService } from "../../src/game/service.js";
 import { type Log, RecordingLog } from "../../src/log.js";
 import { ReviewDesk } from "../../src/srs/review.js";
 import { FakeCoach } from "../fakes/fake-coach.js";
 import { ScriptedEngine } from "../fakes/scripted-engine.js";
+import { FakeEngineProcess, type GoRequest } from "../support/fake-engine-process.js";
 
 let app: FastifyInstance | undefined;
 afterEach(async () => {
@@ -422,8 +424,46 @@ async function endedItem(
   return id;
 }
 
+// A stop is answered with what the search had, as Stockfish does; the base fake ignores it.
+class StoppableStockfish extends FakeEngineProcess {
+  constructor(
+    onGo: (request: GoRequest) => void,
+    private readonly onStop: (emit: (line: string) => void) => void,
+  ) {
+    super(onGo);
+  }
+
+  override send(line: string): void {
+    super.send(line);
+    if (line === "stop") queueMicrotask(() => this.onStop((out) => this.emit(out)));
+  }
+}
+
+// The one limit a strip search may carry; any other (a movetime) leaves the scripted engine silent.
+function depthLimitOf(command: string): number | null {
+  const asked = /^go depth (\d+)$/.exec(command);
+  return asked ? Number(asked[1]) : null;
+}
+
+const stockfishLine = (depth: number, cp: number): string =>
+  `info depth ${depth} seldepth ${depth + 2} multipv 1 score cp ${cp} pv a1a8`;
+const goCommandsOf = (stockfish: FakeEngineProcess): string[] =>
+  stockfish.sent.filter((line) => line.startsWith("go "));
+const stopsSentTo = (stockfish: FakeEngineProcess): number =>
+  stockfish.sent.filter((line) => line === "stop").length;
+
+// Taken before any test installs a fake clock, so the wait for the socket still runs on real time.
+const realSetTimeout = globalThis.setTimeout;
+async function untilGoSentTo(stockfish: FakeEngineProcess): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (goCommandsOf(stockfish).length > 0) return;
+    await new Promise((resolve) => realSetTimeout(resolve, 5));
+  }
+  throw new Error(`the engine was never sent a go; it got ${JSON.stringify(stockfish.sent)}`);
+}
+
 describe("analysis over the socket", () => {
-  async function startWithEngine() {
+  async function startWithEngine(lane?: (request: SearchRequest) => Promise<SearchResult>) {
     const db = seededDatabase();
     const session = createCoachSession(db, { promptVersion: "v" });
     const notifications = { sessionId: () => session.id };
@@ -439,14 +479,29 @@ describe("analysis over the socket", () => {
         activity,
         db,
         allowedOrigins: ["http://localhost:5173"],
-        analyse: async (request) => {
-          asked.push(request);
-          return { fen: request.fen, bestmove: "a1a8", lines: [{ moves: ["a1a8"], score: 9990 }] };
-        },
+        analyse:
+          lane ??
+          (async (request) => {
+            asked.push(request);
+            return {
+              fen: request.fen,
+              bestmove: "a1a8",
+              lines: [{ moves: ["a1a8"], score: 9990 }],
+            };
+          }),
       },
     });
     await app.listen({ port: 0, host: "127.0.0.1" });
     return { app, asked };
+  }
+
+  // The analysis lane as main.ts wires it: the real pool and engine wrapper over a scripted process.
+  async function startWithStockfish(evaluation: FakeEngineProcess) {
+    const pool = new EnginePool((role) =>
+      role === "evaluation" ? evaluation : new FakeEngineProcess(() => {}),
+    );
+    await pool.start();
+    return (await startWithEngine((request) => pool.analyzeWith(request))).app;
   }
 
   it("refuses the engine while an item is open and answers once it ended", async () => {
@@ -488,7 +543,7 @@ describe("analysis over the socket", () => {
       requested_lines: 2,
       lines: [{ moves: ["a1a8"], san: ["Ra8#"], score_cp: 9990 }],
     });
-    expect(asked).toEqual([{ fen: BACK_RANK, depth: 12, multipv: 2, movetime: 4000 }]);
+    expect(asked).toEqual([{ fen: BACK_RANK, depth: 12, multipv: 2, capMs: 4000 }]);
   });
 
   it("refuses the engine off a practice item and for an item no longer on the board", async () => {
@@ -604,5 +659,85 @@ describe("analysis over the socket", () => {
     expect(inbox.filter((event) => event.type === "error" || event.type === "analysis")).toEqual(
       [],
     );
+  });
+
+  it("asks the engine for the depth under a cap and answers once it is reached", async () => {
+    const stockfish = new FakeEngineProcess(({ command, emit }) => {
+      const depth = depthLimitOf(command);
+      if (depth === null) return;
+      emit(stockfishLine(depth, 30));
+      emit("bestmove a1a8");
+    });
+    const server = await startWithStockfish(stockfish);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    const id = await endedItem(socket, next);
+    socket.send(
+      JSON.stringify({
+        type: "analyse",
+        command_id: "c1",
+        activity_id: id,
+        fen: BACK_RANK,
+        depth: 12,
+      }),
+    );
+    await untilGoSentTo(stockfish);
+    expect(goCommandsOf(stockfish)).toEqual(["go depth 12"]);
+    expect(await next("analysis")).toEqual({
+      type: "analysis",
+      command_id: "c1",
+      fen: BACK_RANK,
+      depth: 12,
+      requested_lines: 1,
+      lines: [{ moves: ["a1a8"], san: ["Ra8#"], score_cp: 30 }],
+    });
+    expect(stopsSentTo(stockfish)).toBe(0);
+  });
+
+  it("stops a search that never reaches the depth at the cap and keeps its deepest layer", async () => {
+    const stockfish = new StoppableStockfish(
+      ({ command, emit }) => {
+        if (depthLimitOf(command) === null) return;
+        // Layer 14 is the last one completed; the best move waits for the stop.
+        for (const [depth, cp] of [
+          [12, 20],
+          [13, 30],
+          [14, 40],
+        ] as const) {
+          emit(stockfishLine(depth, cp));
+        }
+      },
+      (emit) => emit("bestmove a1a8"),
+    );
+    const server = await startWithStockfish(stockfish);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    const id = await endedItem(socket, next);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      socket.send(
+        JSON.stringify({ type: "analyse", command_id: "c1", activity_id: id, fen: BACK_RANK }),
+      );
+      await untilGoSentTo(stockfish);
+      expect(goCommandsOf(stockfish)).toEqual(["go depth 18"]);
+      await vi.advanceTimersByTimeAsync(ANALYSIS_BUDGET_MS - 1);
+      expect(stopsSentTo(stockfish)).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(stopsSentTo(stockfish)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    const analysis = await next("analysis");
+    expect(analysis).toEqual({
+      type: "analysis",
+      command_id: "c1",
+      fen: BACK_RANK,
+      depth: 14,
+      requested_lines: 1,
+      cutByTime: true,
+      lines: [{ moves: ["a1a8"], san: ["Ra8#"], score_cp: 40 }],
+    });
+    // The page parses every frame with this schema, which drops a field it does not name.
+    expect(ServerEventSchema.parse(analysis)).toEqual(analysis);
   });
 });

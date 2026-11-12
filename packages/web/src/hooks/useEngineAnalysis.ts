@@ -66,11 +66,12 @@ export function useEngineAnalysis(
   const [failedKey, setFailedKey] = useState<string | null>(null);
   const sent = useRef<{ key: string; errors: number } | null>(null);
   // The answer on hand is for this position at these settings; the engine echoes the request,
-  // so a position with fewer legal lines than asked is never asked again.
+  // so a position with fewer legal lines than asked is never asked again. A search the cap cut
+  // reports the depth it reached, below the one asked for, and asking again meets the same cap.
   const fresh =
     latest !== null &&
     latest.fen === fen &&
-    latest.depth === prefs.depth &&
+    (latest.depth === prefs.depth || latest.cutByTime === true) &&
     latest.requested_lines === prefs.lines;
 
   const failed = failedKey === requestKey;

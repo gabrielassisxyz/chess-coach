@@ -181,6 +181,43 @@ describe("the engine strip", () => {
     expect(screen.getByTestId("engine-eval").textContent).toBe("M");
   });
 
+  describe("an answer that stopped short of the depth asked for", () => {
+    const shallow: AnalysisEvent = {
+      type: "analysis",
+      fen: START_FEN,
+      depth: 14,
+      requested_lines: 1,
+      lines: [{ moves: ["e2e4"], san: ["e4"], score_cp: 35 }],
+    };
+
+    function asksAgainAfter(answer: AnalysisEvent): { asked: boolean; label: boolean } {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        window.localStorage.setItem(ENGINE_PREFS_STORAGE_KEY, JSON.stringify({ on: true }));
+        const server = api(solved(), answer);
+        render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+        act(() => vi.advanceTimersByTime(ANALYSE_DEBOUNCE_MS * 4));
+        return {
+          asked: vi.mocked(server.send).mock.calls.some(([command]) => command.type === "analyse"),
+          label: screen.queryByText("Stockfish · depth 14") !== null,
+        };
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    it("is the answer to the request when the cap cut the search, and shows the depth reached", () => {
+      expect(asksAgainAfter({ ...shallow, cutByTime: true })).toEqual({
+        asked: false,
+        label: true,
+      });
+    });
+
+    it("is asked for again when nothing says the cap cut it", () => {
+      expect(asksAgainAfter(shallow)).toEqual({ asked: true, label: true });
+    });
+  });
+
   it("opens the engine settings and keeps the lines and depth", () => {
     render(<Practice server={api(solved())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
     fireEvent.click(screen.getByRole("button", { name: "Engine settings" }));

@@ -171,7 +171,11 @@
 - **Engine on Practice:** `analyse {fen, lines 1-5, depth 8-24}` runs the evaluation engine's
   analysis lane on a position and answers that connection with an `analysis` event (lines with
   SAN and a centipawn score from White's side, a mate as 10000). The search stops at the depth or
-  after 4 s, whichever first. It is refused with `training_item_open` while an item is open, so the
+  after 4 s, whichever first: the request carries `depth` and `capMs` and never `movetime`, which
+  would spend the whole 4 s on every position. The event's `depth` is the depth the lines reached,
+  and `cutByTime: true` says the cap stopped the search first; the strip takes such an answer for
+  the answer to its request, since asking again meets the same cap. It is refused with
+  `training_item_open` while an item is open, so the
   engine never helps with the answer, with `not_in_training` or `stale_activity` off the item, and
   with `engine_unavailable` when Stockfish is missing or dead; a request a newer one replaced
   answers nothing. The
