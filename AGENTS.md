@@ -42,9 +42,10 @@
 - **Test scratch directories:** the server tests build every scratch path with `os.tmpdir()`, which
   the package's vitest setup (`packages/server/test/support/temp-root.ts`) points at one root per
   run, `chess-coach-tests-<pid>-*`, removed when the run ends; the next run removes a root that a
-  killed run left. The root sits under `TMPDIR` when it is set, else on the build disk when the
-  machine has the one `bin/ci` uses for Node's compile cache, else in the system temporary
-  directory. A test never hard-codes a temporary path: `test/temp-root.test.ts` fails if one does.
+  killed run left. The root sits under `TMPDIR` when it is set, else in the system temporary
+  directory, a tmpfs on the owner's machine: on the build disk, waiting on the test databases'
+  syncs pushed tests past the 5 s limit on a busy machine. A test never hard-codes a temporary
+  path: `test/temp-root.test.ts` fails if one does.
 - **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
   proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
   Stockfish missing, engine fault, dropped socket, restart per game phase, undelivered
