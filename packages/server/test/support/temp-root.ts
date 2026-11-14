@@ -8,11 +8,10 @@ import type { TestProject } from "vitest/node";
 // leaves one root behind instead of the hundreds of directories its tests made, and the next
 // run removes it.
 
-// The owner's machine keeps scratch files on its build disk rather than on the tmpfs; a CI
-// runner has no such disk and keeps its default, the same rule `bin/ci` applies to Node's
-// compile cache.
-export const BUILD_DISK = "/mnt/build";
-export const BUILD_DISK_TEMP = join(BUILD_DISK, "chess-coach-tmp");
+// The base is the system temporary directory, a tmpfs on the owner's machine, and not the build
+// disk: there every test database's sync waits on the disk, and with dozens of them at once a
+// busy machine ran tests past vitest's 5 s limit. The root per run is what keeps the tmpfs from
+// filling up, as the directories the tests once leaked did.
 export const TEMP_ROOT_PREFIX = "chess-coach-tests-";
 
 const ROOT_NAME = /^chess-coach-tests-(\d+)-[A-Za-z0-9]{6}$/;
@@ -25,15 +24,13 @@ declare module "vitest" {
 
 export interface TempBaseInputs {
   env: { TMPDIR?: string };
-  exists: (path: string) => boolean;
   systemTemp: () => string;
 }
 
 /** A TMPDIR the caller set wins, so a lane that exports its own per-worktree one keeps it. */
-export function chooseTempBase({ env, exists, systemTemp }: TempBaseInputs): string {
+export function chooseTempBase({ env, systemTemp }: TempBaseInputs): string {
   const fromCaller = env.TMPDIR?.trim();
   if (fromCaller) return fromCaller;
-  if (exists(BUILD_DISK)) return BUILD_DISK_TEMP;
   return systemTemp();
 }
 
@@ -96,6 +93,6 @@ export function requireTempRoot(root: string | undefined): string {
 }
 
 export default function setup(project: TestProject): () => void {
-  const base = chooseTempBase({ env: process.env, exists: existsSync, systemTemp: tmpdir });
+  const base = chooseTempBase({ env: process.env, systemTemp: tmpdir });
   return setupTempRoot(project, { base, pid: process.pid, isRunning: processIsRunning });
 }

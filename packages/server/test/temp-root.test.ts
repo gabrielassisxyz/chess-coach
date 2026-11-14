@@ -11,8 +11,6 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, inject, it } from "vitest";
 import {
-  BUILD_DISK,
-  BUILD_DISK_TEMP,
   chooseTempBase,
   createTempRoot,
   requireTempRoot,
@@ -37,22 +35,12 @@ describe("the base of a run's temporary root", () => {
   const systemTemp = () => "/system-temp";
 
   it("is TMPDIR when the caller set it", () => {
-    const base = chooseTempBase({
-      env: { TMPDIR: "/lane/scratch" },
-      exists: () => true,
-      systemTemp,
-    });
-    expect(base).toBe("/lane/scratch");
+    expect(chooseTempBase({ env: { TMPDIR: "/lane/scratch" }, systemTemp })).toBe("/lane/scratch");
   });
 
-  it("is the build disk's directory when TMPDIR is unset or empty and the disk exists", () => {
-    const exists = (path: string) => path === BUILD_DISK;
-    expect(chooseTempBase({ env: {}, exists, systemTemp })).toBe(BUILD_DISK_TEMP);
-    expect(chooseTempBase({ env: { TMPDIR: " " }, exists, systemTemp })).toBe(BUILD_DISK_TEMP);
-  });
-
-  it("is the system temporary directory where there is no build disk, as on a CI runner", () => {
-    expect(chooseTempBase({ env: {}, exists: () => false, systemTemp })).toBe("/system-temp");
+  it("is the system temporary directory when TMPDIR is unset or blank", () => {
+    expect(chooseTempBase({ env: {}, systemTemp })).toBe("/system-temp");
+    expect(chooseTempBase({ env: { TMPDIR: " " }, systemTemp })).toBe("/system-temp");
   });
 });
 
