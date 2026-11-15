@@ -24,6 +24,7 @@ import {
   httpExplorerFetcher,
   systemExplorerClock,
 } from "./openings/explorer-client.js";
+import { FOUND_NOTE_SYSTEM_PROMPT, generateFoundNotes } from "./openings/found-notes.js";
 import { loadRepertoireBranchBook } from "./openings/from-repertoire.js";
 import { loadOpeningNames } from "./openings/names.js";
 import { generateRepertoireIdeas, sdkIdeaSession } from "./openings/repertoire-ideas.js";
@@ -104,6 +105,12 @@ const listAddable = () => {
 // Each run starts its own Claude sessions, so nothing here holds a process open between runs.
 const runRepertoireIdeas = () =>
   generateRepertoireIdeas(db, sdkIdeaSession(query, { cwd: dataDir() }), log);
+const runFoundNotes = () =>
+  generateFoundNotes(
+    db,
+    sdkIdeaSession(query, { cwd: dataDir(), systemPrompt: FOUND_NOTE_SYSTEM_PROMPT }),
+    log,
+  );
 const coach = new CoachSession({
   db,
   query,
@@ -154,6 +161,7 @@ const composed = composeServer({
       usernames: (process.env.CHESS_COACH_USERNAMES ?? "").split(",").filter(Boolean),
     },
     generateRepertoireIdeas: runRepertoireIdeas,
+    generateFoundNotes: runFoundNotes,
     listAddableOpenings: listAddable,
   },
 });
