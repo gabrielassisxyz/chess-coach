@@ -76,6 +76,14 @@ Motion and focus
   offset); `test/focus.test.tsx` renders every screen and fails for an interactive element a
   rule leaves without it.
 
+States
+
+- Loading: a quiet plain sentence (`role="status"`), with no skeleton and no spinner.
+- Error: one sentence in the error tone (`role="alert"`) paired with a Try again button in the same
+  card, keeping any action the card can still run.
+- Empty: the card stays with a quiet sentence, the student's number and an action when one exists;
+  an empty row or segment is not drawn, and the enclosing section stays.
+
 ## The checklist
 
 | # | Rule | Shell | Play | Games | Practice | Coverage | Phone |
@@ -94,7 +102,7 @@ Motion and focus
 | 12 | Running text near 65ch | ok | ok | ok | ok | ok | ok |
 | 13 | Motion under 300 ms, ease-out, transform and opacity only, reduced motion respected | ok | ok | ok | ok | ok | ok |
 | 14 | Focus visible on every interactive element, one ring | ok | ok | ok | ok | ok | ok |
-| 15 | Empty, loading and error states say what to do next, in calm plain words | ok | ok | ok | ok | ok | ok |
+| 15 | Loading quiet sentence; error one error-tone sentence + Try again in same card; empty card/section stays, empty row/segment hidden | ok | ok | ok | partial | ok | ok |
 | 16 | Summary before detail; one focus per glance | ok | ok | ok | ok | ok | ok |
 | 17 | What is interactive looks interactive | ok | ok | partial | ok | ok | ok |
 | 18 | Both themes exist and follow `prefers-color-scheme` until the button overrides them | ok | ok | ok | ok | ok | ok |
@@ -129,6 +137,11 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   size a data cell, not layout spacing.
 - **17, Games.** The game list rows are plain text buttons: pointer, hover and the focus ring
   mark them, but nothing says "button" before the pointer arrives.
+- **15, Practice.** Loading and error states match the rule (quiet sentence, or one sentence in
+  the error tone with Try again in the same card), and Due cards keeps the card at 0 due while
+  omitting empty breakdown rows; however, empty library motif rows still draw disabled with
+  `none`, and empty Found in your games and Black openings sections are omitted rather than
+  keeping an empty section with a sentence and count.
 
 ## Documented exceptions
 
@@ -173,37 +186,38 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   its Practice cells were re-read against the markup and `repertoire.css` and hold. So were the
   cells for the list of openings met in the student's games, under White openings: a block with a
   hairline top border like each opening above it, rows of a name, a mono line and a count, and an
-  Add button that is 44 px under 900 px. M1 and M2 print nothing for it, its states (reading
-  failed, building, built, refused) are each a sentence that says what to do next, and a refusal
-  is the only one in the error tone. The cells were read again for the levels and the branch
+  Add button that is 44 px under 900 px. M1 and M2 print nothing for it, and its states
+  (loading, reading failed, building, built, refused) follow Rule 15: refusals and read failures
+  use the error tone, and read failures pair one sentence with a Try again button in the same card.
+  The cells were read again for the levels and the branch
   points: a side with more than one opening and an opening with more than one variation carry a
   row of starts under a plain label, above what they cover, with the same buttons as a
   variation's; the book's other White moves open from an Add a variation button under the
   opening, each position as a heading line with its mono line, then rows built like the met
   openings, a held move saying where it is in place of the button. Every button is 44 px under
-  900 px, M1 and M2 print nothing, and the building, built and refused states read as the met
-  openings' do. The variation row under the drill's head is text on the type scale in the two
-  text tokens, with a hairline below it like the head's. The Practice cells were read once more
-  for the drills from the student's games, grouped by opening family: a line inside an opening's
-  menu, a line under an opening met in games, and for the families with neither a block of rows
-  with a hairline above it like each opening has, inside the White openings card or, for Black, a
-  Black openings card of such rows alone. Each is a name, a count and a first-try rate in the
-  secondary text token (the cell stays empty for a family with no attempt in 30 days) and a Drill
-  button that is 44 px under 900 px. M1 and M2 print nothing for it, the rows wait for the openings
-  met in games so none moves onto a met row after it has shown, a start refused because the
-  family is gone says to reload, in the error tone like every refusal, and a list that could not
-  be read is one plain sentence in the Openings card that says to reload. The Practice cells were
-  read a last time for the Found in your games section, which holds the openings met in games
-  that the openings menu used to list apart from the chosen ones: a block under the chosen
-  openings with a hairline above it like each opening has, a heading in the type of an opening's
-  name, the menu of each added opening as any opening has it, the rows still to add built like
-  the met openings' with the same 44 px Add button, and last one row of starts under a plain
-  label with a hairline above it, the same buttons as a variation's. With no added opening it
-  holds the rows to add and no starts, and with nothing met and nothing built it is not drawn.
-  The section is a labelled region, not a card, so no card sits inside another. M1 and M2 print
-  nothing for it, and its states (building, built, refused, list unreadable) read as the met
-  openings' do. The row under the drill's head now names the opening beside the variation, each
-  a label and a name in the two text tokens that wrap together as a pair, so a long name never
+  900 px, M1 and M2 print nothing, and the building, built, refused and list-unreadable states
+  read as the met openings' do. The variation row under the drill's head is text on the type scale
+  in the two text tokens, with a hairline below it like the head's. The Practice cells were read
+  once more for the drills from the student's games, grouped by opening family: a line inside an
+  opening's menu, a line under an opening met in games, and for the families with neither a block
+  of rows with a hairline above it like each opening has, inside the White openings card or, for
+  Black, a Black openings card of such rows alone. Each is a name, a count and a first-try rate
+  in the secondary text token (the cell stays empty for a family with no attempt in 30 days) and a
+  Drill button that is 44 px under 900 px. M1 and M2 print nothing for it, the rows wait for the
+  openings met in games so none moves onto a met row after it has shown, a start refused because
+  the family is gone says to reload, in the error tone like every refusal, and a list that could
+  not be read is one sentence in the error tone paired with a Try again button in the Openings
+  card. The Practice cells were read a last time for the Found in your games section, which holds
+  the openings met in games that the openings menu used to list apart from the chosen ones: a
+  block under the chosen openings with a hairline above it like each opening has, a heading in the
+  type of an opening's name, the menu of each added opening as any opening has it, the rows still
+  to add built like the met openings' with the same 44 px Add button, and last one row of starts
+  under a plain label with a hairline above it, the same buttons as a variation's. With no added
+  opening it holds the rows to add and no starts, and with nothing met and nothing built it is not
+  drawn. The section is a labelled region, not a card, so no card sits inside another. M1 and M2
+  print nothing for it, and its states (loading, building, built, refused, list unreadable) read as
+  the met openings' do. The row under the drill's head now names the opening beside the variation,
+  each a label and a name in the two text tokens that wrap together as a pair, so a long name never
   pushes the row past the column on a phone.
 - **The coverage view** opens under a variation of the openings menu, from its Coverage button,
   and has a column of its own in the checklist. Its cells were read against the markup,
@@ -211,7 +225,8 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   no card of its own; four facts in a grid that wraps, notes capped at the measure, rows that
   wrap with their lines breaking anywhere, buttons that are 44 px under 900 px, and the accent
   with the word "Gap" for a reply that has no answer yet, never the error tone. M1 and M2 print
-  nothing for it. Its states (loading, not read, nothing stored, no gap) each say what to do
-  next, and only the reading failure is in the error tone.
+  nothing for it. Its states (loading, not read, nothing stored, no gap) follow Rule 15: not read
+  is one sentence in the error tone paired with a Try again button inside the panel, and only the
+  reading failure uses the error tone.
 - **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
   and a model setting exist.
