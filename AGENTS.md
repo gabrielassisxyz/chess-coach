@@ -102,13 +102,35 @@
   without `opening` the whole colour, as before. A family the colour does not have is refused with
   `unknown_opening` before any run is written or replaced: it is compared with the stored names, and only
   those reach SQL, as bound parameters. The run stores the items it was drawn with in
-  `training_runs.items_json` and no family. The hub puts each family where it is already listed: a "Positions from
-  your games (N)" line in the menu of the opening that has its name, else on the row of the first
-  opening met in games of that family, else a row of its own under White openings or a Black openings
-  card; the rows wait until the openings met in games have been read. The old per-colour rows that drilled
-  every family mixed are gone from the hub, though `start_training` without `opening` still serves them.
+  `training_runs.items_json` and no family. The web no longer reads the route or sends the command: the
+  Openings page draws no line, row or card for a family, and the positions those drills served are the
+  From my games page's. The server keeps accepting both, and `start_training` without `opening` still
+  serves a whole colour.
 - **Addable openings:** `GET /api/openings/addable` lists every book family Black can leave the 1.e4 path with (first moves other than e5, second moves other than Nc6 after 1.e4 e5 2.Nf3), one entry per family with the root, the book name, the student's game count from `met[]`, the share at 0-1199 and the unit already built, if any. A family reached by several moves keeps its alphabetically first one. The shares come from two explorer reads (after 1.e4 and after 1.e4 e5 2.Nf3) and are null without a token or on failure.
 - **Openings page figures:** each entry of `repertoires[]` and of `groups` in `GET /api/repertoires` (a group is an opening, the variations that share its name) carries `moves_total`, `remembered_30d`, `in_line`, `covered_percent` and `line`, computed at request time with nothing stored (`http/repertoire-summary.ts`). `moves_total` is the White moves the variation stores, its setup moves included; for an opening it is the union of its variations, a move two of them share counted once, as the drill merges them. `remembered_30d` is `{right, of}`, the first attempts the line drill rated in the 30 days before the request (`repertoire_first_attempts`), summed over the variations of an opening, since an attempt belongs to one variation. `in_line` is `{stayed, of}` over `repertoire_game_reviews`: `in_book`, `reply_added` and `reply_not_stored` stayed, `departed` left, and `not_reached` and `other_side` are in neither count because they carry the Italian's id as a fallback, not the variation the game met; the sum over an opening is exact since a game is reviewed against one variation. `covered_percent` is the walk behind `GET /api/repertoires/:id/coverage` (`repertoireCoveredPercent`, no explorer or engine call), null while nothing is stored; for an opening the walk runs over the rows of all its variations at once, so a reply is covered when any variation answers it, and where two variations answer one position with different moves it follows the likelier row, the older variation at a tie, and does not visit the other's branch. An opening of one variation reuses that variation's figures instead of walking again. A group's `line` is its setup moves numbered from move 1 (`1.e4 e5 2.Nf3 Nc6 3.Bc4`, `1.e4 d5`), null while no setup move is stored. A variation's `line` runs from the end of the setup to the White move it is named after: `3...Bc5 4.d3` for the first Italian variation (the White move stored right after 3...Bc5), `2.exd5` for the first unit of a root (the move stored right after the root), the rest of its stored branch for a variation built at a branch point (`3...Nf6 4.Ng5`), and null for any other variation of a group and for a first variation whose answer is not stored. The figures and `line` are optional in the shared schemas, like `points`, `root` and `branch`, so a fixture need not carry them.
+- **Openings page:** `components/PracticeOpenings.tsx` draws the one `GET /api/repertoires` answer
+  (`useOpeningAdds` in `components/RepertoireMenu.tsx` reads it and again after each add; the hub no
+  longer loads a repertoire list of its own). A header with the side control (All, As White, As Black;
+  a colour not shown stays mounted, hidden), then a section for each colour, always both: its
+  heading with "N openings · D due" (`sides[].moves.due`), a train button "Train all · N" when it holds
+  more than one opening, a card for each entry of `groups` and, for a colour with none, "No opening is
+  stored yet." (White) or "No Black line yet. The app does not build Black lines yet." (Black) in a
+  dashed box. A card starts closed and opens by its head to a row for each variation, which
+  shows the same five cells (Moves, Due now, Remembered 30 days, In line, Coverage) from that
+  variation's figures; a cell with nothing measured draws the no-value dash and no bar. Pressing a
+  variation's name opens its coverage under its row. A train button (`components/TrainButton.tsx`) reads
+  "Train N" with the level's `recommended` count and sends `start_training {mode: "repertoire",
+  repertoire_id, scope: "recommended"}` with `level` `side` on a colour, `group` on a card and none on a
+  row, the id being the first variation listed at that level; its chevron opens "Everything due N" and
+  "All moves N". With nothing recommended it is an outlined "Train all moves" that sends `all`, with no
+  menu. "+ Add a variation" is drawn on a card whose book has a choice no variation plays (or whose run
+  stopped short) and opens the book's positions under its head; "Add an opening…" is drawn after the
+  last White card while `met` holds an opening with no unit (or a cut run) and opens a panel of them in
+  its place. Both panels hold the style points control, one split for the page, and an add waits
+  until all 6 points are placed. While an add runs its button reads "Building", every other add and every
+  train button is disabled and the status sentences show under the card's head or the Add an opening
+  button, kept after the panel closes. The page's styles are `styles/practice-openings.css`; the
+  classes of the add panels, the style points and the coverage view are in `styles/repertoire.css`.
 - **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
   adds the whole Lichess puzzle database (`lichess-db:` ids, source `lichess-db`) to the library, reading CSV from
   stdin into the usual data dir and printing rows added, skipped and failed. A row's `FEN` is shown after its first
@@ -187,10 +209,9 @@
   (`components/PracticeHub.tsx`, `state/practice-page.ts`). Two pages are built: the Overview (the
   day streak, puzzle rating and cards remembered from `GET /api/progress` as three tiles, the Due
   cards card, and a Puzzle themes section holding the Puzzles by motif card), which Puzzle themes
-  shows scrolled to that section, and Openings (the openings menu and the older Italian drill row).
-  From my games and the four Stats pages only say they are not built yet. The Openings entry shows
-  the repertoire moves due now, the sum of `sides[].moves.due` in the `GET /api/repertoires` answer
-  the openings menu last read. Every page stays mounted while another is shown, and a refused start
+  shows scrolled to that section, and Openings (below). From my games and the four Stats pages only
+  say they are not built yet. The Openings entry shows the repertoire moves due now, the sum of
+  `sides[].moves.due` in the `GET /api/repertoires` answer the Openings page last read. Every page stays mounted while another is shown, and a refused start
   shows on the page it was pressed on. The entry chosen is stored in the browser under
   `chess-coach.practice-page`, so the hub comes back to it after a session and after a reload.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
@@ -222,8 +243,7 @@
   expects different moves in two variations asks the one whose line the pass plays. The item's
   `repertoire_id` and `variation_name`, and the drill's `repertoire_id`, name the variation of the
   move in play, and the drill carries the `level`. `GET /api/repertoires` counts the
-  levels from the same merge in `groups` and `sides`; the menu offers them where a side holds more
-  than one opening or an opening more than one variation.
+  levels from the same merge in `groups` and `sides`; the Openings page draws a button for each.
 - **Coach conversations:** one per tab (`play`, `games`, `practice`), each its own `coach_sessions`
   row (`tab` column) resumed by its own Claude session id. The live game and the student's chat on
   Play write to `play`, training to `practice`, a question about a stored game to `games`. A tab's
