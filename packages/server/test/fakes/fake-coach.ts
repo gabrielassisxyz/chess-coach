@@ -1,7 +1,11 @@
 import type { CoachTab } from "@chess-coach/shared";
 import type { CoachEvent } from "../../src/coach/events.js";
-import type { CoachEventListener, PermissionRequest } from "../../src/coach/session.js";
-import { createCoachSession } from "../../src/db/chat.js";
+import type {
+  ChatRowListener,
+  CoachEventListener,
+  PermissionRequest,
+} from "../../src/coach/session.js";
+import { type ChatMessage, createCoachSession } from "../../src/db/chat.js";
 import type { Database } from "../../src/db/open.js";
 import type { CoachPort } from "../../src/ws/hub.js";
 
@@ -16,6 +20,7 @@ export class FakeCoach implements CoachPort {
   failSendWith: Error | undefined;
   flushes = 0;
   private readonly eventListeners = new Set<CoachEventListener>();
+  private readonly rowListeners = new Set<ChatRowListener>();
   private readonly permissionListeners = new Set<(request: PermissionRequest) => void>();
 
   constructor(private readonly db?: Database) {}
@@ -58,6 +63,11 @@ export class FakeCoach implements CoachPort {
     return () => this.eventListeners.delete(listener);
   }
 
+  onRow(listener: ChatRowListener): () => void {
+    this.rowListeners.add(listener);
+    return () => this.rowListeners.delete(listener);
+  }
+
   onPermissionRequest(listener: (request: PermissionRequest) => void): () => void {
     this.permissionListeners.add(listener);
     return () => this.permissionListeners.delete(listener);
@@ -65,6 +75,10 @@ export class FakeCoach implements CoachPort {
 
   emit(event: CoachEvent, tab: CoachTab = "play"): void {
     for (const listener of this.eventListeners) listener(event, tab);
+  }
+
+  emitRow(row: ChatMessage, tab: CoachTab = "play"): void {
+    for (const listener of this.rowListeners) listener(row, tab);
   }
 
   requestPermission(request: PermissionRequest): void {
