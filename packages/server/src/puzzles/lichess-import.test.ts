@@ -221,6 +221,40 @@ describe("importLichessPuzzles", () => {
     expect(count("puzzle_themes")).toBe(14);
   });
 
+  it("writes one puzzle_openings row per opening tag at the puzzle's rating, and none without tags", async () => {
+    await run();
+    expect(
+      db
+        .prepare(
+          "SELECT opening, rating, puzzle_id FROM puzzle_openings ORDER BY puzzle_id, opening",
+        )
+        .all(),
+    ).toEqual([
+      { opening: "French_Defense", rating: 1032, puzzle_id: "lichess-db:0000H" },
+      { opening: "Italian_Game", rating: 1498, puzzle_id: "lichess-db:00sHx" },
+      { opening: "Italian_Game_Classical_Variation", rating: 1498, puzzle_id: "lichess-db:00sHx" },
+    ]);
+  });
+
+  it("adds no puzzle_openings row on a second import of the same puzzle, even at a new rating", async () => {
+    await run([HEADER, MATE]);
+    const before = db.prepare("SELECT * FROM puzzle_openings ORDER BY opening").all();
+    expect(before).toHaveLength(2);
+    const rerated = MATE.replace(",1498,", ",1600,");
+    expect(rerated).not.toBe(MATE);
+    expect(await run([HEADER, rerated])).toEqual({ added: 0, skipped: 1, failed: 0 });
+    expect(db.prepare("SELECT * FROM puzzle_openings ORDER BY opening").all()).toEqual(before);
+  });
+
+  it("files no opening rows for a puzzle it did not add", async () => {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
+       VALUES ('lichess-db:00sHx', 'x', 'fork', 'beginner', 'x', '[]', '[]', 'why')`,
+    ).run();
+    expect(await run([HEADER, MATE])).toEqual({ added: 0, skipped: 1, failed: 0 });
+    expect(count("puzzle_openings")).toBe(0);
+  });
+
   it("skips a row that fails to replay and goes on to the next", async () => {
     await run([HEADER, ILLEGAL_MOVE, MATE]);
     expect(count("puzzles")).toBe(1);
