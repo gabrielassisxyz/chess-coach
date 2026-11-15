@@ -16,22 +16,17 @@ import {
   addOpeningToServer,
   addVariationToServer,
   DEFAULT_STYLE_POINTS,
+  type FetchAddableOpenings,
   type FetchCoverage,
   type FetchRepertoireList,
+  fetchAddableOpeningsFromServer,
   fetchRepertoireListFromServer,
-  metToAdd,
   type StylePoints,
   stylePointsLeft,
 } from "../state/repertoires-api.js";
 import { OpeningCard, type VariationAdder } from "./OpeningCard.js";
-import {
-  AddStatus,
-  MetToAdd,
-  type OpeningAdds,
-  StylePointsControl,
-  useOpeningAdds,
-  withStylePoints,
-} from "./RepertoireMenu.js";
+import { PracticeAddOpening } from "./PracticeAddOpening.js";
+import { AddStatus, type OpeningAdds, useOpeningAdds, withStylePoints } from "./RepertoireMenu.js";
 import { TrainButton, type TrainControls } from "./TrainButton.js";
 
 export interface PracticeOpeningsProps {
@@ -45,6 +40,9 @@ export interface PracticeOpeningsProps {
   fetchList?: FetchRepertoireList | undefined;
   addOpening?: AddOpening | undefined;
   addVariation?: AddVariation | undefined;
+  // Where the list of every opening that can be added comes from, read when its panel opens; the
+  // server's by default.
+  fetchAddable?: FetchAddableOpenings | undefined;
   // Where a variation's coverage comes from when it is opened; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
 }
@@ -57,6 +55,7 @@ interface OpeningsContext {
   // A start is in flight or the style points are not all placed yet, so no add can run.
   addsBusy: boolean;
   addOpening: AddOpening;
+  fetchAddable: FetchAddableOpenings;
   adder: VariationAdder;
   fetchCoverage: FetchCoverage | undefined;
 }
@@ -87,16 +86,13 @@ function SideControl({
   );
 }
 
-// The openings the student's games met and no drill covers yet, in the place of the button that
-// opened them. The sentences of a run in flight stay under the button, so closing the panel leaves
-// them where the student looks for them.
+// The button that opens the panel of openings to add, which takes its place while it is open. The
+// sentences of a run in flight stay under it, so closing the panel leaves them where the student
+// looks for them.
 function AddOpeningArea({ ctx }: { ctx: OpeningsContext }) {
-  const { adds } = ctx;
   const [open, setOpen] = useState(false);
   const opener = useRef<HTMLButtonElement>(null);
   const refocus = useRef(false);
-  const entries = metToAdd(adds.met ?? [], adds.unfinished);
-  const showing = open && entries.length > 0;
 
   // Closing removes the button that held the focus, so the one that returns takes it.
   useEffect(() => {
@@ -107,7 +103,20 @@ function AddOpeningArea({ ctx }: { ctx: OpeningsContext }) {
 
   return (
     <div className="openings-add">
-      {entries.length > 0 && !showing ? (
+      {open ? (
+        <PracticeAddOpening
+          adds={ctx.adds}
+          busy={ctx.addsBusy}
+          addOpening={ctx.addOpening}
+          fetchAddable={ctx.fetchAddable}
+          points={ctx.adder.points}
+          onPoints={ctx.adder.onPoints}
+          onClose={() => {
+            refocus.current = true;
+            setOpen(false);
+          }}
+        />
+      ) : (
         <button
           type="button"
           className="button openings-add__open"
@@ -116,27 +125,8 @@ function AddOpeningArea({ ctx }: { ctx: OpeningsContext }) {
         >
           Add an opening…
         </button>
-      ) : null}
-      {showing ? (
-        <section className="openings-panel" aria-label="Add an opening">
-          <div className="openings-panel__head">
-            <h4 className="openings-panel__title">Add an opening</h4>
-            <button
-              type="button"
-              className="button"
-              onClick={() => {
-                refocus.current = true;
-                setOpen(false);
-              }}
-            >
-              Close
-            </button>
-          </div>
-          <MetToAdd entries={entries} adds={adds} busy={ctx.addsBusy} addOpening={ctx.addOpening} />
-          <StylePointsControl points={ctx.adder.points} onChange={ctx.adder.onPoints} />
-        </section>
-      ) : null}
-      <AddStatus adds={adds} origin="met" />
+      )}
+      <AddStatus adds={ctx.adds} origin="met" />
     </div>
   );
 }
@@ -225,6 +215,7 @@ export function PracticeOpenings({
   fetchList = fetchRepertoireListFromServer,
   addOpening = addOpeningToServer,
   addVariation = addVariationToServer,
+  fetchAddable = fetchAddableOpeningsFromServer,
   fetchCoverage,
 }: PracticeOpeningsProps) {
   const adds = useOpeningAdds(fetchList);
@@ -239,6 +230,7 @@ export function PracticeOpenings({
     adds,
     addsBusy,
     addOpening: withStylePoints(addOpening, points),
+    fetchAddable,
     adder: {
       choices: {
         adds,

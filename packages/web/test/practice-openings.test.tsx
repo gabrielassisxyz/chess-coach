@@ -239,12 +239,16 @@ describe("the sections", () => {
     expect(within(black).queryByRole("article")).toBeNull();
   });
 
-  it("keeps the White section with no opening stored, with its sentence and no button", async () => {
+  it("keeps the White section with no opening stored, with its sentence and the button that adds one", async () => {
     renderPage(answer({ repertoires: [], groups: [], sides: [] }));
     const white = await section("White");
     expect(within(white).getByText("No opening is stored yet.")).toBeTruthy();
     expect(within(white).getByText("no line yet")).toBeTruthy();
-    expect(within(white).queryByRole("button")).toBeNull();
+    expect(
+      within(white)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Add an opening…"]);
   });
 
   it("draws a Black opening as a card in the Black section", async () => {

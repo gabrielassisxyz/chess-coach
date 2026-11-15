@@ -1885,6 +1885,7 @@ function renderHub(props: Partial<PracticeHubProps> = {}) {
       onStart={noop}
       onStartRepertoire={noop}
       fetchRepertoireList={async () => repertoireAnswer()}
+      fetchAddableOpenings={async () => []}
       {...props}
     />,
   );
@@ -1934,15 +1935,25 @@ const whiteOpenings = (): Promise<HTMLElement> => screen.findByRole("region", { 
 // The list is read once after mount; this waits for that read to settle, however it ended.
 const settle = (): Promise<void> => act(async () => {});
 
-// The panel that Add an opening… opens in the button's place, with the openings met in games.
+// The panel that Add an opening… opens in the button's place, on its second tab: the openings met
+// in games, which the first tab's list of every opening does not replace.
 async function openAddPanel(white: HTMLElement): Promise<HTMLElement> {
   fireEvent.click(await within(white).findByRole("button", { name: "Add an opening…" }));
-  return within(white).getByRole("region", { name: "Add an opening" });
+  const panel = within(white).getByRole("region", { name: "Add an opening" });
+  fireEvent.click(within(panel).getByRole("tab", { name: /^From my games/ }));
+  return panel;
 }
 
 const isDisabled = (element: HTMLElement): boolean => (element as HTMLButtonElement).disabled;
 
+// What the server answers when no opening is left to add. A page rendered whole reads it from the
+// network when the panel opens, so a test that opens the panel there stands in for the call.
+const noAddableOpenings = async (): Promise<Response> =>
+  new Response(JSON.stringify({ entries: [] }), { status: 200 });
+
 describe("the openings met in games", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("lists in the panel behind Add an opening… each met root that has no drill, with its opening and game count", async () => {
     renderHub({
       fetchRepertoireList: async () => listing([scandinavian, alekhine, caroKann, unnamed]),
@@ -1982,7 +1993,7 @@ describe("the openings met in games", () => {
     expect(document.activeElement).toBe(button);
   });
 
-  it("draws the button after the last White card, and none when every root already has a drill", async () => {
+  it("draws the button after the last White card, and keeps it when every root already has a drill", async () => {
     renderHub({ fetchRepertoireList: async () => listing([scandinavian]) });
     const white = await whiteOpenings();
     const button = await within(white).findByRole("button", { name: "Add an opening…" });
@@ -1990,12 +2001,13 @@ describe("the openings met in games", () => {
     expect(follows(italian, button)).toBe(true);
     cleanup();
 
-    const read = vi.fn(async () => listing([caroKann]));
-    renderHub({ fetchRepertoireList: read });
+    renderHub({ fetchRepertoireList: async () => listing([caroKann]) });
     const again = await whiteOpenings();
     await within(again).findByRole("article", { name: "Italian Game" });
-    expect(within(again).queryByRole("button", { name: "Add an opening…" })).toBeNull();
-    expect(within(again).queryByRole("region", { name: "Add an opening" })).toBeNull();
+    expect(within(again).getByRole("button", { name: "Add an opening…" })).toBeTruthy();
+    const panel = await openAddPanel(again);
+    expect(within(panel).getByText("Every opening from your games has a line.")).toBeTruthy();
+    expect(within(panel).queryByRole("list", { name: "Openings met in your games" })).toBeNull();
   });
 
   it("offers Add an opening… in an empty White section, after its sentence", async () => {
@@ -2020,6 +2032,7 @@ describe("the openings met in games", () => {
       .mockReturnValueOnce(secondCall);
     const fetchProgress = vi.fn(hubProps.fetchProgress);
     const fetchThemeStats = vi.fn(hubProps.fetchThemeStats);
+    vi.stubGlobal("fetch", noAddableOpenings);
 
     render(
       <Practice

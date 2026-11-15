@@ -76,7 +76,8 @@ export const REPERTOIRE_SEARCH_CAP_MS = 30_000;
 const ITALIAN_NAMING_REPLY_SAN = "Bc5";
 // pickItalianWhiteUci prefers the Italian setup move on turns 1 to 3. The walk plays those plies
 // from its fixed line, so the preference could only choose White's answer after a root, where the
-// rule is the most played move within the margin. No turn has no setup move.
+// rule is the most played move within the margin. The value names no turn, so the setup preference
+// stays off.
 const NO_SETUP_PREFERENCE_TURN = 0;
 // A rebuild stores its rows under this group until its walk ends, apart from the unit it replaces.
 const REPERTOIRE_REBUILD_GROUP_SUFFIX = " (rebuilding)";
@@ -836,7 +837,8 @@ class RepertoireWalk {
     const branching = this.repliesToKeep(step, position);
     // Where no reply is common enough to prepare for, the line still goes on with one, so that the
     // student can memorize it to the end. Reach keeps its usual product, which puts that reply under
-    // the goal, so it is not a requirement.
+    // the goal and out of the required coverage, except where the most played reply has under 200
+    // games of its own.
     const replies =
       branching.length > 0 ? branching : await this.continuationReplies(step, position);
     for (const reply of replies) {
@@ -1065,7 +1067,6 @@ function unitVariationCounts(db: Database, unit: RepertoireUnit): RepertoireCoun
   return stored ? repertoireCounts(db, stored.id) : NO_REPERTOIRE_COUNTS;
 }
 
-/** What one run of the generator works with. */
 interface RepertoireRunDeps {
   db: Database;
   engine: Searcher;
@@ -1331,10 +1332,10 @@ function branchChoiceListing(
 }
 
 /**
- * The book's branch points that the Italian's first variation reaches, the likeliest first. Only
- * there can a variation forced at one position differ from it, since it plays the usual rule
- * everywhere else; the line is the one the first variation stored, so a choice is named and built
- * from the same moves.
+ * The book's branch points that the Italian's first variation reaches, the likeliest first. Each
+ * variation chooses from its own stored moves, the forced one included, so a branch variation can
+ * differ elsewhere too; the line is the one the first variation stored, so a choice is named and
+ * built from the same moves.
  */
 export function listRepertoireBranches(
   db: Database,
