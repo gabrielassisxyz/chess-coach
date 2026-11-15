@@ -119,7 +119,20 @@
   the item open at the same position; `show_solution` ends it as given up and the board plays the
   solution line. A right answer ends with its move on the board, for a card as for a puzzle's last
   move: `fen` and `exploring.fen` are the position after it. A card given up keeps the position it
-  was served in, because `solution_line` is the moves from `fen`. Every try is kept in
+  was served in, because `solution_line` is the moves from `fen`. A card born from a puzzle
+  (`srs_cards.puzzle_id`) is reviewed through the puzzle's whole stored solution, when the puzzle is
+  still stored, has an odd number of plies from 3 up and starts from the card's position and first
+  move; any other card is graded on its own `expected_uci` alone. It stays an item of kind `card` and
+  steps through `puzzles/attempt.ts` as a puzzle does: the server plays each reply, a wrong try keeps
+  its step and is listed in `wrong_tries` with its ply, any checkmate ends the last step, and
+  `show_solution` keeps the position of the step it stopped at, with `solution_line` holding the moves
+  left from there. It is rated once, at the end; it writes no `puzzle_attempts` row, moves no puzzle
+  rating and creates no card. The desk is told whether every step was right first time, so
+  `srs_reviews.correct` is 1 only then and `answered_uci` is the first try of the first step; the
+  suggested quality is 4, or 2 after a wrong try or a hint at any step, or 0 once the solution was
+  shown. Its `srs_answer` notification is amended to describe the step the student missed (the one
+  the solution was shown at, else the first wrong try's), with that step's position, the move tried
+  and the move expected, and it lists every try. Every try is kept in
   `training_tries`, and puzzle accuracy is first-try solves
   (`puzzle_attempts.first_try`). The coach hears once per item, when it ends, except a puzzle solved first try without a hint: that writes no notification, the state carries `coach_comment: "offered"`, and `ask_coach_about_item {activity_id}` (refused with `stale_activity`, `not_in_training` or `already_requested`) writes it with the position and the solution. A `hint` marks the
   origin square of the expected move, clears on the next try, and makes the solve count as missed.
