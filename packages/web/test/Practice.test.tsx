@@ -18,7 +18,8 @@ import { type BoardFactory, MOVE_PAUSE_MS } from "../src/components/Board.js";
 import { PracticeHub, type PracticeHubProps } from "../src/components/PracticeHub.js";
 import { type ServerApi, useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
-import { formatInterval, nextBatchParts, trainingView } from "../src/state/practice.js";
+import { formatInterval, NONE, nextBatchParts, trainingView } from "../src/state/practice.js";
+import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
   type AddedOpening,
   addOpeningToServer,
@@ -33,12 +34,15 @@ import {
   CLASSICAL_VARIATION,
   italianRepertoire,
   motifCounts,
+  openPracticePage,
   progressOf,
   repertoireActivity,
   repertoireList,
 } from "./practice-fixtures.js";
 
 afterEach(cleanup);
+// The hub stores the page it shows, which would open the next test's hub on it.
+afterEach(() => window.localStorage.removeItem(PRACTICE_PAGE_STORAGE_KEY));
 
 const board = {
   activity_id: 4,
@@ -211,6 +215,9 @@ const hubProps = {
   fetchOpeningDrills: async () => ({ white: [], black: [] }),
 };
 
+const practiceNav = (): HTMLElement =>
+  screen.getByRole("navigation", { name: "Practice sections" });
+
 describe("the hub", () => {
   it("shows the due numbers from the progress summary", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-03-01T12:00:00") });
@@ -226,11 +233,73 @@ describe("the hub", () => {
       expect(within(due).getByText("Next batch 3").nextSibling?.textContent).toMatch(
         /^(today|tomorrow|[A-Z][a-z]{2}) \d\d:\d\d$/,
       );
-      expect(within(due).getByText("Remembered, 30 days").nextSibling?.textContent).toBe("83%");
+      // The share remembered moved to its tile, so the card no longer repeats it.
+      expect(within(due).queryByText("Remembered, 30 days")).toBeNull();
+      expect(due.textContent).not.toContain("83%");
       expect(within(due).getByRole("button", { name: "Review 4 cards" })).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // The value beside each tile's label, and the line under it where the tile has one.
+  const tileOf = (label: string): string[] => {
+    const term = screen.getByText(label, { selector: "dt" });
+    const values = [];
+    for (let node = term.nextElementSibling; node; node = node.nextElementSibling) {
+      values.push(node.textContent ?? "");
+    }
+    return values;
+  };
+
+  it("shows the day streak, the puzzle rating and the cards remembered in a row of three tiles", async () => {
+    const progress = progressOf({ correct_rate_30d: 0.836, correct_rate_7d: 0.5, total: 38 }, 1432);
+    render(<Practice server={api(null)} {...hubProps} fetchProgress={async () => progress} />);
+    const streak = await screen.findByText("Day streak");
+    const tiles = streak.closest("dl") as HTMLElement;
+    expect([...tiles.children].map((tile) => tile.querySelector("dt")?.textContent)).toEqual([
+      "Day streak",
+      "Puzzle rating",
+      "Cards remembered",
+    ]);
+    expect(tileOf("Day streak")).toEqual(["2 days"]);
+    expect(tileOf("Puzzle rating")).toEqual(["1432"]);
+    expect(tileOf("Cards remembered")).toEqual(["84%", "38 cards in rotation"]);
+  });
+
+  it("shows the no-value dash for cards with no review in 30 days, and one day or card in the singular", async () => {
+    const progress = { ...progressOf({ correct_rate_30d: null, total: 1 }), streak_days: 1 };
+    render(<Practice server={api(null)} {...hubProps} fetchProgress={async () => progress} />);
+    await screen.findByText("Day streak");
+    expect(tileOf("Day streak")).toEqual(["1 day"]);
+    expect(tileOf("Cards remembered")).toEqual([NONE, "1 card in rotation"]);
+  });
+
+  it("draws no tile while the numbers load or after they failed, and the Due cards card says so", async () => {
+    const view = render(
+      <Practice server={api(null)} {...hubProps} fetchProgress={() => new Promise(() => {})} />,
+    );
+    const loading = await screen.findByRole("region", { name: "Due cards" });
+    expect(within(loading).getByRole("status").textContent).toBe("Loading your cards.");
+    expect(screen.queryByText("Day streak")).toBeNull();
+    expect(screen.queryByText("Cards remembered")).toBeNull();
+    view.unmount();
+
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchProgress={async () => {
+          throw new Error("down");
+        }}
+      />,
+    );
+    const failed = await screen.findByRole("region", { name: "Due cards" });
+    expect((await within(failed).findByRole("alert")).textContent).toBe(
+      "Your card numbers could not be loaded.",
+    );
+    expect(screen.queryByText("Day streak")).toBeNull();
+    expect(screen.queryByText("Puzzle rating")).toBeNull();
   });
 
   it("lists the fourteen Lichess motifs with descriptions plus the six library choices, each once", async () => {
@@ -303,6 +372,7 @@ describe("the hub", () => {
       { motif: "opening-italian", count: 7 },
     ];
     render(<Practice server={server} {...hubProps} fetchMotifs={motifs} />);
+    openPracticePage("Openings");
     const card = await screen.findByRole("region", { name: "Openings" });
     expect(within(card).getByText("Italian Opening")).toBeTruthy();
     await within(card).findByText("7 positions");
@@ -317,6 +387,7 @@ describe("the hub", () => {
 
   it("disables the Italian drill at 0 with the generate hint", async () => {
     render(<Practice server={api(null)} {...hubProps} />);
+    openPracticePage("Openings");
     const card = await screen.findByRole("region", { name: "Openings" });
     const drill = within(card).getByRole("button", { name: "Drill" }) as HTMLButtonElement;
     expect(drill.disabled).toBe(true);
@@ -371,13 +442,14 @@ describe("a hub with a problem", () => {
       const button = await screen.findByRole("button", { name });
       expect((button as HTMLButtonElement).disabled).toBe(true);
     }
+    const before = fetchHealth.mock.calls.length;
+    fireEvent.click(within(card).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(fetchHealth.mock.calls.length).toBeGreaterThan(before));
+    openPracticePage("Openings");
     const openings = await screen.findByRole("region", { name: "Openings" });
     expect(
       (within(openings).getByRole("button", { name: "Drill" }) as HTMLButtonElement).disabled,
     ).toBe(true);
-    const before = fetchHealth.mock.calls.length;
-    fireEvent.click(within(card).getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(fetchHealth.mock.calls.length).toBeGreaterThan(before));
   });
 
   it("copies the fix command", async () => {
@@ -935,23 +1007,26 @@ describe("starting a session from the hub", () => {
     return FakeSocket.latest;
   }
 
-  // Waits for every part of the hub that decides a button's state.
+  // Waits for every part of the hub that decides a button's state, on the page each part is on.
   async function hubReady(): Promise<void> {
     await screen.findByRole("button", { name: "Review 4 cards" });
+    openPracticePage("Openings");
     await screen.findByRole("heading", { name: "Italian Game" });
     await screen.findByText("Generate the Italian drill first");
   }
 
   it.each([
-    ["Review 4 cards", { type: "start_training", mode: "srs", size: 10 }],
-    ["Start any motif", { type: "start_training", mode: "puzzles", size: 10 }],
+    ["Review 4 cards", "Overview", { type: "start_training", mode: "srs", size: 10 }],
+    ["Start any motif", "Overview", { type: "start_training", mode: "puzzles", size: 10 }],
     [
       "Recommended 10",
+      "Openings",
       { type: "start_training", mode: "repertoire", repertoire_id: 3, scope: "recommended" },
     ],
-  ])("sends the start of %s and nothing else", async (name, command) => {
+  ])("sends the start of %s and nothing else", async (name, page, command) => {
     const socket = bootIntoHub();
     await hubReady();
+    openPracticePage(page);
     fireEvent.click(screen.getByRole("button", { name }));
     // The socket stamps each frame with a command id of its own.
     expect(socket.sent).toHaveLength(1);
@@ -1425,8 +1500,9 @@ describe("what the board shows at once, with no pause", () => {
 
 const noop = (): void => {};
 
+// The hub on its Openings page, where the openings menu is.
 function renderHub(props: Partial<PracticeHubProps> = {}) {
-  return render(
+  const view = render(
     <PracticeHub
       progress={{ status: "ready", value: progressOf() }}
       motifs={{ status: "ready", value: motifCounts }}
@@ -1441,6 +1517,8 @@ function renderHub(props: Partial<PracticeHubProps> = {}) {
       {...props}
     />,
   );
+  openPracticePage("Openings");
+  return view;
 }
 
 const scandinavian: MetOpening = {
@@ -1561,6 +1639,7 @@ describe("the openings met in games", () => {
         fetchOpeningDrills={fetchOpeningDrills}
       />,
     );
+    openPracticePage("Openings");
 
     await screen.findByRole("heading", { name: "Italian Game" });
     const white = await whiteOpenings();
@@ -1992,6 +2071,7 @@ describe("the openings menu at each level", () => {
         fetchRepertoireList={async () => levelListing()}
       />,
     );
+    openPracticePage("Openings");
     // The loading card is replaced once the list has loaded, so it is found by what the list holds.
     await screen.findByRole("heading", { name: "Italian Game" });
     const white = screen.getByRole("region", { name: "White openings" });
@@ -2380,6 +2460,7 @@ describe("the openings found in your games", () => {
         fetchRepertoireList={async () => foundListing()}
       />,
     );
+    openPracticePage("Openings");
     // The loading card is replaced once the list has loaded, so it is found by what the list holds.
     await screen.findByRole("heading", { name: "Scandinavian Defense" });
     const white = screen.getByRole("region", { name: "White openings" });
@@ -2748,6 +2829,7 @@ describe("the opening drills from your games", () => {
         fetchOpeningDrills={fetchOpeningDrills}
       />,
     );
+    openPracticePage("Openings");
 
     const openings = await screen.findByRole("region", { name: "Openings" });
     const alert = await within(openings).findByRole("alert");
@@ -2795,6 +2877,7 @@ describe("starting an opening drill from the screen", () => {
       />,
     );
     fireEvent.click(await screen.findByRole("button", { name: "20" }));
+    openPracticePage("Openings");
     // The loading card is replaced once the list has loaded, so the menu is found by what it holds.
     await screen.findByRole("heading", { name: "Italian Game" });
     const white = screen.getByRole("region", { name: "White openings" });
@@ -2820,6 +2903,7 @@ describe("starting an opening drill from the screen", () => {
         fetchOpeningDrills={readDrills}
       />,
     );
+    openPracticePage("Openings");
     await screen.findByRole("heading", { name: "Italian Game" });
     fireEvent.click(
       within(await blackOpenings()).getByRole("button", { name: "Drill other positions as Black" }),
@@ -2843,6 +2927,7 @@ describe("starting an opening drill from the screen", () => {
       fetchOpeningDrills: readDrills,
     };
     const view = render(<Practice server={server} {...props} />);
+    openPracticePage("Openings");
     // The loading card is replaced once the list has loaded, so the menu is found by what it holds.
     await screen.findByRole("heading", { name: "Italian Game" });
     const white = screen.getByRole("region", { name: "White openings" });
@@ -2868,5 +2953,448 @@ describe("starting an opening drill from the screen", () => {
         name: "Drill Sicilian Defense as White",
       }),
     ).toBeTruthy();
+  });
+});
+
+describe("the hub's frame", () => {
+  const entriesOf = (container: HTMLElement): string[] =>
+    within(container)
+      .getAllByRole("button")
+      .map((button) => button.textContent ?? "");
+  const currentEntries = (): string[] =>
+    within(practiceNav())
+      .getAllByRole("button")
+      .filter((button) => button.getAttribute("aria-current") === "page")
+      .map((button) => button.textContent ?? "");
+  // Only the page on screen is in the accessibility tree, so its title is the one heading at level 2.
+  const pageTitle = (): string => screen.getByRole("heading", { level: 2 }).textContent ?? "";
+  const openingsEntry = (): HTMLElement =>
+    within(practiceNav()).getByRole("button", { name: /^Openings(,|$)/ });
+  const UNBUILT = [
+    "From my games",
+    "Dashboard",
+    "Improvement areas",
+    "Strengths",
+    "Openings played",
+  ];
+
+  // An answer that counts the moves due on each side apart from the variations under it.
+  const withSides = (
+    white: number,
+    black: number,
+    met: MetOpening[] = [],
+  ): RepertoiresResponse => ({
+    ...listing(met),
+    sides: [
+      { side: "white", moves: { recommended: 4, due: white, all: 40 } },
+      { side: "black", moves: { recommended: 2, due: black, all: 12 } },
+    ],
+  });
+
+  it("lists Train and Stats with their entries in order, eight buttons in all", () => {
+    render(<Practice server={api(null)} {...hubProps} />);
+    const train = within(practiceNav()).getByRole("group", { name: "Train" });
+    const stats = within(practiceNav()).getByRole("group", { name: "Stats" });
+    expect(entriesOf(train)).toEqual(["Overview", "Puzzle themes", "From my games", "Openings"]);
+    expect(entriesOf(stats)).toEqual([
+      "Dashboard",
+      "Improvement areas",
+      "Strengths",
+      "Openings played",
+    ]);
+    expect(follows(train, stats)).toBe(true);
+    expect(within(practiceNav()).getAllByRole("button")).toHaveLength(8);
+  });
+
+  it("opens on Overview with nothing stored, and marks only the entry of the page on screen", () => {
+    expect(window.localStorage.getItem(PRACTICE_PAGE_STORAGE_KEY)).toBeNull();
+    render(<Practice server={api(null)} {...hubProps} />);
+    expect(pageTitle()).toBe("Practice");
+    expect(currentEntries()).toEqual(["Overview"]);
+    openPracticePage("Strengths");
+    expect(currentEntries()).toEqual(["Strengths"]);
+  });
+
+  it("shows the page of the entry chosen, stores the entry and puts the page back at its top", () => {
+    const { container } = render(<Practice server={api(null)} {...hubProps} />);
+    const scroller = screen.getByRole("region", { name: "Practice" });
+    scroller.scrollTop = 480;
+    container.scrollTop = 120;
+    openPracticePage("Openings");
+    expect(pageTitle()).toBe("Openings");
+    expect(scroller.scrollTop).toBe(0);
+    expect(container.scrollTop).toBe(0);
+    expect(window.localStorage.getItem(PRACTICE_PAGE_STORAGE_KEY)).toBe("openings");
+
+    scroller.scrollTop = 300;
+    openPracticePage("Overview");
+    expect(pageTitle()).toBe("Practice");
+    expect(scroller.scrollTop).toBe(0);
+    expect(screen.queryByRole("region", { name: "Openings" })).toBeNull();
+    expect(window.localStorage.getItem(PRACTICE_PAGE_STORAGE_KEY)).toBe("overview");
+  });
+
+  it("shows the Overview at its Puzzle themes section for Puzzle themes, that entry being current", () => {
+    const scrolled = vi.spyOn(Element.prototype, "scrollIntoView");
+    try {
+      render(<Practice server={api(null)} {...hubProps} />);
+      openPracticePage("Dashboard");
+      scrolled.mockClear();
+      openPracticePage("Puzzle themes");
+      expect(pageTitle()).toBe("Practice");
+      const themes = screen.getByRole("region", { name: "Puzzle themes" });
+      expect(within(themes).getByRole("region", { name: "Puzzles by motif" })).toBeTruthy();
+      expect(scrolled.mock.contexts).toEqual([themes]);
+      expect(currentEntries()).toEqual(["Puzzle themes"]);
+      expect(window.localStorage.getItem(PRACTICE_PAGE_STORAGE_KEY)).toBe("puzzle-themes");
+    } finally {
+      scrolled.mockRestore();
+    }
+  });
+
+  it("comes back to the stored page after an item ends and after a reload", () => {
+    const view = render(<Practice server={api(null)} {...hubProps} createBoard={spyBoard} />);
+    openPracticePage("Openings");
+    view.rerender(<Practice server={api(puzzle())} {...hubProps} createBoard={spyBoard} />);
+    expect(screen.queryByRole("navigation", { name: "Practice sections" })).toBeNull();
+    view.rerender(<Practice server={api(null)} {...hubProps} createBoard={spyBoard} />);
+    expect(pageTitle()).toBe("Openings");
+    expect(currentEntries()).toEqual(["Openings"]);
+
+    view.unmount();
+    render(<Practice server={api(null)} {...hubProps} />);
+    expect(pageTitle()).toBe("Openings");
+    expect(currentEntries()).toEqual(["Openings"]);
+  });
+
+  it("brings a stored Puzzle themes back to its section", () => {
+    window.localStorage.setItem(PRACTICE_PAGE_STORAGE_KEY, "puzzle-themes");
+    const scrolled = vi.spyOn(Element.prototype, "scrollIntoView");
+    try {
+      render(<Practice server={api(null)} {...hubProps} />);
+      expect(pageTitle()).toBe("Practice");
+      expect(currentEntries()).toEqual(["Puzzle themes"]);
+      expect(scrolled.mock.contexts).toEqual([
+        screen.getByRole("region", { name: "Puzzle themes" }),
+      ]);
+    } finally {
+      scrolled.mockRestore();
+    }
+  });
+
+  it.each(["dashboards", "", "Openings"])(
+    "shows Overview for a stored value that names no page: %j",
+    (stored) => {
+      window.localStorage.setItem(PRACTICE_PAGE_STORAGE_KEY, stored);
+      render(<Practice server={api(null)} {...hubProps} />);
+      expect(pageTitle()).toBe("Practice");
+      expect(currentEntries()).toEqual(["Overview"]);
+    },
+  );
+
+  it("draws the Overview in order: title, problem cards, tiles, Due cards, Puzzle themes", async () => {
+    const missing = async () => ({
+      status: "ok" as const,
+      version: "test",
+      ready: false,
+      reason: "stockfish_missing",
+    });
+    const authFailure = { type: "turn_error" as const, key: "e1", message: "Not logged in" };
+    render(
+      <Practice
+        server={{ ...api(null), items: [authFailure] }}
+        {...hubProps}
+        fetchHealth={missing}
+      />,
+    );
+    const title = screen.getByRole("heading", { level: 2, name: "Practice" });
+    expect(title.nextElementSibling?.textContent).toBe(
+      "Pick a session. The board appears once an item starts.",
+    );
+    const engine = await screen.findByRole("alert", { name: "Engine missing" });
+    const login = screen.getByRole("alert", { name: "Coach not logged in" });
+    const tiles = (await screen.findByText("Day streak")).closest("dl") as HTMLElement;
+    const due = screen.getByRole("region", { name: "Due cards" });
+    const themes = screen.getByRole("region", { name: "Puzzle themes" });
+    expect(within(themes).getByRole("heading", { name: "Puzzle themes" })).toBeTruthy();
+    const motifs = within(themes).getByRole("region", { name: "Puzzles by motif" });
+    const order = [title, engine, login, tiles, due, themes];
+    for (const [index, node] of order.slice(1).entries()) {
+      expect(follows(order[index] as Element, node)).toBe(true);
+    }
+    // The motif card keeps its rows, its size choice and its start.
+    expect(within(motifs).getByRole("radio", { name: /^Fork,/ })).toBeTruthy();
+    expect(within(motifs).getByRole("group", { name: "Drill size" })).toBeTruthy();
+    expect(within(motifs).getByRole("button", { name: "Start any motif" })).toBeTruthy();
+  });
+
+  it.each(UNBUILT)("says %s is not built yet, and nothing else", (name) => {
+    render(<Practice server={api(null)} {...hubProps} />);
+    openPracticePage(name);
+    const title = screen.getByRole("heading", { level: 2 });
+    expect(title.textContent).toBe(name);
+    const page = title.closest(".practice-page") as HTMLElement;
+    expect(page.textContent).toBe(`${name}This page is not built yet.`);
+    expect(within(page).queryAllByRole("button")).toEqual([]);
+    expect(currentEntries()).toEqual([name]);
+    expect(screen.queryByRole("region", { name: "Due cards" })).toBeNull();
+  });
+
+  it("shows the Openings page with its title over the openings menu and the older Italian row", async () => {
+    render(<Practice server={api(null)} {...hubProps} fetchRepertoires={listedRepertoires} />);
+    openPracticePage("Openings");
+    const title = screen.getByRole("heading", { level: 2 });
+    expect(title.textContent).toBe("Openings");
+    await screen.findByRole("heading", { name: "Italian Game" });
+    const white = screen.getByRole("region", { name: "White openings" });
+    const italian = screen.getByRole("region", { name: "Openings" });
+    expect(within(italian).getByText("Italian Opening")).toBeTruthy();
+    expect(follows(title, white)).toBe(true);
+    expect(follows(white, italian)).toBe(true);
+    expect(screen.queryByRole("region", { name: "Puzzles by motif" })).toBeNull();
+  });
+
+  it("counts on Openings the repertoire moves due now over both sides, and on no other entry", async () => {
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchRepertoires={listedRepertoires}
+        fetchRepertoireList={async () => withSides(9, 3)}
+      />,
+    );
+    const openings = await within(practiceNav()).findByRole("button", {
+      name: "Openings, 12 moves due",
+    });
+    expect(openings.textContent).toBe("Openings12");
+    const others = within(practiceNav())
+      .getAllByRole("button")
+      .filter((entry) => entry !== openings);
+    expect(others).toHaveLength(7);
+    for (const entry of others) expect(entry.textContent).not.toMatch(/\d/);
+  });
+
+  it("shows no count while the list loads, when it could not be read, or at 0", async () => {
+    const loading = render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchRepertoires={listedRepertoires}
+        fetchRepertoireList={() => new Promise<RepertoiresResponse>(() => {})}
+      />,
+    );
+    await screen.findByRole("button", { name: "Review 4 cards" });
+    await settle();
+    expect(openingsEntry().textContent).toBe("Openings");
+    loading.unmount();
+
+    const failing = render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchRepertoires={listedRepertoires}
+        fetchRepertoireList={async () => {
+          throw new Error("down");
+        }}
+      />,
+    );
+    openPracticePage("Openings");
+    // The loading card is replaced once the list has loaded, so it is found by what the list holds.
+    await screen.findByRole("heading", { name: "Italian Game" });
+    const white = screen.getByRole("region", { name: "White openings" });
+    await within(white).findByRole("alert");
+    expect(openingsEntry().textContent).toBe("Openings");
+    failing.unmount();
+
+    const read = vi.fn(async () => withSides(0, 0));
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchRepertoires={listedRepertoires}
+        fetchRepertoireList={read}
+      />,
+    );
+    await waitFor(() => expect(read).toHaveBeenCalled());
+    await settle();
+    expect(openingsEntry().textContent).toBe("Openings");
+    expect(openingsEntry().getAttribute("aria-label")).toBeNull();
+  });
+
+  it("counts again from the list the openings menu reads once it has added a drill", async () => {
+    const built = { ...scandinavian, repertoire_id: 7 };
+    const reads = [
+      withSides(9, 3, [scandinavian]),
+      { ...withSides(15, 3, [built]), repertoires: [...repertoireList, scandinavianDrill] },
+    ];
+    renderHub({
+      fetchRepertoireList: async () => reads.shift() as RepertoiresResponse,
+      addOpening: async () => ({ truncated: false }),
+    });
+    await within(practiceNav()).findByRole("button", { name: "Openings, 12 moves due" });
+    const white = await whiteOpenings();
+    fireEvent.click(
+      await within(white).findByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
+    );
+    expect(
+      await within(practiceNav()).findByRole("button", { name: "Openings, 18 moves due" }),
+    ).toBeTruthy();
+  });
+
+  it("keeps an opening being built while another page is shown", async () => {
+    let finish: () => void = noop;
+    renderHub({
+      fetchRepertoireList: async () => listing([scandinavian]),
+      addOpening: () =>
+        new Promise<AddedOpening>((resolve) => {
+          finish = () => resolve({ truncated: false });
+        }),
+    });
+    const white = await whiteOpenings();
+    fireEvent.click(
+      await within(white).findByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
+    );
+    openPracticePage("Overview");
+    openPracticePage("Openings");
+    expect(
+      within(white).getByRole("button", { name: "Building Scandinavian Defense, 1.e4 d5" }),
+    ).toBeTruthy();
+    await act(async () => finish());
+  });
+
+  it("shows the Starting state and a refused start on the Openings page, where it was pressed", async () => {
+    const server = api(null);
+    const props = { ...hubProps, fetchRepertoires: listedRepertoires };
+    const view = render(<Practice server={server} {...props} />);
+    openPracticePage("Openings");
+    await screen.findByRole("heading", { name: "Italian Game" });
+    const white = screen.getByRole("region", { name: "White openings" });
+    fireEvent.click(within(white).getByRole("button", { name: "Everything due 14" }));
+    expect(within(white).getByRole("button", { name: "Starting" })).toBeTruthy();
+    openPracticePage("Overview");
+    expect(screen.queryByRole("button", { name: "Starting" })).toBeNull();
+
+    view.rerender(
+      <Practice server={{ ...server, errorCount: 1, lastErrorCode: "empty_queue" }} {...props} />,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    openPracticePage("Openings");
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "No move of this opening is due right now",
+    );
+  });
+
+  it("shows the Starting state and a refused start on the Overview, where it was pressed", async () => {
+    const server = api(null);
+    const view = render(<Practice server={server} {...hubProps} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review 4 cards" }));
+    expect(
+      within(screen.getByRole("region", { name: "Due cards" })).getByRole("button", {
+        name: "Starting",
+      }),
+    ).toBeTruthy();
+    openPracticePage("Openings");
+    expect(screen.queryByRole("button", { name: "Starting" })).toBeNull();
+
+    view.rerender(
+      <Practice
+        server={{ ...server, errorCount: 1, lastErrorCode: "empty_queue" }}
+        {...hubProps}
+      />,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    openPracticePage("Overview");
+    expect((await screen.findByRole("alert")).textContent).toContain("Nothing is due right now");
+  });
+});
+
+// The browser lays the frame out; these read the rules it is drawn with off the stylesheet.
+describe("the hub's frame styles", () => {
+  const STYLES = join(import.meta.dirname, "../src/styles");
+  const css = readFileSync(join(STYLES, "practice-hub.css"), "utf8").replace(
+    /\/\*[\s\S]*?\*\//g,
+    "",
+  );
+  const tokens = readFileSync(join(STYLES, "tokens.css"), "utf8");
+  const phoneAt = css.indexOf("@media (max-width: 899px)");
+  const desktop = css.slice(0, phoneAt);
+  const phone = css.slice(phoneAt);
+
+  // Every declaration the rules naming the selector give it, the later one winning.
+  function declared(sheet: string, selector: string): Record<string, string> {
+    const found: Record<string, string> = {};
+    for (const [, selectors = "", body = ""] of sheet.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!selectors.split(",").some((part) => part.trim() === selector)) continue;
+      for (const declaration of body.split(";")) {
+        const [property = "", ...value] = declaration.split(":");
+        if (property.trim() !== "" && value.length > 0) {
+          found[property.trim()] = value.join(":").trim();
+        }
+      }
+    }
+    return found;
+  }
+  const token = (name: string): string | undefined =>
+    new RegExp(`${name}: ([^;]+);`).exec(tokens)?.[1];
+
+  it("keeps the navigation 220 px wide and in view beside a column of at most 1440 px, 16 px apart", () => {
+    expect(phoneAt).toBeGreaterThan(0);
+    expect(declared(desktop, ".practice-nav")).toMatchObject({
+      width: "220px",
+      flex: "none",
+      position: "sticky",
+      top: "0",
+    });
+    expect(declared(desktop, ".practice-hub")).toMatchObject({
+      display: "flex",
+      gap: "var(--space-4)",
+    });
+    expect(token("--space-4")).toBe("1rem");
+    expect(declared(desktop, ".practice-hub__pages")).toMatchObject({
+      "min-width": "0",
+      "max-width": "1440px",
+    });
+  });
+
+  it("draws an entry 36 px high in 14 px text with a 4 px radius, the current one on the inset surface", () => {
+    expect(declared(desktop, ".practice-nav__entry")).toMatchObject({
+      height: "36px",
+      "font-size": "var(--text-sm)",
+      "border-radius": "var(--radius-sm)",
+      color: "var(--text-2)",
+    });
+    expect(token("--text-sm")).toBe("0.875rem");
+    expect(token("--radius-sm")).toBe("4px");
+    expect(declared(desktop, '.practice-nav__entry[aria-current="page"]')).toMatchObject({
+      background: "var(--surface-2)",
+      color: "var(--text-1)",
+    });
+    expect(declared(desktop, ".practice-nav__label")).toMatchObject({
+      "font-size": "var(--text-xs)",
+      color: "var(--text-3)",
+    });
+    expect(token("--text-xs")).toBe("0.75rem");
+  });
+
+  it("lets only the navigation scroll by itself, never a card", () => {
+    const scrolling = [...desktop.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter(([, , body = ""]) => /overflow|max-height/.test(body))
+      .map(([, selectors = ""]) => selectors.trim());
+    expect(scrolling).toEqual([".practice-nav"]);
+  });
+
+  it("stacks the hub under 900 px: a wrapping row of 44 px entries with no group label, one column of cards", () => {
+    expect(declared(phone, ".practice-hub")).toMatchObject({ "flex-direction": "column" });
+    expect(declared(phone, ".practice-nav")).toMatchObject({
+      position: "static",
+      "flex-direction": "row",
+      "flex-wrap": "wrap",
+    });
+    expect(declared(phone, ".practice-nav__group")).toMatchObject({ display: "contents" });
+    expect(declared(phone, ".practice-nav__label")).toMatchObject({ display: "none" });
+    expect(declared(phone, ".practice-nav__entry")).toMatchObject({ "min-height": "44px" });
+    for (const grid of [".practice-page__cards", ".practice-tiles"]) {
+      expect(declared(phone, grid)).toMatchObject({ "grid-template-columns": "minmax(0, 1fr)" });
+    }
   });
 });

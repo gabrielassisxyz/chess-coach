@@ -4,11 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Games } from "../src/screens/Games.js";
 import { Practice } from "../src/screens/Practice.js";
 import type { GamesApi } from "../src/state/games-api.js";
+import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import { COACH_GAME_SOURCE, idleImportApi } from "./fixtures.js";
-import { progressOf } from "./practice-fixtures.js";
+import { openPracticePage, progressOf } from "./practice-fixtures.js";
 import { serverApi } from "./server-api.js";
 
 afterEach(cleanup);
+// The hub stores the page it shows, which would open the next test's hub on it.
+afterEach(() => window.localStorage.removeItem(PRACTICE_PAGE_STORAGE_KEY));
 
 const summary: GameSummary = {
   ...COACH_GAME_SOURCE,
@@ -248,6 +251,7 @@ describe("Practice states", () => {
         fetchOpeningDrills={fetchOpeningDrills}
       />,
     );
+    openPracticePage("Openings");
 
     const card = await screen.findByRole("region", { name: "Openings" });
     const alert = await within(card).findByRole("alert");

@@ -5,10 +5,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import { Practice } from "../src/screens/Practice.js";
+import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
   CLASSICAL_VARIATION,
   italianRepertoire,
   motifCounts,
+  openPracticePage,
   progressOf,
   repertoireActivity,
   repertoireList,
@@ -59,6 +61,9 @@ const fact = (key: string): string | undefined =>
 const arrows = (): unknown[] => seen.at(-1)?.drawable?.autoShapes ?? [];
 
 describe("the openings menu on the hub", () => {
+  // The menu is on the hub's Openings page, which each hub here opens on as the page stored last.
+  beforeEach(() => window.localStorage.setItem(PRACTICE_PAGE_STORAGE_KEY, "openings"));
+
   it("shows a White openings group with Italian Game, its variation and three starts with counts", async () => {
     render(<Practice server={serverApi(null)} {...hubProps} />);
     const group = await whiteOpenings();
@@ -100,6 +105,7 @@ describe("the openings menu on the hub", () => {
     expect(
       (within(group).getByRole("button", { name: "Recommended 10" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+    openPracticePage("Overview");
     const motifStart = screen.getByRole("button", { name: "Start any motif" });
     expect((motifStart as HTMLButtonElement).disabled).toBe(true);
   });
@@ -107,7 +113,9 @@ describe("the openings menu on the hub", () => {
   it("waits while another card starts a session", async () => {
     render(<Practice server={serverApi(null)} {...hubProps} />);
     const group = await whiteOpenings();
+    openPracticePage("Overview");
     fireEvent.click(await screen.findByRole("button", { name: "Start any motif" }));
+    openPracticePage("Openings");
     expect(
       (within(group).getByRole("button", { name: "Recommended 10" }) as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -136,7 +144,9 @@ describe("the openings menu on the hub", () => {
       reason: "stockfish_missing",
     });
     render(<Practice server={serverApi(null)} {...hubProps} fetchHealth={missing} />);
+    openPracticePage("Overview");
     await screen.findByRole("alert", { name: "Engine missing" });
+    openPracticePage("Openings");
     const group = await whiteOpenings();
     const start = within(group).getByRole("button", { name: "Recommended 10" });
     expect((start as HTMLButtonElement).disabled).toBe(false);
