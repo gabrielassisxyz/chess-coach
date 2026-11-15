@@ -219,8 +219,9 @@ export type RepertoireDrillResult = z.infer<typeof RepertoireDrillResultSchema>;
 
 // What a repertoire drill adds to a training activity. `opening_name` names the current position.
 // `first_pass` is set while the current move is shown for the first time, and `answer` is its move
-// then; later passes hide it. `flagged_opening` names the other opening a good but unexpected try
-// reached, cleared on the next try. A move is left until it is played right at the first attempt
+// then; later passes hide it. `flagged_opening` names the other opening a sound unexpected try
+// reached, and `flagged_sound` is true whenever an unexpected try stayed within the centipawn
+// margin, cleared on the next try. A move is left until it is played right at the first attempt
 // of a pass; right and wrong count how that first rated attempt went. `repertoire_id` is the
 // variation of the move in play, as on the item, and `level` the one the drill was started at.
 export const RepertoireDrillSchema = z.object({
@@ -232,6 +233,7 @@ export const RepertoireDrillSchema = z.object({
   answer: ExpectedMoveSchema.nullable(),
   hint: RepertoireHintSchema,
   flagged_opening: z.string().nullable(),
+  flagged_sound: z.boolean().optional(),
   moves_left: z.number().int().nonnegative(),
   moves_right: z.number().int().nonnegative(),
   moves_wrong: z.number().int().nonnegative(),

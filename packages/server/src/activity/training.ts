@@ -98,8 +98,8 @@ export interface PracticeRunPort {
   state(activityId: number): TrainingActivity;
   explore(kind: ExplorationKind, uci?: string): void;
   linkMessage(messageId: number): void;
-  /** A repertoire try may wait on the engine for its flag; every other step is synchronous. */
-  tryMove(uci: string): void | Promise<void>;
+  /** A repertoire try may check the engine in the background and return a follow-up update. */
+  tryMove(uci: string): void | Promise<() => boolean>;
   showSolution(): void;
   hint(): void;
   askCoach(): void;
