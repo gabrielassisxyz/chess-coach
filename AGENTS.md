@@ -286,7 +286,7 @@
   schedule when right. A wrong try within 50 cp of the engine's best that reaches another named opening
   carries that name. `GET /api/repertoires` lists each variation with what each scope would serve.
   A `level` on the command widens the drill from that repertoire to every variation of its group
-  (`group`) or every unit of its side (`side`, the hub's White openings); without one it is the
+  (`group`) or every unit of its side (`side`, the Openings page's "Train all" button of a colour); without one it is the
   variation. The level's moves are merged so that a move two variations share, one card, is served
   once, under the variation where its reach is higher and the older one at a tie; a position that
   expects different moves in two variations asks the one whose line the pass plays. The item's

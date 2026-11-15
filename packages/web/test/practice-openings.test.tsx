@@ -493,6 +493,41 @@ describe("the train buttons", () => {
     expect(onStart).toHaveBeenCalledWith(6, "all", "group");
   });
 
+  it("disables the outlined button when the opening has no move at all, and leaves it enabled with moves", async () => {
+    renderPage(
+      answer({
+        groups: [italianGroup, { ...kingsPawnGroup, moves: { recommended: 0, due: 0, all: 0 } }],
+      }),
+    );
+    const kings = await card("King's Pawn Game");
+    expect(
+      isDisabled(within(kings).getByRole("button", { name: "Train all moves, King's Pawn Game" })),
+    ).toBe(true);
+    cleanup();
+    renderPage();
+    const withMoves = await card("King's Pawn Game");
+    expect(
+      isDisabled(
+        within(withMoves).getByRole("button", { name: "Train all moves, King's Pawn Game" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("disables a menu entry whose count is 0 and leaves the others enabled", async () => {
+    renderPage(
+      answer({
+        groups: [{ ...italianGroup, moves: { recommended: 5, due: 0, all: 39 } }, kingsPawnGroup],
+      }),
+    );
+    const italian = await card("Italian Game");
+    fireEvent.click(
+      within(italian).getByRole("button", { name: "More ways to train, Italian Game" }),
+    );
+    const menu = within(italian).getByRole("group", { name: "Train Italian Game" });
+    expect(isDisabled(within(menu).getByRole("button", { name: "Everything due 0" }))).toBe(true);
+    expect(isDisabled(within(menu).getByRole("button", { name: "All moves 39" }))).toBe(false);
+  });
+
   it("holds the split button as one shape, a primary label and a chevron", async () => {
     renderPage();
     const italian = await card("Italian Game");
