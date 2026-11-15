@@ -40,12 +40,12 @@ export interface PuzzleFilter {
   ratingAround?: undefined;
 }
 
-// Sampling cannot honour a motif or a difficulty, because neither is in the index it seeks on.
-export interface RatingSampleFilter {
+// Sampling cannot honour a motif or a difficulty, because neither is in the index it seeks on. It
+// seeks on one index, so it takes a theme or a Lichess opening tag, never both.
+export type RatingSampleFilter = {
   ratingAround: number;
-  theme?: string | undefined;
   limit?: number | undefined;
-}
+} & ({ theme?: string | undefined; opening?: undefined } | { opening: string; theme?: undefined });
 
 // Injected shuffle source, so tests stay deterministic while production shuffles.
 export type PuzzleShuffleRandom = () => number;
@@ -104,7 +104,18 @@ interface SampleSource {
   params: Record<string, string>;
 }
 
-function sampleSourceFor(theme: string | undefined): SampleSource {
+function sampleSourceFor(filter: RatingSampleFilter): SampleSource {
+  if (filter.opening !== undefined) {
+    return {
+      table: "puzzle_openings",
+      ratingColumn: "rating",
+      idColumn: "puzzle_id",
+      scope: "s.opening = @opening",
+      eligible: POPULAR_ENOUGH,
+      params: { opening: filter.opening },
+    };
+  }
+  const { theme } = filter;
   if (theme === undefined) {
     return {
       table: "puzzles",
@@ -244,7 +255,7 @@ function sampleAroundRating(
   randomSource: PuzzleShuffleRandom,
 ): PuzzleSummary[] {
   const limit = clampLimit(filter.limit);
-  const source = sampleSourceFor(filter.theme);
+  const source = sampleSourceFor(filter);
   const range = ratedRange(db, source);
   if (!range) return [];
   const picked = new Map<string, PuzzleSummary>();
@@ -495,6 +506,34 @@ export function openingNamesOfFamily(
   return rows
     .map((row) => row.openingName)
     .filter((openingName) => openingFamilyOf(openingName) === family);
+}
+
+/** One Lichess opening tag: the puzzles filed under it, and the attempts on them in a window. */
+export interface OpeningTagTally {
+  puzzles: number;
+  played: number;
+  firstTry: number;
+}
+
+/**
+ * How many puzzles are filed under one opening tag, and the attempts made on them inside the window
+ * with the first-try solves among them. The attempts lead the second query, so its cost follows the
+ * student's history and not the size of the tag; the tag reaches both only as a bound parameter.
+ */
+export function tallyOpeningTag(db: Database, tag: string, window: AttemptWindow): OpeningTagTally {
+  const filed = db
+    .prepare("SELECT COUNT(*) AS puzzles FROM puzzle_openings WHERE opening = ?")
+    .get(tag) as { puzzles: number };
+  const attempts = db
+    .prepare(
+      `SELECT COUNT(*) AS played, COALESCE(SUM(a.first_try), 0) AS firstTry
+       FROM puzzle_attempts a CROSS JOIN puzzles p ON p.id = a.puzzle_id
+       WHERE a.attempted_at >= @from AND a.attempted_at <= @to
+         AND EXISTS (SELECT 1 FROM puzzle_openings o
+                     WHERE o.opening = @tag AND o.rating = p.difficulty_rating AND o.puzzle_id = p.id)`,
+    )
+    .get({ tag, ...window }) as { played: number; firstTry: number };
+  return { puzzles: filed.puzzles, played: attempts.played, firstTry: attempts.firstTry };
 }
 
 export interface GeneratedPuzzle {
