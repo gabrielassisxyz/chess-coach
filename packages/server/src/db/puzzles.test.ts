@@ -664,7 +664,11 @@ describe("puzzles by Lichess opening tag", () => {
         played: 0,
         firstTry: 0,
       });
-      expect(tallyOpeningTag(db, "Italian_Game' OR '1'='1", WINDOW).puzzles).toBe(0);
+      expect(tallyOpeningTag(db, "Italian_Game' OR '1'='1", WINDOW)).toEqual({
+        puzzles: 0,
+        played: 0,
+        firstTry: 0,
+      });
     });
   });
 });
