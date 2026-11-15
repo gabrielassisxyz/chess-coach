@@ -1,4 +1,5 @@
 import type {
+  PlayedOpeningsResponse,
   ProgressResponse,
   PuzzleRatingHistoryResponse,
   PuzzleRatingPoint,
@@ -8,6 +9,16 @@ import type {
 } from "@chess-coach/shared";
 import type { ReactNode } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
+import {
+  type FetchOpeningsPlayed,
+  fetchOpeningsPlayedFromServer,
+  PLAYED_FAILED_TEXT,
+  PLAYED_LOADING_TEXT,
+  PLAYED_SECTION_EMPTY_TEXT,
+  playedGamesText,
+  playedSideText,
+  topPlayedOpeningsOf,
+} from "../state/openings-played-api.js";
 import { NEEDS_ENGINE_TEXT, NONE } from "../state/practice.js";
 import {
   type FetchPuzzleRatingHistory,
@@ -20,6 +31,7 @@ import {
   type ThemeStatsKind,
   themeRowsOf,
 } from "../state/theme-stats-api.js";
+import { PlayedBar, PlayedScore } from "./PracticeOpeningsPlayed.js";
 import { TileDelta } from "./PracticeOverview.js";
 import {
   emptyThemeMessageOf,
@@ -33,6 +45,7 @@ import {
 
 const DAY_MS = 86_400_000;
 const DASHBOARD_THEME_LIMIT = 5;
+const DASHBOARD_OPENINGS_LIMIT = 4;
 const ANY_MOTIF = "";
 
 export interface PracticeDashboardProps {
@@ -40,10 +53,11 @@ export interface PracticeDashboardProps {
   progress: Loaded<ProgressResponse>;
   fetchThemeStats?: FetchThemeStats | undefined;
   fetchRatingHistory?: FetchPuzzleRatingHistory | undefined;
+  fetchOpeningsPlayed?: FetchOpeningsPlayed | undefined;
   starting: ThemeStatsStarting | null;
   engineMissing: boolean;
   onStart(mode: TrainingMode, motif: string): void;
-  onOpenPage(kind: ThemeStatsKind): void;
+  onOpenPage(page: ThemeStatsKind | "openings-played"): void;
   failure: ReactNode;
 }
 
@@ -341,12 +355,82 @@ function DashboardThemeCard({
   );
 }
 
-/** Windowed Dashboard combining puzzle KPIs, rating trend chart, and top improvement/strength themes. */
+function DashboardOpeningsCard({
+  openings,
+  onOpenPage,
+}: {
+  openings: Loaded<PlayedOpeningsResponse>;
+  onOpenPage(page: "openings-played"): void;
+}) {
+  const rows =
+    openings.status === "ready"
+      ? topPlayedOpeningsOf(openings.value, DASHBOARD_OPENINGS_LIMIT)
+      : [];
+
+  return (
+    <section
+      className="practice-dashboard__card"
+      aria-labelledby="practice-dashboard-openings-heading"
+    >
+      <div className="practice-dashboard__card-head">
+        <div className="practice-dashboard__card-titles">
+          <h3 id="practice-dashboard-openings-heading" className="practice-dashboard__card-title">
+            Openings played
+          </h3>
+          <p className="practice-dashboard__card-sub">
+            Most frequent in your games · win / draw / loss
+          </p>
+        </div>
+        <button
+          type="button"
+          className="practice-dashboard__link"
+          onClick={() => onOpenPage("openings-played")}
+        >
+          See all
+        </button>
+      </div>
+      {openings.status === "loading" ? (
+        <p className="practice-dashboard__state" role="status">
+          {PLAYED_LOADING_TEXT}
+        </p>
+      ) : null}
+      {openings.status === "failed" ? (
+        <div className="practice-dashboard__state-box">
+          <p className="practice__failure" role="alert">
+            {PLAYED_FAILED_TEXT}
+          </p>
+          <button type="button" className="button" onClick={openings.retry}>
+            Try again
+          </button>
+        </div>
+      ) : null}
+      {openings.status === "ready" && rows.length === 0 ? (
+        <p className="practice-dashboard__state">{PLAYED_SECTION_EMPTY_TEXT}</p>
+      ) : null}
+      {rows.length > 0 ? (
+        <ul className="played-top" aria-label="Most played openings">
+          {rows.map(({ side, section, opening }) => (
+            <li key={`${side}/${section}/${opening.opening}`} className="played-top__row">
+              <span className="played-top__name">{opening.opening}</span>
+              <span className="played-top__side">{playedSideText(side)}</span>
+              <span className="played-top__games">{playedGamesText(opening.games)}</span>
+              <PlayedBar figures={opening} />
+              <PlayedScore figures={opening} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+/** Windowed Dashboard combining puzzle KPIs, rating trend chart, top improvement/strength themes and the most played openings. */
 export function PracticeDashboard({
   shown,
   progress,
   fetchThemeStats = fetchThemeStatsFromServer,
   fetchRatingHistory = fetchPuzzleRatingHistoryFromServer,
+  fetchOpeningsPlayed = fetchOpeningsPlayedFromServer,
   starting,
   engineMissing,
   onStart,
@@ -356,6 +440,7 @@ export function PracticeDashboard({
   const { activated, days, selectWindow } = useActivatedWindow(shown);
   const themeStats = useWindowedResource(activated, days, fetchThemeStats);
   const ratingHistory = useWindowedResource(activated, days, fetchRatingHistory);
+  const openingsPlayed = useWindowedResource(activated, days, fetchOpeningsPlayed);
 
   // The hub keeps every page mounted, so before the first visit there is no tile, chart or
   // theme row to duplicate the Overview's labels in hidden queries.
@@ -410,6 +495,7 @@ export function PracticeDashboard({
           />
         ))}
       </div>
+      <DashboardOpeningsCard openings={openingsPlayed} onOpenPage={onOpenPage} />
       {engineMissing ? <p className="practice__card-note">{NEEDS_ENGINE_TEXT}</p> : null}
     </div>
   );

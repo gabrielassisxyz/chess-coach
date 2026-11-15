@@ -1503,3 +1503,383 @@
     min-height: 44px;
   }
 }
+
+/*
+ * Openings played: a header of the title and its two controls, a line of the total with the
+ * legend, then two panels of openings. An opening is a button row 52 px high that opens its
+ * variations, 44 px rows behind a hairline with a Drill button. The Dashboard's card of the most
+ * played openings draws the same bar and score.
+ */
+.played {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.played-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.played-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.played-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.played-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.played-legend__swatch {
+  width: 10px;
+  height: 6px;
+  border-radius: 2px;
+}
+
+/* Won, drawn and lost keep their colours in the legend, the bars and nowhere else. */
+.played-legend__swatch[data-outcome="won"],
+.played-bar__part[data-outcome="won"] {
+  background: var(--status-ready);
+}
+
+.played-legend__swatch[data-outcome="drawn"],
+.played-bar__part[data-outcome="drawn"] {
+  background: var(--text-3);
+}
+
+.played-legend__swatch[data-outcome="lost"],
+.played-bar__part[data-outcome="lost"] {
+  background: var(--status-error);
+}
+
+.played-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: var(--space-2);
+}
+
+.played-section__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.played-section__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 500;
+  line-height: var(--leading-heading);
+}
+
+.played-section__note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.played-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  padding: var(--space-1) 0;
+}
+
+.played-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+/* The head and a variation's row start 48 px in, where an opening's name starts after its chevron. */
+.played-head,
+.played-row--variation {
+  grid-template-columns: minmax(0, 1fr) 72px 160px 56px 72px;
+}
+
+.played-head {
+  display: grid;
+  gap: var(--space-4);
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--space-4) 0 48px;
+  border-bottom: 1px solid var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.played-head__games,
+.played-head__score {
+  text-align: right;
+}
+
+.played-list,
+.played-variations {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.played-opening {
+  border-bottom: 1px solid var(--surface-2);
+}
+
+.played-opening:last-child {
+  border-bottom: 0;
+}
+
+.played-variations {
+  padding-bottom: var(--space-2);
+}
+
+.played-row {
+  display: grid;
+  gap: 12px var(--space-4);
+  align-items: center;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+}
+
+.played-row--opening {
+  grid-template-columns: 16px minmax(0, 1fr) 72px 160px 56px 72px;
+  width: 100%;
+  min-height: 52px;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.played-row--opening:hover {
+  background: var(--surface-2);
+}
+
+/* The rows are stacked with a hairline between them, so a ring drawn outside would cross their edges. */
+.played-row--opening:focus-visible {
+  outline-offset: -2px;
+}
+
+.played-row--variation {
+  gap: var(--space-4);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-4) var(--space-1) 48px;
+}
+
+.played-row__chevron {
+  color: var(--text-2);
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.played-row--opening[aria-expanded="true"] .played-row__chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .played-row__chevron {
+    transition: none;
+  }
+}
+
+.played-row__name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.played-row--variation .played-row__name {
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+}
+
+.played-row__title {
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.played-row--variation .played-row__title {
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+
+.played-row__line {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.played-row--opening .played-row__line {
+  overflow-wrap: anywhere;
+}
+
+.played-row--variation .played-row__line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.played-row__games,
+.played-score,
+.played-row__counts {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.played-row__games {
+  color: var(--text-2);
+}
+
+.played-score {
+  color: var(--text-1);
+}
+
+.played-row--opening .played-row__games,
+.played-row--opening .played-score {
+  font-size: var(--text-sm);
+}
+
+.played-row--opening .played-row__games {
+  color: var(--text-1);
+}
+
+.played-row__counts {
+  color: var(--text-3);
+}
+
+.played-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.played-bar__part {
+  display: block;
+  height: 100%;
+}
+
+/* The score takes the same bands as the first-try share: 70 and 55, in the grade tones that hold their contrast. */
+.played-score[data-tone="good"] {
+  color: var(--quality-best);
+}
+
+.played-score[data-tone="mid"] {
+  color: var(--quality-inaccuracy);
+}
+
+.played-score[data-tone="low"] {
+  color: var(--quality-blunder);
+}
+
+.played-row__drill {
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.played-top {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.played-top__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px 72px 160px 48px;
+  gap: var(--space-3);
+  align-items: center;
+  height: 40px;
+  border-top: 1px solid var(--surface-2);
+  font-size: var(--text-sm);
+}
+
+.played-top__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.played-top__side,
+.played-top__games {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.played-top__games {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/*
+ * Under 900 px a row keeps its name, its games and its score: the line of moves, the bar and the
+ * last column go. A variation keeps its Drill, the only way to start one, as a 44 px target.
+ */
+@media (max-width: 899px) {
+  .played-row--opening {
+    grid-template-columns: 16px minmax(0, 1fr) auto auto;
+    gap: var(--space-3);
+  }
+
+  .played-head {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: var(--space-3);
+    padding-left: 44px;
+  }
+
+  .played-row--variation {
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    gap: var(--space-3);
+    padding-left: 44px;
+  }
+
+  .played-row__line,
+  .played-bar,
+  .played-row__counts,
+  .played-head__bar,
+  .played-head__counts {
+    display: none;
+  }
+
+  .played-row__drill,
+  .played-state .button {
+    min-height: 44px;
+  }
+
+  .played-top__row {
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    height: auto;
+    min-height: 44px;
+  }
+
+  .played-top__name {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
