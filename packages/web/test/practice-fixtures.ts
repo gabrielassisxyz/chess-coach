@@ -5,8 +5,16 @@ import type {
   RepertoireSummary,
   TrainingActivity,
 } from "@chess-coach/shared";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { Chess } from "chess.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
+
+// Chooses an entry of the Practice hub's navigation by its name, which on Openings may go on with a
+// count of the moves due.
+export function openPracticePage(name: string): void {
+  const nav = screen.getByRole("navigation", { name: "Practice sections" });
+  fireEvent.click(within(nav).getByRole("button", { name: new RegExp(`^${name}(,|$)`) }));
+}
 
 type Cards = ProgressResponse["cards"];
 

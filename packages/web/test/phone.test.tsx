@@ -133,7 +133,15 @@ describe("coach bar on a phone", () => {
 describe("the phone breakpoint", () => {
   it("is the one the stylesheets stack at", () => {
     const px = PHONE_QUERY.match(/max-width: (\d+px)/)?.[1];
-    for (const file of ["layout.css", "chat.css", "games.css", "play.css", "board.css"]) {
+    const files = [
+      "layout.css",
+      "chat.css",
+      "games.css",
+      "play.css",
+      "board.css",
+      "practice-hub.css",
+    ];
+    for (const file of files) {
       const css = readFileSync(join(STYLES, file), "utf8");
       expect(css, file).toContain(`@media (max-width: ${px})`);
     }

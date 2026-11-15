@@ -167,6 +167,18 @@
   strongest first; both lists break a tie by more attempts and hold at most 8 theme keys. A theme is
   compared with the overall performance of the same window, never with the Elo puzzle rating, which
   is on another scale.
+- **Practice hub:** with no item on the board, Practice is a frame: a navigation of eight entries in
+  two groups (Train: Overview, Puzzle themes, From my games, Openings; Stats: Dashboard, Improvement
+  areas, Strengths, Openings played) beside a column that shows one page at a time
+  (`components/PracticeHub.tsx`, `state/practice-page.ts`). Two pages are built: the Overview (the
+  day streak, puzzle rating and cards remembered from `GET /api/progress` as three tiles, the Due
+  cards card, and a Puzzle themes section holding the Puzzles by motif card), which Puzzle themes
+  shows scrolled to that section, and Openings (the openings menu and the older Italian drill row).
+  From my games and the four Stats pages only say they are not built yet. The Openings entry shows
+  the repertoire moves due now, the sum of `sides[].moves.due` in the `GET /api/repertoires` answer
+  the openings menu last read. Every page stays mounted while another is shown, and a refused start
+  shows on the page it was pressed on. The entry chosen is stored in the browser under
+  `chess-coach.practice-page`, so the hub comes back to it after a session and after a reload.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
   each step, and a run is never paused: it ends when it stops being on the board, and its row stays as
   the record, with the reason it ended. `finished` is a queue whose last item is done, `ended` is

@@ -97,9 +97,9 @@ States
 | 5 | The error tone only for something that failed (plus the blunder grade) | ok | ok | ok | ok | ok | ok |
 | 6 | Plex Sans for titles and UI, Plex Mono only for data | ok | ok | ok | ok | ok | ok |
 | 7 | One 28/600 title per screen where the screen has one, the same face and tracking | n/a | partial | ok | ok | n/a | ok |
-| 8 | The same type scale: controls, notes and lists use the same steps on every screen | ok | ok | ok | ok | ok | ok |
+| 8 | The same type scale: controls, notes and lists use the same steps on every screen | ok | ok | ok | partial | ok | ok |
 | 9 | Radii 4 px controls, 8 px panels, hairline borders; no nested cards, no icon tile, eyebrow, hero or gradient text | ok | ok | ok | ok | ok | ok |
-| 10 | Spacing from the 4-based scale; the same screen padding and block gap | ok | partial | ok | ok | ok | ok |
+| 10 | Spacing from the 4-based scale; the same screen padding and block gap | ok | partial | ok | partial | ok | ok |
 | 11 | Shell measurements: 48 px bar, 24 px frame padding, 16 px gap, 220 (328 on an item) / board / 360 columns, 32 px strip | ok | ok | ok | ok | n/a | n/a |
 | 12 | Running text near 65ch | ok | ok | ok | ok | ok | ok |
 | 13 | Motion under 300 ms, ease-out, transform and opacity only, reduced motion respected | ok | ok | ok | ok | ok | ok |
@@ -125,6 +125,21 @@ square is a 28 px disc centred on the square's top right corner as seen on scree
 inward by half its size on the top row or the right column so it stays fully inside the
 board. M1 and M2 still find no matches.
 
+The Practice column was re-checked on rows 7, 9, 10, 11, 14, 15, 16 and 17, and the Phone
+column on row 19, for the hub's frame, against the markup and `practice-hub.css`; the cells were
+not measured in a browser. Each page has one 28/600 title (`.screen__title`) with a 14 px note
+beside it. The entries are 4 px controls with no border, the tiles 8 px panels with a hairline
+border, and the Puzzle themes section is a labelled region rather than a card, so the motif card
+inside it is not nested. The navigation is 220 px with the shell's 16 px gap to the page, and the
+page column stops at 1440 px. Its entries take the one focus ring, drawn 2 px inside the entry
+because the navigation is a box that scrolls by itself and would clip a ring drawn outside. The
+tiles are drawn only once the progress numbers are read, while the Due cards card says it is
+loading or offers Try again, and a page with no content yet keeps its title and a sentence. The
+Overview reads the tiles before the cards. An entry reads as navigation: a column of names beside
+the page, the current one on the inset surface in the primary text, the others in the secondary
+text until hovered. Under 900 px the entries are one wrapping row of 44 px targets above the page
+and the cards stack in one column. M1 and M2 still find no matches.
+
 The Play, Games and Practice columns were re-checked for icon controls in light and dark at
 390 px. In Chromium, Play's empty state, Games' load failure state and Practice's open puzzle
 had no horizontal overflow. Practice keeps the move controls together and wraps Explore,
@@ -140,9 +155,16 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   dot to a sighted reader; the word reaches only a screen reader.
 - **7, Play.** The left column no longer shows a "Play" title; the section is named by its
   `aria-label` only, so Play is the one screen without a visible title.
+- **8, Practice.** The section title inside a hub page ("Puzzle themes" on the Overview) is
+  20 px, the redesign's step between the 18 px heading and the 28 px title, which has no token
+  yet.
 - **10, Play.** The move list and the table rows use `2px`, `6px`, `24px`, `28px` and
   `32px` values (row height, dot size, gaps) that are not on the 4-based space scale; they
   size a data cell, not layout spacing.
+- **10, Practice.** The hub's navigation and tiles keep the redesign's `2px` between entries,
+  `6px` under a group label, `10px` inside an entry and between a tile's lines, and `14px` above
+  and below a tile's content, none of them on the 4-based scale; they size a row of the
+  navigation or a tile, not the page's spacing, which stays on the scale.
 - **17, Games.** The game list rows are plain text buttons: pointer, hover and the focus ring
   mark them, but nothing says "button" before the pointer arrives.
 - **15, Practice.** Loading and error states match the rule (quiet sentence, or one sentence in
@@ -189,8 +211,15 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
 - **Play's board settings.** Play still opens the older settings card in its column with the
   theme radios alone; the popover with coordinates, animation and highlights exists on Practice
   only, though every board honours the stored preferences.
-- **The Practice hub** was not part of the puzzle redesign and keeps its three older cards.
-  The openings menu for the repertoire line drill is a fourth, built on the same card rules;
+- **The Practice hub** is a frame: a navigation of eight entries in two groups, Train and
+  Stats, sticky beside a page column of at most 1440 px that shows one page at a time, the page
+  scrolling as a whole and only the navigation scrolling by itself when it is taller than the
+  window. The Overview opens first, with three tiles over the older Due cards card and a Puzzle
+  themes section holding the older Puzzles by motif card; Puzzle themes in the navigation shows the
+  Overview scrolled to that section. The Openings page holds the openings menu and the older
+  Italian drill row, and the five other pages are a title and a sentence saying the page is not
+  built yet. The older cards are mounted on their pages unchanged. The openings menu for the
+  repertoire line drill is built on the same card rules as before;
   its Practice cells were re-read against the markup and `repertoire.css` and hold. So were the
   cells for the list of openings met in the student's games, under White openings: a block with a
   hairline top border like each opening above it, rows of a name, a mono line and a count, and an

@@ -7,31 +7,35 @@ import type {
   RepertoireSummary,
   TrainingMode,
 } from "@chess-coach/shared";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
 import type { OpeningDrillControls } from "../state/openings-api.js";
 import {
-  DRILL_SIZES,
   type DrillSize,
-  dueBreakdown,
   italianOpeningCount,
   type MotifCount,
-  motifLabel,
-  motifRows,
+  NEEDS_ENGINE_TEXT,
   NONE,
-  nextBatchParts,
-  percent,
 } from "../state/practice.js";
-import type {
-  AddOpening,
-  AddVariation,
-  FetchCoverage,
-  FetchRepertoireList,
+import {
+  openingsDueOf,
+  PRACTICE_ENTRY_LABEL,
+  type PracticeEntry,
+  type PracticePage,
+  practicePageOf,
+  UNBUILT_PRACTICE_PAGES,
+  usePracticeEntry,
+} from "../state/practice-page.js";
+import {
+  type AddOpening,
+  type AddVariation,
+  type FetchCoverage,
+  type FetchRepertoireList,
+  fetchRepertoireListFromServer,
 } from "../state/repertoires-api.js";
+import { PracticeNav } from "./PracticeNav.js";
+import { type HubStartButton, PracticeOverview, PracticePageHead } from "./PracticeOverview.js";
 import { RepertoireMenu } from "./RepertoireMenu.js";
-
-const ANY_MOTIF = "";
-const NEEDS_ENGINE = "Needs the engine to grade answers.";
 
 export interface PracticeHubProps {
   progress: Loaded<ProgressResponse>;
@@ -64,43 +68,8 @@ export interface PracticeHubProps {
   addVariation?: AddVariation | undefined;
   // Where a variation's coverage comes from when it is opened; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
-}
-
-interface StartProps {
-  mode: TrainingMode;
-  motif: string;
-  idle: string;
-  disabled?: boolean;
-}
-
-function MotifStatus({ motifs }: { motifs: Loaded<MotifCount[]> }) {
-  if (motifs.status === "loading") {
-    return (
-      <p className="practice__card-note" role="status">
-        Loading motifs.
-      </p>
-    );
-  }
-  if (motifs.status === "failed") {
-    return (
-      <>
-        <p className="practice__failure" role="alert">
-          The motif list could not be loaded. You can still drill with Any motif.
-        </p>
-        <button type="button" className="button" onClick={motifs.retry}>
-          Try again
-        </button>
-      </>
-    );
-  }
-  if (motifs.value.length === 0) {
-    return (
-      <p className="practice__card-note" role="status">
-        No puzzles are loaded. Restart the server to load the puzzle library.
-      </p>
-    );
-  }
-  return null;
+  // The engine and coach problem cards, which the Overview draws under its title.
+  problems?: ReactNode;
 }
 
 function ItalianRow({
@@ -110,7 +79,7 @@ function ItalianRow({
 }: {
   counts: MotifCount[];
   known: boolean;
-  startButton: (props: StartProps) => ReactNode;
+  startButton: HubStartButton;
 }): ReactNode {
   const count = italianOpeningCount(counts);
   const empty = known && count === 0;
@@ -146,278 +115,218 @@ function drillControlsOf(props: PracticeHubProps): OpeningDrillControls | undefi
   };
 }
 
-export function PracticeHub(props: PracticeHubProps) {
-  const { progress, motifs, repertoires, engineMissing, starting, failure, size, onSize } = props;
-  const { onStart, onStartRepertoire } = props;
-  const [motif, setMotif] = useState(ANY_MOTIF);
-  const busy = starting !== null;
-  const counts = motifs.status === "ready" ? motifs.value : [];
-  const rows = motifRows(counts, progress.status === "ready" ? progress.value : null);
+// The Openings entry counts from the answers the openings menu reads, so the number follows the
+// menu's retries and the drills it adds, and the count asks the server nothing of its own.
+function useOpeningsDue(fetchList: FetchRepertoireList) {
+  const [due, setDue] = useState<number | null>(null);
+  const counted = useCallback<FetchRepertoireList>(async () => {
+    const listing = await fetchList();
+    setDue(openingsDueOf(listing));
+    return listing;
+  }, [fetchList]);
+  return { due, fetchList: counted };
+}
 
-  const startButton = ({ mode, motif: target, idle, disabled = false }: StartProps): ReactNode => {
+// The page scrolls in whichever box holds it: the screen on a desktop, the frame on a phone.
+function scrollToTop(hub: HTMLElement | null): void {
+  for (let box = hub; box !== null; box = box.parentElement) box.scrollTop = 0;
+}
+
+// Choosing an entry moves the page: Puzzle themes to the Overview's themes section, which is not a
+// page of its own, and any other entry to the top. Puzzle themes kept from a visit before moves there too.
+function usePageScroll(
+  entry: PracticeEntry,
+  choices: number,
+  hub: RefObject<HTMLElement | null>,
+  themes: RefObject<HTMLElement | null>,
+): void {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: every choice moves the page, the same entry chosen again too
+  useEffect(() => {
+    if (entry === "puzzle-themes") themes.current?.scrollIntoView({ block: "start" });
+    else scrollToTop(hub.current);
+  }, [entry, choices]);
+}
+
+// Every page stays mounted and only the one on screen is shown, so a page keeps what the student
+// left on it, an opening still being built among it. The outer box has no display rule of its own,
+// so the hidden attribute alone hides it.
+function PageSlot({ shown, children }: { shown: boolean; children: ReactNode }) {
+  return (
+    <div hidden={!shown}>
+      <div className="practice-page">{children}</div>
+    </div>
+  );
+}
+
+// The older Italian drill row, in the card the hub has always called Openings.
+function ItalianCard({ hub, startButton }: { hub: PracticeHubProps; startButton: HubStartButton }) {
+  const { motifs, openingDrills, engineMissing } = hub;
+  return (
+    <section className="practice__card" aria-label="Openings">
+      <h3 className="practice__card-title">Openings</h3>
+      {openingDrills?.status === "loading" ? (
+        <p className="practice__card-note" role="status">
+          Loading positions from your games.
+        </p>
+      ) : null}
+      {openingDrills?.status === "failed" ? (
+        <>
+          <p className="practice__failure" role="alert">
+            The positions from your games could not be loaded.
+          </p>
+          <button type="button" className="button" onClick={openingDrills.retry}>
+            Try again
+          </button>
+        </>
+      ) : null}
+      <p className="practice__card-note">Italian Opening</p>
+      <ItalianRow
+        counts={motifs.status === "ready" ? motifs.value : []}
+        known={motifs.status === "ready"}
+        startButton={startButton}
+      />
+      {engineMissing ? <p className="practice__card-note">{NEEDS_ENGINE_TEXT}</p> : null}
+    </section>
+  );
+}
+
+// Today's openings menu on a page of its own; the hub's starts arrive already marked with this page.
+function OpeningsPage({
+  hub,
+  startButton,
+  fetchList,
+  failure,
+}: {
+  hub: PracticeHubProps;
+  startButton: HubStartButton;
+  fetchList: FetchRepertoireList;
+  failure: ReactNode;
+}) {
+  const { starting } = hub;
+  return (
+    <>
+      <PracticePageHead title="Openings" />
+      <div className="practice-page__cards">
+        <RepertoireMenu
+          repertoires={hub.repertoires}
+          busy={starting !== null}
+          starting={
+            starting?.mode === "repertoire" && starting.repertoireId !== undefined
+              ? {
+                  repertoireId: starting.repertoireId,
+                  scope: starting.motif as RepertoireScope,
+                  level: starting.level,
+                }
+              : null
+          }
+          onStart={hub.onStartRepertoire}
+          fetchList={fetchList}
+          addOpening={hub.addOpening}
+          addVariation={hub.addVariation}
+          fetchCoverage={hub.fetchCoverage}
+          openingDrills={drillControlsOf(hub)}
+        />
+        <ItalianCard hub={hub} startButton={startButton} />
+      </div>
+      {failure}
+    </>
+  );
+}
+
+// The pages whose content is still to come, each saying so under its title.
+function UnbuiltPages({ page }: { page: PracticePage }) {
+  return UNBUILT_PRACTICE_PAGES.map((unbuilt) => (
+    <PageSlot key={unbuilt} shown={page === unbuilt}>
+      <PracticePageHead title={PRACTICE_ENTRY_LABEL[unbuilt]} note="This page is not built yet." />
+    </PageSlot>
+  ));
+}
+
+// Each start remembers the page it was pressed on, where its refusal is then shown.
+function useStartsByPage(props: PracticeHubProps, page: PracticePage) {
+  const [startedOn, setStartedOn] = useState<PracticePage>(page);
+  const pressedHere = <Args extends unknown[]>(start: (...args: Args) => void) => {
+    return (...args: Args): void => {
+      setStartedOn(page);
+      start(...args);
+    };
+  };
+  const { onStartOpening, failure } = props;
+  const marked: PracticeHubProps = {
+    ...props,
+    onStart: pressedHere(props.onStart),
+    onStartRepertoire: pressedHere(props.onStartRepertoire),
+    onStartOpening: onStartOpening ? pressedHere(onStartOpening) : undefined,
+  };
+  const failureOn = (target: PracticePage): ReactNode =>
+    failure && startedOn === target ? (
+      <p className="practice__failure" role="alert">
+        {failure}
+      </p>
+    ) : null;
+  return { marked, failureOn };
+}
+
+function startButtonOf({ starting, engineMissing, onStart }: PracticeHubProps): HubStartButton {
+  return ({ mode, motif: target, idle, disabled = false }) => {
     const mine = starting?.mode === mode && starting.motif === target;
     return (
       <button
         type="button"
         className="button button--primary"
-        disabled={busy || engineMissing || disabled}
+        disabled={starting !== null || engineMissing || disabled}
         onClick={() => onStart(mode, target)}
       >
         {mine ? "Starting" : idle}
       </button>
     );
   };
+}
+
+// The hub's frame: the navigation of its pages beside a column that shows one page at a time.
+export function PracticeHub(props: PracticeHubProps) {
+  const { entry, choose } = usePracticeEntry();
+  const [choices, setChoices] = useState(0);
+  const page = practicePageOf(entry);
+  const { marked, failureOn } = useStartsByPage(props, page);
+  const openingsDue = useOpeningsDue(props.fetchRepertoireList ?? fetchRepertoireListFromServer);
+  const hub = useRef<HTMLDivElement>(null);
+  const themes = useRef<HTMLElement>(null);
+  usePageScroll(entry, choices, hub, themes);
+  const startButton = startButtonOf(marked);
+  const onChoose = (next: PracticeEntry): void => {
+    choose(next);
+    setChoices((count) => count + 1);
+  };
 
   return (
-    <div className="practice__hub" aria-busy={busy}>
-      <section className="practice__card" aria-label="Due cards">
-        <h3 className="practice__card-title">Due cards</h3>
-        <p className="practice__card-note">Spaced repetition on positions from your own games</p>
-        <DueCards progress={progress} now={props.now ?? new Date()} />
-        {engineMissing ? <p className="practice__card-note">{NEEDS_ENGINE}</p> : null}
-        {dueButton(progress, startButton)}
-      </section>
-
-      <section className="practice__card" aria-label="Puzzles by motif">
-        <h3 className="practice__card-title">Puzzles by motif</h3>
-        <p className="practice__card-note">Solved first try, last 30 days.</p>
-        <div className="practice__motifs" role="radiogroup" aria-label="Motif">
-          <MotifChoice
-            name="Any motif"
-            value={ANY_MOTIF}
-            count={0}
-            description="A mix of everything at your level."
-            kind="lichess"
-            selected={motif === ANY_MOTIF}
-            onPick={setMotif}
+    <div className="practice-hub" ref={hub}>
+      <PracticeNav current={entry} onChoose={onChoose} openingsDue={openingsDue.due} />
+      <div className="practice-hub__pages" aria-busy={props.starting !== null}>
+        <PageSlot shown={page === "overview"}>
+          <PracticeOverview
+            progress={props.progress}
+            motifs={props.motifs}
+            engineMissing={props.engineMissing}
+            size={props.size}
+            onSize={props.onSize}
+            startButton={startButton}
+            problems={props.problems}
+            failure={failureOn("overview")}
+            themesRef={themes}
+            now={props.now ?? new Date()}
           />
-          {rows.map((row) => (
-            <MotifChoice
-              key={row.motif}
-              name={row.label}
-              value={row.motif}
-              count={row.count}
-              rate={row.rate30d}
-              attempts={row.attempts30d}
-              solved={row.solved30d}
-              description={row.description}
-              kind={row.kind}
-              selected={motif === row.motif}
-              onPick={setMotif}
-            />
-          ))}
-        </div>
-        <MotifStatus motifs={motifs} />
-        <fieldset className="practice__sizes" aria-label="Drill size">
-          {DRILL_SIZES.map((option) => (
-            <button
-              key={option}
-              type="button"
-              className="button practice__size"
-              aria-pressed={option === size}
-              onClick={() => onSize(option)}
-            >
-              {option}
-            </button>
-          ))}
-        </fieldset>
-        {startButton({
-          mode: "puzzles",
-          motif,
-          idle: `Start ${motif === ANY_MOTIF ? "any motif" : motifLabel(motif)}`,
-        })}
-      </section>
-
-      <RepertoireMenu
-        repertoires={repertoires}
-        busy={busy}
-        starting={
-          starting?.mode === "repertoire" && starting.repertoireId !== undefined
-            ? {
-                repertoireId: starting.repertoireId,
-                scope: starting.motif as RepertoireScope,
-                level: starting.level,
-              }
-            : null
-        }
-        onStart={onStartRepertoire}
-        fetchList={props.fetchRepertoireList}
-        addOpening={props.addOpening}
-        addVariation={props.addVariation}
-        fetchCoverage={props.fetchCoverage}
-        openingDrills={drillControlsOf(props)}
-      />
-
-      <section className="practice__card" aria-label="Openings">
-        <h3 className="practice__card-title">Openings</h3>
-        {props.openingDrills?.status === "loading" ? (
-          <p className="practice__card-note" role="status">
-            Loading positions from your games.
-          </p>
-        ) : null}
-        {props.openingDrills?.status === "failed" ? (
-          <>
-            <p className="practice__failure" role="alert">
-              The positions from your games could not be loaded.
-            </p>
-            <button type="button" className="button" onClick={props.openingDrills.retry}>
-              Try again
-            </button>
-          </>
-        ) : null}
-        <p className="practice__card-note">Italian Opening</p>
-        <ItalianRow counts={counts} known={motifs.status === "ready"} startButton={startButton} />
-        {engineMissing ? <p className="practice__card-note">{NEEDS_ENGINE}</p> : null}
-      </section>
-
-      {failure ? (
-        <p className="practice__failure" role="alert">
-          {failure}
-        </p>
-      ) : null}
+        </PageSlot>
+        <PageSlot shown={page === "openings"}>
+          <OpeningsPage
+            hub={marked}
+            startButton={startButton}
+            fetchList={openingsDue.fetchList}
+            failure={failureOn("openings")}
+          />
+        </PageSlot>
+        <UnbuiltPages page={page} />
+      </div>
     </div>
-  );
-}
-
-function DueCards({ progress, now }: { progress: Loaded<ProgressResponse>; now: Date }) {
-  if (progress.status === "loading") {
-    return (
-      <p className="practice__card-note" role="status">
-        Loading your cards.
-      </p>
-    );
-  }
-  if (progress.status === "failed") {
-    return (
-      <>
-        <p className="practice__failure" role="alert">
-          Your card numbers could not be loaded.
-        </p>
-        <button type="button" className="button" onClick={progress.retry}>
-          Try again
-        </button>
-      </>
-    );
-  }
-  const { cards } = progress.value;
-  const next = nextBatchParts(cards.next_due_at, cards.next_due_count, now);
-  return (
-    <>
-      <p className="practice__due">
-        <strong className="practice__due-count">{cards.due_now}</strong>
-        {cards.due_now === 0 ? (
-          <span> due, you're caught up</span>
-        ) : (
-          <span>
-            {" "}
-            due now
-            {cards.due_from_games > 0
-              ? ` · from ${cards.due_from_games} ${cards.due_from_games === 1 ? "game" : "games"}`
-              : ""}
-          </span>
-        )}
-      </p>
-      <dl className="practice__facts">
-        {dueBreakdown(cards.due_by_classification).map((entry) => (
-          <div key={entry.key} className="practice__fact">
-            <dt>{entry.label}</dt>
-            <dd>{entry.count}</dd>
-          </div>
-        ))}
-        {next ? (
-          <div className="practice__fact">
-            <dt>{next.label}</dt>
-            <dd>{next.when}</dd>
-          </div>
-        ) : null}
-        <div className="practice__fact">
-          <dt>Remembered, 30 days</dt>
-          <dd>{percent(cards.correct_rate_30d)}</dd>
-        </div>
-      </dl>
-    </>
-  );
-}
-
-function dueButton(
-  progress: Loaded<ProgressResponse>,
-  startButton: (props: StartProps) => ReactNode,
-): ReactNode {
-  if (progress.status !== "ready") {
-    return startButton({ mode: "srs", motif: ANY_MOTIF, idle: "Review due cards" });
-  }
-  const due = progress.value.cards.due_now;
-  if (due === 0) return null;
-  const idle = `Review ${due} ${due === 1 ? "card" : "cards"}`;
-  return startButton({ mode: "srs", motif: ANY_MOTIF, idle });
-}
-
-interface MotifChoiceProps {
-  name: string;
-  value: string;
-  count: number;
-  rate?: number | null | undefined;
-  attempts?: number | undefined;
-  solved?: number | undefined;
-  description: string | null;
-  kind: "lichess" | "library";
-  selected: boolean;
-  onPick(value: string): void;
-}
-
-function motifRateText(rate: number | null, attempts: number, solved: number): string {
-  if (rate === null) return "not tried yet";
-  return `${percent(rate)} · ${solved} of ${attempts}`;
-}
-
-function MotifChoice({
-  name,
-  value,
-  count,
-  rate,
-  attempts = 0,
-  solved = 0,
-  description,
-  kind,
-  selected,
-  onPick,
-}: MotifChoiceProps) {
-  // A Lichess theme always has puzzles at the student's level once imported, so it stays
-  // selectable even though the motif counts cover the library only.
-  const empty = kind === "library" && count === 0;
-  const accessibleName =
-    kind === "lichess"
-      ? `${name}, ${description ?? ""}`
-      : rate === undefined || empty
-        ? `${name}, ${count} puzzles`
-        : `${name}, ${count} puzzles, ${motifRateText(rate, attempts, solved)}`;
-  return (
-    <label className="practice__motif" data-selected={selected} data-empty={empty}>
-      <input
-        type="radio"
-        name="motif"
-        aria-label={accessibleName}
-        checked={selected}
-        disabled={empty}
-        onChange={() => onPick(value)}
-      />
-      <span className="practice__motif-name" aria-hidden="true">
-        <span className="practice__motif-label">{name}</span>
-        {description ? <span className="practice__motif-desc">{description}</span> : null}
-      </span>
-      {kind === "lichess" ? null : (
-        <span className="practice__motif-count" aria-hidden="true">
-          {empty ? NONE : count}
-        </span>
-      )}
-      {kind === "lichess" || rate === undefined || empty ? null : (
-        <span className="practice__motif-rate" aria-hidden="true">
-          <span className="practice__bar" aria-hidden="true">
-            <span style={{ width: `${Math.round((rate ?? 0) * 100)}%` }} />
-          </span>
-          {motifRateText(rate, attempts, solved)}
-        </span>
-      )}
-    </label>
   );
 }
