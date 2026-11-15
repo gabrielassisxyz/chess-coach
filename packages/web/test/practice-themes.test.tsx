@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MIX_PRACTICE_MOTIF,
@@ -651,6 +651,20 @@ describe("the Overview with its themes", () => {
     expect(urls.length).toBeGreaterThan(0);
     expect(urls.filter((url) => url.includes("/api/puzzles/motifs"))).toEqual([]);
     expect(urls.some((url) => url.includes("/api/puzzles/themes/stats?days=30"))).toBe(true);
+  });
+});
+
+describe("the web source", () => {
+  it("keeps no trace of the motif list: its card, its rows, its loader or its request", () => {
+    const src = join(import.meta.dirname, "../src");
+    const names = ["MotifChoice", "MotifCard", "motifRows", "fetchMotifs", "api/puzzles/motifs"];
+    const found = readdirSync(src, { recursive: true, encoding: "utf8" })
+      .filter((file) => /\.tsx?$/.test(file))
+      .flatMap((file) => {
+        const text = readFileSync(join(src, file), "utf8");
+        return names.filter((name) => text.includes(name)).map((name) => `${file}: ${name}`);
+      });
+    expect(found).toEqual([]);
   });
 });
 
