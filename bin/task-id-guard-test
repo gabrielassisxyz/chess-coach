@@ -95,6 +95,69 @@ expect_pass "base directory on the build disk" "scratch under chess-coach-tmp st
 expect_pass "hyphen after stem is not an id" "chess-coach-abc-def stays out" "PR title"
 expect_pass "slash after stem is not an id" "branch chess-coach-abc/def stays out" "PR title"
 
+# The --commits mode, run against a throwaway repository so the real git log path is
+# exercised. The repository is removed on exit, also when a case fails.
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+repo="$scratch/repo"
+git init -q "$repo"
+
+commit() {  # $1 = message; makes an empty commit with a fixed identity
+    git -C "$repo" -c user.name=t -c user.email=t@example.invalid \
+        commit -q --allow-empty -m "$1"
+}
+
+# Runs --commits in the scratch repository; sets out and status.
+run_commits() {  # $1 = base, $2 = head
+    out="$(cd "$repo" && "$OLDPWD/$guard" --commits "$1" "$2" 2>&1)" && status=0 || status=$?
+}
+
+expect_commits() {  # $1 = label, $2 = base, $3 = head, $4 = exit code, $5 = optional needle
+    count=$((count + 1))
+    run_commits "$2" "$3"
+    if [ "$status" -ne "$4" ]; then
+        printf 'FAIL %s: exit %s, want %s\noutput: %s\n' "$1" "$status" "$4" "$out" >&2
+        fail=1
+        return
+    fi
+    if [ -n "${5:-}" ] && ! grep -qF -- "$5" <<<"$out"; then
+        printf 'FAIL %s: output names no %s\noutput: %s\n' "$1" "$5" "$out" >&2
+        fail=1
+        return
+    fi
+    printf 'ok %s\n' "$1"
+}
+
+commit "chore: start with an id before the range (chess-coach-old123)"
+base="$(git -C "$repo" rev-parse HEAD)"
+commit "fix(board): keep the piece on its square"
+mid="$(git -C "$repo" rev-parse HEAD)"
+commit "docs: describe the drill"
+clean_head="$(git -C "$repo" rev-parse HEAD)"
+expect_commits "range of clean commits passes" "$mid" "$clean_head" 0
+
+# The commit before BASE holds an id, and the range starts after it.
+expect_commits "id before BASE does not fail the range" "$base" "$clean_head" 0
+
+commit "fix(openings): keep the plan (chess-coach-sub456)"
+subject_sha="$(git -C "$repo" rev-parse HEAD)"
+subject_head="$subject_sha"
+expect_commits "range with id in a subject is refused and names the commit" \
+    "$base" "$subject_head" 1 "$subject_sha"
+
+body_base="$subject_head"
+commit "feat(practice): drill one family
+
+Explains the drill.
+
+Bead: chess-coach-bod789"
+body_head="$(git -C "$repo" rev-parse HEAD)"
+expect_commits "range with id only in a body is refused" \
+    "$body_base" "$body_head" 1 "Bead: chess-coach-bod789"
+
+expect_commits "range that cannot be resolved is a hard error" \
+    "0000000000000000000000000000000000000000" "$clean_head" 2 "cannot resolve"
+
 if [ "$fail" -ne 0 ]; then
     printf '==> task-id-guard-test FAILED (%s cases)\n' "$count" >&2
     exit 1
