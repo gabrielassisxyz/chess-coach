@@ -102,6 +102,12 @@ function insertReview(cardId: number, day: number, correct: boolean): void {
   ).run(cardId, at(day), correct ? 1 : 0);
 }
 
+function insertTrainingItem(day: number): void {
+  db.prepare(
+    `INSERT INTO training_items (kind, puzzle_id, served_at) VALUES ('puzzle', 'p', ?)`,
+  ).run(at(day));
+}
+
 function insertUserMessage(day: number, role: "user" | "assistant" = "user"): void {
   const session =
     (db.prepare("SELECT id FROM coach_sessions LIMIT 1").get() as { id: number } | undefined)?.id ??
@@ -236,6 +242,8 @@ describe("computeProgress on a fixture database", () => {
     // 9 cards; 4 due by day 10 noon: blunder x2 (games a, b), mistake x1 (game a), teaching x1.
     // Next batch starts at(11); at(11, 13) is exactly an hour later, at(11, 14) is not.
     // 30 days: three reviews in range (2 correct), the 31-day-old miss is out.
+    // Due next 7 days by local day: 4 overdue or today, 3 on day 11, none later; day 20 and 30 are out.
+    // Previous 30 days: the single May 10 miss, so a rate of 0.
     expect(progress.cards).toEqual({
       total: 9,
       due_now: 4,
@@ -246,8 +254,12 @@ describe("computeProgress on a fixture database", () => {
       next_due_at: at(11),
       next_due_count: 2,
       correct_rate_30d: 2 / 3,
+      due_next_7d: [4, 3, 0, 0, 0, 0, 0],
+      correct_rate_prev_30d: 0,
     });
     expect(progress.streak_days).toBe(3);
+    expect(progress.streak_best).toBe(3);
+    expect(progress.activity_7d).toEqual([true, true, false, false, true, true, true]);
     expect(progress.difficulty).toEqual({
       current_elo: 700,
       last_change: { to_elo: 700, reason: "streak_up", changed_at: at(9) },
@@ -268,9 +280,14 @@ describe("computeProgress on a fixture database", () => {
       next_due_at: null,
       next_due_count: 0,
       correct_rate_30d: null,
+      due_next_7d: [0, 0, 0, 0, 0, 0, 0],
+      correct_rate_prev_30d: null,
     });
     expect(progress.puzzles_by_motif).toEqual([]);
     expect(progress.difficulty).toEqual({ current_elo: 600, last_change: null });
+    expect(progress.streak_days).toBe(0);
+    expect(progress.streak_best).toBe(1);
+    expect(progress.activity_7d).toEqual([false, false, false, false, false, true, false]);
   });
 
   it("caps the game list at fifty, newest first", () => {
@@ -365,6 +382,67 @@ describe("streak_days", () => {
       "INSERT INTO puzzle_attempts (puzzle_id, attempted_at, solved, answered_uci) VALUES ('f1', ?, 1, 'x')",
     ).run(new Date(2026, 4, 31, 12).toISOString());
     expect(computeProgress(db, clockOn(1)).streak_days).toBe(2);
+  });
+
+  it("counts a day whose only practice was a line drill", () => {
+    insertTrainingItem(10);
+    const progress = computeProgress(db, clockOn(10));
+    expect(progress.streak_days).toBe(1);
+    expect(progress.activity_7d).toEqual([false, false, false, false, false, false, true]);
+  });
+
+  it("reports the best streak across the whole history", () => {
+    for (let day = 1; day <= 11; day += 1) insertAttempt("fork", `old-${day}`, true, day);
+    for (let day = 15; day <= 20; day += 1) insertAttempt("fork", `new-${day}`, true, day);
+    const progress = computeProgress(db, clockOn(20));
+    expect(progress.streak_days).toBe(6);
+    expect(progress.streak_best).toBe(11);
+    expect(progress.activity_7d).toEqual([false, true, true, true, true, true, true]);
+  });
+
+  it("is 0 on an empty database and never above the current streak", () => {
+    const empty = computeProgress(db, clockOn(10));
+    expect(empty.streak_best).toBe(0);
+    expect(empty.activity_7d).toEqual([false, false, false, false, false, false, false]);
+    insertAttempt("fork", "f1", true, 10);
+    insertAttempt("fork", "f2", true, 9);
+    const progress = computeProgress(db, clockOn(10));
+    expect(progress.streak_best).toBeGreaterThanOrEqual(progress.streak_days);
+  });
+});
+
+describe("cards.due_next_7d", () => {
+  it("groups due cards by local day, keeping overdue in the first bucket and ignoring day 8", () => {
+    insertCard(at(9));
+    insertCard(at(10, 9));
+    insertCard(at(11));
+    insertCard(at(13));
+    insertCard(at(20));
+    expect(computeProgress(db, clockOn(10)).cards.due_next_7d).toEqual([2, 1, 0, 1, 0, 0, 0]);
+  });
+});
+
+describe("cards.correct_rate_prev_30d", () => {
+  it("shares the reviews answered right between 60 and 30 days ago", () => {
+    const card = insertCard(at(20));
+    const now = new Date(2026, 5, 10, 12).getTime();
+    const dayMs = 24 * 60 * 60 * 1000;
+    db.prepare(
+      `INSERT INTO srs_reviews (card_id, reviewed_at, quality, answered_uci, correct) VALUES (?, ?, 4, 'd2d4', ?)`,
+    ).run(card, new Date(now - 40 * dayMs).toISOString(), 1);
+    db.prepare(
+      `INSERT INTO srs_reviews (card_id, reviewed_at, quality, answered_uci, correct) VALUES (?, ?, 4, 'd2d4', ?)`,
+    ).run(card, new Date(now - 50 * dayMs).toISOString(), 0);
+    db.prepare(
+      `INSERT INTO srs_reviews (card_id, reviewed_at, quality, answered_uci, correct) VALUES (?, ?, 4, 'd2d4', ?)`,
+    ).run(card, new Date(now - 10 * dayMs).toISOString(), 1);
+    expect(computeProgress(db, clockOn(10)).cards.correct_rate_prev_30d).toBe(0.5);
+  });
+
+  it("is null when the previous window has no review", () => {
+    const card = insertCard(at(20));
+    insertReview(card, 9, true);
+    expect(computeProgress(db, clockOn(10)).cards.correct_rate_prev_30d).toBeNull();
   });
 });
 

@@ -7,8 +7,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TrainingRun } from "../activity/training.js";
 import { listMoves, setGrading } from "../db/games.js";
 import { type Database, openDatabase } from "../db/open.js";
-import { insertGeneratedPuzzle } from "../db/puzzles.js";
-import { findOpenTrainingRun } from "../db/training.js";
 import { classifyCpLoss } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
 import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
@@ -39,6 +37,19 @@ const italianNames = parseOpeningTable(
     "eco\tname\tpgn\tuci\tepd",
     `B00\tKing's Pawn Game\t1. e4\te2e4\t${fenKey(fenAfter("e4"))}`,
     `C50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${fenKey(fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4"))}`,
+    "",
+  ].join("\n"),
+);
+
+// Names on the lines of a White game and of a Black game, so that a name carried from one game into
+// the next is told apart from the names that game earns on its own line.
+const queensGambitAndItalianNames = parseOpeningTable(
+  [
+    "eco\tname\tpgn\tuci\tepd",
+    `B00\tKing's Pawn Game\t1. e4\te2e4\t${fenKey(fenAfter("e4"))}`,
+    `C50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${fenKey(fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4"))}`,
+    `D06\tQueen's Gambit\t1. d4 d5 2. c4\td2d4\t${fenKey(fenAfter("d4", "d5", "c4"))}`,
+    `D30\tQueen's Gambit Declined\t1. d4 d5 2. c4 e6\td2d4\t${fenKey(fenAfter("d4", "d5", "c4", "e6"))}`,
     "",
   ].join("\n"),
 );
@@ -193,6 +204,25 @@ describe("generateOpeningPuzzles", () => {
     );
   });
 
+  it("starts each game's line with no name, so a drill never carries the one the game before it ended on", async () => {
+    // The Black game is stored first and ends in the Queen's Gambit Declined; the White game's
+    // first position is the start, which no line has named yet.
+    addGame(BLACK_ONE, "black", "queens-gambit");
+    addGame(WHITE_TWO, "white", "italian");
+    await generateOpeningPuzzles(db, new FakeEngine(), queensGambitAndItalianNames);
+    const namesOf = (motif: string): Set<string | null> =>
+      new Set(
+        rows()
+          .filter((row) => row.motif === motif)
+          .map((row) => row.opening_name),
+      );
+    expect(namesOf("opening-black")).toEqual(
+      new Set([null, "Queen's Gambit", "Queen's Gambit Declined"]),
+    );
+    expect(namesOf("opening-white")).toEqual(new Set([null, "King's Pawn Game", "Italian Game"]));
+    expect(rows().find((row) => row.fen === new Chess().fen())?.opening_name).toBeNull();
+  });
+
   it("fills names on existing own-games rows without changing their ids or searching", async () => {
     addGame(WHITE_TWO, "white", "italian");
     await generateOpeningPuzzles(db, new FakeEngine());
@@ -223,28 +253,6 @@ describe("generateOpeningPuzzles", () => {
     );
     const item = TrainingActivitySchema.parse(run.state(1)).item;
     expect(item).toMatchObject({ kind: "puzzle", opening_name: "Italian Game" });
-  });
-
-  it("keeps the opening name when a practice run resumes", () => {
-    insertGeneratedPuzzle(db, {
-      id: "own:named",
-      source: "own-games",
-      motif: "opening-white",
-      difficulty: "beginner",
-      fen: new Chess().fen(),
-      solutionUci: ["e2e4"],
-      solutionSan: ["e4"],
-      explanation: "Best: e4.",
-      openingName: "Italian Game",
-    });
-    const deps = { db, desk: new ReviewDesk({ db }) };
-    const started = TrainingRun.begin(deps, { mode: "openings", color: "white" });
-    expect(started.state(1).item).toMatchObject({ opening_name: "Italian Game" });
-    const stored = findOpenTrainingRun(db);
-    if (!stored) throw new Error("practice run was not stored");
-    expect(TrainingRun.resume(deps, stored).state(2).item).toMatchObject({
-      opening_name: "Italian Game",
-    });
   });
 
   it("migrates puzzles with a nullable opening name", () => {

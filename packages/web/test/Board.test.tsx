@@ -3,11 +3,13 @@ import type { TrainingActivity } from "@chess-coach/shared";
 import { Chessground } from "@lichess-org/chessground";
 import type { Api } from "@lichess-org/chessground/api";
 import type { Config } from "@lichess-org/chessground/config";
+import type { DrawShape } from "@lichess-org/chessground/draw";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Chess } from "chess.js";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board, type BoardFactory } from "../src/components/Board.js";
+import { logicalKnightShape } from "../src/components/knight-arrow.js";
 import { boardOf } from "../src/state/practice.js";
 import { legalMovesOf, liveGame, START_FEN } from "./fixtures.js";
 
@@ -178,6 +180,148 @@ describe("Board drawing", () => {
       />,
     );
     expect(api.state.drawable.shapes).toEqual([]);
+  });
+
+  it("converts app knight arrows to L customSvgs while leaving straight, diagonal, and circle shapes unchanged", () => {
+    const recorder = new RecordingBoard();
+    const shapes: DrawShape[] = [
+      { orig: "g1", dest: "f3", brush: "green" },
+      { orig: "b8", dest: "c6", brush: "blue" },
+      { orig: "e4", dest: "f6", brush: "red" },
+      { orig: "e2", dest: "e4", brush: "green" },
+      { orig: "c1", dest: "f4", brush: "blue" },
+      { orig: "e4", brush: "yellow" },
+    ];
+    render(
+      <Board
+        activity={liveGame()}
+        onMove={vi.fn()}
+        shapes={shapes}
+        createBoard={recorder.factory}
+      />,
+    );
+    const brushes = recorder.created[0]?.drawable?.brushes;
+    const autoShapes = recorder.created[0]?.drawable?.autoShapes ?? [];
+    expect(autoShapes).toHaveLength(6);
+
+    const g1f3 = autoShapes[0] as DrawShape;
+    expect(g1f3.brush).toBeUndefined();
+    expect(g1f3.customSvg?.center).toBe("orig");
+    expect(g1f3.customSvg?.html).toContain("M 50 50 L 50 -150 L ");
+    expect(g1f3.customSvg?.html).toContain("-50,-150");
+    expect(g1f3.customSvg?.html).toContain(`stroke="${brushes?.green.color}"`);
+    expect(g1f3.customSvg?.html).toContain('opacity="0.9"');
+    expect(g1f3.customSvg?.html).toContain('stroke-width="15.625"');
+
+    const b8c6 = autoShapes[1] as DrawShape;
+    expect(b8c6.brush).toBeUndefined();
+    expect(b8c6.customSvg?.html).toContain("M 50 50 L 50 250 L ");
+    expect(b8c6.customSvg?.html).toContain("150,250");
+    expect(b8c6.customSvg?.html).toContain(`stroke="${brushes?.blue.color}"`);
+
+    const e4f6 = autoShapes[2] as DrawShape;
+    expect(e4f6.brush).toBeUndefined();
+    expect(e4f6.customSvg?.html).toContain("M 50 50 L 50 -150 L ");
+    expect(e4f6.customSvg?.html).toContain("150,-150");
+    expect(e4f6.customSvg?.html).toContain(`stroke="${brushes?.red.color}"`);
+
+    expect(autoShapes[3]).toEqual({ orig: "e2", dest: "e4", brush: "green" });
+    expect(autoShapes[4]).toEqual({ orig: "c1", dest: "f4", brush: "blue" });
+    expect(autoShapes[5]).toEqual({ orig: "e4", brush: "yellow" });
+  });
+
+  it("mirrors app knight arrows when the board is oriented to black", () => {
+    const recorder = new RecordingBoard();
+    const shapes: DrawShape[] = [
+      { orig: "g1", dest: "f3", brush: "green" },
+      { orig: "b8", dest: "c6", brush: "green" },
+      { orig: "e4", dest: "f6", brush: "green" },
+    ];
+    render(
+      <Board
+        activity={liveGame({ orientation: "black" })}
+        onMove={vi.fn()}
+        shapes={shapes}
+        createBoard={recorder.factory}
+      />,
+    );
+    const autoShapes = recorder.created[0]?.drawable?.autoShapes ?? [];
+    expect(autoShapes[0]?.customSvg?.html).toContain("M 50 50 L 50 250 L ");
+    expect(autoShapes[0]?.customSvg?.html).toContain("150,250");
+    expect(autoShapes[1]?.customSvg?.html).toContain("M 50 50 L 50 -150 L ");
+    expect(autoShapes[1]?.customSvg?.html).toContain("-50,-150");
+    expect(autoShapes[2]?.customSvg?.html).toContain("M 50 50 L 50 250 L ");
+    expect(autoShapes[2]?.customSvg?.html).toContain("-50,250");
+  });
+
+  it("converts hand-drawn knight arrows in onChange and toggles off a repeat with the same colour", () => {
+    const setShapes = vi.fn();
+    let lastConfig!: Config;
+    const factory: BoardFactory = (_element, config) => {
+      lastConfig = config;
+      return {
+        set: (next: Config) => {
+          lastConfig = next;
+        },
+        setShapes,
+        destroy: vi.fn(),
+      } as unknown as Api;
+    };
+    render(<Board activity={liveGame()} onMove={vi.fn()} createBoard={factory} />);
+
+    act(() => lastConfig.drawable?.onChange?.([{ orig: "g1", dest: "f3", brush: "green" }]));
+    const first = setShapes.mock.calls.at(-1)?.[0] as DrawShape[];
+    expect(first).toHaveLength(1);
+    expect(first[0]?.brush).toBeUndefined();
+    expect(logicalKnightShape(first[0] as DrawShape)).toEqual({
+      orig: "g1",
+      dest: "f3",
+      brush: "green",
+    });
+
+    act(() => lastConfig.drawable?.onChange?.([{ orig: "g1", dest: "f3", brush: "green" }]));
+    expect(setShapes.mock.calls.at(-1)?.[0]).toEqual([]);
+  });
+});
+
+describe("Board try mark", () => {
+  function badgeStyle(square: string, orientation: "white" | "black"): CSSStyleDeclaration {
+    const recorder = new RecordingBoard();
+    render(
+      <Board
+        activity={liveGame({ orientation })}
+        onMove={vi.fn()}
+        badge={{ square, kind: "check" }}
+        createBoard={recorder.factory}
+      />,
+    );
+    return screen.getByTestId("square-badge").style;
+  }
+
+  it("centres the mark on the destination corner for a try to c4 shown from White", () => {
+    const style = badgeStyle("c4", "white");
+    expect(style.left).toBe("37.5%");
+    expect(style.top).toBe("50%");
+  });
+
+  it("centres the mark on the destination corner for a try to c4 shown from Black", () => {
+    const style = badgeStyle("c4", "black");
+    expect(style.left).toBe("75%");
+    expect(style.top).toBe("37.5%");
+  });
+
+  it("keeps the mark fully inside the board for h8 shown from White", () => {
+    const style = badgeStyle("h8", "white");
+    // With the existing translate(-50%, -50%), the centre sits half a badge in from each
+    // edge, so the 28 px box ends at the board's right and top edges.
+    expect(style.left).toBe("calc(100% - 14px)");
+    expect(style.top).toBe("14px");
+  });
+
+  it("keeps the mark fully inside the board for a1 shown from Black", () => {
+    const style = badgeStyle("a1", "black");
+    expect(style.left).toBe("calc(100% - 14px)");
+    expect(style.top).toBe("14px");
   });
 });
 
@@ -361,14 +505,21 @@ async function rightDraw(
   from: string,
   to: string,
   modifiers: { shiftKey?: boolean; altKey?: boolean } = {},
+  orientation: "white" | "black" = "white",
 ) {
-  act(() => fireEvent.mouseDown(board, { ...squarePoint(from), button: 2, ...modifiers }));
+  act(() =>
+    fireEvent.mouseDown(board, { ...squarePoint(from, orientation), button: 2, ...modifiers }),
+  );
   await settle();
   if (to !== from) {
-    act(() => fireEvent.mouseMove(document, { ...squarePoint(to), button: 2, ...modifiers }));
+    act(() =>
+      fireEvent.mouseMove(document, { ...squarePoint(to, orientation), button: 2, ...modifiers }),
+    );
     await settle();
   }
-  act(() => fireEvent.mouseUp(document, { ...squarePoint(to), button: 2, ...modifiers }));
+  act(() =>
+    fireEvent.mouseUp(document, { ...squarePoint(to, orientation), button: 2, ...modifiers }),
+  );
 }
 
 // Chessground reports a user move through a 1ms timer, so a test waits for it to fire; an
@@ -455,15 +606,113 @@ describe("Board click-to-move", () => {
     await rightDraw(board, "d2", "d4", { shiftKey: true });
     await rightDraw(board, "g1", "f3", { altKey: true });
     await rightDraw(board, "b1", "c3", { shiftKey: true, altKey: true });
-    expect(api.state.drawable.shapes).toEqual([
+    expect(api.state.drawable.shapes.slice(0, 3)).toEqual([
       { orig: "e4", dest: undefined, brush: "green" },
       { orig: "e2", dest: "e4", brush: "green" },
       { orig: "d2", dest: "d4", brush: "red" },
-      { orig: "g1", dest: "f3", brush: "blue" },
-      { orig: "b1", dest: "c3", brush: "yellow" },
     ]);
+    const g1f3 = api.state.drawable.shapes[3] as DrawShape;
+    const b1c3 = api.state.drawable.shapes[4] as DrawShape;
+    expect(g1f3.brush).toBeUndefined();
+    expect(g1f3.customSvg?.center).toBe("orig");
+    expect(logicalKnightShape(g1f3)).toEqual({ orig: "g1", dest: "f3", brush: "blue" });
+    expect(b1c3.brush).toBeUndefined();
+    expect(b1c3.customSvg?.center).toBe("orig");
+    expect(logicalKnightShape(b1c3)).toEqual({ orig: "b1", dest: "c3", brush: "yellow" });
     click(board, "e2");
     expect(api.state.drawable.shapes).toEqual([]);
+  });
+
+  it("toggles a hand-drawn knight arrow off on a repeat draw with the same colour and replaces it on another colour", async () => {
+    let api!: Api;
+    const createBoard: BoardFactory = (element, config) => {
+      api = Chessground(element, { ...config, trustAllEvents: true });
+      return api;
+    };
+    const { container } = render(
+      <Board
+        activity={liveGame({ input_enabled: false, legal_moves: [] })}
+        onMove={vi.fn()}
+        createBoard={createBoard}
+      />,
+    );
+    const board = container.querySelector("cg-board") as HTMLElement;
+    await rightDraw(board, "g1", "f3");
+    await settle();
+    expect(api.state.drawable.shapes).toHaveLength(1);
+    expect(api.state.drawable.shapes[0]?.brush).toBeUndefined();
+    expect(container.querySelectorAll(".cg-custom-svgs svg path")).toHaveLength(1);
+
+    // Repeating with the same colour removes the converted arrow.
+    await rightDraw(board, "g1", "f3");
+    await settle();
+    expect(api.state.drawable.shapes).toEqual([]);
+    expect(container.querySelectorAll(".cg-custom-svgs svg")).toHaveLength(0);
+
+    // Drawing in green then redrawing in red replaces instead of removing.
+    await rightDraw(board, "g1", "f3");
+    await rightDraw(board, "g1", "f3", { shiftKey: true });
+    expect(api.state.drawable.shapes).toHaveLength(1);
+    expect(logicalKnightShape(api.state.drawable.shapes[0] as DrawShape)).toEqual({
+      orig: "g1",
+      dest: "f3",
+      brush: "red",
+    });
+  });
+
+  it("keeps a hand-drawn knight arrow across same-position updates and orientation flips, and clears it on a new position", async () => {
+    let api!: Api;
+    const createBoard: BoardFactory = (element, config) => {
+      api = Chessground(element, { ...config, trustAllEvents: true });
+      return api;
+    };
+    const initial = liveGame();
+    const onMove = vi.fn();
+    const { container, rerender } = render(
+      <Board activity={initial} onMove={onMove} createBoard={createBoard} />,
+    );
+    const board = container.querySelector("cg-board") as HTMLElement;
+    await rightDraw(board, "g1", "f3");
+    expect(api.state.drawable.shapes).toHaveLength(1);
+    const whiteHtml = api.state.drawable.shapes[0]?.customSvg?.html;
+    expect(whiteHtml).toContain("M 50 50 L 50 -150 L ");
+
+    // Updating app shapes on the same position keeps the hand-drawn knight arrow.
+    rerender(
+      <Board
+        activity={initial}
+        onMove={onMove}
+        shapes={[{ orig: "e2", dest: "e4", brush: "green" }]}
+        createBoard={createBoard}
+      />,
+    );
+    expect(api.state.drawable.shapes).toHaveLength(1);
+    expect(api.state.drawable.shapes[0]?.customSvg?.html).toBe(whiteHtml);
+
+    // Flipping the board on the same position keeps the knight arrow and mirrors its path.
+    rerender(
+      <Board activity={initial} onMove={onMove} orientation="black" createBoard={createBoard} />,
+    );
+    expect(api.state.drawable.shapes).toHaveLength(1);
+    expect(api.state.drawable.shapes[0]?.customSvg?.html).toContain("M 50 50 L 50 250 L ");
+
+    // Moving to a new position clears the knight arrow and resets toggle-off history.
+    const chess = new Chess(initial.fen);
+    chess.move("e4");
+    const next = liveGame({ fen: chess.fen(), turn: "black" });
+    rerender(
+      <Board activity={next} onMove={onMove} orientation="white" createBoard={createBoard} />,
+    );
+    expect(api.state.drawable.shapes).toEqual([]);
+
+    // Drawing the same knight arrow on the new position draws it again rather than toggling off.
+    await rightDraw(board, "g1", "f3");
+    expect(api.state.drawable.shapes).toHaveLength(1);
+    expect(logicalKnightShape(api.state.drawable.shapes[0] as DrawShape)).toEqual({
+      orig: "g1",
+      dest: "f3",
+      brush: "green",
+    });
   });
 
   it("keeps a drawing when the server echoes a move already made on the board", async () => {

@@ -5,7 +5,6 @@ import {
   COACH_TABS,
   type CoachTab,
   type ErrorCode,
-  type PausedTraining,
   type PermissionRequestEvent,
   type ServerEvent,
   type TranscriptEntry,
@@ -68,8 +67,6 @@ export interface ChatState {
   localCount: number;
   activity: ActivityState | null;
   currentElo?: number | null;
-  // The practice queue the server holds open while the board shows something else.
-  pausedTraining?: PausedTraining | null;
   // Cards made from each game since the page loaded, summed so a repeat click cannot show 0 over 3.
   cardsCreated: Record<number, number>;
   // A practice item ended and its notification was sent, so the coach owes a reply for it.
@@ -90,7 +87,6 @@ export const initialChatState: ChatState = {
   localCount: 0,
   activity: null,
   currentElo: null,
-  pausedTraining: null,
   cardsCreated: {},
   practiceReplyPending: false,
   practiceEndedItem: null,
@@ -290,7 +286,6 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         localCount: state.localCount,
         activity: event.activity,
         currentElo: event.current_elo ?? null,
-        pausedTraining: event.paused_training ?? null,
       };
     }
     case "chat":
@@ -309,7 +304,6 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         activity: event.state,
-        pausedTraining: event.paused_training ?? null,
         ...pendingAfter(state, event.state),
       };
     case "analysis":

@@ -3,6 +3,8 @@ import {
   type OpeningDrill,
   type OpeningDrillColor,
   type OpeningDrillsResponse,
+  type PlayedOpeningsResponse,
+  type PlayedWindow,
   UNNAMED_OPENING,
 } from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
@@ -26,6 +28,7 @@ import {
   type RepertoireResult,
 } from "../openings/from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames } from "../openings/names.js";
+import { listPlayedOpenings } from "../openings/played.js";
 import { IdeaSessionError, type RepertoireIdeasResult } from "../openings/repertoire-ideas.js";
 import {
   checkRepertoireRoot,
@@ -122,6 +125,38 @@ export function registerOpeningDrillRoutes(
       }));
     return { white: drillsOf("white"), black: drillsOf("black") };
   });
+}
+
+export interface PlayedOpeningsRouteOptions {
+  names?: OpeningNames;
+  clock?: Clock;
+}
+
+// The student's finished games counted by opening and variation, per colour. `days` holds the
+// window, last N days or every game; absent it counts the last 30 days.
+export function registerPlayedOpeningsRoute(
+  app: FastifyInstance,
+  db: Database,
+  options: PlayedOpeningsRouteOptions = {},
+): void {
+  const playedQuery = z.object({ days: z.enum(["7", "30", "90", "all"]).default("30") });
+  app.get(
+    "/api/openings/played",
+    async (request, reply): Promise<PlayedOpeningsResponse | undefined> => {
+      const parsed = playedQuery.safeParse(request.query);
+      if (!parsed.success) {
+        await reply.code(400).send({ error: "invalid_days", message: "days is 7, 30, 90 or all" });
+        return undefined;
+      }
+      const days = parsed.data.days as PlayedWindow;
+      return listPlayedOpenings(
+        db,
+        options.names ?? NO_OPENING_NAMES,
+        days,
+        options.clock ?? systemClock,
+      );
+    },
+  );
 }
 
 export interface AddableOpeningsRouteOptions {

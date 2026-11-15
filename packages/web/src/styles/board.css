@@ -90,6 +90,15 @@ cg-board square.check {
   background: radial-gradient(var(--board-check) 20%, transparent 70%);
 }
 
+/* Match .cg-shapes's overlay opacity and let L-shaped knight arrows extend beyond their origin square. */
+.cg-wrap .cg-custom-svgs {
+  opacity: 0.6;
+}
+
+.cg-wrap .cg-custom-svgs svg {
+  overflow: visible;
+}
+
 .promotion {
   position: absolute;
   inset: 0;

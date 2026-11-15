@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# task-id-guard: refuse tracker task ids in pull request titles, bodies and commits.
+#
+# WHY this exists. The rules keep task ids out of anything a stranger reads, and squash
+# merges keep the history of `main` clean. The commits of each pull request stay readable
+# on its GitHub page for good, and several already carry an id. The `pr-text` job read
+# only the title and body, and only for an em dash, so nothing stopped the next one.
+# This script is the new check that job runs, and it lives here (not in `bin/slop-guard`)
+# because that file is installed byte-identical from another repository and must not be
+# edited here.
+#
+# WHAT counts as an id. The tracker issues `chess-coach-` plus a base36 hash, three
+# characters today and up to eight as the tracker grows. Several names in this repository
+# share that prefix without being ids: `chess-coach-tools`, the scratch prefixes
+# `chess-coach-probe-` and `chess-coach-ideas-`, the test roots
+# `chess-coach-tests-<pid>-<random>`, and their base directory `chess-coach-tmp`. A plain
+# pattern matches every one of them, so this script matches
+# `chess-coach-[a-z0-9]{3,8}` not followed by a letter, a digit, a hyphen or a slash,
+# and skips the project names on its own allowlist. The hyphen rule already clears the
+# scratch prefixes and the test roots (the character after the stem is a hyphen); the
+# allowlist clears the bare stems and the two short names the pattern would otherwise
+# catch. `chess-coach` alone never matches, since the hyphen and the hash are required.
+#
+# Usage:
+#   bin/task-id-guard --stdin LABEL        read stdin as text labelled LABEL (e.g. "PR
+#                                          title", "PR body") and fail on any hit.
+#   bin/task-id-guard --commits BASE HEAD  fail when any commit message in BASE..HEAD
+#                                          holds an id. Prints the commit and the line.
+#
+# Both forms print each matching line with where it was found, and exit 1 on any hit,
+# 0 when clean. A base or head that cannot be resolved is a hard error, never a pass:
+# in CI the usual cause is a shallow checkout, so the job checks out full history.
+set -euo pipefail
+
+PATTERN='chess-coach-[a-z0-9]{3,8}(?![A-Za-z0-9/-])'
+
+# Project names that share the prefix without being ids. Compared against the whole
+# match, so `chess-coach-tools` passes while `chess-coach-toolsextra` still fails.
+is_allowed() {
+    case "$1" in
+        chess-coach-tools|chess-coach-tmp|chess-coach-tests|chess-coach-probe|chess-coach-ideas)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# Print each id on one line. grep -P carries the negative lookahead the rule needs;
+# a match that is only an allowlisted name is filtered by the caller.
+extract_ids() {
+    grep -Po -- "$PATTERN" || true
+}
+
+fail=0
+
+# Check one labelled stream, printing "<label>:<line-number>: <line>" per hit.
+check_stream() {  # $1 = label, stdin = text
+    local label="$1"
+    local lineno=0
+    local line
+    local ids
+    local id
+    local hit
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        ids="$(printf '%s' "$line" | extract_ids)"
+        [ -z "$ids" ] && continue
+        hit=""
+        while IFS= read -r id; do
+            [ -z "$id" ] && continue
+            is_allowed "$id" || hit="$id"
+        done <<<"$ids"
+        if [ -n "$hit" ]; then
+            printf '%s:%s: %s\n' "$label" "$lineno" "$line" >&2
+            fail=1
+        fi
+    done
+}
+
+if [ "${1:-}" = "--stdin" ]; then
+    label="${2:-stdin}"
+    check_stream "$label"
+    if [ "$fail" -ne 0 ]; then
+        echo "==> task-id-guard FAILED ($label)" >&2
+        exit 1
+    fi
+    echo "==> task-id-guard OK ($label)"
+    exit 0
+fi
+
+if [ "${1:-}" = "--commits" ]; then
+    [ -n "${2:-}" ] && [ -n "${3:-}" ] || {
+        echo "task-id-guard: --commits needs a base and a head sha" >&2
+        exit 2
+    }
+    base="$2"
+    head="$3"
+    if ! git cat-file -e "$base" 2>/dev/null || ! git cat-file -e "$head" 2>/dev/null; then
+        cat >&2 <<EOF
+task-id-guard: cannot resolve '$base' or '$head', so there is no commit range
+to check. This is a failure, not a pass.
+
+  - in GitHub Actions: the checkout is shallow by default, add \`fetch-depth: 0\`
+    to the actions/checkout step of the pr-text job
+  - locally: \`git fetch origin\` first, then pass shas that exist
+EOF
+        exit 2
+    fi
+    commits="$(git log --format='%H' "$base..$head" || true)"
+    if [ -z "$commits" ]; then
+        echo "==> task-id-guard OK (no commits in range)"
+        exit 0
+    fi
+    sha=""
+    for sha in $commits; do
+        subject="$(git log -1 --format='%s' "$sha")"
+        body="$(git log -1 --format='%B' "$sha")"
+        lineno=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            lineno=$((lineno + 1))
+            ids="$(printf '%s' "$line" | extract_ids)"
+            [ -z "$ids" ] && continue
+            hit=""
+            while IFS= read -r id; do
+                [ -z "$id" ] && continue
+                is_allowed "$id" || hit="$id"
+            done <<<"$ids"
+            if [ -n "$hit" ]; then
+                printf 'commit %s:%s: %s\n' "$sha" "$lineno" "$line" >&2
+                fail=1
+            fi
+        done <<<"$body"
+        _unused="$subject"
+    done
+    if [ "$fail" -ne 0 ]; then
+        echo "==> task-id-guard FAILED (commits $base..$head)" >&2
+        exit 1
+    fi
+    echo "==> task-id-guard OK (commits $base..$head)"
+    exit 0
+fi
+
+cat >&2 <<EOF
+usage:
+  bin/task-id-guard --stdin LABEL
+  bin/task-id-guard --commits BASE HEAD
+EOF
+exit 2

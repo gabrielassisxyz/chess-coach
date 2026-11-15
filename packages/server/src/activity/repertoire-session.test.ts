@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type ActivityState,
-  PausedTrainingSchema,
   type RepertoireDrill,
   type RepertoireLevel,
   type RepertoireScope,
@@ -29,6 +28,7 @@ import {
   insertRepertoireOwnMove,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
+import { endRunsLeftOpenAtStart } from "../db/training.js";
 import { GameService } from "../game/service.js";
 import { importFinishedGame } from "../import/pgn.js";
 import { positionKey } from "../openings/from-games.js";
@@ -339,8 +339,12 @@ const notificationCount = (): number =>
 const runEnds = (): unknown[] =>
   db.prepare("SELECT ended_reason, ended_at FROM training_runs ORDER BY id").all();
 
-// Everything a server boot builds that holds memory: a new call is a restart over the same file.
+const wholeRun = (): unknown => db.prepare("SELECT * FROM training_runs").get();
+
+// Everything a server boot builds that holds memory: a new call is a restart over the same file,
+// and a restart ends the runs the last process left open before it serves anything.
 function boot(judge?: RepertoireTryJudge): ActivityService {
+  endRunsLeftOpenAtStart(db, clock.now().toISOString());
   const session = createCoachSession(db, { promptVersion: "v" });
   const notifications = { sessionId: () => session.id };
   return new ActivityService({
@@ -932,7 +936,7 @@ describe("a repertoire drill", () => {
     expect(judge.searched).toEqual(["f1b5", "d2d4"]);
   });
 
-  it("keeps a wrong try that waits on the engine when the board moves on meanwhile", async () => {
+  it("ends the drill when the board moves on while a wrong try waits on the engine, and the late flag changes nothing", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
     const gameId = addFinishedGame();
@@ -942,21 +946,23 @@ describe("a repertoire drill", () => {
 
     const tried = service.trainingTry(uciOf(state.fen, "Bb5"), state.activity_id);
     await settle(() => judge.searched.length > 0);
-    await service.openGame(gameId);
-    judge.release(12);
-    await tried;
+    const board = await service.openGame(gameId);
+    const leftRow = wholeRun();
+    expect(runEnds()).toEqual([{ ended_reason: "left", ended_at: T0.toISOString() }]);
 
-    expect(service.current()?.kind).toBe("review");
+    now = new Date(T0.getTime() + HOUR_MS);
+    judge.release(12);
+    expect(await tried).toBe(board);
+
+    expect(service.current()).toBe(board);
+    expect(wholeRun()).toEqual(leftRow);
     expect(db.prepare("SELECT uci, correct FROM training_tries").all()).toEqual([
       { uci: "f1b5", correct: 0 },
     ]);
     expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
-    const resumed = training(await service.resumeTraining());
-    expect(resumed.last_try).toMatchObject({ san: "Bb5", correct: false });
-    expect(drillOf(resumed)).toMatchObject({ flagged_opening: "Ruy Lopez", moves_wrong: 1 });
   });
 
-  it("leaves a board opened in the same tick as a move on the board, with the drill paused", async () => {
+  it("leaves a board opened in the same tick as a move on the board, with the drill ended as left", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS);
     const gameId = addFinishedGame();
@@ -969,7 +975,9 @@ describe("a repertoire drill", () => {
     ]);
 
     expect(service.current()?.kind).toBe("review");
-    expect(service.pausedTraining()).toMatchObject({ mode: "repertoire", solved: 1 });
+    expect(db.prepare("SELECT solved, ended_reason FROM training_runs").all()).toEqual([
+      { solved: 1, ended_reason: "left" },
+    ]);
     expect(db.prepare("SELECT uci, correct FROM training_tries").all()).toEqual([
       { uci: "e2e4", correct: 1 },
     ]);
@@ -1082,39 +1090,31 @@ describe("a repertoire drill", () => {
     expect((await start(service, id, "all")).repertoire?.moves_left).toBe(6);
   });
 
-  it("pauses a repertoire drill on restart and resumes it on the same move with its progress", async () => {
+  it("ends a repertoire drill as left when the server starts", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS);
     const first = boot();
     let state = await start(first, id, "recommended");
-    for (const san of ["e4", "Nf3", "Bc4", "c3", "d4"]) state = await play(first, state, san);
-    state = await next(first, state);
-    state = await play(first, state, "h3");
-    const before = { ...state, activity_id: 0, served_at: "" };
+    for (const san of ["e4", "Nf3", "Bc4"]) state = await play(first, state, san);
+    expect(runEnds()).toEqual([{ ended_reason: null, ended_at: null }]);
 
+    now = new Date(T0.getTime() + HOUR_MS);
     const second = boot();
     expect(second.current()).toBeNull();
-    expect(second.pausedTraining()).toMatchObject({
-      mode: "repertoire",
-      repertoire_id: id,
-      scope: "recommended",
-      color: "white",
-      size: 6,
-      position: 5,
-      solved: 5,
-      failed: 1,
+    expect(runEnds()).toEqual([{ ended_reason: "left", ended_at: now.toISOString() }]);
+    // What was answered stays rated, and the moves not reached stay due.
+    expect(cardOf("", "e4")).toMatchObject({ repetitions: 3 });
+    expect(cardOf("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3")).toMatchObject({
+      repetitions: 2,
+      next_review_at: PAST,
     });
-    let resumed = training(await second.resumeTraining());
-    expect({ ...resumed, activity_id: 0, served_at: "" }).toEqual(before);
-    expect(resumed.wrong_tries).toEqual([{ ply: 6, uci: "h2h3", san: "h3" }]);
 
-    resumed = await play(second, resumed, "d3");
-    resumed = await next(second, resumed);
-    expect(lineSan(resumed)).toEqual(["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"]);
-    resumed = await play(second, resumed, "d3");
-    resumed = await next(second, resumed);
-    expect(drillOf(resumed).result).toEqual({ practised: 6, first_try_right: 5 });
-    expect(second.pausedTraining()).toBeNull();
+    const fresh = await start(second, id, "all");
+    expect(fresh.input_enabled).toBe(true);
+    expect(runEnds()).toEqual([
+      { ended_reason: "left", ended_at: now.toISOString() },
+      { ended_reason: null, ended_at: null },
+    ]);
   });
 });
 
@@ -1350,18 +1350,6 @@ describe("recording the first attempts of a repertoire drill", () => {
     ]);
   });
 
-  it("writes the row once for a move whose first try came before a restart", async () => {
-    const id = addVariation("Classical", ITALIAN_ROWS);
-    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
-    const first = boot();
-    await play(first, await start(first, id, "due"), "h3");
-    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
-
-    const second = boot();
-    await play(second, training(await second.resumeTraining()), "e4");
-    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
-  });
-
   it("returns the count of the moves a drill rated and how many were right first time", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS, () => true, 0);
@@ -1484,85 +1472,33 @@ describe("the run of a repertoire drill", () => {
     expect(drillOf(state).result).toEqual({ practised: 1, first_try_right: 1 });
     expect(wakes).toEqual([1]);
     expect(runEnds()).toEqual([{ ended_reason: "finished", ended_at: T0.toISOString() }]);
-    expect(boot().pausedTraining()).toBeNull();
   });
 
-  it("ends its run on end_training, so nothing is left to resume", async () => {
+  it("ends its run on end_training", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS);
     const service = boot();
     const state = await play(service, await start(service, id, "due"), "e4");
     expect(await service.endTraining(state.activity_id)).toBeNull();
-    expect(service.pausedTraining()).toBeNull();
     expect(runEnds()).toEqual([{ ended_reason: "ended", ended_at: T0.toISOString() }]);
   });
 
-  it("ends a paused drill as replaced when a new one starts, so it never comes back", async () => {
+  it("ends the drill on the board as replaced when a new one starts, and never rewrites that reason", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS);
-    const first = boot();
-    await play(first, await start(first, id, "due"), "e4");
-    const second = boot();
-    expect(second.pausedTraining()).toMatchObject({ mode: "repertoire", solved: 1 });
+    const service = boot();
+    await play(service, await start(service, id, "due"), "e4");
 
-    const state = await start(second, id, "all");
+    await start(service, id, "all");
     expect(runEnds()).toEqual([
       { ended_reason: "replaced", ended_at: T0.toISOString() },
       { ended_reason: null, ended_at: null },
     ]);
-    await second.endTraining(state.activity_id);
-    expect(second.pausedTraining()).toBeNull();
-  });
-
-  it("shows a paused drill with every move done as on its last move, and keeps its scope in the frame", async () => {
-    const id = addVariation("Classical", ITALIAN_ROWS);
-    addCards(ITALIAN_ROWS);
-    const first = boot();
-    let state = await start(first, id, "recommended");
-    for (const san of ["e4", "Nf3", "Bc4", "c3", "d4"]) state = await play(first, state, san);
-    state = await play(first, await next(first, state), "d3");
-    expect(drillOf(state).moves_left).toBe(0);
-
-    const second = boot();
-    const paused = second.pausedTraining();
-    expect(paused).toMatchObject({
-      repertoire_id: id,
-      scope: "recommended",
-      size: 6,
-      position: 5,
-      solved: 6,
-      failed: 0,
-    });
-    expect(PausedTrainingSchema.parse(paused)).toEqual(paused);
-    const resumed = await next(second, training(await second.resumeTraining()));
-    expect(drillOf(resumed).result).toEqual({ practised: 6, first_try_right: 6 });
-  });
-
-  it("resumes a drill whose open move left the repertoire with that pass over and the other moves kept", async () => {
-    const id = addVariation("Classical", ITALIAN_ROWS);
-    addCards(ITALIAN_ROWS);
-    await start(boot(), id, "due");
-    // 1.e4, the move the paused pass is open on.
-    db.prepare("DELETE FROM repertoire_positions WHERE repertoire_id = ? AND ply = 1").run(id);
-
-    const second = boot();
-    let resumed = training(await second.resumeTraining());
-    expect(resumed.input_enabled).toBe(false);
-    resumed = await next(second, resumed);
-    expect(lineSan(resumed)).toEqual(["e4", "e5"]);
-    expect(drillOf(resumed).moves_left).toBe(5);
-  });
-
-  it("refuses to resume a drill whose repertoire is gone, and still discards it", async () => {
-    const id = addVariation("Classical", ITALIAN_ROWS);
-    addCards(ITALIAN_ROWS);
-    await start(boot(), id, "due");
-    db.prepare("DELETE FROM repertoires WHERE id = ?").run(id);
-
-    const second = boot();
-    expect(await code(second.resumeTraining())).toBe("empty_queue");
-    await second.discardTraining();
-    expect(second.pausedTraining()).toBeNull();
+    await service.openGame(addFinishedGame());
+    expect(runEnds()).toEqual([
+      { ended_reason: "replaced", ended_at: T0.toISOString() },
+      { ended_reason: "left", ended_at: T0.toISOString() },
+    ]);
   });
 });
 
@@ -1857,28 +1793,6 @@ describe("a drill over a group or a side", () => {
       await app.close();
     }
   });
-
-  it("pauses a group drill on restart and resumes it on the same move, under the same variation", async () => {
-    const { classical, pianissimo } = addPartingVariations();
-    const first = boot();
-    let state = await startAt(first, classical, "due", "group");
-    for (const san of ["e4", "Nf3", "Bc4", "c3"]) state = await play(first, state, san);
-    state = await next(first, state);
-    const before = { ...state, activity_id: 0, served_at: "" };
-
-    const second = boot();
-    const paused = second.pausedTraining();
-    expect(paused).toMatchObject({
-      repertoire_id: classical,
-      scope: "due",
-      level: "group",
-      size: 5,
-    });
-    expect(PausedTrainingSchema.parse(paused)).toEqual(paused);
-    const resumed = training(await second.resumeTraining());
-    expect({ ...resumed, activity_id: 0, served_at: "" }).toEqual(before);
-    expect(variationOf(resumed)).toEqual({ id: pianissimo, name: PIANISSIMO, drill: pianissimo });
-  });
 });
 
 const SCANDINAVIAN_GROUP = "Scandinavian Defense";
@@ -2099,22 +2013,6 @@ describe("a drill over the units found in games", () => {
     now = new Date(T0.getTime() + 25 * HOUR_MS);
     expect(introducedToday()).toBe(0);
     expect(await foundLeft(service, "all")).toBe(3);
-  });
-
-  it("pauses a found drill on restart and resumes it on the same move, under the same unit", async () => {
-    const first = boot();
-    let state = await startAt(first, scandinavian, "all", "found");
-    state = await play(first, state, "e4");
-    const before = { ...state, activity_id: 0, served_at: "" };
-
-    const second = boot();
-    const paused = second.pausedTraining();
-    expect(paused).toMatchObject({ repertoire_id: scandinavian, scope: "all", level: "found" });
-    expect(PausedTrainingSchema.parse(paused)).toEqual(paused);
-    const resumed = training(await second.resumeTraining());
-    expect({ ...resumed, activity_id: 0, served_at: "" }).toEqual(before);
-    expect(variationOf(resumed)).toEqual({ id: alekhine, name: ALEKHINE_MODERN, drill: alekhine });
-    expect(openingOf(resumed)).toBe(ALEKHINE_GROUP);
   });
 
   it("starts from the start_training command's found level, in a frame the page accepts", async () => {

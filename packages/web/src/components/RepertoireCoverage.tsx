@@ -201,9 +201,16 @@ export function RepertoireCoverage({
   }
   if (loaded.status === "failed") {
     return (
-      <p className="practice__failure" role="alert">
-        The coverage could not be loaded. Close it and open it again to try again.
-      </p>
+      <>
+        <p className="practice__failure" role="alert">
+          The coverage could not be loaded.
+        </p>
+        <div className="controls__row">
+          <button type="button" className="button" onClick={loaded.retry}>
+            Try again
+          </button>
+        </div>
+      </>
     );
   }
   if (loaded.value.positions.length === 0) {

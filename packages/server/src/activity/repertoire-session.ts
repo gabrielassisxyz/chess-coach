@@ -1,5 +1,4 @@
 import type {
-  PausedTraining,
   PlayedMove,
   QueueOutcome,
   RepertoireDrill,
@@ -36,12 +35,10 @@ import {
   insertTrainingRun,
   insertTrainingTry,
   linkItemMessage,
-  listTrainingTries,
   openTrainingItem,
   type RunEndReason,
   saveTrainingRun,
   setTrainingItemHinted,
-  type TrainingRunRow,
 } from "../db/training.js";
 import { evaluatePlayerMove } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
@@ -54,7 +51,7 @@ import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
 import { dueAt, type Quality, review as reviewSchedule } from "../srs/sm2.js";
 import { ActivityError } from "./errors.js";
-import { type PracticeRunPort, pausedTrainingOf, type TrainingDeps } from "./training.js";
+import type { PracticeRunPort, TrainingDeps } from "./training.js";
 
 /** The `recommended` scope serves at most this many due moves, the likeliest first. */
 export const REPERTOIRE_RECOMMENDED_SIZE = 10;
@@ -411,8 +408,8 @@ interface DrillPass {
   tries: DrillTry[];
 }
 
-// `training_runs.current_json` of a repertoire drill: the whole state, since every pass depends on
-// what the earlier ones got right. The tries are read back from `training_tries`.
+// `training_runs.current_json` of a repertoire drill: the whole state at its last step. The tries
+// are in `training_tries`.
 interface StoredDrillPass {
   item_id: number;
   served_at: string;
@@ -421,8 +418,7 @@ interface StoredDrillPass {
   line: PlayedMove[];
   fen: string;
   ask: { row_id: number; hint: 0 | 1 | 2; attempted: boolean; flagged: string | null } | null;
-  /** Absent from rows written before a drill could span variations, whose pass had one. */
-  variation_id?: number;
+  variation_id: number;
   missed: boolean;
   hinted: boolean;
   opening_name: string | null;
@@ -432,8 +428,7 @@ interface StoredDrill {
   /** The repertoire the drill was started from; its level widens it to the group or the side. */
   repertoire_id: number;
   scope: RepertoireScope;
-  /** Absent from rows written before levels existed, which drilled one variation. */
-  level?: RepertoireLevel;
+  level: RepertoireLevel;
   pass_index: number;
   moves: {
     row_id: number;
@@ -444,22 +439,10 @@ interface StoredDrill {
   pass: StoredDrillPass;
 }
 
-interface DrillResume {
-  passIndex: number;
-  outcomes: ItemOutcome[];
-  pass: StoredDrillPass;
-}
-
 function repertoireHintOf(ask: DrillAsk | null, asked: DrillMoveState | null): RepertoireHint {
   if (!ask || !asked || ask.hint === 0) return { kind: "none" };
   if (ask.hint === 1) return { kind: "idea", text: asked.move.idea?.trim() || REPERTOIRE_NO_IDEA };
   return { kind: "move", uci: asked.move.uci, san: asked.move.san };
-}
-
-function fenAfterRepertoireSans(sans: readonly string[]): string {
-  const board = new Chess();
-  for (const san of sans) board.move(san);
-  return board.fen();
 }
 
 const uciOfRepertoireMove = (move: Move): string => `${move.from}${move.to}${move.promotion ?? ""}`;
@@ -491,7 +474,6 @@ export class RepertoireSession implements PracticeRunPort {
     private readonly scope: RepertoireScope,
     private readonly level: RepertoireLevel,
     states: DrillMoveState[],
-    resume: DrillResume | null,
   ) {
     this.clock = deps.clock ?? systemClock;
     this.order = [...states].sort((a, b) => compareRepertoireLineOrder(a.move, b.move));
@@ -501,13 +483,7 @@ export class RepertoireSession implements PracticeRunPort {
       atKey.push(state);
       this.byKey.set(state.move.positionKey, atKey);
     }
-    if (resume === null) {
-      this.pass = this.openPass(this.planNext() as RepertoirePassPlan);
-      return;
-    }
-    this.passIndex = resume.passIndex;
-    this.outcomes = [...resume.outcomes];
-    this.pass = this.restorePass(resume.pass);
+    this.pass = this.openPass(this.planNext() as RepertoirePassPlan);
   }
 
   // A drill that would serve nothing is refused; a new one ends any run still open as replaced.
@@ -565,56 +541,10 @@ export class RepertoireSession implements PracticeRunPort {
         currentJson: "{}",
         startedAt,
       });
-      const session = new RepertoireSession(deps, runId, repertoire, scope, level, states, null);
+      const session = new RepertoireSession(deps, runId, repertoire, scope, level, states);
       session.save();
       return session;
     })();
-  }
-
-  /** Puts a paused drill back on the move it stopped on, with every move's progress. */
-  static resume(deps: TrainingDeps, row: TrainingRunRow): RepertoireSession {
-    const stored = JSON.parse(row.currentJson) as StoredDrill;
-    const repertoire = findDrillRepertoire(deps.db, stored.repertoire_id);
-    if (!repertoire) {
-      throw new ActivityError("empty_queue", `repertoire ${stored.repertoire_id} no longer exists`);
-    }
-    const level = stored.level ?? "variation";
-    // Every row of every variation, not only the ones a merge would keep: the drill stored the rows
-    // it served, and a rerun that raised another variation's reach since must not drop them.
-    const moves = new Map<number, RepertoireLevelMove>();
-    for (const { variation, moves: listed } of listLevelUnitMoves(deps.db, repertoire, level)) {
-      for (const move of listed) moves.set(move.rowId, { ...move, variation });
-    }
-    const states = stored.moves.flatMap((state): DrillMoveState[] => {
-      const move = moves.get(state.row_id);
-      if (!move) return [];
-      return [{ move, stage: state.stage, rating: state.rating, asked: state.asked }];
-    });
-    const resume = { passIndex: stored.pass_index, outcomes: row.outcomes, pass: stored.pass };
-    return deps.db.transaction(() => {
-      const session = new RepertoireSession(
-        deps,
-        row.id,
-        repertoire,
-        stored.scope,
-        level,
-        states,
-        resume,
-      );
-      session.save();
-      return session;
-    })();
-  }
-
-  /** A paused drill counts moves: `size` served, `position` of them finished. */
-  static pausedOf(row: TrainingRunRow): PausedTraining {
-    const stored = JSON.parse(row.currentJson) as Partial<StoredDrill>;
-    return {
-      ...pausedTrainingOf(row),
-      ...(stored.repertoire_id === undefined ? {} : { repertoire_id: stored.repertoire_id }),
-      ...(stored.scope === undefined ? {} : { scope: stored.scope }),
-      ...(stored.level === undefined ? {} : { level: stored.level }),
-    };
   }
 
   state(activityId: number): TrainingActivity {
@@ -812,6 +742,11 @@ export class RepertoireSession implements PracticeRunPort {
     this.closeRun("ended");
   }
 
+  /** The board moved on without the student ending the drill; a run already ended keeps its reason. */
+  leave(): void {
+    this.closeRun("left");
+  }
+
   private requireAsk(): { ask: DrillAsk; state: DrillMoveState } {
     const ask = this.pass.ask;
     const state = ask ? this.byRow.get(ask.rowId) : undefined;
@@ -882,8 +817,7 @@ export class RepertoireSession implements PracticeRunPort {
   }
 
   // A move played right before it is due keeps its schedule, so practising early earns no longer
-  // interval; a miss fails it like any other. Due is read when the move is played, so a drill
-  // resumed after its moves fell due treats them as due.
+  // interval; a miss fails it like any other. Due is read when the move is played.
   private reschedule(state: DrillMoveState, right: boolean, now: Date): void {
     const db = this.deps.db;
     introduceRepertoireCard(db, state.move, now.toISOString());
@@ -1033,8 +967,8 @@ export class RepertoireSession implements PracticeRunPort {
     endTrainingRun(this.deps.db, this.runId, reason, this.clock.now().toISOString());
   }
 
-  // The ledger rows a step writes and the run row that follows them commit together, so a restart
-  // between two steps finds the drill exactly where the ledger says it was.
+  // The ledger rows a step writes and the run row that follows them commit together, so the row
+  // always says where the ledger says the drill was.
   private transition(change: () => void): void {
     this.wake = false;
     this.deps.db.transaction(() => {
@@ -1101,40 +1035,6 @@ export class RepertoireSession implements PracticeRunPort {
   private variationOfRow(rowId: number | undefined): RepertoireRow {
     const state = rowId === undefined ? undefined : this.byRow.get(rowId);
     return state?.move.variation ?? this.repertoire;
-  }
-
-  // A variation no move of the drill belongs to any more is gone from what the pass can name.
-  private variationOfId(id: number | undefined): RepertoireRow {
-    const state = this.order.find((candidate) => candidate.move.variation.id === id);
-    return state?.move.variation ?? this.repertoire;
-  }
-
-  private restorePass(stored: StoredDrillPass): DrillPass {
-    const ask = stored.ask && this.byRow.has(stored.ask.row_id) ? stored.ask : null;
-    return {
-      itemId: stored.item_id,
-      servedAtMs: Date.parse(stored.served_at),
-      plan: { path: stored.path, chain: stored.chain },
-      line: stored.line,
-      fen: stored.fen,
-      ask: ask
-        ? { rowId: ask.row_id, hint: ask.hint, attempted: ask.attempted, flagged: ask.flagged }
-        : null,
-      variation:
-        stored.variation_id === undefined
-          ? this.repertoire
-          : this.variationOfId(stored.variation_id),
-      missed: stored.missed,
-      hinted: stored.hinted,
-      openingName: stored.opening_name,
-      tries: listTrainingTries(this.deps.db, stored.item_id).map((attempt) => ({
-        at_ms: attempt.atMs,
-        ply: attempt.ply,
-        uci: attempt.uci,
-        san: sanFor(fenAfterRepertoireSans(stored.path.slice(0, attempt.ply)), attempt.uci),
-        correct: attempt.correct,
-      })),
-    };
   }
 
   private notify(content: TrainingSummaryNotification): void {

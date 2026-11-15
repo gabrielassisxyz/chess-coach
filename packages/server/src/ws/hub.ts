@@ -71,9 +71,6 @@ export type ActivityPort = Pick<
   | "rateCard"
   | "nextTrainingItem"
   | "endTraining"
-  | "pausedTraining"
-  | "resumeTraining"
-  | "discardTraining"
 >;
 
 export interface HubOptions {
@@ -239,7 +236,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
     ),
   );
   const unsubscribeActivity = activity.onState((state: ActivityState | null) => {
-    broadcast(frame({ type: "activity", state, paused_training: activity.pausedTraining() }));
+    broadcast(frame({ type: "activity", state }));
     if (state?.kind === "training") broadcast(frame(trainingEventOf(state)));
   });
   app.addHook("onClose", async () => {
@@ -270,7 +267,6 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
       conversations: { play, games, practice },
       activity: activity.current(),
       current_elo: getCurrentElo(db),
-      paused_training: activity.pausedTraining(),
     });
   };
 
@@ -368,12 +364,6 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         return;
       case "end_training":
         await activity.endTraining(command.activity_id);
-        return;
-      case "resume_training":
-        await activity.resumeTraining();
-        return;
-      case "discard_training":
-        await activity.discardTraining();
         return;
       case "create_cards": {
         const created = createCards(reviewDeps, command.game_id);

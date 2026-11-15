@@ -23,6 +23,7 @@ import {
   positionsAlong,
   promotionsFor,
 } from "../state/play.js";
+import { convertKnightArrowShape, reconcileHandKnightArrows } from "./knight-arrow.js";
 import { PromotionChooser } from "./PromotionChooser.js";
 
 export type BoardFactory = (element: HTMLElement, config: Config) => Api;
@@ -109,16 +110,19 @@ function toConfig(
   prefs: BoardPrefs,
   shapes: readonly DrawShape[],
   pausing: boolean,
+  onDrawChange?: (shapes: DrawShape[]) => void,
 ): Config {
   const last = shown ?? activity.last_move;
   const lastMove = last ? [last.from, last.to] : [];
   const fen = shown ? shown.fen : activity.fen;
+  const palette = arrowBrushes();
   const drawable = {
     enabled: true,
     visible: true,
-    autoShapes: [...shapes],
-    brushes: arrowBrushes(),
+    autoShapes: shapes.map((shape) => convertKnightArrowShape(shape, orientation, palette)),
+    brushes: palette,
     eraseOnClick: true,
+    ...(onDrawChange ? { onChange: onDrawChange } : {}),
   };
   return {
     fen,
@@ -191,13 +195,17 @@ function useMovePause(pause: MovePause | null): LineStep | null {
   return key === null ? null : (pause?.steps[count] ?? null);
 }
 
-// The mark sits on the square's centre, so it reads from the piece that just landed there.
+// The mark sits on the destination square's top right corner as seen on screen, so the
+// piece that just landed stays visible. On the top row or the right column the centre
+// moves inward by half the badge (14 px of the 28 px disc), so the box ends at the edge.
 function BadgeMark({ badge, orientation }: { badge: SquareBadge; orientation: Color }) {
   const file = badge.square.charCodeAt(0) - "a".charCodeAt(0);
   const rank = Number(badge.square[1]) - 1;
   const column = orientation === "white" ? file : 7 - file;
   const row = orientation === "white" ? 7 - rank : rank;
-  const style = { left: `${(column + 0.5) * 12.5}%`, top: `${(row + 0.5) * 12.5}%` };
+  const left = column === 7 ? "calc(100% - 14px)" : `${(column + 1) * 12.5}%`;
+  const top = row === 0 ? "14px" : `${row * 12.5}%`;
+  const style = { left, top };
   return (
     <span
       className="board__badge"
@@ -246,6 +254,7 @@ export function Board({
   const apiRef = useRef<Api | null>(null);
   const appliedPosition = useRef<{ key: string; syncToken: number; resync: number } | null>(null);
   const localMove = useRef<{ activityId: number; from: Key; to: Key } | null>(null);
+  const handDrawingsRef = useRef<DrawShape[]>([]);
   const [pending, setPending] = useState<PendingPromotion | null>(null);
   const [resync, setResync] = useState(0);
   const played = useLinePlayback(activity.fen, line);
@@ -266,11 +275,23 @@ export function Board({
   });
   latest.current = { activity, onMove, bothSides, hintSquare, facing, prefs, shapes, pausing };
 
+  const handleDrawChange = useRef((drawnShapes: DrawShape[]) => {
+    const { shapes: next, changed } = reconcileHandKnightArrows(
+      drawnShapes,
+      handDrawingsRef.current,
+      latest.current.facing,
+      arrowBrushes(),
+    );
+    handDrawingsRef.current = next;
+    if (changed) apiRef.current?.setShapes?.(next);
+  });
+
   useEffect(() => {
     const element = elementRef.current;
     if (!element) return;
     appliedPosition.current = null;
     localMove.current = null;
+    handDrawingsRef.current = [];
     const api = createBoard(element, {
       ...toConfig(
         latest.current.activity,
@@ -281,6 +302,7 @@ export function Board({
         latest.current.prefs,
         latest.current.shapes,
         false,
+        handleDrawChange.current,
       ),
       draggable: { enabled: false },
       premovable: { enabled: false },
@@ -312,7 +334,17 @@ export function Board({
   useEffect(() => {
     const api = apiRef.current;
     if (!api) return;
-    const config = toConfig(activity, bothSides, shown, hintSquare, facing, prefs, shapes, pausing);
+    const config = toConfig(
+      activity,
+      bothSides,
+      shown,
+      hintSquare,
+      facing,
+      prefs,
+      shapes,
+      pausing,
+      handleDrawChange.current,
+    );
     const positionKey = `${activity.activity_id} ${shown?.fen ?? activity.fen}`;
     const previous = appliedPosition.current;
     const positionChanged = previous?.key !== positionKey;
@@ -333,9 +365,14 @@ export function Board({
       api.getFen() === echoed.fen.split(" ")[0];
     // Chessground clears user shapes whenever set() receives a fen, even if the fen is unchanged.
     const keepDrawings = (!positionChanged && !needsResync) || localEcho;
-    const handDrawn = keepDrawings ? (api.state?.drawable.shapes.slice() ?? []) : [];
+    const handDrawn = keepDrawings
+      ? (api.state?.drawable.shapes ?? []).map((shape) =>
+          convertKnightArrowShape(shape, facing, arrowBrushes()),
+        )
+      : [];
+    handDrawingsRef.current = handDrawn;
     api.set(config);
-    if (handDrawn.length) api.setShapes(handDrawn);
+    if (handDrawn.length) api.setShapes?.(handDrawn);
     // A pause step is only shown: what follows it is compared with the position before it, so a
     // wrong move going back keeps the drawings it found there.
     const key = pausing && previous ? previous.key : positionKey;
