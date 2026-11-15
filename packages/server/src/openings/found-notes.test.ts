@@ -432,6 +432,11 @@ describe("foundNoteRejection", () => {
     );
   });
 
+  it("pins the limit at 200 characters: 200 passes and 201 is refused", () => {
+    expect(verdict("a".repeat(200))).toBe("accepted");
+    expect(verdict("a".repeat(201))).toBe("the text is 201 characters and the limit is 200");
+  });
+
   it.each([
     ["the best move", "It plays Bc4 to eye the weak pawn", "Bc4"],
     ["the best move in lower case", "bc4 is the idea", "Bc4"],
