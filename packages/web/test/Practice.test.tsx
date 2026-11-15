@@ -36,6 +36,7 @@ import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
 import {
   CLASSICAL_VARIATION,
+  noFoundPositions,
   openPracticePage,
   progressOf,
   repertoireActivity,
@@ -245,6 +246,7 @@ const hubProps = {
   fetchRepertoireList: async () => ({ repertoires: [], met: [] }),
   fetchRatingHistory: async () => ratingHistoryOf(),
   fetchThemeStats: async () => overviewThemeStatsOf(),
+  fetchFoundPositions: async () => noFoundPositions,
 };
 
 const practiceNav = (): HTMLElement =>
@@ -1516,7 +1518,9 @@ describe("what the hub no longer carries", () => {
     ["the Italian drill row of single positions", /ItalianRow|ItalianCard|italianOpeningCount/],
     [
       "the lines and cards of the old opening drill of a family",
-      /OpeningDrillLine|DrillRows|DrillOnlyCard|placeDrills|Positions from your games/,
+      // The old line counted its drills, "Positions from your games (12)", and named its colour. The
+      // Overview's panel of the same title, and the From my games page, are a different thing.
+      /OpeningDrillLine|DrillRows|DrillOnlyCard|placeDrills|Positions from your games( \(| as )/,
     ],
     ["the mixed start of the openings found in games", /Every added opening, mixed|LevelStarts/],
     ["the choice of a drill size", /DRILL_SIZES|DrillSize|practice__sizes?\b|Drill size/],
@@ -2968,7 +2972,7 @@ describe("the hub's frame", () => {
   const pageTitle = (): string => screen.getByRole("heading", { level: 2 }).textContent ?? "";
   const openingsEntry = (): HTMLElement =>
     within(practiceNav()).getByRole("button", { name: /^Openings(,|$)/ });
-  const UNBUILT = ["From my games", "Dashboard", "Openings played"];
+  const UNBUILT = ["Dashboard", "Openings played"];
 
   // An answer that counts the moves due on each side apart from the variations under it.
   const withSides = (

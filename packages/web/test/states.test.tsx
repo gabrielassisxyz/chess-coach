@@ -6,7 +6,7 @@ import { Practice } from "../src/screens/Practice.js";
 import type { GamesApi } from "../src/state/games-api.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import { COACH_GAME_SOURCE, idleImportApi } from "./fixtures.js";
-import { progressOf } from "./practice-fixtures.js";
+import { noFoundPositions, progressOf } from "./practice-fixtures.js";
 import { serverApi } from "./server-api.js";
 
 afterEach(cleanup);
@@ -98,6 +98,7 @@ const hub = {
   fetchProgress: async () => progressOf(),
   fetchRepertoires: async () => [],
   fetchRepertoireList: async () => ({ repertoires: [], met: [] }),
+  fetchFoundPositions: async () => noFoundPositions,
   fetchThemeStats: emptyThemeStats,
 };
 

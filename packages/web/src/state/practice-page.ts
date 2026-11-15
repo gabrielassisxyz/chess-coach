@@ -25,11 +25,7 @@ export const PRACTICE_ENTRY_LABEL: Record<PracticeEntry, string> = {
 };
 
 // The pages whose content is still to come; until then each says so.
-export const UNBUILT_PRACTICE_PAGES: readonly PracticePage[] = [
-  "from-my-games",
-  "dashboard",
-  "openings-played",
-];
+export const UNBUILT_PRACTICE_PAGES: readonly PracticePage[] = ["dashboard", "openings-played"];
 
 export const practicePageOf = (entry: PracticeEntry): PracticePage =>
   entry === "puzzle-themes" ? "overview" : entry;

@@ -45,6 +45,8 @@ export interface PracticeOverviewProps {
   // The themes section, which the Puzzle themes entry scrolls into view.
   themesRef: Ref<HTMLElement>;
   now: Date;
+  // The panel of positions from the student's games, drawn beside the Due cards card.
+  foundPanel?: ReactNode;
 }
 
 const ANY_MOTIF = "";
@@ -348,6 +350,7 @@ export function PracticeOverview(props: PracticeOverviewProps) {
           engineMissing={engineMissing}
           onStart={props.onStart}
         />
+        {props.foundPanel}
       </div>
       <PracticeThemes
         themeStats={props.themeStats}

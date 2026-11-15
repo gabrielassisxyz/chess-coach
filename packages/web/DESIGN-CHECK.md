@@ -287,9 +287,9 @@ name, pill and Add on one line with the moves under the name. M1 and M2 still fi
   Cards remembered) over a row of the Due cards card (with its Coming up 7-day forecast) and the
   Puzzles by weakness card, and a Puzzle themes section holding the Healthy mix and a tile for each
   of the 54 themes; Puzzle themes in the navigation shows the Overview scrolled to that section. The Openings page is built as described in the check above,
-  Improvement areas and Strengths show the ranked puzzle theme tables, and the three other pages
-  are a title and a sentence saying the page is not built yet. The older cards are mounted on their
-  pages unchanged.
+  Improvement areas and Strengths show the ranked puzzle theme tables, From my games lists the
+  positions from the student's games (its own entry below), and the two other pages are a title and
+  a sentence saying the page is not built yet. The older cards are mounted on their pages unchanged.
 - **The Openings page** keeps the machinery that adds an opening or a variation, and its cells hold
   as they did in the menu it replaced. The panel that Add an opening opens has two tabs: every
   opening Black can leave the path with, behind a search field and under a heading for each path,
@@ -329,5 +329,28 @@ name, pill and Add on one line with the moves under the name. M1 and M2 still fi
   forecast with a `1px solid var(--surface-2)` top border, uses `--accent` on today and
   `--surface-2` on upcoming days, and leaves partial data without alerts when rating history or
   theme stats fail. M1 and M2 still print nothing.
+- **From my games** sits in the Train group of the Practice hub, and the Overview draws a panel of
+  the same positions beside the Due cards card. The page is a `screen__title`, a `screen__note` and
+  a row of controls (a phase control and a colour control, each a bordered row of `32px` toggles
+  built like the period control of Improvement areas, and one accent pill, `Train N`, with a chevron
+  that opens two more starts), a `12px` line of counts, and two sections, each a `16px`/600 heading
+  with its count beside it over a grid of columns of at least `420px`. A card is a `surface-1` panel
+  with a hairline border and an `8px` radius: a `112px` read-only board, a `14px` title with its
+  state at the right (`due` in the accent, `new` in the primary text, a scheduled position in the
+  secondary text), the moves in `12px` mono, `4px` chips, and a `12px` foot with a `28px` Drill
+  button. How often the best move was found takes the grade tones, which keep their contrast in both
+  themes, and always stands beside its words and figures, so the colour never stands alone (Rule 4).
+  Loading (`role="status"`), the failed read (`role="alert"` and `Try again`) and the empty
+  sentence follow Rule 15 inside the page and inside the panel: a section with no position keeps its
+  heading and says so, and a page with no position at all keeps its title and the sentence and draws
+  no control. Under 900 px the controls wrap under the title, the cards are one column, a card's
+  title wraps and every button is 44 px; in a column narrower than the design's, as the page is with
+  the coach panel open, the heading and the filters wrap instead of being clipped. The boards are
+  hidden from assistive technology, since the title, the moves and the chips say what a board shows.
+  `2px`, `5px`, `6px`, `10px`, `14px`, `18px` and `28px` size a chip, a card's text
+  column, the panel's rows, the pill and the gap between sections rather than layout spacing. The
+  Practice column was re-checked on rows 4, 5, 6, 9, 10, 14, 15 and 17, and the Phone column on row
+  19, for this page and its panel, and the cells hold. M1 and M2 print nothing for it. The cells
+  were read off the markup and `practice-hub.css`, and were not measured in a browser.
 - **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
   and a model setting exist.
