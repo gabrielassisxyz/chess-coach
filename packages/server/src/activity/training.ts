@@ -55,6 +55,7 @@ import {
 } from "../db/training.js";
 import { applyUci } from "../engine/moves.js";
 import type { NotificationSink } from "../game/notifications.js";
+import { computeThemeStats } from "../progress/theme-stats.js";
 import {
   type AttemptState,
   giveUp,
@@ -323,27 +324,85 @@ function drawFixedSet(deps: TrainingDeps, filter: PuzzleFilter): DrawnQueue {
   return { entries: listing.puzzles.map(puzzleEntryOf), endless: false };
 }
 
+// The statistics screens open on 30 days, and so do the improvement areas a batch leans on. They
+// are read again for every batch, so a theme that enters or leaves the list during a session is
+// followed.
+const BOOST_WINDOW_DAYS = "30";
+// Of every batch of PUZZLE_BATCH_SIZE, this many come from the improvement areas.
+const BOOSTED_PUZZLES_PER_BATCH = 3;
+// The unthemed queue serves no opening material, so it never leans on the opening phase.
+const BOOST_SKIPPED_THEME = "opening";
+
+function boostableThemes(deps: TrainingDeps): string[] {
+  const stats = computeThemeStats(deps.db, BOOST_WINDOW_DAYS, deps.clock ?? systemClock);
+  return stats.improvement_areas.filter((theme) => theme !== BOOST_SKIPPED_THEME);
+}
+
+// The theme of each boosted place: the listed themes in turn, from one picked at random, so the
+// weakest theme is not the one that always gets the extra place.
+function boostedPlaces(themes: readonly string[], random: () => number): string[] {
+  const first = Math.floor(random() * themes.length);
+  return Array.from(
+    { length: BOOSTED_PUZZLES_PER_BATCH },
+    (_, place) => themes[(first + place) % themes.length] as string,
+  );
+}
+
+// One themed draw around the rating for each listed theme, for as many places as it holds. A puzzle
+// the run or the batch already has is not taken twice; a theme with too few puzzles leaves its
+// places to the unthemed sample, which is how a batch keeps its length.
+function drawBoostedPuzzles(
+  deps: TrainingDeps,
+  ratingAround: number,
+  taken: ReadonlySet<string>,
+): PuzzleSummary[] {
+  const themes = boostableThemes(deps);
+  if (themes.length === 0) return [];
+  const places = boostedPlaces(themes, deps.shuffleRandom ?? Math.random);
+  const picked = new Map<string, PuzzleSummary>();
+  for (const theme of new Set(places)) {
+    const wanted = places.filter((place) => place === theme).length;
+    const limit = wanted + taken.size + picked.size;
+    const drawn = listPuzzles(deps.db, { theme, ratingAround, limit }, deps.shuffleRandom);
+    const fresh = drawn.puzzles.filter((puzzle) => !taken.has(puzzle.id) && !picked.has(puzzle.id));
+    for (const puzzle of fresh.slice(0, wanted)) picked.set(puzzle.id, puzzle);
+  }
+  return [...picked.values()];
+}
+
+// Fisher-Yates over a copy, so the boosted puzzles of a batch sit at no fixed positions.
+function shuffledBatchEntries(entries: readonly QueueEntry[], random: () => number): QueueEntry[] {
+  const shuffled = [...entries];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j] as QueueEntry, shuffled[i] as QueueEntry];
+  }
+  return shuffled;
+}
+
 // One batch of a queue sampled around the student's rating, of one theme or of none. The sampler
 // drops duplicates inside a call only, and a puzzle the run already served has been answered, so
 // it is returned last, and again once a window holds too few new ones. Asking for as many extra
 // puzzles as the run holds leaves a whole batch after those are dropped; the sampler's own bound
 // per call (50) is where that stops being true, and a batch that then comes back short or empty is
-// the end of the run.
+// the end of the run. A queue of no theme leans on the student's improvement areas: its boosted
+// puzzles are drawn first, the unthemed sample fills the rest, and the batch is shuffled.
 function drawRatedBatch(
   deps: TrainingDeps,
   motif: string | undefined,
   taken: ReadonlySet<string>,
 ): QueueEntry[] {
   const theme = motif && (THEME_OF_MOTIF[motif] ?? motif);
-  const filter = {
-    theme,
-    ratingAround: currentPuzzleRating(deps.db),
-    limit: PUZZLE_BATCH_SIZE + taken.size,
-  };
-  return listPuzzles(deps.db, filter, deps.shuffleRandom)
-    .puzzles.filter((puzzle) => !taken.has(puzzle.id))
-    .slice(0, PUZZLE_BATCH_SIZE)
-    .map(puzzleEntryOf);
+  const ratingAround = currentPuzzleRating(deps.db);
+  const boosted = motif === undefined ? drawBoostedPuzzles(deps, ratingAround, taken) : [];
+  const skipped = new Set([...taken, ...boosted.map((puzzle) => puzzle.id)]);
+  const filter = { theme, ratingAround, limit: PUZZLE_BATCH_SIZE + taken.size };
+  const sampled = listPuzzles(deps.db, filter, deps.shuffleRandom)
+    .puzzles.filter((puzzle) => !skipped.has(puzzle.id))
+    .slice(0, PUZZLE_BATCH_SIZE - boosted.length);
+  const batch = [...boosted, ...sampled].map(puzzleEntryOf);
+  if (boosted.length === 0) return batch;
+  return shuffledBatchEntries(batch, deps.shuffleRandom ?? Math.random);
 }
 
 export class TrainingRun implements PracticeRunPort {

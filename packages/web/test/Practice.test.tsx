@@ -720,6 +720,7 @@ const AFTER_NC6 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 
 const AFTER_BC4 = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3";
 const AFTER_BC5 = "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
 const AFTER_D4 = "r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3";
+const AFTER_BB5 = "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3";
 
 const playedE4E5: NonNullable<TrainingActivity["moves"]> = [
   { ply: 0, uci: "e2e4", san: "e4", by: "student" },
@@ -1388,6 +1389,32 @@ describe("explore mode", () => {
     dropOnPracticeBoard("e2", "e4");
     expect(server.send).not.toHaveBeenCalled();
     expect(screen.getByText("Nf3 Nc6 d4")).toBeTruthy();
+  });
+
+  it("checks a drop at a stepped-back point of an ended line against that point", () => {
+    boards.length = 0;
+    const server = api(puzzleAfterE5({ status: "solved", input_enabled: false, legal_moves: [] }));
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(stepButton("Explore"));
+    for (const [from, to] of [
+      ["g1", "f3"],
+      ["b8", "c6"],
+      ["f1", "c4"],
+      ["f8", "c5"],
+    ] as const) {
+      dropOnPracticeBoard(from, to);
+    }
+    expect(screen.getByText("Nf3 Nc6 Bc4 Bc5")).toBeTruthy();
+    fireEvent.click(stepButton("Previous move"));
+    fireEvent.click(stepButton("Previous move"));
+    expect(boards.at(-1)?.fen).toBe(AFTER_NC6);
+
+    vi.mocked(server.send).mockClear();
+    dropOnPracticeBoard("f1", "b5");
+    expect(server.send).not.toHaveBeenCalled();
+    expect(screen.getByText("Nf3 Nc6 Bb5")).toBeTruthy();
+    expect(boards.at(-1)?.fen).toBe(AFTER_BB5);
+    expect(stepButton("Next move").disabled).toBe(true);
   });
 
   it("keeps the item's earlier positions read-only in Explore", () => {

@@ -199,8 +199,18 @@
   in `puzzle_themes` on seed. A
   puzzles queue is sampled by index seek (`listPuzzles` with `ratingAround`, never a count) from
   puzzles within 200 points of that number, widening by 200 per side until full and repeating a
-  puzzle only when its window has too few new ones, skipping popularity under 50; Any also skips
-  all opening material, and a motif with no `puzzle_themes` rows keeps the plain listing. The plain
+  puzzle only when its window has too few new ones, skipping popularity under 50, and a motif with
+  no `puzzle_themes` rows keeps the plain listing. An unthemed queue (no `motif`) draws each batch
+  of 10 in two parts: 3 puzzles from the themes the app lists as the student's improvement areas,
+  and 7 from the unthemed sample, which skips all opening material. The areas are those of the
+  last 30 days (`computeThemeStats`), read again for every batch so that a theme that enters or
+  leaves the list is followed, and `opening` is never one of them. The 3 places go to the listed
+  themes in turn, from one picked with `shuffleRandom`, each by a themed draw around the rating,
+  so a boosted puzzle may be opening material. A puzzle already in the run is not added twice, a
+  theme that yields no puzzle gives its place to the unthemed sample so that the batch keeps its
+  length, and the batch is shuffled before it joins the run. With no improvement area the batch is
+  the unthemed sample alone. The run keeps `training_runs.motif` NULL and `run_motif` null, and a
+  queue with a motif has no boost. The plain
   listing, used by the coach's puzzle tool and `GET /api/puzzles`, and the motif counts cover only the
   library, never `lichess-db` rows, since they read every matching row. Elo stays over Glicko-2 on
   purpose: against puzzles whose rating does not move and whose deviation is low, simulated runs
