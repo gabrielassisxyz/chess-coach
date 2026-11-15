@@ -73,14 +73,34 @@ interface StartProps {
   disabled?: boolean;
 }
 
-function motifNote(motifs: Loaded<MotifCount[]>): string | null {
-  if (motifs.status === "loading") return "Loading motifs.";
-  if (motifs.status === "failed") {
-    return "The motif list could not be loaded. You can still drill with Any motif.";
+function MotifStatus({ motifs }: { motifs: Loaded<MotifCount[]> }) {
+  if (motifs.status === "loading") {
+    return (
+      <p className="practice__card-note" role="status">
+        Loading motifs.
+      </p>
+    );
   }
-  return motifs.value.length === 0
-    ? "No puzzles are loaded. Restart the server to load the puzzle library."
-    : null;
+  if (motifs.status === "failed") {
+    return (
+      <>
+        <p className="practice__failure" role="alert">
+          The motif list could not be loaded. You can still drill with Any motif.
+        </p>
+        <button type="button" className="button" onClick={motifs.retry}>
+          Try again
+        </button>
+      </>
+    );
+  }
+  if (motifs.value.length === 0) {
+    return (
+      <p className="practice__card-note" role="status">
+        No puzzles are loaded. Restart the server to load the puzzle library.
+      </p>
+    );
+  }
+  return null;
 }
 
 function ItalianRow({
@@ -133,7 +153,6 @@ export function PracticeHub(props: PracticeHubProps) {
   const busy = starting !== null;
   const counts = motifs.status === "ready" ? motifs.value : [];
   const rows = motifRows(counts, progress.status === "ready" ? progress.value : null);
-  const note = motifNote(motifs);
 
   const startButton = ({ mode, motif: target, idle, disabled = false }: StartProps): ReactNode => {
     const mine = starting?.mode === mode && starting.motif === target;
@@ -188,7 +207,7 @@ export function PracticeHub(props: PracticeHubProps) {
             />
           ))}
         </div>
-        {note ? <p role="status">{note}</p> : null}
+        <MotifStatus motifs={motifs} />
         <fieldset className="practice__sizes" aria-label="Drill size">
           {DRILL_SIZES.map((option) => (
             <button
@@ -231,10 +250,20 @@ export function PracticeHub(props: PracticeHubProps) {
 
       <section className="practice__card" aria-label="Openings">
         <h3 className="practice__card-title">Openings</h3>
-        {props.openingDrills?.status === "failed" ? (
+        {props.openingDrills?.status === "loading" ? (
           <p className="practice__card-note" role="status">
-            The positions from your games could not be loaded. Reload the page to try again.
+            Loading positions from your games.
           </p>
+        ) : null}
+        {props.openingDrills?.status === "failed" ? (
+          <>
+            <p className="practice__failure" role="alert">
+              The positions from your games could not be loaded.
+            </p>
+            <button type="button" className="button" onClick={props.openingDrills.retry}>
+              Try again
+            </button>
+          </>
         ) : null}
         <p className="practice__card-note">Italian Opening</p>
         <ItalianRow counts={counts} known={motifs.status === "ready"} startButton={startButton} />
@@ -251,13 +280,23 @@ export function PracticeHub(props: PracticeHubProps) {
 }
 
 function DueCards({ progress, now }: { progress: Loaded<ProgressResponse>; now: Date }) {
-  if (progress.status !== "ready") {
+  if (progress.status === "loading") {
     return (
       <p className="practice__card-note" role="status">
-        {progress.status === "loading"
-          ? "Loading your cards."
-          : "Your card numbers are not available."}
+        Loading your cards.
       </p>
+    );
+  }
+  if (progress.status === "failed") {
+    return (
+      <>
+        <p className="practice__failure" role="alert">
+          Your card numbers could not be loaded.
+        </p>
+        <button type="button" className="button" onClick={progress.retry}>
+          Try again
+        </button>
+      </>
     );
   }
   const { cards } = progress.value;

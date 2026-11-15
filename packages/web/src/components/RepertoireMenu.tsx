@@ -96,13 +96,29 @@ interface AddOutcome {
   text: string;
 }
 
+interface RefreshFailure {
+  origin: AddOrigin;
+  // Set when an add finished cleanly before the list read failed, so a retry restores its built note.
+  builtName: string | null;
+}
+
 interface OpeningAdds {
   // The whole answer as last read; null until it has been read.
   listing: RepertoiresResponse | null;
   // The openings the student's games met; null until the list has been read.
   met: MetOpening[] | null;
+  // The first list read is still in flight, and no add has read it since.
+  loading: boolean;
   // The list could not be read, and no add has read it since.
   unreadable: boolean;
+  // Retries the initial list read after a failure.
+  retry(): void;
+  // A post-add list refresh is in flight for this origin.
+  refreshing: AddOrigin | null;
+  // The post-add list refresh failed for this origin.
+  refreshFailure: RefreshFailure | null;
+  // Retries a failed post-add list refresh.
+  retryRefresh(): Promise<void>;
   // The drills as they stand after an add; null before one, when the screen's own list is current.
   built: RepertoireSummary[] | null;
   // The adds whose last run stopped short: their drill is partial, and adding again resumes it.
@@ -118,11 +134,8 @@ const addFailureText = (error: unknown): string =>
     ? error.message
     : "The drill could not be built. Try again.";
 
-// The menu above has the new drill only if the list could be read again; if not, the page says so.
 const builtText = (name: string, listed: boolean): string =>
-  listed
-    ? `${name} is built. Its drill is listed above.`
-    : `${name} is built. Reload the page to see its drill.`;
+  listed ? `${name} is built. Its drill is listed above.` : `${name} is built.`;
 
 const stoppedText = (name: string): string =>
   `The run for ${name} stopped at its request limit. Add it again to carry on.`;
@@ -143,11 +156,14 @@ function useOpeningAdds(fetchList: FetchRepertoireList): OpeningAdds {
   const [listing, setListing] = useState<RepertoiresResponse | null>(null);
   const [adding, setAdding] = useState<OpeningAdds["adding"]>(null);
   const [outcome, setOutcome] = useState<AddOutcome | null>(null);
+  const [refreshing, setRefreshing] = useState<AddOrigin | null>(null);
+  const [refreshFailure, setRefreshFailure] = useState<RefreshFailure | null>(null);
   const [unfinished, setUnfinished] = useState<ReadonlySet<string>>(new Set());
 
   const add = async ({ key, name, origin, run }: AddRequest): Promise<void> => {
     setAdding({ key, origin });
     setOutcome(null);
+    setRefreshFailure(null);
     let failure: string | null = null;
     let truncated = false;
     try {
@@ -166,13 +182,42 @@ function useOpeningAdds(fetchList: FetchRepertoireList): OpeningAdds {
     if (failure !== null) setOutcome({ origin, failed: true, text: failure });
     else if (truncated) setOutcome({ origin, failed: true, text: stoppedText(name) });
     else setOutcome({ origin, failed: false, text: builtText(name, refreshed) });
+    setRefreshFailure(
+      refreshed ? null : { origin, builtName: failure === null && !truncated ? name : null },
+    );
+  };
+
+  const retryRefresh = async (): Promise<void> => {
+    const failed = refreshFailure;
+    if (failed === null || refreshing !== null) return;
+    setRefreshing(failed.origin);
+    setRefreshFailure(null);
+    try {
+      setListing(await fetchList());
+      if (failed.builtName !== null) {
+        setOutcome({
+          origin: failed.origin,
+          failed: false,
+          text: builtText(failed.builtName, true),
+        });
+      }
+    } catch {
+      setRefreshFailure(failed);
+    } finally {
+      setRefreshing(null);
+    }
   };
 
   const current = listing ?? (opened.status === "ready" ? opened.value : null);
   return {
     listing: current,
     met: current?.met ?? null,
+    loading: current === null && opened.status === "loading",
     unreadable: current === null && opened.status === "failed",
+    retry: opened.status === "failed" ? opened.retry : () => undefined,
+    refreshing,
+    refreshFailure,
+    retryRefresh,
     built: listing?.repertoires ?? null,
     unfinished,
     adding,
@@ -347,7 +392,7 @@ function ChoiceRow({
           type="button"
           className="button"
           aria-label={`${adding ? "Building" : "Add"} ${name}`}
-          disabled={busy || adds.adding !== null}
+          disabled={busy || adds.adding !== null || adds.refreshing !== null}
           onClick={add}
         >
           {adding ? "Building" : "Add"}
@@ -380,6 +425,8 @@ function BranchPoint({
 
 function AddStatus({ adds, origin }: { adds: OpeningAdds; origin: AddOrigin }) {
   const outcome = adds.outcome?.origin === origin ? adds.outcome : null;
+  const refreshing = adds.refreshing === origin;
+  const refreshFailed = adds.refreshFailure?.origin === origin;
   return (
     <>
       {adds.adding?.origin === origin ? (
@@ -395,6 +442,29 @@ function AddStatus({ adds, origin }: { adds: OpeningAdds; origin: AddOrigin }) {
           {outcome.text}
         </p>
       )}
+      {refreshing ? (
+        <p className="practice__card-note" role="status">
+          Loading openings.
+        </p>
+      ) : null}
+      {refreshFailed ? (
+        <>
+          <p className="practice__failure" role="alert">
+            The openings list could not be loaded.
+          </p>
+          <div className="controls__row">
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                void adds.retryRefresh();
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        </>
+      ) : null}
     </>
   );
 }
@@ -649,7 +719,7 @@ function MetToAdd({
           <MetRow
             key={metRootKey(entry.root)}
             entry={entry}
-            disabled={busy || adds.adding !== null}
+            disabled={busy || adds.adding !== null || adds.refreshing !== null}
             adding={adds.adding?.key === metRootKey(entry.root)}
             onAdd={add}
             drillLine={metLine(metRootKey(entry.root))}
@@ -685,14 +755,30 @@ function FoundInGames({
   const entries = metToAdd(adds.met ?? [], adds.unfinished);
   const running = adds.adding?.origin === "met";
   const told = adds.outcome?.origin === "met";
+  const refreshing = adds.refreshing === "met";
+  const refreshFailed = adds.refreshFailure?.origin === "met";
   if (openings.length === 0 && entries.length === 0) {
-    if (!running && !told && !adds.unreadable) return null;
+    if (!running && !told && !adds.loading && !adds.unreadable && !refreshing && !refreshFailed) {
+      return null;
+    }
     return (
       <div className="repertoire-menu__met">
-        {adds.unreadable ? (
-          <p className="practice__card-note">
-            The openings met in your games could not be loaded. Reload the page to try again.
+        {adds.loading ? (
+          <p className="practice__card-note" role="status">
+            Loading openings met in your games.
           </p>
+        ) : null}
+        {adds.unreadable ? (
+          <>
+            <p className="practice__failure" role="alert">
+              The openings met in your games could not be loaded.
+            </p>
+            <div className="controls__row">
+              <button type="button" className="button" onClick={adds.retry}>
+                Try again
+              </button>
+            </div>
+          </>
         ) : null}
         <AddStatus adds={adds} origin="met" />
       </div>
@@ -719,13 +805,31 @@ function FoundInGames({
   );
 }
 
-function Note({ text, children }: { text: string; children?: ReactNode }) {
+function Note({
+  text,
+  onRetry,
+  children,
+}: {
+  text: string;
+  onRetry?: () => void;
+  children?: ReactNode;
+}) {
   return (
     <section className="practice__card" aria-label="White openings">
       <h3 className="practice__card-title">White openings</h3>
-      <p className="practice__card-note" role="status">
+      <p
+        className={onRetry ? "practice__failure" : "practice__card-note"}
+        role={onRetry ? "alert" : "status"}
+      >
         {text}
       </p>
+      {onRetry ? (
+        <div className="controls__row">
+          <button type="button" className="button" onClick={onRetry}>
+            Try again
+          </button>
+        </div>
+      ) : null}
       {children}
     </section>
   );
@@ -888,7 +992,7 @@ export function RepertoireMenu({
   const [stylePoints, setStylePoints] = useState<StylePoints>({ ...DEFAULT_STYLE_POINTS });
   if (repertoires.status === "loading") return <Note text="Loading openings." />;
   if (repertoires.status === "failed") {
-    return <Note text="The openings could not be loaded. Reload the page to try again." />;
+    return <Note text="The openings could not be loaded." onRetry={repertoires.retry} />;
   }
   const levels = {
     groups: adds.listing?.groups,
