@@ -141,9 +141,11 @@
   puzzle's own rating never moves, since one student's attempts say nothing about a number built
   from many players.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
-  each step. Opening a game, starting one or a restart pauses it; the hub offers Resume
-  (`resume_training`) and Discard (`discard_training`), and a new start ends it as `replaced`. The
-  boot never puts it back on the board by itself. A single item the coach serves is not persisted.
+  each step. Opening a game, starting one or a restart pauses it. The hub offers no resume and
+  shows no paused run: the web sends neither `resume_training` nor `discard_training` (the server
+  still accepts both and still reports the run as `paused_training`), and the next start ends a
+  paused run as `replaced`. What was answered stays rated and the rest stays due. The boot never
+  puts it back on the board by itself. A single item the coach serves is not persisted.
 - **Repertoire drill:** `start_training {mode: "repertoire", repertoire_id, scope}` runs a stored
   variation as passes from move 1 (`activity/repertoire-session.ts`): the server plays Black and every
   White move not asked, and stops on the moves still to find. `recommended` takes at most 10 due moves,
