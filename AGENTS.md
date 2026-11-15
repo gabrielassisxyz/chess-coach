@@ -165,6 +165,25 @@
   button, kept after the panel closes. The page's styles, the panel's included, are
   `styles/practice-openings.css`; the classes of the style points and the coverage view are in
   `styles/repertoire.css`.
+  Each colour that holds a stored opening closes with the block "Puzzles from these openings"
+  (`components/PracticeOpeningPuzzles.tsx`), under its cards and, for White, the Add an opening
+  button; a colour with no stored opening has none, and the side control hides it with its colour.
+  The names it asks about come from `openingPuzzleNamesOf` in `state/opening-puzzles-api.ts`: the
+  colour's stored openings in the page's order, then, for White, the families (`openingFamilyOf`) of
+  `met[]` in its order, none twice, a `met` entry with no name skipped, at most 12
+  (`OPENING_PUZZLE_TILE_LIMIT`). The block reads `GET /api/puzzles/openings` once for each colour
+  with those names, and again only when the names change or Try again is pressed, and draws a tile
+  for each entry that has puzzles, in the order asked: the name, `first_try_30d` over `played_30d` as
+  a whole percentage in the theme tiles' bands (`new` when `played_30d` is 0) and "N puzzles" with
+  thousands separators. The tiles are the Overview's theme tiles, classes and measures included. A
+  tile sends `start_training {mode: "puzzles", opening: <tag>}` with the entry's `tag` through
+  `beginOpeningPuzzles` in `screens/Practice.tsx`, which keeps the tag in the `motif` field of the
+  start in flight, so the Overview's theme buttons never take it for their own; a refusal shows on
+  this page like any other start. Every tile waits while any start is in flight, while an opening is
+  being added (the hub would unmount and lose the page's memory of the add) and while the engine is
+  missing. A failed read says `The puzzles of your openings could not be loaded.` with Try again
+  inside the block and leaves the rest of the page as it was, and a block whose entries all have no
+  puzzle says `No Lichess puzzle comes from these openings.`.
 - **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
   adds the whole Lichess puzzle database (`lichess-db:` ids, source `lichess-db`) to the library, reading CSV from
   stdin into the usual data dir and printing rows added, skipped and failed. A row's `FEN` is shown after its first

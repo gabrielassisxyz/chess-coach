@@ -1,6 +1,11 @@
 import type { RepertoireLevel, RepertoireScope, RepertoiresResponse } from "@chess-coach/shared";
 import { useEffect, useId, useRef, useState } from "react";
 import {
+  type FetchOpeningPuzzles,
+  fetchOpeningPuzzlesFromServer,
+  openingPuzzleNamesOf,
+} from "../state/opening-puzzles-api.js";
+import {
   OPENINGS_FILTERS,
   type OpeningsFilter,
   type OpeningsSectionModel,
@@ -26,8 +31,20 @@ import {
 } from "../state/repertoires-api.js";
 import { OpeningCard, type VariationAdder } from "./OpeningCard.js";
 import { PracticeAddOpening } from "./PracticeAddOpening.js";
+import { PracticeOpeningPuzzles } from "./PracticeOpeningPuzzles.js";
 import { AddStatus, type OpeningAdds, useOpeningAdds, withStylePoints } from "./RepertoireMenu.js";
 import { TrainButton, type TrainControls } from "./TrainButton.js";
+
+// The block of Lichess puzzles under each colour's openings. A page given none draws none.
+export interface OpeningPuzzlesControls {
+  // Where the puzzles of each opening are counted, once for each colour; the server's by default.
+  fetchPuzzles?: FetchOpeningPuzzles | undefined;
+  // Starts the puzzles of the Lichess opening tag a tile names.
+  onStart(tag: string): void;
+  // The tag of the puzzle start this page sent, whose tile says so.
+  starting: string | null;
+  engineMissing: boolean;
+}
 
 export interface PracticeOpeningsProps {
   // Any start is in flight, from this page or another: every train button waits.
@@ -45,6 +62,7 @@ export interface PracticeOpeningsProps {
   fetchAddable?: FetchAddableOpenings | undefined;
   // Where a variation's coverage comes from when it is opened; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
+  openingPuzzles?: OpeningPuzzlesControls | undefined;
 }
 
 // What every part of the page shares: what the train buttons wait for, the state of the adds, and
@@ -58,6 +76,9 @@ interface OpeningsContext {
   fetchAddable: FetchAddableOpenings;
   adder: VariationAdder;
   fetchCoverage: FetchCoverage | undefined;
+  puzzles: OpeningPuzzlesControls | null;
+  // The openings opponents played in the student's games, which White's puzzle block draws from.
+  met: RepertoiresResponse["met"];
 }
 
 function SideControl({
@@ -142,6 +163,29 @@ function EmptySection({ side }: { side: OpeningsSectionModel["side"] }) {
   );
 }
 
+// The Lichess puzzles of a colour's openings, under its cards. A colour with no stored opening has
+// none, as it has no card, so the block never stands alone under an empty section.
+function OpeningPuzzlesArea({
+  section,
+  ctx,
+}: {
+  section: OpeningsSectionModel;
+  ctx: OpeningsContext;
+}) {
+  const { puzzles } = ctx;
+  if (puzzles === null || section.openings.length === 0) return null;
+  return (
+    <PracticeOpeningPuzzles
+      names={openingPuzzleNamesOf(section, ctx.met)}
+      fetchPuzzles={puzzles.fetchPuzzles ?? fetchOpeningPuzzlesFromServer}
+      busy={ctx.train.disabled}
+      engineMissing={puzzles.engineMissing}
+      startingTag={puzzles.starting}
+      onStart={puzzles.onStart}
+    />
+  );
+}
+
 function OpeningsSection({
   section,
   hidden,
@@ -182,6 +226,7 @@ function OpeningsSection({
         />
       ))}
       {side === "white" ? <AddOpeningArea ctx={ctx} /> : null}
+      <OpeningPuzzlesArea section={section} ctx={ctx} />
     </section>
   );
 }
@@ -217,6 +262,7 @@ export function PracticeOpenings({
   addVariation = addVariationToServer,
   fetchAddable = fetchAddableOpeningsFromServer,
   fetchCoverage,
+  openingPuzzles,
 }: PracticeOpeningsProps) {
   const adds = useOpeningAdds(fetchList);
   const [filter, setFilter] = useState<OpeningsFilter>("all");
@@ -242,6 +288,8 @@ export function PracticeOpenings({
       onPoints: setPoints,
     },
     fetchCoverage,
+    puzzles: openingPuzzles ?? null,
+    met: listing?.met ?? [],
   };
 
   return (

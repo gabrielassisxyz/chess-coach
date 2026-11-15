@@ -28,6 +28,7 @@ import {
   fetchFoundPositionsFromServer,
 } from "../state/found-api.js";
 import { serviceNotice } from "../state/health.js";
+import type { FetchOpeningPuzzles } from "../state/opening-puzzles-api.js";
 import {
   type FetchOpeningsPlayed,
   fetchOpeningsPlayedFromServer,
@@ -66,6 +67,9 @@ export interface PracticeProps {
   fetchRepertoires?: FetchRepertoires;
   // The whole repertoire answer the Openings page draws its cards from; the server's by default.
   fetchRepertoireList?: FetchRepertoireList | undefined;
+  // How many Lichess puzzles each opening on the Openings page has and how the student did on them;
+  // the server's by default.
+  fetchOpeningPuzzles?: FetchOpeningPuzzles | undefined;
   // 7-day puzzle rating history for the Overview tile; the server's by default.
   fetchRatingHistory?: FetchPuzzleRatingHistory | undefined;
   // The positions found in the student's games, whole and narrowed by colour and phase; the server's
@@ -174,7 +178,17 @@ function useStartOutcome(server: ServerApi) {
       setFailure(OFFLINE_START_TEXT);
     }
   };
-  return { starting, failure, begin, beginRepertoire, beginFound };
+  // A puzzle queue of one Lichess opening names its tag where a theme's queue names its motif, and
+  // the tag sits in the same field of the start in flight, so no theme's button takes it for its own.
+  const beginOpeningPuzzles = (tag: string): void => {
+    setFailure(null);
+    if (server.send({ type: "start_training", mode: "puzzles", opening: tag })) {
+      setStarting({ mode: "puzzles", motif: tag, errorsBefore: server.errorCount });
+    } else {
+      setFailure(OFFLINE_START_TEXT);
+    }
+  };
+  return { starting, failure, begin, beginRepertoire, beginFound, beginOpeningPuzzles };
 }
 
 // The login card clears once the student has checked again, and returns on the next auth failure.
@@ -193,6 +207,7 @@ function Hub({
   createBoard,
   fetchProgress,
   fetchRepertoireList,
+  fetchOpeningPuzzles,
   fetchRatingHistory,
   fetchFoundPositions,
   onOpenGameReview,
@@ -202,7 +217,11 @@ function Hub({
 }: Required<Pick<PracticeProps, "server" | "fetchProgress">> &
   Pick<
     PracticeProps,
-    "createBoard" | "fetchHealth" | "fetchRepertoireList" | "onOpenGameReview"
+    | "createBoard"
+    | "fetchHealth"
+    | "fetchRepertoireList"
+    | "fetchOpeningPuzzles"
+    | "onOpenGameReview"
   > & {
     fetchRatingHistory: FetchPuzzleRatingHistory;
     fetchFoundPositions: FetchFoundPositions;
@@ -223,7 +242,8 @@ function Hub({
   const [retries, setRetries] = useState(0);
   const notice = serviceNotice(useHealth(retries, fetchHealth ? { fetchHealth } : {}));
   const login = useCoachLogin(server);
-  const { starting, failure, begin, beginRepertoire, beginFound } = useStartOutcome(server);
+  const { starting, failure, begin, beginRepertoire, beginFound, beginOpeningPuzzles } =
+    useStartOutcome(server);
   const engineMissing = notice?.reason === "stockfish_missing";
 
   return (
@@ -244,6 +264,8 @@ function Hub({
       failure={failure}
       onStart={begin}
       onStartRepertoire={beginRepertoire}
+      onStartOpeningPuzzles={beginOpeningPuzzles}
+      fetchOpeningPuzzles={fetchOpeningPuzzles}
       foundPositions={{
         positions: foundPositions,
         fetchPositions: fetchFoundPositions,
@@ -448,6 +470,7 @@ export function Practice({
   fetchProgress = fetchProgressFromServer,
   fetchRepertoires = fetchRepertoiresFromServer,
   fetchRepertoireList,
+  fetchOpeningPuzzles,
   fetchRatingHistory = fetchPuzzleRatingHistoryFromServer,
   fetchFoundPositions = fetchFoundPositionsFromServer,
   onOpenGameReview,
@@ -511,6 +534,7 @@ export function Practice({
           createBoard={createBoard}
           fetchProgress={fetchProgress}
           fetchRepertoireList={fetchRepertoireList}
+          fetchOpeningPuzzles={fetchOpeningPuzzles}
           fetchRatingHistory={fetchRatingHistory}
           fetchFoundPositions={fetchFoundPositions}
           {...(onOpenGameReview === undefined ? {} : { onOpenGameReview })}
