@@ -7,8 +7,9 @@
 -- with the best first, is written once, so a stored position is never searched again. A row with
 -- listed = 0 is kept for that reason, and so the positions left out can be counted.
 --
--- game_id names no game by foreign key: an unlisted row has no puzzle either, nothing deletes a
--- game, and a row outliving a game deleted by hand only keeps its last counts.
+-- No column is a foreign key: an unlisted row has no puzzle under its id, and game_id only names the
+-- game shown, which nothing in the server deletes; a row that outlives a game deleted by hand keeps
+-- its last counts.
 CREATE TABLE found_positions (
   id TEXT PRIMARY KEY,
   fen TEXT NOT NULL,
