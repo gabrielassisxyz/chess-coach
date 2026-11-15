@@ -107,6 +107,7 @@
   opening met in games of that family, else a row of its own under White openings or a Black openings
   card; the rows wait until the openings met in games have been read. The old per-colour rows that drilled
   every family mixed are gone from the hub, though `start_training` without `opening` still serves them.
+- **Addable openings:** `GET /api/openings/addable` lists every book family Black can leave the 1.e4 path with (first moves other than e5, second moves other than Nc6 after 1.e4 e5 2.Nf3), one entry per family with the root, the book name, the student's game count from `met[]`, the share at 0-1199 and the unit already built, if any. A family reached by several moves keeps its alphabetically first one. The shares come from two explorer reads (after 1.e4 and after 1.e4 e5 2.Nf3) and are null without a token or on failure.
 - **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
   adds the whole Lichess puzzle database (`lichess-db:` ids, source `lichess-db`) to the library, reading CSV from
   stdin into the usual data dir and printing rows added, skipped and failed. A row's `FEN` is shown after its first
@@ -129,7 +130,13 @@
   library's `difficulty_rating`; a first-try solve wins, anything else loses, an unrated puzzle
   (opening drills) moves nothing. It lives in `settings.puzzle_rating`, is replayed once from
   the stored attempts at boot when absent (`puzzles.rating` log event), and the activity carries it
-  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`. A
+  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`.
+  `GET /api/progress` carries the number as `puzzle_rating`. A
+  puzzles queue (`start_training {mode: "puzzles", motif}`) accepts any fixed choice
+  (`isFixedPracticeMotif`), any stored `puzzles.motif`, or any `puzzle_themes.theme` with stored
+  rows, and refuses any other with `empty_queue`; rated library puzzles of `fork`, `pin`, `skewer`,
+  `back_rank_mate` (`backRankMate`), `checkmate` (`mate`), `endgame` and `promotion` are indexed
+  in `puzzle_themes` on seed. A
   puzzles queue is sampled by index seek (`listPuzzles` with `ratingAround`, never a count) from
   puzzles within 200 points of that number, widening by 200 per side until full and repeating a
   puzzle only when its window has too few new ones, skipping popularity under 50; Any also skips
@@ -376,7 +383,11 @@
 - Bold marks structure (a bullet lead-in, a table header), never emphasis mid-sentence.
 - No process narration anywhere a stranger can read it: no task ids, phase names, review
   rounds, or references to a session. Commit and PR text describe the problem and the
-  change, never how the work was organised.
+  change, never how the work was organised. The `pr-text` job refuses task ids
+  (`chess-coach-` plus 3 to 8 lowercase letters or digits) in the PR title, body and
+  commits (`bin/task-id-guard`); the scratch names `chess-coach-tools`,
+  `chess-coach-probe-`, `chess-coach-ideas-`, `chess-coach-tests-<pid>-<random>` and
+  `chess-coach-tmp` are allowlisted.
 - Comment density is low by default: the non-obvious only, the why and not the what.
 
 ## Git & secrets

@@ -12,7 +12,12 @@ import { Play } from "./screens/Play.js";
 import { Practice } from "./screens/Practice.js";
 import { DEFAULT_COACH_IDLE, useCoachPanel, useTabUnread } from "./state/coach-panel.js";
 import { serviceNotice } from "./state/health.js";
-import { practiceIdleLabel, practiceWaitingLabel, trainingOf } from "./state/practice.js";
+import {
+  isPracticeHub,
+  practiceIdleLabel,
+  practiceWaitingLabel,
+  trainingOf,
+} from "./state/practice.js";
 import { contextLineOf } from "./state/practice-item.js";
 import { useTheme } from "./state/theme.js";
 
@@ -31,7 +36,8 @@ export function App({ fetchHealth }: AppProps = {}) {
   const server = useServer({ tab: SCREEN_TAB[screen] });
   const notice = serviceNotice(useHealth(server.errorCount, fetchHealth ? { fetchHealth } : {}));
   const { theme, toggle: toggleTheme } = useTheme();
-  const coach = useCoachPanel(server.coachMessages, server.tab);
+  const practiceHubVisible = screen === "Practice" && isPracticeHub(server.activity);
+  const coach = useCoachPanel(server.coachMessages, server.tab, practiceHubVisible);
   const { play, games, practice } = server.conversations;
   const unreadTabs = useTabUnread(
     { play: play.coachMessages, games: games.coachMessages, practice: practice.coachMessages },

@@ -19,6 +19,7 @@ import type { Clock } from "../clock.js";
 import { appendChatMessage, createCoachSession } from "../db/chat.js";
 import { type Database, openDatabase } from "../db/open.js";
 import {
+  countRepertoireFirstAttemptsInWindow,
   findDrillRepertoire,
   listRepertoireDrillMoves,
   type RepertoireDrillMove,
@@ -222,6 +223,41 @@ function cardOf(lineText: string, san: string): CardRow | undefined {
        FROM repertoire_cards WHERE position_key = ? AND move_uci = ?`,
     )
     .get(place.positionKey, place.uci) as CardRow | undefined;
+}
+
+interface FirstAttemptRow {
+  position_key: string;
+  move_uci: string;
+  repertoire_id: number;
+  attempted_at: string;
+  correct: number;
+}
+
+const firstAttempts = (): FirstAttemptRow[] =>
+  db
+    .prepare(
+      `SELECT position_key, move_uci, repertoire_id, attempted_at, correct
+       FROM repertoire_first_attempts ORDER BY id`,
+    )
+    .all() as FirstAttemptRow[];
+
+// The row a rated move leaves: its card's key, the variation it was served under, the moment it
+// was rated and 1 for a first attempt got right.
+function attemptOf(
+  lineText: string,
+  san: string,
+  repertoireId: number,
+  correct: 0 | 1,
+  at: Date = T0,
+): FirstAttemptRow {
+  const place = placeOf(lineText, san);
+  return {
+    position_key: place.positionKey,
+    move_uci: place.uci,
+    repertoire_id: repertoireId,
+    attempted_at: at.toISOString(),
+    correct,
+  };
 }
 
 function setIdea(lineText: string, san: string, idea: string): void {
@@ -1206,6 +1242,176 @@ describe("rating a repertoire move", () => {
     state = await play(service, state, "e4");
     expect(state.status).toBe("failed");
     expect(drillOf(state)).toMatchObject({ moves_left: 1, moves_right: 0, moves_wrong: 1 });
+  });
+});
+
+describe("recording the first attempts of a repertoire drill", () => {
+  it("writes a row for a move got right, one for a wrong try and one for a hint, under the variation in play", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4" || san === "Nf3" || san === "Bc4");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = await play(service, state, "e4");
+    now = new Date(T0.getTime() + HOUR_MS);
+    state = await play(service, state, "h3");
+    state = await play(service, state, "Nf3");
+    now = new Date(T0.getTime() + 2 * HOUR_MS);
+    training(await service.trainingHint(state.activity_id));
+    state = await play(service, state, "Bc4");
+
+    // Each row is stamped when its move was rated, so the three differ.
+    expect(firstAttempts()).toEqual([
+      attemptOf("", "e4", id, 1),
+      attemptOf("e4 e5", "Nf3", id, 0, new Date(T0.getTime() + HOUR_MS)),
+      attemptOf("e4 e5 Nf3 Nc6", "Bc4", id, 0, new Date(T0.getTime() + 2 * HOUR_MS)),
+    ]);
+  });
+
+  it("writes a miss when the first thing done at a move is a hint or a shown solution", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4" || san === "Nf3");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = training(await service.trainingShowSolution(state.activity_id));
+    state = await play(service, state, "e4");
+    state = training(await service.trainingHint(state.activity_id));
+    state = await play(service, state, "Nf3");
+
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0), attemptOf("e4 e5", "Nf3", id, 0)]);
+  });
+
+  it("writes one row for a move however many tries it takes, and none for its retries", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    let state = await start(service, id, "due");
+    for (const san of ["a3", "b3", "h3"]) state = await play(service, state, san);
+    training(await service.trainingHint(state.activity_id));
+    training(await service.trainingShowSolution(state.activity_id));
+    state = await play(service, state, "e4");
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+
+    // The missed move comes back on the next pass; getting it right there rates nothing new.
+    state = await next(service, state);
+    state = await play(service, state, "e4");
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+  });
+
+  it("writes no row for a move shown with its answer, and one when a later pass rates it", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    // The setup is known, so 4.c3 is the one new move a recommended drill takes.
+    addCards(SETUP_ROWS, () => false);
+    const service = boot();
+    let state = await start(service, id, "recommended");
+    expect(drillOf(state).first_pass).toBe(true);
+    state = await play(service, state, "h3");
+    state = await play(service, state, "c3");
+    expect(firstAttempts()).toEqual([]);
+
+    now = new Date(T0.getTime() + HOUR_MS);
+    state = await next(service, state);
+    expect(drillOf(state).first_pass).toBe(false);
+    state = await play(service, state, "c3");
+    expect(firstAttempts()).toEqual([
+      attemptOf("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3", id, 1, new Date(T0.getTime() + HOUR_MS)),
+    ]);
+  });
+
+  it("writes a row for a right move that keeps its schedule because it was not due", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, () => false);
+    const stored = cardOf("", "e4");
+    const service = boot();
+    const state = await start(service, id, "all");
+    await play(service, state, "e4");
+
+    expect(cardOf("", "e4")).toEqual(stored);
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 1)]);
+  });
+
+  it("records each move of a drill widened to an opening under its own variation", async () => {
+    const { classical, pianissimo } = addPartingVariations();
+    const service = boot();
+    let state = await startAt(service, classical, "due", "group");
+    for (const san of ["e4", "Nf3", "Bc4", "c3"]) state = await play(service, state, san);
+    // The second variation's move is asked on the next pass, where c3 is the other one's answer.
+    state = await next(service, state);
+    expect(variationOf(state)?.id).toBe(pianissimo);
+    state = await play(service, state, "c3");
+    state = await play(service, state, "d3");
+
+    const parted = "e4 e5 Nf3 Nc6 Bc4 Bc5";
+    expect(firstAttempts()).toEqual([
+      attemptOf("", "e4", classical, 1),
+      attemptOf("e4 e5", "Nf3", classical, 1),
+      attemptOf("e4 e5 Nf3 Nc6", "Bc4", classical, 1),
+      attemptOf(parted, "c3", classical, 1),
+      attemptOf(parted, "d3", pianissimo, 0),
+    ]);
+  });
+
+  it("writes the row once for a move whose first try came before a restart", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const first = boot();
+    await play(first, await start(first, id, "due"), "h3");
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+
+    const second = boot();
+    await play(second, training(await second.resumeTraining()), "e4");
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+  });
+
+  it("returns the count of the moves a drill rated and how many were right first time", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, () => true, 0);
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = await play(service, state, "e4");
+    state = await play(service, state, "h3");
+    state = await play(service, state, "Nf3");
+    training(await service.trainingHint(state.activity_id));
+    state = await play(service, state, "Bc4");
+    for (const san of ["c3", "d4"]) state = await play(service, state, san);
+    state = await next(service, state);
+    state = await play(service, state, "d3");
+    state = await next(service, state);
+    for (const san of ["Nf3", "Bc4"]) state = await play(service, state, san);
+
+    // Six moves were rated: e4, c3, d4 and d3 right first time, Nf3 and Bc4 not; the retries add none.
+    expect(firstAttempts()).toHaveLength(6);
+    expect(countRepertoireFirstAttemptsInWindow(db, id, now)).toEqual({ attempts: 6, right: 4 });
+  });
+
+  describe("beside the card's schedule", () => {
+    it("rolls the card back when the attempt cannot be written", async () => {
+      const id = addVariation("Classical", ITALIAN_ROWS);
+      addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+      const service = boot();
+      const state = await start(service, id, "due");
+      const stored = cardOf("", "e4");
+      db.exec(
+        `CREATE TRIGGER refuse_first_attempt BEFORE INSERT ON repertoire_first_attempts
+         BEGIN SELECT RAISE(ABORT, 'first attempt refused'); END`,
+      );
+
+      await expect(play(service, state, "e4")).rejects.toThrow("first attempt refused");
+      expect(cardOf("", "e4")).toEqual(stored);
+    });
+
+    it("writes no attempt when the card cannot be moved", async () => {
+      const id = addVariation("Classical", ITALIAN_ROWS);
+      addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+      const service = boot();
+      const state = await start(service, id, "due");
+      db.exec(
+        `CREATE TRIGGER refuse_card_review BEFORE UPDATE ON repertoire_cards
+         BEGIN SELECT RAISE(ABORT, 'card review refused'); END`,
+      );
+
+      await expect(play(service, state, "e4")).rejects.toThrow("card review refused");
+      expect(firstAttempts()).toEqual([]);
+    });
   });
 });
 

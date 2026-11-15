@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { ProgressResponseSchema } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Database, openDatabase } from "../db/open.js";
+import { INITIAL_PUZZLE_RATING, setPuzzleRating } from "../puzzles/rating.js";
 import { computeCoachProgress, computeProgress, timeClassOf } from "./compute.js";
 
 let tmp: string;
@@ -283,6 +284,12 @@ describe("computeProgress on a fixture database", () => {
     expect(games).toHaveLength(50);
     expect(games[0]?.played_at).toBe(new Date(2026, 0, 55).toISOString());
   });
+
+  it("serves the current puzzle rating, defaulting to 1200", () => {
+    expect(computeProgress(db, clockOn(10)).puzzle_rating).toBe(INITIAL_PUZZLE_RATING);
+    setPuzzleRating(db, 1337, at(10));
+    expect(computeProgress(db, clockOn(10)).puzzle_rating).toBe(1337);
+  });
 });
 
 describe("Lichess games", () => {
@@ -381,5 +388,11 @@ describe("computeCoachProgress", () => {
     expect(coach).not.toHaveProperty("games");
     expect(coach.games_played).toBe(6);
     expect(coach.streak_days).toBe(3);
+  });
+
+  it("carries the current puzzle rating", () => {
+    expect(computeCoachProgress(db, clockOn(10)).puzzle_rating).toBe(INITIAL_PUZZLE_RATING);
+    setPuzzleRating(db, 1337, at(10));
+    expect(computeCoachProgress(db, clockOn(10)).puzzle_rating).toBe(1337);
   });
 });

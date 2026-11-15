@@ -140,6 +140,8 @@ describe("App", () => {
     expect(log()).toContain("about my game");
     expect(log()).not.toContain("about the puzzle");
     fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+    // The hub keeps the panel closed until the student opens it there.
+    fireEvent.click(screen.getByRole("button", { name: /Expand coach panel/ }));
     expect(log()).toContain("about the puzzle");
     expect(log()).not.toContain("about my game");
     fireEvent.click(screen.getByRole("button", { name: "Games" }));

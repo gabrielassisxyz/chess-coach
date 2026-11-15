@@ -1,5 +1,6 @@
 import type {
   ActivityState,
+  DemoActivity,
   ErrorCode,
   ExploredEvent,
   ProgressResponse,
@@ -228,6 +229,17 @@ export function practiceWaitingLabel(
 
 export function trainingOf(activity: ActivityState | null): TrainingActivity | null {
   return activity?.kind === "training" ? activity : null;
+}
+
+export function demoOverTraining(activity: ActivityState | null): DemoActivity | null {
+  if (activity?.kind === "demo" && activity.returns_to === "training") return activity;
+  return null;
+}
+
+// The Practice hub is on screen when no training item is on the board and no coach demo
+// covers one; both Practice.tsx and App.tsx read this one function.
+export function isPracticeHub(activity: ActivityState | null): boolean {
+  return trainingOf(activity) === null && demoOverTraining(activity) === null;
 }
 
 export function formatElapsed(ms: number): string {
