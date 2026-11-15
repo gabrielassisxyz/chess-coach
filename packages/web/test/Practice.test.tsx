@@ -540,6 +540,70 @@ describe("a card on the board", () => {
       (screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement).disabled,
     ).toBe(false);
   });
+
+  // A card born from a puzzle of several moves: after a right move the server plays the reply and
+  // the card stays open at the next step. Built in a function, since the positions it names are
+  // declared further down this file.
+  const repliedCard = (): TrainingActivity =>
+    card({
+      status: "in_progress",
+      fen: AFTER_E5,
+      last_move: { from: "e7", to: "e5" },
+      legal_moves: legalMovesOf(AFTER_E5),
+      exploring: { fen: AFTER_E5, line_san: [], trail: [] },
+      last_try: { uci: "e2e4", san: "e4", correct: true },
+      moves: playedE4E5,
+    });
+
+  it("shows the reply on the board after a right move and keeps the card open at its heading", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      boards.length = 0;
+      const { rerender } = render(
+        <Practice server={api(card())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+      );
+      dropOnPracticeBoard("e2", "e4");
+      rerender(
+        <Practice server={api(repliedCard())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+      );
+      expect(boards.at(-1)?.fen).toBe(AFTER_E4);
+      act(() => {
+        vi.advanceTimersByTime(MOVE_PAUSE_MS);
+      });
+      expect(boards.at(-1)).toEqual({ movableColor: "white", fen: AFTER_E5, hint: {} });
+      expect(screen.getByRole("heading", { name: "Card 1 of 3" })).toBeTruthy();
+      expect(screen.getByRole("status").textContent).toBe("Best move");
+      expect(screen.getByRole("list", { name: "Moves" }).textContent).toMatch(/e4.*e5/);
+      expect(screen.getByRole("button", { name: "View solution" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers the rating and Continue only after the last move of the line", () => {
+    const { rerender } = render(
+      <Practice server={api(repliedCard())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+    );
+    expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue training" })).toBeNull();
+    const solved = card({
+      status: "solved",
+      fen: AFTER_NF3,
+      turn: "black",
+      input_enabled: false,
+      legal_moves: [],
+      last_move: { from: "g1", to: "f3" },
+      exploring: { fen: AFTER_NF3, line_san: [], trail: [] },
+      last_try: { uci: "g1f3", san: "Nf3", correct: true },
+      moves: [...playedE4E5, { ply: 2, uci: "g1f3", san: "Nf3", by: "student" }],
+      suggested_quality: 4,
+    });
+    rerender(<Practice server={api(solved)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.getByRole("heading", { name: "Card 1 of 3" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Rate your recall" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Solved");
+    expect(document.querySelector(".state-card")?.textContent).toContain("2 moves");
+  });
 });
 
 describe("a puzzle on the board", () => {
