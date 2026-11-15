@@ -358,6 +358,76 @@ describe("030_puzzle_openings", () => {
   });
 });
 
+describe("031_found_notes", () => {
+  // Opened as the server opens it, with foreign keys enforced: found_cards points at
+  // found_positions with ON DELETE CASCADE, so a rebuild of that table would take the cards with it.
+  function databaseAt030(): BetterSqlite3.Database {
+    const all = listMigrations(defaultMigrationsDir);
+    const upTo030 = migrationsDir(
+      Object.fromEntries(
+        all
+          .filter((name) => name < "031")
+          .map((name) => [name, readFileSync(join(defaultMigrationsDir, name), "utf8")]),
+      ),
+    );
+    const db = new BetterSqlite3(join(tmp, "at-030.db"));
+    db.pragma("foreign_keys = ON");
+    runMigrations(db, upTo030);
+    return db;
+  }
+
+  function insertPosition(db: BetterSqlite3.Database, id: string, listed: number): void {
+    db.prepare(
+      `INSERT INTO found_positions
+         (id, fen, color, phase, from_mistake, from_repeat, from_departure, accepted_uci, listed,
+          reached_games, best_games, last_reached_at, game_id, ply, first_found_at)
+       VALUES (?, 'x', 'white', 'opening', 1, 0, 0, '["e2e4"]', ?, 2, 1,
+          '2026-11-15T12:00:00.000Z', 33, 3, '2026-11-15T12:30:00.000Z')`,
+    ).run(id, listed);
+  }
+
+  it("adds a nullable note column and keeps every row and every card that points at one", () => {
+    const db = databaseAt030();
+    insertPosition(db, "own:listed", 1);
+    insertPosition(db, "own:unlisted", 0);
+    db.prepare(
+      `INSERT INTO found_cards (position_id, next_review_at, introduced_at, reviews)
+       VALUES ('own:listed', '2026-11-16T00:00:00.000Z', '2026-11-15T00:00:00.000Z', 2)`,
+    ).run();
+    const positionsBefore = db.prepare("SELECT * FROM found_positions ORDER BY id").all();
+    const cardsBefore = db.prepare("SELECT * FROM found_cards").all();
+
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("031_found_notes.sql");
+
+    expect(db.prepare("SELECT * FROM found_positions ORDER BY id").all()).toEqual(
+      positionsBefore.map((row) => ({ ...(row as object), note: null })),
+    );
+    expect(db.prepare("SELECT * FROM found_cards").all()).toEqual(cardsBefore);
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+    const note = (
+      db.pragma("table_info(found_positions)") as Array<{
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+      }>
+    ).find((column) => column.name === "note");
+    expect(note).toMatchObject({ type: "TEXT", notnull: 0, dflt_value: null });
+    db.close();
+  });
+
+  it("stores a note and takes it back to null", () => {
+    const db = new BetterSqlite3(join(tmp, "new.db"));
+    runMigrations(db, defaultMigrationsDir);
+    insertPosition(db, "own:a", 1);
+    db.prepare("UPDATE found_positions SET note = ? WHERE id = 'own:a'").run("Why it works.");
+    expect(db.prepare("SELECT note FROM found_positions").get()).toEqual({ note: "Why it works." });
+    db.prepare("UPDATE found_positions SET note = NULL").run();
+    expect(db.prepare("SELECT note FROM found_positions").get()).toEqual({ note: null });
+    db.close();
+  });
+});
+
 describe("026_training_run_left", () => {
   const REASONS = ["finished", "ended", "discarded", "replaced", "left"];
 

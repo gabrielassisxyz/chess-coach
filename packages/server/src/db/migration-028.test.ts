@@ -28,7 +28,12 @@ const COLUMNS: Array<[name: string, type: string]> = [
   ["game_id", "INTEGER"],
   ["ply", "INTEGER"],
   ["first_found_at", "TEXT"],
+  // Added by 031_found_notes.sql, after the table was created.
+  ["note", "TEXT"],
 ];
+
+// The key reports no NOT NULL (see below), and the note is the one column a row may leave empty.
+const MAY_BE_NULL = new Set(["id", "note"]);
 
 const ROW = {
   id: "own:0123456789abcdef",
@@ -62,7 +67,7 @@ describe("028_found_positions", () => {
   });
 
   // The key reads `id TEXT PRIMARY KEY`, as in puzzles, so SQLite reports no NOT NULL on it.
-  it("creates every column as text or integer, not null, keyed by the own: id", () => {
+  it("creates every column as text or integer, not null but the note, keyed by the own: id", () => {
     runMigrations(db, defaultMigrationsDir);
     const columns = db.pragma("table_info(found_positions)") as Array<{
       name: string;
@@ -71,7 +76,12 @@ describe("028_found_positions", () => {
       pk: number;
     }>;
     expect(columns.map(({ name, type, notnull, pk }) => [name, type, notnull, pk])).toEqual(
-      COLUMNS.map(([name, type]) => [name, type, name === "id" ? 0 : 1, name === "id" ? 1 : 0]),
+      COLUMNS.map(([name, type]) => [
+        name,
+        type,
+        MAY_BE_NULL.has(name) ? 0 : 1,
+        name === "id" ? 1 : 0,
+      ]),
     );
     expect(db.pragma("foreign_key_list(found_positions)")).toEqual([]);
   });
@@ -79,7 +89,7 @@ describe("028_found_positions", () => {
   it("stores a row, and refuses a second one for the same position", () => {
     runMigrations(db, defaultMigrationsDir);
     insert(ROW);
-    expect(db.prepare("SELECT * FROM found_positions").all()).toEqual([ROW]);
+    expect(db.prepare("SELECT * FROM found_positions").all()).toEqual([{ ...ROW, note: null }]);
     expect(() => insert(ROW)).toThrow(/UNIQUE/);
   });
 
