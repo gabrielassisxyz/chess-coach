@@ -10,6 +10,7 @@ export interface HealthResponse {
 
 export * from "./activity.js";
 export * from "./events.js";
+export * from "./found-positions.js";
 export * from "./games.js";
 export * from "./import.js";
 export * from "./motifs.js";

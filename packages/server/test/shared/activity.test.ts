@@ -169,3 +169,56 @@ describe("ActivityState schemas", () => {
     }
   });
 });
+
+describe("start_training for the positions from the student's games", () => {
+  const start = (fields: Record<string, unknown>) =>
+    ClientCommandSchema.safeParse({ type: "start_training", command_id: "c", ...fields });
+
+  it("accepts the found mode with each scope, alone or with a colour, a phase and a position", () => {
+    for (const scope of ["recommended", "due", "all"]) {
+      expect(start({ mode: "found", scope }).success).toBe(true);
+    }
+    const narrowed = start({
+      mode: "found",
+      scope: "all",
+      color: "black",
+      phase: "endgame",
+      position: "own:0123456789abcdef",
+    });
+    expect(narrowed.success).toBe(true);
+    expect(narrowed.data).toMatchObject({ phase: "endgame", position: "own:0123456789abcdef" });
+    for (const phase of ["opening", "middlegame"]) {
+      expect(start({ mode: "found", scope: "due", phase }).success).toBe(true);
+    }
+  });
+
+  it.each([
+    ["no scope", { mode: "found" }],
+    ["no scope with filters", { mode: "found", color: "white", phase: "opening" }],
+    ["another scope", { mode: "found", scope: "weekly" }],
+    ["another colour", { mode: "found", scope: "all", color: "green" }],
+    ["another phase", { mode: "found", scope: "all", phase: "late" }],
+    ["an empty position", { mode: "found", scope: "all", position: "" }],
+    ["a position that is no id", { mode: "found", scope: "all", position: "x".repeat(65) }],
+  ])("refuses %s with a validation error", (_name, fields) => {
+    const parsed = start(fields);
+    expect(parsed.success).toBe(false);
+  });
+
+  it("names the missing scope in the error", () => {
+    expect(start({ mode: "found" }).error?.issues).toMatchObject([{ path: ["scope"] }]);
+  });
+
+  it("leaves the other modes as they were, with no scope needed", () => {
+    for (const fields of [
+      { mode: "srs" },
+      { mode: "puzzles", motif: "fork" },
+      { mode: "openings", color: "white" },
+      { mode: "repertoire", repertoire_id: 3 },
+      { mode: "repertoire", repertoire_id: 3, scope: "due", level: "group" },
+    ]) {
+      expect(start(fields).success).toBe(true);
+    }
+    expect(start({ mode: "nope", scope: "all" }).success).toBe(false);
+  });
+});

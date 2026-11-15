@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActivityService } from "../../src/activity/service.js";
 import { buildApp } from "../../src/app.js";
 import { createCoachSession } from "../../src/db/chat.js";
+import { insertFoundPosition } from "../../src/db/found-positions.js";
 import { type Database, openDatabase } from "../../src/db/open.js";
 import { endRunsLeftOpenAtStart } from "../../src/db/training.js";
 import { EngineFault } from "../../src/engine/errors.js";
@@ -429,6 +430,82 @@ describe("training over the socket", () => {
     await next("bootstrap");
     socket.send(JSON.stringify({ type: "explore", command_id: "c1", kind: "undo" }));
     expect(await next("error")).toMatchObject({ code: "not_exploring", command_id: "c1" });
+    socket.close();
+  });
+
+  it("starts a drill of the positions from games with its filters, and refuses one with no scope", async () => {
+    const db = seededDatabase();
+    for (const [id, phase] of [
+      ["own:endgame", "endgame"],
+      ["own:opening", "opening"],
+    ] as const) {
+      insertFoundPosition(db, {
+        id,
+        fen: BACK_RANK,
+        color: "white",
+        phase,
+        fromMistake: true,
+        fromRepeat: false,
+        fromDeparture: false,
+        listed: true,
+        acceptedUci: ["a1a8"],
+        reachedGames: 1,
+        bestGames: 0,
+        lastReachedAt: "2026-11-01T00:00:00.000Z",
+        gameId: 1,
+        ply: 40,
+        firstFoundAt: "2026-11-01T00:00:00.000Z",
+      });
+      db.prepare(
+        `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
+         VALUES (?, 'own-games', ?, 'beginner', ?, '["a1a8"]', '["Ra8#"]', 'why')`,
+      ).run(id, `${phase}-white`, BACK_RANK);
+    }
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c1",
+        mode: "found",
+        scope: "recommended",
+        phase: "endgame",
+      }),
+    );
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      mode: "found",
+      status: "prompt",
+      item: { kind: "puzzle", puzzle_id: "own:endgame", queue_length: 1 },
+    });
+    await next("activity");
+    expect(ServerEventSchema.parse(await next("chat_row"))).toMatchObject({
+      tab: "practice",
+      entry: { role: "system", kind: "text", content: { label: "From my games" } },
+    });
+    socket.send(JSON.stringify({ type: "try_move", command_id: "c2", uci: "a1a8" }));
+    expect(await next("training")).toMatchObject({ status: "solved" });
+    expect(db.prepare("SELECT position_id, reviews FROM found_cards").all()).toEqual([
+      { position_id: "own:endgame", reviews: 1 },
+    ]);
+
+    socket.send(JSON.stringify({ type: "start_training", command_id: "c3", mode: "found" }));
+    expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: "c3" });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 1 });
+
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c4",
+        mode: "found",
+        scope: "all",
+        position: "own:opening",
+      }),
+    );
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      mode: "found",
+      item: { puzzle_id: "own:opening", queue_length: 1 },
+    });
     socket.close();
   });
 });

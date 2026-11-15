@@ -130,7 +130,7 @@ export type ItemOutcome = "solved" | "failed";
 
 export interface TrainingRunRow {
   id: number;
-  mode: "srs" | "puzzles" | "openings" | "repertoire";
+  mode: "srs" | "puzzles" | "openings" | "repertoire" | "found";
   motif: string | null;
   color: "white" | "black" | null;
   size: number;

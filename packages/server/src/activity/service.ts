@@ -1,6 +1,7 @@
 import type {
   ActivityKind,
   ActivityState,
+  FoundPositionPhase,
   PromotionPiece,
   RepertoireLevel,
   RepertoireScope,
@@ -255,6 +256,8 @@ export class ActivityService {
     repertoireId?: number;
     scope?: RepertoireScope;
     level?: RepertoireLevel;
+    phase?: FoundPositionPhase;
+    position?: string;
   }): Promise<ActivityState> {
     return this.enqueue("training", async () => {
       if (!this.trainingDeps) {

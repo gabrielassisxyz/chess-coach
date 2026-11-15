@@ -2,6 +2,7 @@ import type {
   ExpectedMove,
   PlayedMove,
   QueueOutcome,
+  RepertoireScope,
   ExploredEvent as ShownEvent,
   TrainingActivity,
   TrainingItem,
@@ -27,6 +28,8 @@ import type {
   TriedMove,
 } from "../coach/notify.js";
 import { appendChatMessage } from "../db/chat.js";
+import { rateFoundCard } from "../db/found-cards.js";
+import { listListedFoundPositions } from "../db/found-positions.js";
 import type { PlayerColor } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import {
@@ -60,6 +63,7 @@ import {
 } from "../db/training.js";
 import { applyUci } from "../engine/moves.js";
 import type { NotificationSink } from "../game/notifications.js";
+import type { PositionPhase } from "../openings/game-phase.js";
 import { computeThemeStats } from "../progress/theme-stats.js";
 import {
   type AttemptState,
@@ -75,6 +79,7 @@ import { SrsError } from "../srs/errors.js";
 import type { AnswerResult, ReviewDesk } from "../srs/review.js";
 import { ActivityError } from "./errors.js";
 import { Exploration } from "./exploration.js";
+import { selectFoundDrillPositions } from "./found-drill.js";
 import type { RepertoireTryJudge } from "./repertoire-session.js";
 
 export type DeskPort = Pick<
@@ -127,13 +132,25 @@ export interface TrainingInput {
    * without it the drill serves every position of the colour. Other modes ignore it.
    */
   opening?: string | undefined;
+  /** Which positions from the student's games a found drill serves; the other modes ignore it. */
+  scope?: RepertoireScope | undefined;
+  /** A found drill narrowed to one phase, or to one listed position by its id. */
+  phase?: PositionPhase | undefined;
+  position?: string | undefined;
 }
 
 export type TrainingItemRef = { kind: "card"; id: number } | { kind: "puzzle"; id: string };
 
+// `accepted` is set on a position from the student's games: every move it takes as right.
 type QueueEntry =
   | { kind: "card"; cardId: number }
-  | { kind: "puzzle"; id: string; motif: string; difficulty: string };
+  | {
+      kind: "puzzle";
+      id: string;
+      motif: string;
+      difficulty: string;
+      accepted?: readonly string[];
+    };
 
 // A repertoire pass is served by RepertoireSession, never by a queue.
 type QueueItem = Exclude<TrainingItem, { kind: "repertoire" }>;
@@ -250,6 +267,29 @@ function isLegalUci(fen: string, uci: string): boolean {
   return new Chess(fen)
     .moves({ verbose: true })
     .some((move) => `${move.from}${move.to}${move.promotion ?? ""}` === uci);
+}
+
+// A drill of the positions from the student's games reads them as the From my games list does,
+// so a filter narrows the drill exactly as it narrows the list; an empty one is refused here.
+function foundDrillQueueOf(deps: TrainingDeps, input: TrainingInput): QueueEntry[] {
+  if (input.scope === undefined) {
+    throw new ActivityError("empty_queue", "choose which positions from your games to drill");
+  }
+  const { color, phase, position } = input;
+  const listed = listListedFoundPositions(deps.db, { color, phase, position });
+  const now = (deps.clock ?? systemClock).now();
+  const queue = selectFoundDrillPositions(listed, input.scope, now);
+  if (queue.length === 0) {
+    const what = position === undefined ? "no position from your games is" : "no such position is";
+    throw new ActivityError("empty_queue", `${what} in this drill`);
+  }
+  return queue.map((found) => ({
+    kind: "puzzle",
+    id: found.id,
+    motif: found.motif,
+    difficulty: found.difficulty,
+    accepted: found.acceptedUci,
+  }));
 }
 
 // A line is the student's move, the reply and a move again, and it ends on the student's move, so
@@ -555,6 +595,7 @@ export class TrainingRun implements PracticeRunPort {
   }
 
   private static materialize(deps: TrainingDeps, input: TrainingInput): DrawnQueue {
+    if (input.mode === "found") return { entries: foundDrillQueueOf(deps, input), endless: false };
     if (input.mode === "srs") {
       const due = deps.desk.listDueCards(DUE_QUEUE_SIZE);
       return { entries: due.map((card) => ({ kind: "card", cardId: card.id })), endless: false };
@@ -745,6 +786,7 @@ export class TrainingRun implements PracticeRunPort {
     }
     const square = expectedUci.slice(0, 2);
     this.transition(() => {
+      this.rateFoundPosition(s, false);
       s.hintSquare = square;
       if (!s.hinted) {
         s.hinted = true;
@@ -1005,6 +1047,7 @@ export class TrainingRun implements PracticeRunPort {
       const code = outcome.reason === "illegal" ? "illegal_move" : "item_finished";
       throw new ActivityError(code, `the puzzle refused ${uci}: ${outcome.reason}`);
     }
+    this.rateFoundPosition(s, outcome.correct);
     this.recordTry(s, before.cursor, uci, outcome.correct, before.fen);
     const state = outcome.state;
     s.attempt = state;
@@ -1025,6 +1068,7 @@ export class TrainingRun implements PracticeRunPort {
   }
 
   private givePuzzleUp(s: Served, item: TrainingItem & { kind: "puzzle" }): void {
+    this.rateFoundPosition(s, false);
     const state = giveUp(s.attempt as AttemptState);
     const expectedUci = state.solution[state.cursor] as string;
     s.attempt = state;
@@ -1070,7 +1114,10 @@ export class TrainingRun implements PracticeRunPort {
     });
     s.ratingChange = this.movePuzzleRating(item.rating ?? null, firstTry);
     this.tally(solved);
-    if (!firstTry) this.cardFromMiss(item, state, s.tries.find((t) => !t.correct)?.uci ?? null);
+    // A position from the student's games keeps its own schedule, so a miss stays off the review desk.
+    if (!firstTry && this.mode !== "found") {
+      this.cardFromMiss(item, state, s.tries.find((t) => !t.correct)?.uci ?? null);
+    }
     // Nothing needed explaining, so the coach hears of it only when the student asks: a row written
     // now would still be flushed with the next wake or at the next start and draw the same reply.
     if (firstTry) {
@@ -1130,6 +1177,15 @@ export class TrainingRun implements PracticeRunPort {
       createdAt: this.clock.now().toISOString(),
       puzzleId: item.puzzle_id,
     });
+  }
+
+  // A position from the student's games is rated once, by the first thing the student does on it:
+  // a right try passes it, and a wrong try, a hint or a give-up fails it. Each caller runs inside
+  // `transition`, so the card moves with the step that rated it or not at all.
+  private rateFoundPosition(s: Served, right: boolean): void {
+    if (this.mode !== "found" || s.item.kind !== "puzzle") return;
+    if (s.tries.length > 0 || s.hinted || s.gaveUp) return;
+    rateFoundCard(this.deps.db, s.item.puzzle_id, right, this.clock.now());
   }
 
   private tally(correct: boolean): void {
@@ -1227,7 +1283,7 @@ export class TrainingRun implements PracticeRunPort {
       orientation: turnOf(puzzle.fen),
       lastMove: null,
       expected: null,
-      attempt: startAttempt(puzzle.fen, puzzle.solution),
+      attempt: startAttempt(puzzle.fen, puzzle.solution, entry.accepted),
       ...ledger({ kind: "puzzle", cardId: null, puzzleId: entry.id, exposureId: null }, puzzle.fen),
     };
   }

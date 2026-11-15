@@ -77,6 +77,78 @@ export function listFoundPositions(db: Database): FoundPosition[] {
   return (rows as FoundPositionRow[]).map(toFoundPosition);
 }
 
+/** What the From my games list and its drill narrow the positions to; each filter is optional. */
+export interface FoundPositionFilter {
+  color?: PlayerColor | undefined;
+  phase?: PositionPhase | undefined;
+  /** One position by its id; one that is not listed matches nothing. */
+  position?: string | undefined;
+}
+
+/** A listed position with its puzzle's header and the schedule the drill keeps for it. */
+export interface ListedFoundPosition extends FoundPosition {
+  motif: string;
+  difficulty: string;
+  openingName: string | null;
+  /** When the drill asks for it again; null while no drill has rated it, which makes it new. */
+  nextReviewAt: string | null;
+}
+
+interface ListedFoundPositionRow extends FoundPositionRow {
+  motif: string;
+  difficulty: string;
+  opening_name: string | null;
+  next_review_at: string | null;
+}
+
+const filterParams = (filter: FoundPositionFilter) => ({
+  color: filter.color ?? null,
+  phase: filter.phase ?? null,
+  position: filter.position ?? null,
+});
+
+/**
+ * The positions the list shows and the drill serves, read once for both so they never disagree.
+ * A position is served through its puzzle, so one whose puzzle is gone is left out of both.
+ */
+export function listListedFoundPositions(
+  db: Database,
+  filter: FoundPositionFilter,
+): ListedFoundPosition[] {
+  const rows = db
+    .prepare(
+      `SELECT f.*, p.motif, p.difficulty, p.opening_name, c.next_review_at
+       FROM found_positions f
+       JOIN puzzles p ON p.id = f.id
+       LEFT JOIN found_cards c ON c.position_id = f.id
+       WHERE f.listed = 1 AND (@color IS NULL OR f.color = @color)
+         AND (@phase IS NULL OR f.phase = @phase) AND (@position IS NULL OR f.id = @position)
+       ORDER BY f.id`,
+    )
+    .all(filterParams(filter)) as ListedFoundPositionRow[];
+  return rows.map((row) => ({
+    ...toFoundPosition(row),
+    motif: row.motif,
+    difficulty: row.difficulty,
+    openingName: row.opening_name,
+    nextReviewAt: row.next_review_at,
+  }));
+}
+
+/** The candidates kept out of the list under the same filters: the ones with `listed = 0`. */
+export function countUnlistedFoundPositions(
+  db: Database,
+  filter: Omit<FoundPositionFilter, "position">,
+): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS unlisted FROM found_positions
+       WHERE listed = 0 AND (@color IS NULL OR color = @color) AND (@phase IS NULL OR phase = @phase)`,
+    )
+    .get({ color: filter.color ?? null, phase: filter.phase ?? null }) as { unlisted: number };
+  return row.unlisted;
+}
+
 const verdictParams = (verdict: FoundPositionVerdict) => ({
   phase: verdict.phase,
   fromMistake: verdict.fromMistake ? 1 : 0,
