@@ -10,42 +10,10 @@ import {
   shownMoveOf,
   variationNameOf,
 } from "../src/state/repertoire-drill.js";
-import { menuOf } from "../src/state/repertoires-api.js";
-import {
-  CLASSICAL_VARIATION,
-  italianRepertoire,
-  repertoireActivity,
-  repertoireList,
-} from "./practice-fixtures.js";
+import { CLASSICAL_VARIATION, repertoireActivity, repertoireList } from "./practice-fixtures.js";
 
 const drillOf = (overrides: Partial<RepertoireDrill> = {}): RepertoireDrill =>
   repertoireActivity({ drill: overrides }).repertoire as RepertoireDrill;
-
-describe("menuOf", () => {
-  const entry = (overrides: object) => ({ ...italianRepertoire, ...overrides }) as never;
-
-  it("puts White first and an opening's due count adds up its variations", () => {
-    const menu = menuOf([
-      entry({ id: 9, side: "black", group_name: "Sicilian Defense" }),
-      entry({ id: 1, moves: { recommended: 3, due: 4, all: 9 } }),
-      entry({
-        id: 2,
-        variation_name: "Evans Gambit (4.b4)",
-        moves: { recommended: 1, due: 2, all: 5 },
-      }),
-    ]);
-    expect(menu.map((side) => side.heading)).toEqual(["White openings", "Black openings"]);
-    const [white] = menu;
-    expect(white?.openings).toHaveLength(1);
-    expect(white?.openings[0]).toMatchObject({ name: "Italian Game", due: 6 });
-    expect(white?.openings[0]?.variations.map((variation) => variation.id)).toEqual([1, 2]);
-  });
-
-  it("is empty for an empty list and leaves out a side with no opening", () => {
-    expect(menuOf([])).toEqual([]);
-    expect(menuOf(repertoireList).map((side) => side.side)).toEqual(["white"]);
-  });
-});
 
 describe("variationNameOf", () => {
   it("prefers the position's own opening name", () => {

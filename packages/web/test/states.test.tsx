@@ -1,4 +1,4 @@
-import type { GameSummary, OpeningDrillsResponse } from "@chess-coach/shared";
+import type { GameSummary } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Games } from "../src/screens/Games.js";
@@ -6,7 +6,7 @@ import { Practice } from "../src/screens/Practice.js";
 import type { GamesApi } from "../src/state/games-api.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import { COACH_GAME_SOURCE, idleImportApi } from "./fixtures.js";
-import { openPracticePage, progressOf } from "./practice-fixtures.js";
+import { progressOf } from "./practice-fixtures.js";
 import { serverApi } from "./server-api.js";
 
 afterEach(cleanup);
@@ -91,7 +91,6 @@ const hub = {
   fetchProgress: async () => progressOf(),
   fetchRepertoires: async () => [],
   fetchRepertoireList: async () => ({ repertoires: [], met: [] }),
-  fetchOpeningDrills: async () => ({ white: [], black: [] }),
 };
 
 describe("Practice states", () => {
@@ -113,17 +112,14 @@ describe("Practice states", () => {
       .mockRejectedValueOnce(new Error("x"))
       .mockReturnValueOnce(second.promise);
     const fetchProgress = vi.fn(hub.fetchProgress);
-    const fetchRepertoires = vi.fn(hub.fetchRepertoires);
     const fetchRepertoireList = vi.fn(hub.fetchRepertoireList);
-    const fetchOpeningDrills = vi.fn(hub.fetchOpeningDrills);
     render(
       <Practice
         server={serverApi()}
         fetchMotifs={fetchMotifs}
         fetchProgress={fetchProgress}
-        fetchRepertoires={fetchRepertoires}
+        fetchRepertoires={hub.fetchRepertoires}
         fetchRepertoireList={fetchRepertoireList}
-        fetchOpeningDrills={fetchOpeningDrills}
       />,
     );
     const card = await screen.findByRole("region", { name: "Puzzles by motif" });
@@ -140,8 +136,7 @@ describe("Practice states", () => {
     expect(within(card).getByRole("status").textContent).toBe("Loading motifs.");
     expect(fetchMotifs).toHaveBeenCalledTimes(2);
     expect(fetchProgress).toHaveBeenCalledTimes(1);
-    expect(fetchRepertoires).toHaveBeenCalledTimes(1);
-    expect(fetchOpeningDrills).toHaveBeenCalledTimes(1);
+    expect(fetchRepertoireList).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       second.resolve([{ motif: "opening_trap", count: 4 }]);
@@ -189,17 +184,14 @@ describe("Practice states", () => {
       .mockRejectedValueOnce(new Error("offline"))
       .mockReturnValueOnce(second.promise);
     const fetchMotifs = vi.fn(hub.fetchMotifs);
-    const fetchRepertoires = vi.fn(hub.fetchRepertoires);
     const fetchRepertoireList = vi.fn(hub.fetchRepertoireList);
-    const fetchOpeningDrills = vi.fn(hub.fetchOpeningDrills);
     render(
       <Practice
         server={serverApi()}
         fetchProgress={fetchProgress}
         fetchMotifs={fetchMotifs}
-        fetchRepertoires={fetchRepertoires}
+        fetchRepertoires={hub.fetchRepertoires}
         fetchRepertoireList={fetchRepertoireList}
-        fetchOpeningDrills={fetchOpeningDrills}
       />,
     );
     const card = await screen.findByRole("region", { name: "Due cards" });
@@ -212,8 +204,7 @@ describe("Practice states", () => {
     expect(within(card).getByRole("status").textContent).toBe("Loading your cards.");
     expect(fetchProgress).toHaveBeenCalledTimes(2);
     expect(fetchMotifs).toHaveBeenCalledTimes(1);
-    expect(fetchRepertoires).toHaveBeenCalledTimes(1);
-    expect(fetchOpeningDrills).toHaveBeenCalledTimes(1);
+    expect(fetchRepertoireList).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       second.resolve(progressOf());
@@ -230,60 +221,6 @@ describe("Practice states", () => {
       "Your card numbers could not be loaded.",
     );
     expect(within(card).getByRole("button", { name: "Review due cards" })).toBeTruthy();
-  });
-
-  it("offers Try again in Openings when game drills fail and retries only opening drills", async () => {
-    const second = deferred<OpeningDrillsResponse>();
-    const fetchOpeningDrills = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("down"))
-      .mockReturnValueOnce(second.promise);
-    const fetchProgress = vi.fn(hub.fetchProgress);
-    const fetchMotifs = vi.fn(hub.fetchMotifs);
-    const fetchRepertoires = vi.fn(hub.fetchRepertoires);
-    render(
-      <Practice
-        server={serverApi()}
-        fetchProgress={fetchProgress}
-        fetchMotifs={fetchMotifs}
-        fetchRepertoires={fetchRepertoires}
-        fetchRepertoireList={hub.fetchRepertoireList}
-        fetchOpeningDrills={fetchOpeningDrills}
-      />,
-    );
-    openPracticePage("Openings");
-
-    const card = await screen.findByRole("region", { name: "Openings" });
-    const alert = await within(card).findByRole("alert");
-    expect(alert.className).toContain("practice__failure");
-    expect(alert.textContent).toBe("The positions from your games could not be loaded.");
-
-    fireEvent.click(within(card).getByRole("button", { name: "Try again" }));
-    expect(within(card).getByRole("status").textContent).toBe("Loading positions from your games.");
-    expect(fetchOpeningDrills).toHaveBeenCalledTimes(2);
-    expect(fetchProgress).toHaveBeenCalledTimes(1);
-    expect(fetchMotifs).toHaveBeenCalledTimes(1);
-    expect(fetchRepertoires).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      second.resolve({
-        white: [
-          {
-            opening: "Sicilian Defense",
-            positions: 6,
-            attempts_30d: 0,
-            first_try_30d: 0,
-            repertoire_id: null,
-          },
-        ],
-        black: [],
-      });
-      await second.promise;
-    });
-    expect(within(card).queryByRole("alert")).toBeNull();
-    expect(
-      await screen.findByRole("button", { name: "Drill Sicilian Defense as White" }),
-    ).toBeTruthy();
   });
 
   it("shows a starting state until the server answers, then the refusal", async () => {
