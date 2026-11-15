@@ -14,7 +14,7 @@ import { CoachLoginCard } from "../components/CoachLoginCard.js";
 import { EngineMissingCard } from "../components/EngineMissingCard.js";
 import { EngineStrip } from "../components/EngineStrip.js";
 import { PracticeColumn, type PracticeColumnActions } from "../components/PracticeColumn.js";
-import { PracticeHub, ResumeCard } from "../components/PracticeHub.js";
+import { PracticeHub } from "../components/PracticeHub.js";
 import { PuzzleBoardBar } from "../components/PuzzleBoardBar.js";
 import { useElapsed } from "../hooks/useElapsed.js";
 import { useEngineAnalysis } from "../hooks/useEngineAnalysis.js";
@@ -28,15 +28,11 @@ import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
 import { serviceNotice } from "../state/health.js";
 import { type FetchOpeningDrills, fetchOpeningDrillsFromServer } from "../state/openings-api.js";
 import {
-  clearLastSession,
   DEFAULT_DRILL_SIZE,
   type DrillSize,
   type FetchMotifs,
   fetchMotifsFromServer,
-  type LastSession,
-  loadLastSession,
   OFFLINE_START_TEXT,
-  saveLastSession,
   startFailureText,
   type TrainingView,
   trainingOf,
@@ -176,12 +172,9 @@ function Hub({
   fetchRepertoireList,
   fetchOpeningDrills,
   fetchHealth,
-  lastSession,
 }: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress" | "fetchRepertoires">> &
   Required<Pick<PracticeProps, "fetchOpeningDrills">> &
-  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList"> & {
-    lastSession: LastSession | null;
-  }) {
+  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList">) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
   const repertoires = useLoaded(fetchRepertoires);
@@ -201,14 +194,6 @@ function Hub({
         <EngineMissingCard notice={notice} onRetry={() => setRetries((count) => count + 1)} />
       ) : null}
       {login ? <CoachLoginCard fix={login.fix} onCheckAgain={login.checkAgain} /> : null}
-      {server.pausedTraining ? (
-        <ResumeCard
-          paused={server.pausedTraining}
-          engineMissing={engineMissing}
-          onResume={() => server.send({ type: "resume_training" })}
-          onDiscard={() => server.send({ type: "discard_training" })}
-        />
-      ) : null}
       <PracticeHub
         progress={progress}
         motifs={motifs}
@@ -222,7 +207,6 @@ function Hub({
         onStartRepertoire={beginRepertoire}
         openingDrills={openingDrills}
         onStartOpening={beginOpening}
-        lastSession={lastSession}
         fetchRepertoireList={fetchRepertoireList}
       />
     </div>
@@ -427,37 +411,21 @@ export function Practice({
   fetchHealth,
 }: PracticeProps) {
   const sessionTraining = trainingOf(server.activity);
-  const [lastSession, setLastSession] = useState<LastSession | null>(() => loadLastSession());
   const send = server.send;
   const summary = sessionTraining?.summary ?? null;
   const summaryActivityId = sessionTraining?.activity_id ?? null;
   const endedFor = useRef<number | null>(null);
-  // A finished queue lands on the hub: keep the tally, then end the run.
+  // A finished queue lands on the hub: end the run.
   useEffect(() => {
-    if (!sessionTraining || !summary || summaryActivityId === null) return;
-    const unit: LastSession["unit"] = sessionTraining.repertoire ? "moves" : undefined;
-    setLastSession((prev) => {
-      const same = prev?.solved === summary.solved && prev.failed === summary.failed;
-      if (prev && same && prev.unit === unit) return prev;
-      const next: LastSession = { solved: summary.solved, failed: summary.failed, unit };
-      saveLastSession(next);
-      return next;
-    });
+    if (!summary || summaryActivityId === null) return;
     if (endedFor.current !== summaryActivityId) {
       endedFor.current = summaryActivityId;
       send({ type: "end_training", activity_id: summaryActivityId });
     }
-  }, [sessionTraining, summary, summaryActivityId, send]);
-  // A fresh session replaces the line until it finishes.
+  }, [summary, summaryActivityId, send]);
+  // A session back on an item has not been ended yet.
   useEffect(() => {
-    if (sessionTraining && sessionTraining.summary === null) {
-      endedFor.current = null;
-      setLastSession((prev) => {
-        if (prev === null) return prev;
-        clearLastSession();
-        return null;
-      });
-    }
+    if (sessionTraining && sessionTraining.summary === null) endedFor.current = null;
   }, [sessionTraining]);
 
   const demo = demoOverTraining(server.activity);
@@ -501,7 +469,6 @@ export function Practice({
           fetchRepertoireList={fetchRepertoireList}
           fetchOpeningDrills={fetchOpeningDrills}
           fetchHealth={fetchHealth}
-          lastSession={lastSession}
         />
       </section>
     );

@@ -604,6 +604,11 @@ describe("listPuzzles by stored opening name", () => {
   it("keeps serving every position of the motif when no name is given", () => {
     expect(listPuzzles(db, { motif: "opening-white", limit: 50 }).puzzles).toHaveLength(4);
   });
+
+  it("serves a stored name with an apostrophe through bound parameters", () => {
+    addNamed("own:kings", "opening-white", "King's Pawn Game: Damiano Defense");
+    expect(idsOf(["King's Pawn Game: Damiano Defense"])).toEqual(["own:kings"]);
+  });
 });
 
 describe("getPuzzle and recordPuzzleAttempt", () => {

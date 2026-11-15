@@ -47,12 +47,6 @@
   font-weight: 600;
 }
 
-.practice__resume-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
 .practice__card-note,
 .practice__reading {
   color: var(--text-2);
@@ -207,14 +201,6 @@
   margin: 0;
   color: var(--error-text);
   font-size: var(--text-sm);
-}
-
-.practice__last-session {
-  grid-column: 1 / -1;
-  margin: 0;
-  color: var(--text-2);
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
 }
 
 /* The confirm sits over everything: inside a clipped panel it would paint under the board,

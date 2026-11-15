@@ -1,4 +1,5 @@
 import {
+  type AddableOpeningsResponse,
   type OpeningDrill,
   type OpeningDrillColor,
   type OpeningDrillsResponse,
@@ -11,6 +12,7 @@ import type { Database } from "../db/open.js";
 import { listOpeningFamilies } from "../db/puzzles.js";
 import { listDrillRepertoires } from "../db/repertoire-cards.js";
 import { type Log, silentLog } from "../log.js";
+import { listAddableOpenings } from "../openings/addable-openings.js";
 import { ExplorerError } from "../openings/explorer-client.js";
 import type { ExplorerResult } from "../openings/from-explorer.js";
 import type { GenerationResult } from "../openings/from-games.js";
@@ -23,6 +25,7 @@ import {
   type RepertoirePointsCheck,
   type RepertoireResult,
 } from "../openings/from-repertoire.js";
+import { NO_OPENING_NAMES, type OpeningNames } from "../openings/names.js";
 import { IdeaSessionError, type RepertoireIdeasResult } from "../openings/repertoire-ideas.js";
 import {
   checkRepertoireRoot,
@@ -118,6 +121,25 @@ export function registerOpeningDrillRoutes(
           null,
       }));
     return { white: drillsOf("white"), black: drillsOf("black") };
+  });
+}
+
+export interface AddableOpeningsRouteOptions {
+  names?: OpeningNames;
+  /** Lists the entries; without it the route answers from the database alone, with null shares. */
+  list?: () => Promise<AddableOpeningsResponse>;
+}
+
+// Every opening Black can leave the student's 1.e4 path with, for the Add an opening list. The
+// provider is injected so the server can build its explorer per request; tests pass a fake.
+export function registerAddableOpeningsRoute(
+  app: FastifyInstance,
+  db: Database,
+  options: AddableOpeningsRouteOptions = {},
+): void {
+  app.get("/api/openings/addable", async (): Promise<AddableOpeningsResponse> => {
+    if (options.list) return options.list();
+    return listAddableOpenings(db, options.names ?? NO_OPENING_NAMES, null);
   });
 }
 

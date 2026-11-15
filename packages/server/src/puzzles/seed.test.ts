@@ -112,28 +112,46 @@ describe("seedPuzzles and puzzle_themes", () => {
     return root;
   }
 
-  it("gives every rated fork, pin and skewer of the library one row", () => {
+  it("gives every rated library puzzle of the indexed motifs one theme row", () => {
     seedPuzzles(db, contentDir());
     const expected = db
       .prepare(
-        `SELECT motif AS theme, difficulty_rating AS rating, id AS puzzle_id FROM puzzles
-         WHERE motif IN ('fork', 'pin', 'skewer') AND difficulty_rating IS NOT NULL
+        `SELECT CASE motif
+                  WHEN 'back_rank_mate' THEN 'backRankMate'
+                  WHEN 'checkmate' THEN 'mate'
+                  ELSE motif
+                END AS theme,
+                difficulty_rating AS rating,
+                id AS puzzle_id
+         FROM puzzles
+         WHERE motif IN ('fork', 'pin', 'skewer', 'back_rank_mate', 'checkmate', 'endgame', 'promotion')
+           AND difficulty_rating IS NOT NULL
          ORDER BY puzzle_id, theme`,
       )
       .all();
-    expect(expected.length).toBeGreaterThan(80);
+    expect(expected.length).toBeGreaterThan(160);
     expect(themeRows()).toEqual(expected);
   });
 
-  it.each(["fork", "pin", "skewer"])("indexes a rated %s", (motif) => {
+  it.each([
+    ["fork", "fork"],
+    ["pin", "pin"],
+    ["skewer", "skewer"],
+    ["back_rank_mate", "backRankMate"],
+    ["checkmate", "mate"],
+    ["endgame", "endgame"],
+    ["promotion", "promotion"],
+  ])("indexes a rated %s under %s", (motif, theme) => {
     seedOne({ ...good, motif, difficulty_rating: 1200 });
-    expect(themeRows()).toEqual([{ theme: motif, rating: 1200, puzzle_id: "one:0" }]);
+    expect(themeRows()).toEqual([{ theme, rating: 1200, puzzle_id: "one:0" }]);
   });
 
-  it("indexes neither an unrated fork nor a rated puzzle of another motif", () => {
-    seedOne({ ...good, motif: "fork" });
-    expect(themeRows()).toEqual([]);
-    seedOne({ ...good, motif: "endgame", difficulty_rating: 1200 });
+  it("indexes neither an unrated puzzle nor a rated puzzle of an unmapped motif", () => {
+    for (const motif of ["fork", "back_rank_mate", "checkmate", "endgame", "promotion"]) {
+      seedOne({ ...good, motif });
+      expect(themeRows()).toEqual([]);
+    }
+    seedOne({ ...good, motif: "opening_trap", difficulty_rating: 1200 });
     expect(themeRows()).toEqual([]);
   });
 
@@ -144,10 +162,15 @@ describe("seedPuzzles and puzzle_themes", () => {
     expect(themeRows()).toEqual(before);
   });
 
-  it("fills the table on a database that already holds the puzzles", () => {
+  it("fills the table on a database that already holds the puzzles, including older seeds", () => {
     seedPuzzles(db, contentDir());
     const before = themeRows();
-    db.prepare("DELETE FROM puzzle_themes").run();
+    db.prepare(
+      "DELETE FROM puzzle_themes WHERE theme IN ('backRankMate', 'mate', 'endgame', 'promotion')",
+    ).run();
+    expect(themeRows().length).toBeLessThan(before.length);
+    expect(seedPuzzles(db, contentDir())).toEqual({ inserted: 0, updated: 0, unchanged: 238 });
+    expect(themeRows()).toEqual(before);
     expect(seedPuzzles(db, contentDir())).toEqual({ inserted: 0, updated: 0, unchanged: 238 });
     expect(themeRows()).toEqual(before);
   });
@@ -160,13 +183,14 @@ describe("seedPuzzles and puzzle_themes", () => {
   });
 
   it("moves the row when a puzzle's rating or motif changes, and drops it when it stops qualifying", () => {
-    const entry = { ...good, motif: "fork", difficulty_rating: 1200 };
+    const entry = { ...good, motif: "back_rank_mate", difficulty_rating: 1200 };
     seedOne(entry);
+    expect(themeRows()).toEqual([{ theme: "backRankMate", rating: 1200, puzzle_id: "one:0" }]);
     seedOne({ ...entry, difficulty_rating: 1300 });
-    expect(themeRows()).toEqual([{ theme: "fork", rating: 1300, puzzle_id: "one:0" }]);
-    seedOne({ ...entry, motif: "pin", difficulty_rating: 1300 });
-    expect(themeRows()).toEqual([{ theme: "pin", rating: 1300, puzzle_id: "one:0" }]);
-    seedOne({ ...entry, motif: "pin", difficulty_rating: undefined });
+    expect(themeRows()).toEqual([{ theme: "backRankMate", rating: 1300, puzzle_id: "one:0" }]);
+    seedOne({ ...entry, motif: "checkmate", difficulty_rating: 1300 });
+    expect(themeRows()).toEqual([{ theme: "mate", rating: 1300, puzzle_id: "one:0" }]);
+    seedOne({ ...entry, motif: "checkmate", difficulty_rating: undefined });
     expect(themeRows()).toEqual([]);
   });
 });

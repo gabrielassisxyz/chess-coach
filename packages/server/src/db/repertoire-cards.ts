@@ -195,6 +195,64 @@ export function saveRepertoireCardReview(
   );
 }
 
+/** One first attempt the line drill rated, as `repertoire_first_attempts` keeps it. */
+export interface RepertoireFirstAttempt {
+  positionKey: string;
+  uci: string;
+  /** The variation the move was served under, also in a drill widened to an opening or a side. */
+  repertoireId: number;
+  /** A hint or a shown solution is a miss. */
+  correct: boolean;
+}
+
+// The drill calls this inside the transaction that moves the card, so an attempt that rated a move
+// is never missing and one that did not is never there.
+export function insertRepertoireFirstAttempt(
+  db: Database,
+  attempt: RepertoireFirstAttempt,
+  attemptedAt: string,
+): void {
+  db.prepare(
+    `INSERT INTO repertoire_first_attempts
+       (position_key, move_uci, repertoire_id, attempted_at, correct)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    attempt.positionKey,
+    attempt.uci,
+    attempt.repertoireId,
+    attemptedAt,
+    attempt.correct ? 1 : 0,
+  );
+}
+
+export interface RepertoireFirstAttemptCounts {
+  attempts: number;
+  right: number;
+}
+
+const REPERTOIRE_FIRST_ATTEMPT_WINDOW_MS = 30 * 24 * 3_600_000;
+
+/**
+ * The first attempts the drill rated under a variation in the 30 days before `at`, and how many of
+ * them were right. An attempt at `at` counts and one exactly 30 days earlier does not, as
+ * `countRepertoireCardsIntroducedSince` reads its window; a variation with none is 0 of 0.
+ */
+export function countRepertoireFirstAttemptsInWindow(
+  db: Database,
+  repertoireId: number,
+  at: Date,
+): RepertoireFirstAttemptCounts {
+  const since = new Date(at.getTime() - REPERTOIRE_FIRST_ATTEMPT_WINDOW_MS).toISOString();
+  const counted = db
+    .prepare(
+      `SELECT COUNT(*) AS attempts, COALESCE(SUM(correct), 0) AS correct_attempts
+       FROM repertoire_first_attempts
+       WHERE repertoire_id = ? AND attempted_at > ? AND attempted_at <= ?`,
+    )
+    .get(repertoireId, since, at.toISOString()) as { attempts: number; correct_attempts: number };
+  return { attempts: counted.attempts, right: counted.correct_attempts };
+}
+
 // The qualities a drill's first try carries, so a move rates the same whichever way it was played.
 const GAME_PASS_QUALITY: Quality = 4;
 const GAME_FAIL_QUALITY: Quality = 2;

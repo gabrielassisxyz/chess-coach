@@ -60,6 +60,7 @@ export const ProgressResponseSchema = z.object({
   cards: CardProgressSchema,
   streak_days: z.number().int().nonnegative(),
   difficulty: DifficultyProgressSchema,
+  puzzle_rating: z.number().int(),
 });
 export type ProgressResponse = z.infer<typeof ProgressResponseSchema>;
 export type ProgressGame = z.infer<typeof ProgressGameSchema>;

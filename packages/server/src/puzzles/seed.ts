@@ -100,10 +100,22 @@ const COLUMNS = [
   "opening_name",
 ] as const;
 
-const THEMED_MOTIFS: ReadonlySet<string> = new Set(["fork", "pin", "skewer"]);
+const SEEDED_THEME_BY_MOTIF: Readonly<Record<string, string>> = {
+  fork: "fork",
+  pin: "pin",
+  skewer: "skewer",
+  back_rank_mate: "backRankMate",
+  checkmate: "mate",
+  endgame: "endgame",
+  promotion: "promotion",
+};
 
-function isThemed(row: Pick<PuzzleRow, "motif" | "difficulty_rating">): boolean {
-  return row.difficulty_rating !== null && THEMED_MOTIFS.has(row.motif);
+function themedEntryFor(
+  row: Pick<PuzzleRow, "motif" | "difficulty_rating">,
+): { theme: string; rating: number } | null {
+  if (row.difficulty_rating === null) return null;
+  const theme = SEEDED_THEME_BY_MOTIF[row.motif];
+  return theme === undefined ? null : { theme, rating: row.difficulty_rating };
 }
 
 // Counts come from comparing with the stored row, so a reboot over unchanged files reports zero writes.
@@ -131,16 +143,20 @@ export function seedPuzzles(
   db.transaction(() => {
     for (const row of rows) {
       const stored = find.get(row.id) as PuzzleRow | undefined;
+      const nextTheme = themedEntryFor(row);
+      const prevTheme = stored ? themedEntryFor(stored) : null;
+      if (
+        stored &&
+        prevTheme &&
+        (!nextTheme || prevTheme.theme !== nextTheme.theme || prevTheme.rating !== nextTheme.rating)
+      ) {
+        dropTheme.run(prevTheme.theme, prevTheme.rating, stored.id);
+      }
       // Unchanged rows pass here too: the table starts empty on a database that holds the puzzles.
-      if (isThemed(row)) addTheme.run(row.motif, row.difficulty_rating, row.id);
+      if (nextTheme) addTheme.run(nextTheme.theme, nextTheme.rating, row.id);
       if (stored && COLUMNS.every((column) => stored[column] === row[column])) {
         result.unchanged += 1;
         continue;
-      }
-      if (stored && isThemed(stored)) {
-        const moved =
-          stored.motif !== row.motif || stored.difficulty_rating !== row.difficulty_rating;
-        if (moved) dropTheme.run(stored.motif, stored.difficulty_rating, stored.id);
       }
       upsert.run(row);
       if (stored) result.updated += 1;

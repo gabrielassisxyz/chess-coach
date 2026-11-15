@@ -7,6 +7,7 @@ import type {
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/open.js";
 import { getCurrentElo, lastDifficultyChange } from "../db/settings.js";
+import { currentPuzzleRating } from "../puzzles/rating.js";
 
 const GAME_LIST_LIMIT = 50;
 const CLEAN_CP_LOSS = 30;
@@ -194,6 +195,7 @@ export function computeProgress(db: Database, clock: Clock): ProgressResponse {
     cards: cardProgress(db, now),
     streak_days: streakDays(db, now),
     difficulty: { current_elo: getCurrentElo(db), last_change: lastDifficultyChange(db) },
+    puzzle_rating: currentPuzzleRating(db),
   };
 }
 
