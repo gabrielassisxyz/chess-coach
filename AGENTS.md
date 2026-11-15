@@ -129,7 +129,8 @@
   library's `difficulty_rating`; a first-try solve wins, anything else loses, an unrated puzzle
   (opening drills) moves nothing. It lives in `settings.puzzle_rating`, is replayed once from
   the stored attempts at boot when absent (`puzzles.rating` log event), and the activity carries it
-  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`. A
+  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`.
+  `GET /api/progress` carries the number as `puzzle_rating`. A
   puzzles queue is sampled by index seek (`listPuzzles` with `ratingAround`, never a count) from
   puzzles within 200 points of that number, widening by 200 per side until full and repeating a
   puzzle only when its window has too few new ones, skipping popularity under 50; Any also skips
