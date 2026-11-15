@@ -195,13 +195,17 @@ function useMovePause(pause: MovePause | null): LineStep | null {
   return key === null ? null : (pause?.steps[count] ?? null);
 }
 
-// The mark sits on the square's centre, so it reads from the piece that just landed there.
+// The mark sits on the destination square's top right corner as seen on screen, so the
+// piece that just landed stays visible. On the top row or the right column the centre
+// moves inward by half the badge (14 px of the 28 px disc), so the box ends at the edge.
 function BadgeMark({ badge, orientation }: { badge: SquareBadge; orientation: Color }) {
   const file = badge.square.charCodeAt(0) - "a".charCodeAt(0);
   const rank = Number(badge.square[1]) - 1;
   const column = orientation === "white" ? file : 7 - file;
   const row = orientation === "white" ? 7 - rank : rank;
-  const style = { left: `${(column + 0.5) * 12.5}%`, top: `${(row + 0.5) * 12.5}%` };
+  const left = column === 7 ? "calc(100% - 14px)" : `${(column + 1) * 12.5}%`;
+  const top = row === 0 ? "14px" : `${row * 12.5}%`;
+  const style = { left, top };
   return (
     <span
       className="board__badge"
