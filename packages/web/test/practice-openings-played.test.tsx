@@ -4,6 +4,7 @@ import type { PlayedOpeningsResponse, PlayedWindow } from "@chess-coach/shared";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Practice } from "../src/screens/Practice.js";
+import { fetchOpeningsPlayedFromServer } from "../src/state/openings-played-api.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
   foundPosition,
@@ -20,6 +21,7 @@ import { serverApi } from "./server-api.js";
 afterEach(() => {
   cleanup();
   window.localStorage.removeItem(PRACTICE_PAGE_STORAGE_KEY);
+  vi.unstubAllGlobals();
 });
 
 const PIANISSIMO = "Italian Game: Giuoco Pianissimo";
@@ -504,6 +506,35 @@ describe("the Openings played page", () => {
     const status = await within(pageRoot()).findByRole("status");
     expect(status.textContent).toBe("Loading your openings.");
     expect(within(pageRoot()).queryByRole("region")).toBeNull();
+  });
+});
+
+describe("the read of the counts", () => {
+  it("asks GET /api/openings/played for the period chosen and parses the answer", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ANSWER });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchOpeningsPlayedFromServer("7")).resolves.toEqual(ANSWER);
+    await fetchOpeningsPlayedFromServer("30");
+    await fetchOpeningsPlayedFromServer("90");
+    await fetchOpeningsPlayedFromServer("all");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/openings/played?days=7",
+      "/api/openings/played?days=30",
+      "/api/openings/played?days=90",
+      "/api/openings/played?days=all",
+    ]);
+  });
+
+  it("refuses an answer that failed and one that is not the counts", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    await expect(fetchOpeningsPlayedFromServer("30")).rejects.toThrow("openings played: 500");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ white: { games: 1 } }) }),
+    );
+    await expect(fetchOpeningsPlayedFromServer("30")).rejects.toThrow();
   });
 });
 
