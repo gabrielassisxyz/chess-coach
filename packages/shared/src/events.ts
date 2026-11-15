@@ -192,13 +192,19 @@ export const AnalysisLineSchema = z.object({
 });
 export type AnalysisLine = z.infer<typeof AnalysisLineSchema>;
 
+// Where an analysis came from: a stored evaluation of the position, or a search run for it.
+export const AnalysisSourceSchema = z.enum(["cache", "engine"]);
+export type AnalysisSource = z.infer<typeof AnalysisSourceSchema>;
+
 // The answer to an `analyse` command, sent to the connection that asked. `depth` is the depth the
-// lines reached, below the one asked for only when `cutByTime` says the cap stopped the search.
+// lines reached: below the one asked for only when `cutByTime` says the cap stopped the search,
+// and above it when `source` is `cache`, which serves the deepest stored set that is deep enough.
 export const AnalysisEventSchema = z.object({
   type: z.literal("analysis"),
   command_id: commandId.optional(),
   fen: z.string(),
   depth: z.number().int(),
+  source: AnalysisSourceSchema,
   requested_lines: z.number().int(),
   cutByTime: z.boolean().optional(),
   lines: z.array(AnalysisLineSchema),

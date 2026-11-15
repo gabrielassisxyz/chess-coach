@@ -167,8 +167,9 @@ function EnginePopover({ engine, onClose }: { engine: EngineView; onClose(): voi
           onChange={(depth) => engine.setPrefs({ depth })}
         />
         <p className="popover__note">
-          Runs on this machine with the server&apos;s Stockfish. During a puzzle the engine stays
-          off until you solve it or view the solution.
+          Runs on this machine with the server&apos;s Stockfish, or reads a stored evaluation that
+          is at least as deep, which can be deeper than the depth set. During a puzzle the engine
+          stays off until you solve it or view the solution.
         </p>
       </div>
     </section>

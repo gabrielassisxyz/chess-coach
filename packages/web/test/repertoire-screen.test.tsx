@@ -28,6 +28,7 @@ const hubProps = {
   fetchProgress: async () => progressOf(),
   fetchRepertoires: listed,
   fetchRepertoireList: async () => repertoireAnswer(),
+  fetchOpeningPuzzles: async () => ({ entries: [] }),
   fetchThemeStats: async (): Promise<ThemeStatsResponse> => ({
     days: "30",
     overall: { played: 0, first_try: 0, rating_avg: null, performance: null },
@@ -303,6 +304,7 @@ describe("the openings page on the hub", () => {
         fetchProgress={fetchProgress}
         fetchThemeStats={fetchThemeStats}
         fetchRepertoireList={fetchRepertoireList}
+        fetchOpeningPuzzles={hubProps.fetchOpeningPuzzles}
       />,
     );
 

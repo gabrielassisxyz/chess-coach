@@ -16,6 +16,7 @@ import { insertFoundPosition } from "../../src/db/found-positions.js";
 import { type Database, openDatabase } from "../../src/db/open.js";
 import { endRunsLeftOpenAtStart } from "../../src/db/training.js";
 import { EngineFault } from "../../src/engine/errors.js";
+import type { EvalCache } from "../../src/engine/eval-cache.js";
 import { AnalyzeSuperseded, EnginePool } from "../../src/engine/pool.js";
 import type { SearchRequest, SearchResult } from "../../src/engine/uci.js";
 import { GameService } from "../../src/game/service.js";
@@ -24,6 +25,7 @@ import { RecordingLog } from "../../src/log.js";
 import { ReviewDesk } from "../../src/srs/review.js";
 import { FakeCoach } from "../fakes/fake-coach.js";
 import { ScriptedEngine } from "../fakes/scripted-engine.js";
+import { openFixtureCache, storedSet } from "../support/eval-cache-fixture.js";
 import { FakeEngineProcess, type GoRequest } from "../support/fake-engine-process.js";
 
 let app: FastifyInstance | undefined;
@@ -772,9 +774,11 @@ describe("analysis over the socket", () => {
   }
 
   // The analysis lane as main.ts wires it: the real pool and engine wrapper over a scripted process.
-  async function startWithStockfish(evaluation: FakeEngineProcess) {
-    const pool = new EnginePool((role) =>
-      role === "evaluation" ? evaluation : new FakeEngineProcess(() => {}),
+  async function startWithStockfish(evaluation: FakeEngineProcess, evalCache?: EvalCache) {
+    const pool = new EnginePool(
+      (role) => (role === "evaluation" ? evaluation : new FakeEngineProcess(() => {})),
+      {},
+      evalCache,
     );
     await pool.start();
     return (await startWithEngine((request) => pool.analyzeWith(request))).app;
@@ -816,6 +820,7 @@ describe("analysis over the socket", () => {
       command_id: "c4",
       fen: BACK_RANK,
       depth: 12,
+      source: "engine",
       requested_lines: 2,
       lines: [{ moves: ["a1a8"], san: ["Ra8#"], score_cp: 9990 }],
     });
@@ -964,6 +969,7 @@ describe("analysis over the socket", () => {
       command_id: "c1",
       fen: BACK_RANK,
       depth: 12,
+      source: "engine",
       requested_lines: 1,
       lines: [{ moves: ["a1a8"], san: ["Ra8#"], score_cp: 30 }],
     });
@@ -1009,12 +1015,152 @@ describe("analysis over the socket", () => {
       command_id: "c1",
       fen: BACK_RANK,
       depth: 14,
+      source: "engine",
       requested_lines: 1,
       cutByTime: true,
       lines: [{ moves: ["a1a8"], san: ["Ra8#"], score_cp: 40 }],
     });
     // The page parses every frame with this schema, which drops a field it does not name.
     expect(ServerEventSchema.parse(analysis)).toEqual(analysis);
+  });
+
+  // The rows a cache holds for the analysis tests below: the back rank position with three lines at
+  // depth 30, and the two castling cases.
+  const BACK_RANK_EPD = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - -";
+  const BOTH_ROOKS_HOME = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
+  const ROOK_ON_E1 = "3k4/8/8/8/8/8/8/K3R3 w - - 0 1";
+  const epdOf = (fen: string): string => fen.split(" ").slice(0, 4).join(" ");
+  const cacheWithBackRank = (): EvalCache =>
+    openFixtureCache([
+      {
+        epd: BACK_RANK_EPD,
+        sets: [
+          storedSet(30, [
+            [310, "a1a8"],
+            [120, "g1f1"],
+            [90, "g2g3"],
+          ]),
+        ],
+      },
+    ]).cache;
+
+  // A Stockfish that answers a depth search at once, so a search that was not needed shows as a go.
+  const answeringStockfish = (): FakeEngineProcess =>
+    new FakeEngineProcess(({ command, emit }) => {
+      const depth = depthLimitOf(command);
+      if (depth === null) return;
+      emit(stockfishLine(depth, 30));
+      emit("bestmove a1a8");
+    });
+
+  // Each ask is one analyse command, numbered c1, c2 and so on; the caller waits for its answer
+  // before the next, since a connection's older command is dropped once a newer one is sent.
+  async function askOverStockfish(stockfish: FakeEngineProcess, cache: EvalCache) {
+    const server = await startWithStockfish(stockfish, cache);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    const id = await endedItem(socket, next);
+    let asked = 0;
+    const ask = (fields: Record<string, unknown>): void => {
+      asked += 1;
+      socket.send(
+        JSON.stringify({ type: "analyse", command_id: `c${asked}`, activity_id: id, ...fields }),
+      );
+    };
+    return { ask, next };
+  }
+
+  it("answers 2 lines at depth 20 from 3 lines at depth 30, at the depth stored, with no search", async () => {
+    const stockfish = answeringStockfish();
+    const { ask, next } = await askOverStockfish(stockfish, cacheWithBackRank());
+    ask({ fen: BACK_RANK, lines: 2, depth: 20 });
+    const analysis = await next("analysis");
+    expect(analysis).toEqual({
+      type: "analysis",
+      command_id: "c1",
+      fen: BACK_RANK,
+      depth: 30,
+      source: "cache",
+      requested_lines: 2,
+      lines: [
+        { moves: ["a1a8"], san: ["Ra8#"], score_cp: 310 },
+        { moves: ["g1f1"], san: ["Kf1"], score_cp: 120 },
+      ],
+    });
+    expect(ServerEventSchema.parse(analysis)).toEqual(analysis);
+    expect(goCommandsOf(stockfish)).toEqual([]);
+  });
+
+  it("sends the same position to the engine when 5 lines are asked for", async () => {
+    const stockfish = answeringStockfish();
+    const { ask, next } = await askOverStockfish(stockfish, cacheWithBackRank());
+    ask({ fen: BACK_RANK, lines: 5, depth: 20 });
+    expect(await next("analysis")).toMatchObject({
+      depth: 20,
+      source: "engine",
+      requested_lines: 5,
+    });
+    expect(goCommandsOf(stockfish)).toEqual(["go depth 20"]);
+  });
+
+  it("writes the file's e1h1 as castling when a king stands on e1 and keeps a rook's move a rook's", async () => {
+    const cache = openFixtureCache([
+      { epd: epdOf(BOTH_ROOKS_HOME), sets: [storedSet(30, [[12, "e1h1 e8a8"]])] },
+      { epd: epdOf(ROOK_ON_E1), sets: [storedSet(30, [[300, "e1h1"]])] },
+    ]).cache;
+    const { ask, next } = await askOverStockfish(answeringStockfish(), cache);
+    ask({ fen: BOTH_ROOKS_HOME });
+    expect(await next("analysis")).toMatchObject({
+      command_id: "c1",
+      source: "cache",
+      lines: [{ moves: ["e1g1", "e8c8"], san: ["O-O", "O-O-O"], score_cp: 12 }],
+    });
+    ask({ fen: ROOK_ON_E1 });
+    expect(await next("analysis")).toMatchObject({
+      command_id: "c2",
+      source: "cache",
+      lines: [{ moves: ["e1h1"], san: ["Rh1"], score_cp: 300 }],
+    });
+  });
+
+  it("drops the answer to an older command once a newer one was answered", async () => {
+    const cache = cacheWithBackRank();
+    const slowFen = "4k3/8/8/8/8/8/8/4K2R w K - 0 1";
+    let finishSlowSearch: () => void = () => {};
+    // The pool's own rule: a stored evaluation answers at once, anything else waits for a search.
+    const lane = async (request: SearchRequest): Promise<SearchResult> => {
+      const hit = cache.lookup(request.fen, {
+        lines: request.multipv ?? 1,
+        depth: request.depth ?? 0,
+      });
+      if (hit) {
+        return {
+          fen: request.fen,
+          bestmove: null,
+          lines: hit.lines,
+          depth: hit.depth,
+          source: "cache",
+        };
+      }
+      await new Promise<void>((resolve) => {
+        finishSlowSearch = resolve;
+      });
+      return { fen: request.fen, bestmove: "h1h8", lines: [{ moves: ["h1h8"], score: 500 }] };
+    };
+    const { app: server } = await startWithEngine(lane);
+    const { socket, next, inbox } = await connect(server);
+    await next("bootstrap");
+    const id = await endedItem(socket, next);
+    for (const [commandId, fen] of [
+      ["slow", slowFen],
+      ["fast", BACK_RANK],
+    ] as const) {
+      socket.send(JSON.stringify({ type: "analyse", command_id: commandId, activity_id: id, fen }));
+    }
+    expect(await next("analysis")).toMatchObject({ command_id: "fast", source: "cache" });
+    finishSlowSearch();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(inbox.filter((event) => event.type === "analysis")).toEqual([]);
   });
 });
 
