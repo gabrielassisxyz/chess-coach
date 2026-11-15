@@ -1,0 +1,201 @@
+/*
+ * The Practice hub's frame: the navigation of the hub's pages beside a column that shows one page
+ * at a time. The page scrolls as a whole, in the screen that holds it, and no card scrolls inside
+ * itself; the navigation stays in view and scrolls on its own only when it is taller than the window.
+ */
+.practice-hub {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.practice-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 20px;
+  width: 220px;
+  /* The window less the top bar and the frame's padding above and below the screen. */
+  max-height: calc(100dvh - 96px);
+  overflow-y: auto;
+}
+
+.practice-nav__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.practice-nav__label {
+  padding: 0 10px 6px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.practice-nav__entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.practice-nav__entry:hover,
+.practice-nav__entry[aria-current="page"] {
+  color: var(--text-1);
+}
+
+.practice-nav__entry[aria-current="page"] {
+  background: var(--surface-2);
+}
+
+/* The navigation is a scrolling box, which would clip a ring drawn outside the entry. */
+.practice-nav__entry:focus-visible {
+  outline-offset: -2px;
+}
+
+.practice-nav__name {
+  flex: 1;
+}
+
+.practice-nav__count {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.practice-hub__pages {
+  flex: 1;
+  min-width: 0;
+  max-width: 1440px;
+}
+
+.practice-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding-bottom: var(--space-6);
+}
+
+.practice-page__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
+/* Cards share a row while it has room, and a card alone in its row keeps a card's width. */
+.practice-page__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.practice-page__section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: var(--space-2);
+}
+
+.practice-page__section-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: var(--leading-title);
+}
+
+.practice-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.practice-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.practice-tile dd {
+  margin: 0;
+}
+
+.practice-tile dt,
+.practice-tile__unit,
+.practice-tile__note {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.practice-tile__value {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.practice-tile__figure {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-title);
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.practice-tile__note {
+  margin-top: auto;
+}
+
+/* Phone: the navigation is one row of every entry above the page, and the cards stack. */
+@media (max-width: 899px) {
+  .practice-hub {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .practice-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    width: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .practice-nav__group {
+    display: contents;
+  }
+
+  .practice-nav__label {
+    display: none;
+  }
+
+  .practice-nav__entry {
+    height: auto;
+    min-height: 44px;
+  }
+
+  .practice-tiles,
+  .practice-page__cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
