@@ -337,7 +337,7 @@ name, pill and Add on one line with the moves under the name. M1 and M2 still fi
   `--quality-best`/`--quality-blunder` arrows, `--status-ready`/`--status-error` split bar, and
   accent `Review` action when `due_now > 0`) in a `minmax(180px, 1fr)` / `12px` grid above the
   `140px` Puzzle rating SVG (`--surface-2` midline, `--accent` polyline) and the two side-by-side
-  `Improvement areas` and `Strengths` cards (`minmax(360px, 1fr)`, `4px` theme rows with `See all`
+  `Improvement areas` and `Strengths` cards (`minmax(360px, 1fr)`, `48px` theme rows with `See all`
   links). Loading (`role="status"`), read failures (`role="alert"` + `Try again` per block), and
   empty/unranked periods keep card structure and follow Rule 15. Under 900 px all KPI tiles and
   theme cards stack to one column, link buttons meet `44px`, and no desktop card scrolls inside

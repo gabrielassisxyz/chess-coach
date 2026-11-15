@@ -69,9 +69,6 @@ export function emptyThemeMessageOf(kind: ThemeStatsPageKind, data: ThemeStatsRe
   return `No theme is ranked yet. A theme is ranked once you have played 8 puzzles of it; your most played theme, ${name}, has ${closest.played}.`;
 }
 
-// The name the Overview weakness card imports; same copy as the Dashboard cards use.
-export const emptyMessageOf = emptyThemeMessageOf;
-
 /** Tracks lazy page activation and the selected time window (`7`, `30`, `90`, `all`). */
 export function useActivatedWindow(shown: boolean): {
   activated: boolean;

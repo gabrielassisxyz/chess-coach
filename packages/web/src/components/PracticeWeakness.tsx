@@ -8,7 +8,7 @@ import { useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
 import { NEEDS_ENGINE_TEXT } from "../state/practice.js";
 import { firstTryBarToneOf, firstTryPercentOf, themeDisplayOf } from "../state/theme-stats-api.js";
-import { emptyMessageOf, type ThemeStatsStarting } from "./PracticeThemeStats.js";
+import { emptyThemeMessageOf, type ThemeStatsStarting } from "./PracticeThemeStats.js";
 
 export interface PracticeWeaknessProps {
   themeStats: Loaded<ThemeStatsResponse> | undefined;
@@ -112,7 +112,7 @@ function WeaknessEmpty({
   const mixing = starting?.mode === "puzzles" && starting.motif === HEALTHY_MIX_MOTIF;
   return (
     <>
-      <p className="practice__card-note">{emptyMessageOf("improvement-areas", stats)}</p>
+      <p className="practice__card-note">{emptyThemeMessageOf("improvement-areas", stats)}</p>
       <button
         type="button"
         className="button"

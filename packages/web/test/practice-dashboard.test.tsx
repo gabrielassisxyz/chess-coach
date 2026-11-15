@@ -337,7 +337,7 @@ describe("PracticeDashboard", () => {
         points: makeDailyPoints(30, "2026-06-10", 1450),
         low: 1450,
         high: 1508,
-        current: 1508,
+        current: 1500,
       });
     });
 
@@ -346,7 +346,7 @@ describe("PracticeDashboard", () => {
 
     const board = dashboardRoot();
     const chartCard = within(board).getByRole("region", { name: "Puzzle rating" });
-    expect(await within(chartCard).findByText("1508")).toBeTruthy();
+    expect(await within(chartCard).findByText("1500")).toBeTruthy();
     expect(within(chartCard).getByText("low 1450 \u00b7 high 1508")).toBeTruthy();
     expect(within(chartCard).getByText("30 days ago")).toBeTruthy();
     expect(within(chartCard).getByText("today")).toBeTruthy();
@@ -361,7 +361,7 @@ describe("PracticeDashboard", () => {
     const polyline = svg.querySelector("polyline");
     expect(polyline?.getAttribute("stroke")).toBe("var(--accent)");
     expect(polyline?.getAttribute("stroke-width")).toBe("2");
-    expect(polyline?.getAttribute("points")).toBeTruthy();
+    expect(polyline?.getAttribute("points")?.split(" ")).toHaveLength(30);
 
     // Switch to 7 days
     fireEvent.click(within(board).getByRole("button", { name: "7 days" }));
@@ -579,5 +579,27 @@ describe("PracticeDashboard", () => {
     );
     expect(mobile).toContain(".practice-dashboard__link {");
     expect(mobile).toContain("min-height: 44px;");
+  });
+
+  it("moves the dashboard rules to one column at the same 899 px breakpoint as the other pages", () => {
+    const css = readFileSync(join(__dirname, "..", "src", "styles", "practice-hub.css"), "utf8");
+    const rule = css.indexOf(".practice-dashboard__tiles,\n  .practice-dashboard__themes {");
+    expect(rule).toBeGreaterThan(-1);
+    const query = css.slice(css.lastIndexOf("@media", rule)).split("{")[0];
+    expect((query ?? "").trim()).toBe("@media (max-width: 899px)");
+  });
+});
+
+describe("the design checklist", () => {
+  const checklist = readFileSync(join(import.meta.dirname, "../DESIGN-CHECK.md"), "utf8");
+
+  it("records the Dashboard in the Practice and Phone columns with its 48 px theme rows", () => {
+    const record = checklist
+      .split("\n- ")
+      .find((item) => item.startsWith("**Dashboard** (`Practice` and `Phone` columns)"));
+    expect(record).toBeDefined();
+    expect(record).toContain("`48px` theme rows");
+    expect(record).toContain("Puzzle rating");
+    expect(record).toContain("Under 900 px");
   });
 });
