@@ -991,3 +991,110 @@ describe("mix practice over the socket", () => {
     socket.close();
   });
 });
+
+describe("a found drill narrowed to one opening over the socket", () => {
+  function seedFoundOpenings(): Database {
+    const db = seededDatabase();
+    const openings = [
+      ["own:two-knights", "Italian Game: Two Knights Defense"],
+      ["own:giuoco", "Italian Game: Giuoco Pianissimo"],
+      ["own:scandi", "Scandinavian Defense"],
+    ] as const;
+    for (const [id, openingName] of openings) {
+      insertFoundPosition(db, {
+        id,
+        fen: BACK_RANK,
+        color: "white",
+        phase: "opening",
+        fromMistake: true,
+        fromRepeat: false,
+        fromDeparture: false,
+        listed: true,
+        acceptedUci: ["a1a8"],
+        reachedGames: 1,
+        bestGames: 0,
+        lastReachedAt: "2026-11-01T00:00:00.000Z",
+        gameId: 1,
+        ply: 40,
+        firstFoundAt: "2026-11-01T00:00:00.000Z",
+      });
+      db.prepare(
+        `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, opening_name)
+         VALUES (?, 'own-games', 'opening-white', 'beginner', ?, '["a1a8"]', '["Ra8#"]', 'why', ?)`,
+      ).run(id, BACK_RANK, openingName);
+    }
+    return db;
+  }
+
+  it("serves the opening's positions and refuses an unknown one and one too long", async () => {
+    expect(
+      ClientCommandSchema.safeParse({
+        type: "start_training",
+        command_id: "v1",
+        mode: "found",
+        scope: "all",
+        opening: "Italian Game",
+      }).success,
+    ).toBe(true);
+    expect(
+      ClientCommandSchema.safeParse({
+        type: "start_training",
+        command_id: "v2",
+        mode: "found",
+        scope: "all",
+        opening: "x".repeat(121),
+      }).success,
+    ).toBe(false);
+    const server = await start(seedFoundOpenings());
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c1",
+        mode: "found",
+        scope: "all",
+        opening: "Italian Game",
+      }),
+    );
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      mode: "found",
+      status: "prompt",
+      item: { queue_length: 2 },
+    });
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c2",
+        mode: "found",
+        scope: "all",
+        opening: "Italian Game: Two Knights Defense",
+      }),
+    );
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      mode: "found",
+      item: { puzzle_id: "own:two-knights", queue_length: 1 },
+    });
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c3",
+        mode: "found",
+        scope: "all",
+        opening: "French Defense",
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "empty_queue", command_id: "c3" });
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c4",
+        mode: "found",
+        scope: "all",
+        opening: "x".repeat(121),
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: "c4" });
+    socket.close();
+  });
+});
