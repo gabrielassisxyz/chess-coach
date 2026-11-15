@@ -42,6 +42,8 @@ export interface PracticeFoundProps {
   // Any start of the hub is in flight, a found one or not, and every start waits for it.
   busy: boolean;
   onStart(request: FoundStartRequest): void;
+  // Opens the game's review at the wrong move from a mistake card's opponent.
+  onOpenGameReview?: ((gameId: number, ply: number) => void) | undefined;
   // The alert of a refused start, when the start was pressed on this page.
   failure: ReactNode;
   now: Date;
@@ -214,6 +216,7 @@ export function PracticeFound({
   starting,
   busy,
   onStart,
+  onOpenGameReview,
   failure,
   now,
   createBoard,
@@ -275,6 +278,7 @@ export function PracticeFound({
         busy={busy}
         startingPosition={starting?.position}
         onDrill={drill}
+        onOpenGameReview={onOpenGameReview}
         createBoard={createBoard}
       />
     </>

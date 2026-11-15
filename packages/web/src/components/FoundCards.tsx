@@ -14,8 +14,50 @@ import {
   foundTitleOf,
   positionsText,
 } from "../state/found-api.js";
+import { dateLabel } from "../state/games.js";
 import type { BoardFactory } from "./Board.js";
 import { MiniBoard } from "./MiniBoard.js";
+
+// The opponent that opens the game's review at the wrong move. A plain text button, so the
+// pointer, the hover underline and the focus ring mark it, as the game list rows do.
+function OpponentLink({
+  opponent,
+  gameId,
+  ply,
+  onOpenGameReview,
+}: {
+  opponent: string;
+  gameId: number;
+  ply: number;
+  onOpenGameReview(gameId: number, ply: number): void;
+}) {
+  return (
+    <button
+      type="button"
+      className="found-card__opponent"
+      onClick={() => onOpenGameReview(gameId, ply)}
+    >
+      {`vs ${opponent}`}
+    </button>
+  );
+}
+
+// Only a mistake listed under Mistakes opens a review: a position reached more than once has no
+// single game to open, and one with no opponent names no one to open it against.
+function opponentLinkOf(
+  position: FoundPositionView,
+  onOpenGameReview: ((gameId: number, ply: number) => void) | undefined,
+): { opponent: string; gameId: number; ply: number } | null {
+  const opponent = position.game.opponent;
+  if (position.section !== "mistakes") return null;
+  if (!position.from_mistake) return null;
+  if (opponent === null) return null;
+  if (onOpenGameReview === undefined) return null;
+  return { opponent, gameId: position.game.id, ply: position.game.ply };
+}
+
+const isNamedOpeningMistake = (position: FoundPositionView): boolean =>
+  position.phase === "opening" && position.opening_name !== null;
 
 function CardChips({ position }: { position: FoundPositionView }) {
   return (
@@ -30,8 +72,35 @@ function CardChips({ position }: { position: FoundPositionView }) {
 
 // A position reached more than once says how often and how often its best move was found; a
 // mistake, which was met once, says when, and against whom or in which opening.
-function CardFacts({ position, now }: { position: FoundPositionView; now: Date }) {
-  if (position.section !== "reached") return <span>{foundMistakeFootOf(position, now)}</span>;
+function CardFacts({
+  position,
+  now,
+  onOpenGameReview,
+}: {
+  position: FoundPositionView;
+  now: Date;
+  onOpenGameReview?: ((gameId: number, ply: number) => void) | undefined;
+}) {
+  if (position.section !== "reached") {
+    const link = opponentLinkOf(position, onOpenGameReview);
+    // A mistake in a named opening carries the opponent in its foot; one past it carries the
+    // opponent in its title instead.
+    if (link !== null && isNamedOpeningMistake(position)) {
+      const date = dateLabel(position.game.played_at ?? position.last_reached_at, now);
+      return (
+        <span>
+          {`${date} · `}
+          <OpponentLink
+            opponent={link.opponent}
+            gameId={link.gameId}
+            ply={link.ply}
+            onOpenGameReview={onOpenGameReview as (gameId: number, ply: number) => void}
+          />
+        </span>
+      );
+    }
+    return <span>{foundMistakeFootOf(position, now)}</span>;
+  }
   return (
     <>
       <span>
@@ -56,6 +125,8 @@ interface FoundCardProps {
   // The start in flight is this card's own.
   starting: boolean;
   onDrill(position: FoundPositionView): void;
+  // Opens the game's review at the wrong move; a card without a mistake never receives it.
+  onOpenGameReview?: ((gameId: number, ply: number) => void) | undefined;
   createBoard: BoardFactory | undefined;
 }
 
@@ -66,18 +137,34 @@ const FoundCard = memo(function FoundCard({
   busy,
   starting,
   onDrill,
+  onOpenGameReview,
   createBoard,
 }: FoundCardProps) {
   const titleId = useId();
   const title = foundTitleOf(position);
   const line = foundLineText(position.line);
+  const link = opponentLinkOf(position, onOpenGameReview);
+  const linkInTitle =
+    link !== null && !isNamedOpeningMistake(position) && onOpenGameReview !== undefined;
   return (
     <li className="found-card">
       <MiniBoard fen={position.fen} orientation={position.color} createBoard={createBoard} />
       <div className="found-card__body">
         <div className="found-card__head">
           <span className="found-card__title" id={titleId} title={title}>
-            {title}
+            {linkInTitle && link !== null ? (
+              <>
+                {`Move ${Math.ceil(position.game.ply / 2)} · `}
+                <OpponentLink
+                  opponent={link.opponent}
+                  gameId={link.gameId}
+                  ply={link.ply}
+                  onOpenGameReview={onOpenGameReview as (gameId: number, ply: number) => void}
+                />
+              </>
+            ) : (
+              title
+            )}
           </span>
           <span className="found-card__state" data-state={position.state}>
             {foundStateText(position, now)}
@@ -90,7 +177,7 @@ const FoundCard = memo(function FoundCard({
         )}
         <CardChips position={position} />
         <div className="found-card__foot">
-          <CardFacts position={position} now={now} />
+          <CardFacts position={position} now={now} onOpenGameReview={onOpenGameReview} />
           <button
             type="button"
             className="button found-card__drill"
@@ -116,6 +203,8 @@ export interface FoundSectionProps {
   // The position whose start is in flight, if a card's start is.
   startingPosition: string | undefined;
   onDrill(position: FoundPositionView): void;
+  // Opens the game's review at the wrong move; a card without a mistake never receives it.
+  onOpenGameReview?: ((gameId: number, ply: number) => void) | undefined;
   createBoard: BoardFactory | undefined;
 }
 
