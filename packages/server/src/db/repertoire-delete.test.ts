@@ -232,7 +232,7 @@ function insertRun(run: SeededRun): number {
 const drillItems = (rowIds: number[]): StoredRunItem[] =>
   rowIds.map((id) => ({ kind: "repertoire", id }));
 
-// The current item a paused drill stores: the unit it started from, its level and the pass's unit.
+// The current item a drill stores: the unit it started from, its level and the pass's unit.
 const drillCurrent = (anchorId: number, level: string, passUnitId: number) => ({
   repertoire_id: anchorId,
   scope: "all",

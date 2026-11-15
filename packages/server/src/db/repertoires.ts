@@ -228,10 +228,11 @@ const gamesReviewedAgainstUnit = (db: Database, repertoireId: number): number[] 
       .all(repertoireId) as Array<{ game_id: number }>
   ).map((row) => row.game_id);
 
-// A paused drill names the unit it started from in its current item, and a drill over a group, a
-// side or the units found in games lists the unit's rows in its queue among other units' rows: a
-// resume would serve rows that are gone, from a merge that no longer exists. Only a drill's queue
-// holds repertoire rows; a card or a puzzle id in another run can carry the same number.
+// A run still open is on the board, or was left open by a server that died. One whose current item
+// names the unit, or whose queue holds the unit's rows among other units' (a drill over a group, a
+// side or the units found in games), would serve rows that are gone, from a merge that no longer
+// exists. Only a drill's queue holds repertoire rows; a card or a puzzle id in another run can carry
+// the same number.
 function openRunsOfRepertoireUnit(db: Database, repertoireId: number): number[] {
   const rows = db
     .prepare(
