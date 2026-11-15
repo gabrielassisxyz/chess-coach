@@ -143,6 +143,10 @@ const INVENTORY: FailureCase[] = [
         file: "server/src/activity/repertoire-session.test.ts",
         titles: ["ends a repertoire drill as left when the server starts"],
       },
+      {
+        file: "server/src/activity/training.test.ts",
+        titles: ["ends a drill of the positions from games as left when the server starts"],
+      },
     ],
   },
   {

@@ -177,8 +177,18 @@
   in `puzzle_themes` on seed. A
   puzzles queue is sampled by index seek (`listPuzzles` with `ratingAround`, never a count) from
   puzzles within 200 points of that number, widening by 200 per side until full and repeating a
-  puzzle only when its window has too few new ones, skipping popularity under 50; Any also skips
-  all opening material, and a motif with no `puzzle_themes` rows keeps the plain listing. The plain
+  puzzle only when its window has too few new ones, skipping popularity under 50, and a motif with
+  no `puzzle_themes` rows keeps the plain listing. An unthemed queue (no `motif`) draws each batch
+  of 10 in two parts: 3 puzzles from the themes the app lists as the student's improvement areas,
+  and 7 from the unthemed sample, which skips all opening material. The areas are those of the
+  last 30 days (`computeThemeStats`), read again for every batch so that a theme that enters or
+  leaves the list is followed, and `opening` is never one of them. The 3 places go to the listed
+  themes in turn, from one picked with `shuffleRandom`, each by a themed draw around the rating,
+  so a boosted puzzle may be opening material. A puzzle already in the run is not added twice, a
+  theme that yields no puzzle gives its place to the unthemed sample so that the batch keeps its
+  length, and the batch is shuffled before it joins the run. With no improvement area the batch is
+  the unthemed sample alone. The run keeps `training_runs.motif` NULL and `run_motif` null, and a
+  queue with a motif has no boost. The plain
   listing, used by the coach's puzzle tool and `GET /api/puzzles`, and the motif counts cover only the
   library, never `lichess-db` rows, since they read every matching row. Elo stays over Glicko-2 on
   purpose: against puzzles whose rating does not move and whose deviation is low, simulated runs
@@ -262,6 +272,38 @@
   move in play, and the drill carries the `level`. `GET /api/repertoires` counts the
   levels from the same merge in `groups` and `sides`; the menu offers them where a side holds more
   than one opening or an opening more than one variation.
+- **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?}` serves
+  the listed rows of `found_positions` (see Openings) as one-move exercises through their `own:`
+  puzzles (`activity/found-drill.ts`, `TrainingRun`). The scope is required, and a command without
+  one is refused as `invalid_command`: `recommended` takes the due cards, the oldest `next_review_at`
+  first, then the new positions, the latest `first_found_at` first, at most 10 in all; `due` every
+  due card and no new position; `all` every listed position, due, then new, then the rest by
+  `next_review_at`. There is no daily cap on new positions. `color`, `phase` and `position` (an id the
+  list gives) narrow the queue as they narrow `GET /api/found-positions`, through the one read both
+  use (`listListedFoundPositions`), and are stored nowhere; an empty queue, an id no listed position
+  has included, is refused with `empty_queue` before any run is written. A try is right when it is
+  any move of the row's `accepted_uci`, and the attempt's copy of the solution becomes the move
+  played, so it stays on the board; every other mode still compares with the one solution move. Each
+  position keeps its schedule in `found_cards` (`db/found-cards.ts`, the columns of
+  `repertoire_cards` keyed by `position_id`): a position with no card is new and due, and the first
+  thing done on an item rates it once, quality 4 for a right try, 2 for a wrong try, a hint or a
+  shown solution, the card being created by that first rating; a right try on a card not yet due
+  keeps its schedule. A miss writes no `srs_cards` card, `puzzle_attempts` is written as for any
+  puzzle, and the puzzle rating does not move, since these puzzles have no rating. The run's divider
+  reads "From my games". `DELETE FROM found_cards` makes every position new again.
+- **From my games list:** `GET /api/found-positions` (optional `color` and `phase`) answers
+  `{positions, counts}` (`http/found-positions.ts`, schemas in shared `found-positions.ts`). A listed
+  position carries `id`, `fen`, `color`, `phase`, `section` (`reached` when `from_repeat`, else
+  `mistakes`), `from_mistake`, `from_departure`, `opening_name`, `line` (`{first_ply, san}`: the shown
+  game's moves from move 1 up to the position, or its last four plies past ply 8), `reached_games`,
+  `best_games`, `last_reached_at`, `game` (`id`, `ply`, `opponent`, and `played_at`, the game's own
+  date else when it ended, both null once the game is gone), `state` (`new`, `due` or `scheduled`)
+  and `next_review_at`, and never the accepted moves or the solution. Section `reached` comes first,
+  and inside a section the positions come in the order the `all` drill serves them. `counts` holds
+  `total`, `due`, `new`, `recommended`, `all` (those three the lengths of the queues the scopes would
+  build now) and `left_out` (the rows with `listed = 0`) under both filters, and `by_phase` and
+  `by_section` under the colour alone. A colour or phase outside the listed values answers 400
+  `invalid_filter` and reads nothing.
 - **Coach conversations:** one per tab (`play`, `games`, `practice`), each its own `coach_sessions`
   row (`tab` column) resumed by its own Claude session id. The live game and the student's chat on
   Play write to `play`, training to `practice`, a question about a stored game to `games`. A tab's

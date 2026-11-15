@@ -2,6 +2,7 @@ import type {
   ExpectedMove,
   PlayedMove,
   QueueOutcome,
+  RepertoireScope,
   ExploredEvent as ShownEvent,
   TrainingActivity,
   TrainingItem,
@@ -22,6 +23,8 @@ import type {
   TriedMove,
 } from "../coach/notify.js";
 import { appendChatMessage } from "../db/chat.js";
+import { rateFoundCard } from "../db/found-cards.js";
+import { listListedFoundPositions } from "../db/found-positions.js";
 import type { PlayerColor } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import {
@@ -55,6 +58,8 @@ import {
 } from "../db/training.js";
 import { applyUci } from "../engine/moves.js";
 import type { NotificationSink } from "../game/notifications.js";
+import type { PositionPhase } from "../openings/game-phase.js";
+import { computeThemeStats } from "../progress/theme-stats.js";
 import {
   type AttemptState,
   giveUp,
@@ -69,6 +74,7 @@ import { SrsError } from "../srs/errors.js";
 import type { AnswerResult, ReviewDesk } from "../srs/review.js";
 import { ActivityError } from "./errors.js";
 import { Exploration } from "./exploration.js";
+import { selectFoundDrillPositions } from "./found-drill.js";
 import type { RepertoireTryJudge } from "./repertoire-session.js";
 
 export type DeskPort = Pick<
@@ -121,13 +127,25 @@ export interface TrainingInput {
    * without it the drill serves every position of the colour. Other modes ignore it.
    */
   opening?: string | undefined;
+  /** Which positions from the student's games a found drill serves; the other modes ignore it. */
+  scope?: RepertoireScope | undefined;
+  /** A found drill narrowed to one phase, or to one listed position by its id. */
+  phase?: PositionPhase | undefined;
+  position?: string | undefined;
 }
 
 export type TrainingItemRef = { kind: "card"; id: number } | { kind: "puzzle"; id: string };
 
+// `accepted` is set on a position from the student's games: every move it takes as right.
 type QueueEntry =
   | { kind: "card"; cardId: number }
-  | { kind: "puzzle"; id: string; motif: string; difficulty: string };
+  | {
+      kind: "puzzle";
+      id: string;
+      motif: string;
+      difficulty: string;
+      accepted?: readonly string[];
+    };
 
 // A repertoire pass is served by RepertoireSession, never by a queue.
 type QueueItem = Exclude<TrainingItem, { kind: "repertoire" }>;
@@ -246,6 +264,29 @@ function isLegalUci(fen: string, uci: string): boolean {
     .some((move) => `${move.from}${move.to}${move.promotion ?? ""}` === uci);
 }
 
+// A drill of the positions from the student's games reads them as the From my games list does,
+// so a filter narrows the drill exactly as it narrows the list; an empty one is refused here.
+function foundDrillQueueOf(deps: TrainingDeps, input: TrainingInput): QueueEntry[] {
+  if (input.scope === undefined) {
+    throw new ActivityError("empty_queue", "choose which positions from your games to drill");
+  }
+  const { color, phase, position } = input;
+  const listed = listListedFoundPositions(deps.db, { color, phase, position });
+  const now = (deps.clock ?? systemClock).now();
+  const queue = selectFoundDrillPositions(listed, input.scope, now);
+  if (queue.length === 0) {
+    const what = position === undefined ? "no position from your games is" : "no such position is";
+    throw new ActivityError("empty_queue", `${what} in this drill`);
+  }
+  return queue.map((found) => ({
+    kind: "puzzle",
+    id: found.id,
+    motif: found.motif,
+    difficulty: found.difficulty,
+    accepted: found.acceptedUci,
+  }));
+}
+
 // A line is the student's move, the reply and a move again, and it ends on the student's move, so
 // it has an odd number of plies from 3 up; anything shorter is one question.
 const MIN_CARD_LINE_PLIES = 3;
@@ -323,27 +364,85 @@ function drawFixedSet(deps: TrainingDeps, filter: PuzzleFilter): DrawnQueue {
   return { entries: listing.puzzles.map(puzzleEntryOf), endless: false };
 }
 
+// The statistics screens open on 30 days, and so do the improvement areas a batch leans on. They
+// are read again for every batch, so a theme that enters or leaves the list during a session is
+// followed.
+const BOOST_WINDOW_DAYS = "30";
+// Of every batch of PUZZLE_BATCH_SIZE, this many come from the improvement areas.
+const BOOSTED_PUZZLES_PER_BATCH = 3;
+// The unthemed queue serves no opening material, so it never leans on the opening phase.
+const BOOST_SKIPPED_THEME = "opening";
+
+function boostableThemes(deps: TrainingDeps): string[] {
+  const stats = computeThemeStats(deps.db, BOOST_WINDOW_DAYS, deps.clock ?? systemClock);
+  return stats.improvement_areas.filter((theme) => theme !== BOOST_SKIPPED_THEME);
+}
+
+// The theme of each boosted place: the listed themes in turn, from one picked at random, so the
+// weakest theme is not the one that always gets the extra place.
+function boostedPlaces(themes: readonly string[], random: () => number): string[] {
+  const first = Math.floor(random() * themes.length);
+  return Array.from(
+    { length: BOOSTED_PUZZLES_PER_BATCH },
+    (_, place) => themes[(first + place) % themes.length] as string,
+  );
+}
+
+// One themed draw around the rating for each listed theme, for as many places as it holds. A puzzle
+// the run or the batch already has is not taken twice; a theme with too few puzzles leaves its
+// places to the unthemed sample, which is how a batch keeps its length.
+function drawBoostedPuzzles(
+  deps: TrainingDeps,
+  ratingAround: number,
+  taken: ReadonlySet<string>,
+): PuzzleSummary[] {
+  const themes = boostableThemes(deps);
+  if (themes.length === 0) return [];
+  const places = boostedPlaces(themes, deps.shuffleRandom ?? Math.random);
+  const picked = new Map<string, PuzzleSummary>();
+  for (const theme of new Set(places)) {
+    const wanted = places.filter((place) => place === theme).length;
+    const limit = wanted + taken.size + picked.size;
+    const drawn = listPuzzles(deps.db, { theme, ratingAround, limit }, deps.shuffleRandom);
+    const fresh = drawn.puzzles.filter((puzzle) => !taken.has(puzzle.id) && !picked.has(puzzle.id));
+    for (const puzzle of fresh.slice(0, wanted)) picked.set(puzzle.id, puzzle);
+  }
+  return [...picked.values()];
+}
+
+// Fisher-Yates over a copy, so the boosted puzzles of a batch sit at no fixed positions.
+function shuffledBatchEntries(entries: readonly QueueEntry[], random: () => number): QueueEntry[] {
+  const shuffled = [...entries];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j] as QueueEntry, shuffled[i] as QueueEntry];
+  }
+  return shuffled;
+}
+
 // One batch of a queue sampled around the student's rating, of one theme or of none. The sampler
 // drops duplicates inside a call only, and a puzzle the run already served has been answered, so
 // it is returned last, and again once a window holds too few new ones. Asking for as many extra
 // puzzles as the run holds leaves a whole batch after those are dropped; the sampler's own bound
 // per call (50) is where that stops being true, and a batch that then comes back short or empty is
-// the end of the run.
+// the end of the run. A queue of no theme leans on the student's improvement areas: its boosted
+// puzzles are drawn first, the unthemed sample fills the rest, and the batch is shuffled.
 function drawRatedBatch(
   deps: TrainingDeps,
   motif: string | undefined,
   taken: ReadonlySet<string>,
 ): QueueEntry[] {
   const theme = motif && (THEME_OF_MOTIF[motif] ?? motif);
-  const filter = {
-    theme,
-    ratingAround: currentPuzzleRating(deps.db),
-    limit: PUZZLE_BATCH_SIZE + taken.size,
-  };
-  return listPuzzles(deps.db, filter, deps.shuffleRandom)
-    .puzzles.filter((puzzle) => !taken.has(puzzle.id))
-    .slice(0, PUZZLE_BATCH_SIZE)
-    .map(puzzleEntryOf);
+  const ratingAround = currentPuzzleRating(deps.db);
+  const boosted = motif === undefined ? drawBoostedPuzzles(deps, ratingAround, taken) : [];
+  const skipped = new Set([...taken, ...boosted.map((puzzle) => puzzle.id)]);
+  const filter = { theme, ratingAround, limit: PUZZLE_BATCH_SIZE + taken.size };
+  const sampled = listPuzzles(deps.db, filter, deps.shuffleRandom)
+    .puzzles.filter((puzzle) => !skipped.has(puzzle.id))
+    .slice(0, PUZZLE_BATCH_SIZE - boosted.length);
+  const batch = [...boosted, ...sampled].map(puzzleEntryOf);
+  if (boosted.length === 0) return batch;
+  return shuffledBatchEntries(batch, deps.shuffleRandom ?? Math.random);
 }
 
 export class TrainingRun implements PracticeRunPort {
@@ -426,6 +525,7 @@ export class TrainingRun implements PracticeRunPort {
   }
 
   private static materialize(deps: TrainingDeps, input: TrainingInput): DrawnQueue {
+    if (input.mode === "found") return { entries: foundDrillQueueOf(deps, input), endless: false };
     if (input.mode === "srs") {
       const due = deps.desk.listDueCards(DUE_QUEUE_SIZE);
       return { entries: due.map((card) => ({ kind: "card", cardId: card.id })), endless: false };
@@ -611,6 +711,7 @@ export class TrainingRun implements PracticeRunPort {
     }
     const square = expectedUci.slice(0, 2);
     this.transition(() => {
+      this.rateFoundPosition(s, false);
       s.hintSquare = square;
       if (!s.hinted) {
         s.hinted = true;
@@ -871,6 +972,7 @@ export class TrainingRun implements PracticeRunPort {
       const code = outcome.reason === "illegal" ? "illegal_move" : "item_finished";
       throw new ActivityError(code, `the puzzle refused ${uci}: ${outcome.reason}`);
     }
+    this.rateFoundPosition(s, outcome.correct);
     this.recordTry(s, before.cursor, uci, outcome.correct, before.fen);
     const state = outcome.state;
     s.attempt = state;
@@ -891,6 +993,7 @@ export class TrainingRun implements PracticeRunPort {
   }
 
   private givePuzzleUp(s: Served, item: TrainingItem & { kind: "puzzle" }): void {
+    this.rateFoundPosition(s, false);
     const state = giveUp(s.attempt as AttemptState);
     const expectedUci = state.solution[state.cursor] as string;
     s.attempt = state;
@@ -936,7 +1039,10 @@ export class TrainingRun implements PracticeRunPort {
     });
     s.ratingChange = this.movePuzzleRating(item.rating ?? null, firstTry);
     this.tally(solved);
-    if (!firstTry) this.cardFromMiss(item, state, s.tries.find((t) => !t.correct)?.uci ?? null);
+    // A position from the student's games keeps its own schedule, so a miss stays off the review desk.
+    if (!firstTry && this.mode !== "found") {
+      this.cardFromMiss(item, state, s.tries.find((t) => !t.correct)?.uci ?? null);
+    }
     // Nothing needed explaining, so the coach hears of it only when the student asks: a row written
     // now would still be flushed with the next wake or at the next start and draw the same reply.
     if (firstTry) {
@@ -996,6 +1102,15 @@ export class TrainingRun implements PracticeRunPort {
       createdAt: this.clock.now().toISOString(),
       puzzleId: item.puzzle_id,
     });
+  }
+
+  // A position from the student's games is rated once, by the first thing the student does on it:
+  // a right try passes it, and a wrong try, a hint or a give-up fails it. Each caller runs inside
+  // `transition`, so the card moves with the step that rated it or not at all.
+  private rateFoundPosition(s: Served, right: boolean): void {
+    if (this.mode !== "found" || s.item.kind !== "puzzle") return;
+    if (s.tries.length > 0 || s.hinted || s.gaveUp) return;
+    rateFoundCard(this.deps.db, s.item.puzzle_id, right, this.clock.now());
   }
 
   private tally(correct: boolean): void {
@@ -1093,7 +1208,7 @@ export class TrainingRun implements PracticeRunPort {
       orientation: turnOf(puzzle.fen),
       lastMove: null,
       expected: null,
-      attempt: startAttempt(puzzle.fen, puzzle.solution),
+      attempt: startAttempt(puzzle.fen, puzzle.solution, entry.accepted),
       ...ledger({ kind: "puzzle", cardId: null, puzzleId: entry.id, exposureId: null }, puzzle.fen),
     };
   }
