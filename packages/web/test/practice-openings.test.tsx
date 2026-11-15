@@ -29,7 +29,7 @@ const pianissimo: RepertoireSummary = {
   side: "white",
   group_name: "Italian Game",
   variation_name: "Giuoco Pianissimo (4.d3)",
-  moves: { recommended: 2, due: 2, all: 24 },
+  moves: { recommended: 2, due: 3, all: 24 },
   moves_total: 24,
   remembered_30d: { right: 5, of: 7 },
   in_line: { stayed: 16, of: 20 },
@@ -41,7 +41,7 @@ const twoKnights: RepertoireSummary = {
   side: "white",
   group_name: "Italian Game",
   variation_name: "Two Knights Defense (4.Ng5)",
-  moves: { recommended: 3, due: 3, all: 15 },
+  moves: { recommended: 3, due: 5, all: 15 },
   moves_total: 15,
   remembered_30d: { right: 11, of: 21 },
   in_line: { stayed: 6, of: 10 },
@@ -76,7 +76,7 @@ const sicilian: RepertoireSummary = {
 const italianGroup: RepertoireGroupSummary = {
   side: "white",
   group_name: "Italian Game",
-  moves: { recommended: 5, due: 5, all: 39 },
+  moves: { recommended: 5, due: 8, all: 39 },
   moves_total: 39,
   remembered_30d: { right: 7, of: 11 },
   in_line: { stayed: 22, of: 30 },
@@ -99,7 +99,7 @@ const kingsPawnGroup: RepertoireGroupSummary = {
 const answer = (overrides: Partial<RepertoiresResponse> = {}): RepertoiresResponse => ({
   repertoires: [pianissimo, twoKnights, kingsPawn],
   groups: [italianGroup, kingsPawnGroup],
-  sides: [{ side: "white", moves: { recommended: 7, due: 5, all: 42 } }],
+  sides: [{ side: "white", moves: { recommended: 7, due: 9, all: 42 } }],
   met: [],
   branches: [],
   ...overrides,
@@ -201,17 +201,17 @@ describe("the sections", () => {
   it("writes the number of openings and the moves due beside White, in the singular for one", async () => {
     renderPage();
     const white = await section("White");
-    expect(within(white).getByText("2 openings · 5 due")).toBeTruthy();
+    expect(within(white).getByText("2 openings · 9 due")).toBeTruthy();
     cleanup();
 
     renderPage(
       answer({
         repertoires: [pianissimo, twoKnights],
         groups: [italianGroup],
-        sides: [{ side: "white", moves: { recommended: 5, due: 5, all: 39 } }],
+        sides: [{ side: "white", moves: { recommended: 5, due: 8, all: 39 } }],
       }),
     );
-    expect(within(await section("White")).getByText("1 opening · 5 due")).toBeTruthy();
+    expect(within(await section("White")).getByText("1 opening · 8 due")).toBeTruthy();
   });
 
   it("draws the train button of a colour only with more than one opening, as Train all with the recommended moves", async () => {
@@ -278,7 +278,7 @@ describe("an opening's card", () => {
     const italian = await card("Italian Game");
     expect(cardCells(italian)).toEqual([
       ["Moves", "39"],
-      ["Due now", "5"],
+      ["Due now", "8"],
       ["Remembered, 30 days", "64%"],
       ["In line · 22 of 30 games", ""],
       ["Coverage", "100%"],
@@ -330,7 +330,7 @@ describe("an opening's card", () => {
     const italian = await card("Italian Game");
     expect(cardCells(italian)).toEqual([
       ["Moves", "39"],
-      ["Due now", "5"],
+      ["Due now", "8"],
       ["Remembered, 30 days", NONE],
       ["In line", NONE],
       ["Coverage", NONE],
@@ -389,7 +389,7 @@ describe("a variation's row", () => {
     expect(first.querySelector(".opening-row__line")?.textContent).toBe("3...Bc5 4.d3");
     expect(cellsOf(first.querySelector(".opening-row__cells"))).toEqual([
       ["Moves", "24"],
-      ["Due now", "2"],
+      ["Due now", "3"],
       ["Remembered, 30 days", "71%"],
       ["In line · 16 of 20 games", ""],
       ["Coverage", "100%"],
@@ -447,9 +447,9 @@ describe("the train buttons", () => {
       within(menu)
         .getAllByRole("button")
         .map((entry) => entry.textContent),
-    ).toEqual(["Everything due 5", "All moves 39"]);
+    ).toEqual(["Everything due 8", "All moves 39"]);
 
-    fireEvent.click(within(menu).getByRole("button", { name: "Everything due 5" }));
+    fireEvent.click(within(menu).getByRole("button", { name: "Everything due 8" }));
     expect(onStart).toHaveBeenLastCalledWith(4, "due", "group");
     expect(within(italian).queryByRole("group", { name: "Train Italian Game" })).toBeNull();
 
@@ -474,7 +474,7 @@ describe("the train buttons", () => {
         name: "More ways to train, Two Knights Defense (4.Ng5)",
       }),
     );
-    fireEvent.click(within(italian).getByRole("button", { name: "Everything due 3" }));
+    fireEvent.click(within(italian).getByRole("button", { name: "Everything due 5" }));
     expect(onStart).toHaveBeenLastCalledWith(5, "due");
     expect(onStart.mock.lastCall).toHaveLength(2);
   });
@@ -576,7 +576,7 @@ describe("the page's view of the answer", () => {
       "King's Pawn Game",
     ]);
     expect(white?.openings[0]?.variations.map((variation) => variation.id)).toEqual([4, 5]);
-    expect(white?.moves).toEqual({ recommended: 7, due: 5, all: 42 });
+    expect(white?.moves).toEqual({ recommended: 7, due: 9, all: 42 });
     expect(black).toEqual({ side: "black", openings: [], moves: null });
   });
 
@@ -591,7 +591,7 @@ describe("the page's view of the answer", () => {
 
   it("writes the counts beside a colour and under an opening in the singular for one", () => {
     const [white, black] = sectionsOf(answer());
-    expect(sectionSummaryText(white as never)).toBe("2 openings · 5 due");
+    expect(sectionSummaryText(white as never)).toBe("2 openings · 9 due");
     expect(sectionSummaryText(black as never)).toBe("no line yet");
     expect(openingMetaText(1, "1.e4 d5")).toBe("1 variation · 1.e4 d5");
     expect(openingMetaText(3, null)).toBe("3 variations");
