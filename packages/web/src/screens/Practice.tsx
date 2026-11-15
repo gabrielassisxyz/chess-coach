@@ -67,6 +67,8 @@ export interface PracticeProps {
   // The positions found in the student's games, whole and narrowed by colour and phase; the server's
   // by default.
   fetchFoundPositions?: FetchFoundPositions;
+  // Opens the game's review at the wrong move from a mistake card's opponent.
+  onOpenGameReview?: ((gameId: number, ply: number) => void) | undefined;
   // Ranked puzzle theme stats for Overview, Improvement areas and Strengths; the server's by default.
   fetchThemeStats?: FetchThemeStats | undefined;
   fetchHealth?: FetchHealth | undefined;
@@ -182,10 +184,14 @@ function Hub({
   fetchRepertoireList,
   fetchRatingHistory,
   fetchFoundPositions,
+  onOpenGameReview,
   fetchThemeStats,
   fetchHealth,
 }: Required<Pick<PracticeProps, "server" | "fetchProgress">> &
-  Pick<PracticeProps, "createBoard" | "fetchHealth" | "fetchRepertoireList"> & {
+  Pick<
+    PracticeProps,
+    "createBoard" | "fetchHealth" | "fetchRepertoireList" | "onOpenGameReview"
+  > & {
     fetchRatingHistory: FetchPuzzleRatingHistory;
     fetchFoundPositions: FetchFoundPositions;
     fetchThemeStats: FetchThemeStats;
@@ -229,6 +235,7 @@ function Hub({
         positions: foundPositions,
         fetchPositions: fetchFoundPositions,
         onStart: beginFound,
+        ...(onOpenGameReview === undefined ? {} : { onOpenGameReview }),
         createBoard,
       }}
       fetchRepertoireList={fetchRepertoireList}
@@ -429,6 +436,7 @@ export function Practice({
   fetchRepertoireList,
   fetchRatingHistory = fetchPuzzleRatingHistoryFromServer,
   fetchFoundPositions = fetchFoundPositionsFromServer,
+  onOpenGameReview,
   fetchThemeStats = fetchThemeStatsFromServer,
   fetchHealth,
 }: PracticeProps) {
@@ -490,6 +498,7 @@ export function Practice({
           fetchRepertoireList={fetchRepertoireList}
           fetchRatingHistory={fetchRatingHistory}
           fetchFoundPositions={fetchFoundPositions}
+          {...(onOpenGameReview === undefined ? {} : { onOpenGameReview })}
           fetchThemeStats={fetchThemeStats}
           fetchHealth={fetchHealth}
         />

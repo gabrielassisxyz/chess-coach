@@ -58,6 +58,8 @@ export interface FoundPositionsProps {
   // The read that narrows the page's list by colour and phase; the server's by default.
   fetchPositions?: FetchFoundPositions | undefined;
   onStart(request: FoundStartRequest): void;
+  // Opens the game's review at the wrong move from a mistake card's opponent.
+  onOpenGameReview?: ((gameId: number, ply: number) => void) | undefined;
   // How the page's boards are made; chessground's by default.
   createBoard?: BoardFactory | undefined;
 }
@@ -309,6 +311,7 @@ export function PracticeHub(props: PracticeHubProps) {
               starting={foundStarting}
               busy={busy}
               onStart={found.onStart}
+              onOpenGameReview={found.onOpenGameReview}
               failure={failureOn("from-my-games")}
               now={now}
               createBoard={found.createBoard}

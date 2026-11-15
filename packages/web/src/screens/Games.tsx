@@ -1,5 +1,5 @@
 import type { GameDetail, GameSummary } from "@chess-coach/shared";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BoardFactory } from "../components/Board.js";
 import { ConnectionsPanel } from "../components/ConnectionsPanel.js";
 import { GamesTable } from "../components/GamesTable.js";
@@ -21,6 +21,11 @@ import { STATUS_POLL_MS, useGradingStatus } from "../state/grading-status.js";
 import { type ImportApi, serverImportApi } from "../state/import-api.js";
 import { useImportFailure } from "../state/import-failure.js";
 
+export interface FoundGameReviewTarget {
+  gameId: number;
+  ply: number;
+}
+
 export interface GamesProps {
   server: ServerApi;
   api?: GamesApi;
@@ -32,6 +37,10 @@ export interface GamesProps {
   onOpenPlay?(): void;
   /** Words for the coach panel's idle state while a game is open; null puts the default back. */
   onCoachIdle?(label: string | null): void;
+  /** A review to open once, from a From my games position's opponent. */
+  target?: FoundGameReviewTarget | null | undefined;
+  /** Runs after the target is opened or fails, so the caller clears it. */
+  onTargetOpened?(): void;
 }
 
 type Listing =
@@ -115,9 +124,12 @@ export function Games({
   pollMs = STATUS_POLL_MS,
   onOpenPlay,
   onCoachIdle,
+  target,
+  onTargetOpened,
 }: GamesProps) {
   const { listing, reload, retry } = useGameList(api);
   const [game, setGame] = useState<GameDetail | null>(null);
+  const [initialPly, setInitialPly] = useState(0);
   const [failed, setFailed] = useState(false);
   const [source, setSource] = useState<SourceFilter>("all");
   const [result, setResult] = useState<ResultFilter>("all");
@@ -139,6 +151,7 @@ export function Games({
       api.getGame(id).then(
         (detail) => {
           setGame(detail);
+          setInitialPly(0);
           send({ type: "open_game", game_id: id });
         },
         () => setFailed(true),
@@ -146,6 +159,33 @@ export function Games({
     },
     [api, send],
   );
+
+  // A review opened from From my games starts at the wrong move. The target is used once: the
+  // opener clears it, so going back to the list or leaving the tab opens nothing again.
+  const targetOpened = useRef(onTargetOpened);
+  targetOpened.current = onTargetOpened;
+  useEffect(() => {
+    if (!target) return;
+    let live = true;
+    setFailed(false);
+    api.getGame(target.gameId).then(
+      (detail) => {
+        if (!live) return;
+        setGame(detail);
+        setInitialPly(target.ply);
+        send({ type: "open_game", game_id: target.gameId });
+        targetOpened.current?.();
+      },
+      () => {
+        if (!live) return;
+        setFailed(true);
+        targetOpened.current?.();
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [target, api, send]);
 
   const games = listing.status === "ready" ? listing.games : [];
   const shown = useMemo(() => filterGames(games, source, result), [games, source, result]);
@@ -159,7 +199,11 @@ export function Games({
         game={game}
         summary={games.find((entry) => entry.id === game.id)}
         createBoard={createBoard}
-        onClose={() => setGame(null)}
+        initialPly={initialPly}
+        onClose={() => {
+          setGame(null);
+          setInitialPly(0);
+        }}
         {...(onCoachIdle ? { onCoachIdle } : {})}
       />
     );
