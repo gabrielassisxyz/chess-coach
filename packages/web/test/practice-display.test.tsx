@@ -382,6 +382,35 @@ describe("jump to the next puzzle automatically", () => {
     }
   });
 
+  it("keeps jumping past the tenth puzzle of a queue without a length", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      window.localStorage.setItem(BOARD_PREFS_STORAGE_KEY, JSON.stringify({ autoNext: true }));
+      const answered = solved();
+      answered.item = {
+        kind: "puzzle",
+        puzzle_id: "f11",
+        motif: "fork",
+        difficulty: "easy",
+        fen: START_FEN,
+        cursor: 0,
+        reply_uci: null,
+        position_in_queue: 11,
+      };
+      const server = api(answered);
+      render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      expect(screen.getByRole("heading", { name: "Puzzle 11" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Finish training" })).toBeNull();
+      act(() => vi.advanceTimersByTime(AUTO_NEXT_MS));
+      expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
+      expect(server.send).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "end_training" }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits while the student analyses the ended position", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
@@ -718,7 +747,6 @@ describe("the hub motif list", () => {
       type: "start_training",
       mode: "puzzles",
       motif: "hangingPiece",
-      size: 10,
     });
   });
 });

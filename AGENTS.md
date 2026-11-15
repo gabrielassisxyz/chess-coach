@@ -80,9 +80,32 @@
   Lichess import form. The token travels only in a REST body, never over the
   socket, whose `ws.command` logs the whole command, and no route returns it. Writes obey the socket's
   Origin and Host rule, so `CHESS_COACH_ALLOWED_ORIGINS` also governs them.
-- **Openings:** `POST /api/openings/generate` turns the first fifteen moves of every graded game into
-  "find the best move" puzzles (`own:` ids, source `own-games`, motifs `opening-white` and
-  `opening-black`); the import grader runs it after each game. Practice's openings mode drills them. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
+- **Openings:** `POST /api/openings/generate` (alone or with `sources: ["own"]`) records in
+  `found_positions` (`openings/from-games.ts`) the positions worth practising from every graded,
+  finished game, and the import grader runs it after each game. Three rules find them, the starting
+  position never counting: the position before a student move from ply 2 on classified
+  `inaccuracy`, `mistake` or `blunder` (`from_mistake`); a position with the student to move that two
+  or more games reached from ply 2 on, a game that ended on the opponent's move counting its last
+  position (`from_repeat`); and, in a White game, the position after the opponent's move that left a
+  stored unit at ply 29 or earlier, which is the review row's `left_ply` on `not_reached` at an even
+  ply, `reply_added` or `reply_not_stored` (`from_departure`). A position found several ways is one
+  row, keyed by its `own:` id. A new one is searched once, at depth 16 with five lines and a 10 s cap,
+  the result used at the depth reached, and `accepted_uci` stores the first moves of the lines less
+  than 30 cp below the best, best first; a stored one is never searched again. Its flags,
+  `reached_games`, `best_games` (games whose move there was `best`), `last_reached_at` (`played_at`,
+  else `finished_at`) and the game shown, `game_id` and `ply` (the latest game with a mistake there,
+  else the latest that reached it), are refreshed on every run, and a stored position no rule finds
+  any more, as after a game deleted by hand, keeps its row with its flags cleared. A position is
+  `listed` with one to four accepted moves that hold every best move graded there and none of the
+  moves the student played there as a mistake, and a repeat with one to five whatever the grading
+  says. A listed one is also a one-move puzzle (`own:` id, source `own-games`, answered by the first
+  accepted move, motif `<phase>-<colour>`), the phase coming from `openings/game-phase.ts`: `endgame`
+  at 6 pieces or fewer besides kings and pawns, else `opening` up to ply 30, else `middlegame`, from
+  the lowest ply the position was reached at. A puzzle row already stored under the id is left as it
+  is, and the `own:` puzzles of the earlier rule, which took every student move of the first fifteen
+  moves, keep their rows and attempts. `openings.generate` logs `candidates`, `listed`,
+  `fromMistake`, `fromRepeat`, `fromDeparture`, `searched` and `created`. Practice's openings mode
+  drills the `opening-white` and `opening-black` puzzles. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
   student's first moves with the replies most played at 0-1199 on the Lichess explorer (`explorer:` ids, source
   `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
   is opt-in at the call and never runs after an import. `POST /api/openings/generate {sources: ["italian"]}` builds the White Italian drill from the 1800-2499 band against 0-1199 replies (`italian:` ids, source `italian-explorer`, motif `opening-italian`). The explorer now answers 401 without a Lichess API
@@ -108,6 +131,7 @@
   card; the rows wait until the openings met in games have been read. The old per-colour rows that drilled
   every family mixed are gone from the hub, though `start_training` without `opening` still serves them.
 - **Addable openings:** `GET /api/openings/addable` lists every book family Black can leave the 1.e4 path with (first moves other than e5, second moves other than Nc6 after 1.e4 e5 2.Nf3), one entry per family with the root, the book name, the student's game count from `met[]`, the share at 0-1199 and the unit already built, if any. A family reached by several moves keeps its alphabetically first one. The shares come from two explorer reads (after 1.e4 and after 1.e4 e5 2.Nf3) and are null without a token or on failure.
+- **Openings page figures:** each entry of `repertoires[]` and of `groups` in `GET /api/repertoires` (a group is an opening, the variations that share its name) carries `moves_total`, `remembered_30d`, `in_line`, `covered_percent` and `line`, computed at request time with nothing stored (`http/repertoire-summary.ts`). `moves_total` is the White moves the variation stores, its setup moves included; for an opening it is the union of its variations, a move two of them share counted once, as the drill merges them. `remembered_30d` is `{right, of}`, the first attempts the line drill rated in the 30 days before the request (`repertoire_first_attempts`), summed over the variations of an opening, since an attempt belongs to one variation. `in_line` is `{stayed, of}` over `repertoire_game_reviews`: `in_book`, `reply_added` and `reply_not_stored` stayed, `departed` left, and `not_reached` and `other_side` are in neither count because they carry the Italian's id as a fallback, not the variation the game met; the sum over an opening is exact since a game is reviewed against one variation. `covered_percent` is the walk behind `GET /api/repertoires/:id/coverage` (`repertoireCoveredPercent`, no explorer or engine call), null while nothing is stored; for an opening the walk runs over the rows of all its variations at once, so a reply is covered when any variation answers it, and where two variations answer one position with different moves it follows the likelier row, the older variation at a tie, and does not visit the other's branch. An opening of one variation reuses that variation's figures instead of walking again. A group's `line` is its setup moves numbered from move 1 (`1.e4 e5 2.Nf3 Nc6 3.Bc4`, `1.e4 d5`), null while no setup move is stored. A variation's `line` runs from the end of the setup to the White move it is named after: `3...Bc5 4.d3` for the first Italian variation (the White move stored right after 3...Bc5), `2.exd5` for the first unit of a root (the move stored right after the root), the rest of its stored branch for a variation built at a branch point (`3...Nf6 4.Ng5`), and null for any other variation of a group and for a first variation whose answer is not stored. The figures and `line` are optional in the shared schemas, like `points`, `root` and `branch`, so a fixture need not carry them.
 - **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
   adds the whole Lichess puzzle database (`lichess-db:` ids, source `lichess-db`) to the library, reading CSV from
   stdin into the usual data dir and printing rows added, skipped and failed. A row's `FEN` is shown after its first
@@ -119,7 +143,20 @@
   the item open at the same position; `show_solution` ends it as given up and the board plays the
   solution line. A right answer ends with its move on the board, for a card as for a puzzle's last
   move: `fen` and `exploring.fen` are the position after it. A card given up keeps the position it
-  was served in, because `solution_line` is the moves from `fen`. Every try is kept in
+  was served in, because `solution_line` is the moves from `fen`. A card born from a puzzle
+  (`srs_cards.puzzle_id`) is reviewed through the puzzle's whole stored solution, when the puzzle is
+  still stored, has an odd number of plies from 3 up and starts from the card's position and first
+  move; any other card is graded on its own `expected_uci` alone. It stays an item of kind `card` and
+  steps through `puzzles/attempt.ts` as a puzzle does: the server plays each reply, a wrong try keeps
+  its step and is listed in `wrong_tries` with its ply, any checkmate ends the last step, and
+  `show_solution` keeps the position of the step it stopped at, with `solution_line` holding the moves
+  left from there. It is rated once, at the end; it writes no `puzzle_attempts` row, moves no puzzle
+  rating and creates no card. The desk is told whether every step was right first time, so
+  `srs_reviews.correct` is 1 only then and `answered_uci` is the first try of the first step; the
+  suggested quality is 4, or 2 after a wrong try or a hint at any step, or 0 once the solution was
+  shown. Its `srs_answer` notification is amended to describe the step the student missed (the one
+  the solution was shown at, else the first wrong try's), with that step's position, the move tried
+  and the move expected, and it lists every try. Every try is kept in
   `training_tries`, and puzzle accuracy is first-try solves
   (`puzzle_attempts.first_try`). The coach hears once per item, when it ends, except a puzzle solved first try without a hint: that writes no notification, the state carries `coach_comment: "offered"`, and `ask_coach_about_item {activity_id}` (refused with `stale_activity`, `not_in_training` or `already_requested`) writes it with the position and the solution. A `hint` marks the
   origin square of the expected move, clears on the next try, and makes the solve count as missed.
@@ -192,6 +229,21 @@
   bootstrap nor the activity event carries a run that is not on the board; `discarded` is only in
   rows written before they were removed and in the runs a unit's delete ends (Deleting a unit). A
   single item the coach serves is not persisted.
+  A puzzle queue drawn around the student's rating, of no motif or of a theme the sampler finds, has
+  no size and no end of its own. `start_training` takes no `size`: its schema is strict, so a frame
+  that still carries one is refused with `invalid_command`. The run starts with a batch of 10
+  (`PUZZLE_BATCH_SIZE`), and `next` on the last item draws 10 more the same way, around the rating
+  the student has by then, appends them to `training_runs.items_json` (and counts them in `size`)
+  and serves the first. None of them is a puzzle the run holds: `drawRatedBatch` asks the sampler
+  for the batch plus as many puzzles as the run holds, up to its 50 per call, and drops those the
+  run has, so past 40 items a refill can come back short. A refill that finds no puzzle finishes the
+  run with its summary, as the last item of any queue does; the student otherwise stops it with End.
+  The items of such a run carry `position_in_queue` and no `queue_length`, `queue_outcomes` holds the
+  items served so far, and the web heads an item `Puzzle N` with no total, draws one progress
+  segment per item served, and never offers Finish training. Every other queue keeps a length and
+  ends on its last item: the due cards (20), the opening drills, the Italian drill and a motif that
+  no theme row names (`opening_trap`), which hold 10 positions at most, and a single item the coach
+  serves.
 - **Repertoire drill:** `start_training {mode: "repertoire", repertoire_id, scope}` runs a stored
   variation as passes from move 1 (`activity/repertoire-session.ts`): the server plays Black and every
   White move not asked, and stops on the moves still to find. `recommended` takes at most 10 due moves,

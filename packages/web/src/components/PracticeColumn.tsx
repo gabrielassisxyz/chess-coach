@@ -1,6 +1,12 @@
 import type { RepertoireDrill, TrainingActivity } from "@chess-coach/shared";
 import { type ReactNode, useState } from "react";
-import { formatElapsed, lookedAtMs, NONE, type TrainingView } from "../state/practice.js";
+import {
+  endsQueue,
+  formatElapsed,
+  lookedAtMs,
+  NONE,
+  type TrainingView,
+} from "../state/practice.js";
 import {
   headingOf,
   type MoveCell,
@@ -56,10 +62,12 @@ function Segments({ training }: { training: TrainingActivity }) {
   const outcomes = outcomesOf(training);
   const solved = outcomes.filter((outcome) => outcome === "solved").length;
   const failed = outcomes.filter((outcome) => outcome === "failed").length;
+  const { position_in_queue: at, queue_length: length } = training.item;
+  const place = length === undefined ? `item ${at}` : `item ${at} of ${length}`;
   return (
     <ol
       className="practice-item__progress"
-      aria-label={`Session progress: ${solved} solved, ${failed} missed, item ${training.item.position_in_queue} of ${training.item.queue_length}`}
+      aria-label={`Session progress: ${solved} solved, ${failed} missed, ${place}`}
     >
       {outcomes.map((outcome, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: a segment is its queue position
@@ -326,9 +334,7 @@ function EndedActions({
   view,
   actions,
 }: Pick<PracticeColumnProps, "training" | "view" | "actions">) {
-  const last = training.repertoire
-    ? nextEndsDrill(training.repertoire)
-    : training.item.position_in_queue === training.item.queue_length;
+  const last = training.repertoire ? nextEndsDrill(training.repertoire) : endsQueue(training.item);
   return (
     <>
       {view.canRate && training.item.kind === "card" ? (

@@ -2,8 +2,6 @@ import type { ProgressResponse, TrainingMode } from "@chess-coach/shared";
 import { type ReactNode, type Ref, useId, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
 import {
-  DRILL_SIZES,
-  type DrillSize,
   dueBreakdown,
   type MotifCount,
   motifLabel,
@@ -28,8 +26,6 @@ export interface PracticeOverviewProps {
   progress: Loaded<ProgressResponse>;
   motifs: Loaded<MotifCount[]>;
   engineMissing: boolean;
-  size: DrillSize;
-  onSize(size: DrillSize): void;
   startButton: HubStartButton;
   // The engine and coach problem cards, drawn under the title when they apply.
   problems?: ReactNode;
@@ -254,10 +250,8 @@ function MotifChoice({
 function MotifCard({
   motifs,
   progress,
-  size,
-  onSize,
   startButton,
-}: Pick<PracticeOverviewProps, "motifs" | "progress" | "size" | "onSize" | "startButton">) {
+}: Pick<PracticeOverviewProps, "motifs" | "progress" | "startButton">) {
   const [motif, setMotif] = useState(ANY_MOTIF);
   const counts = motifs.status === "ready" ? motifs.value : [];
   const rows = motifRows(counts, progress.status === "ready" ? progress.value : null);
@@ -292,19 +286,6 @@ function MotifCard({
         ))}
       </div>
       <MotifStatus motifs={motifs} />
-      <fieldset className="practice__sizes" aria-label="Drill size">
-        {DRILL_SIZES.map((option) => (
-          <button
-            key={option}
-            type="button"
-            className="button practice__size"
-            aria-pressed={option === size}
-            onClick={() => onSize(option)}
-          >
-            {option}
-          </button>
-        ))}
-      </fieldset>
       {startButton({
         mode: "puzzles",
         motif,
@@ -344,13 +325,7 @@ export function PracticeOverview(props: PracticeOverviewProps) {
           Puzzle themes
         </h3>
         <div className="practice-page__cards">
-          <MotifCard
-            motifs={props.motifs}
-            progress={progress}
-            size={props.size}
-            onSize={props.onSize}
-            startButton={startButton}
-          />
+          <MotifCard motifs={props.motifs} progress={progress} startButton={startButton} />
         </div>
       </section>
       {props.failure}

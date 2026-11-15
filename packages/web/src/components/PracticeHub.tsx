@@ -11,7 +11,6 @@ import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useStat
 import type { Loaded } from "../hooks/useLoaded.js";
 import type { OpeningDrillControls } from "../state/openings-api.js";
 import {
-  type DrillSize,
   italianOpeningCount,
   type MotifCount,
   NEEDS_ENGINE_TEXT,
@@ -54,8 +53,6 @@ export interface PracticeHubProps {
     opening?: string | undefined;
   } | null;
   failure: string | null;
-  size: DrillSize;
-  onSize(size: DrillSize): void;
   onStart(mode: TrainingMode, motif: string): void;
   onStartRepertoire(repertoireId: number, scope: RepertoireScope, level?: RepertoireLevel): void;
   // The drills from the student's games, grouped by opening, and what starts one of them. Without
@@ -312,8 +309,6 @@ export function PracticeHub(props: PracticeHubProps) {
             progress={props.progress}
             motifs={props.motifs}
             engineMissing={props.engineMissing}
-            size={props.size}
-            onSize={props.onSize}
             startButton={startButton}
             problems={props.problems}
             failure={failureOn("overview")}

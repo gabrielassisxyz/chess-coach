@@ -16,6 +16,7 @@ import { type Clock, systemClock } from "../clock.js";
 import type {
   ExploredEvent,
   PuzzleResultNotification,
+  SrsAnswerNotification,
   TrainingReasoning,
   TrainingSummaryNotification,
   TriedMove,
@@ -30,12 +31,12 @@ import {
   openingNamesOfFamily,
   type PuzzleFilter,
   type PuzzleSummary,
-  type RatingSampleFilter,
   recordPuzzleAttempt,
 } from "../db/puzzles.js";
 import { getCard, insertCard } from "../db/srs.js";
 import {
   amendPendingNotification,
+  appendTrainingRunItems,
   closeTrainingItem,
   type ExplorationKind,
   endOpenTrainingRuns,
@@ -65,7 +66,7 @@ import {
 import { currentPuzzleRating, ratingAfter, setPuzzleRating } from "../puzzles/rating.js";
 import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
-import type { ReviewDesk } from "../srs/review.js";
+import type { AnswerResult, ReviewDesk } from "../srs/review.js";
 import { ActivityError } from "./errors.js";
 import { Exploration } from "./exploration.js";
 import type { RepertoireTryJudge } from "./repertoire-session.js";
@@ -76,8 +77,9 @@ export type DeskPort = Pick<
 >;
 
 export const DUE_QUEUE_SIZE = 20;
-export const DEFAULT_DRILL_SIZE = 10;
-export type DrillSize = 5 | 10 | 20;
+// The puzzles drawn at a time: a queue without an end gets this many when it starts and again each
+// time the student reaches its last item, and a drill over a fixed set holds this many.
+export const PUZZLE_BATCH_SIZE = 10;
 
 export interface TrainingDeps {
   db: Database;
@@ -119,8 +121,6 @@ export interface TrainingInput {
    * without it the drill serves every position of the colour. Other modes ignore it.
    */
   opening?: string | undefined;
-  /** How many positions a puzzle or opening drill holds; a review queue ignores it. */
-  size?: DrillSize | undefined;
 }
 
 export type TrainingItemRef = { kind: "card"; id: number } | { kind: "puzzle"; id: string };
@@ -139,6 +139,8 @@ interface Served {
   orientation: PlayerColor;
   lastMove: string | null;
   expected: ExpectedMove | null;
+  // The line a puzzle steps through, and a card born from a puzzle with a line of its own; null
+  // for a card graded on one move.
   attempt: AttemptState | null;
   itemId: number;
   servedAtMs: number;
@@ -244,6 +246,46 @@ function isLegalUci(fen: string, uci: string): boolean {
     .some((move) => `${move.from}${move.to}${move.promotion ?? ""}` === uci);
 }
 
+// A line is the student's move, the reply and a move again, and it ends on the student's move, so
+// it has an odd number of plies from 3 up; anything shorter is one question.
+const MIN_CARD_LINE_PLIES = 3;
+
+// The solution a card is reviewed through: its puzzle's whole one, so the review asks what the
+// puzzle asked. Every other card is graded on its own move: one with no puzzle, one whose puzzle
+// is gone (`puzzle_id` has no foreign key) or holds a single move, and one whose puzzle the seed
+// has since rewritten, since a line that does not start from the card's position and move is not
+// the line the card was made from.
+function puzzleLineOfCard(db: Database, cardId: number): readonly string[] | null {
+  const card = getCard(db, cardId);
+  if (!card || card.puzzleId === null) return null;
+  const puzzle = getPuzzle(db, card.puzzleId);
+  if (!puzzle) return null;
+  const { solution } = puzzle;
+  if (solution.length < MIN_CARD_LINE_PLIES || solution.length % 2 === 0) return null;
+  if (puzzle.fen !== card.promptFen || solution[0] !== card.expectedUci) return null;
+  return solution;
+}
+
+// The row the desk writes describes the card's first move, which is all a card of one move is
+// graded on. A card reviewed through a line is described where the student missed instead, so the
+// coach explains the miss in the position it happened in: the step the solution was shown at,
+// else the step of the first wrong try. At the first step that is what the desk already wrote.
+function missedStepOfCard(s: Served, promptFen: string): Partial<SrsAnswerNotification> {
+  const line = s.attempt;
+  if (!line) return {};
+  const wrong = s.tries.find((attempt) => !attempt.correct);
+  const ply = s.gaveUp ? line.cursor : wrong?.ply;
+  if (ply === undefined) return {};
+  const fen = fenAfter(promptFen, line.solution.slice(0, ply));
+  const expectedUci = line.solution[ply] as string;
+  return {
+    prompt_fen: fen,
+    expected_uci: expectedUci,
+    expected_san: sanFor(fen, expectedUci),
+    ...(!s.gaveUp && wrong ? { answered_uci: wrong.uci, answered_san: wrong.san } : {}),
+  };
+}
+
 /**
  * One queue of cards or puzzles, served one at a time. It holds no activity id: the activity
  * service owns ids and staleness, and asks this for the state to publish.
@@ -261,6 +303,49 @@ function hasStoredMotifOrTheme(db: Database, motif: string): boolean {
   );
 }
 
+const puzzleEntryOf = (puzzle: PuzzleSummary): QueueEntry => ({
+  kind: "puzzle",
+  id: puzzle.id,
+  motif: puzzle.motif,
+  difficulty: puzzle.difficulty,
+});
+
+// What a start draws: the first items, and whether the queue goes on past them. A queue sampled
+// around the student's rating has no end of its own; every other queue is a set fixed at the start.
+interface DrawnQueue {
+  entries: QueueEntry[];
+  endless: boolean;
+}
+
+// A fixed set holds one batch: the opening drills, and a motif no theme row names.
+function drawFixedSet(deps: TrainingDeps, filter: PuzzleFilter): DrawnQueue {
+  const listing = listPuzzles(deps.db, { ...filter, limit: PUZZLE_BATCH_SIZE }, deps.shuffleRandom);
+  return { entries: listing.puzzles.map(puzzleEntryOf), endless: false };
+}
+
+// One batch of a queue sampled around the student's rating, of one theme or of none. The sampler
+// drops duplicates inside a call only, and a puzzle the run already served has been answered, so
+// it is returned last, and again once a window holds too few new ones. Asking for as many extra
+// puzzles as the run holds leaves a whole batch after those are dropped; the sampler's own bound
+// per call (50) is where that stops being true, and a batch that then comes back short or empty is
+// the end of the run.
+function drawRatedBatch(
+  deps: TrainingDeps,
+  motif: string | undefined,
+  taken: ReadonlySet<string>,
+): QueueEntry[] {
+  const theme = motif && (THEME_OF_MOTIF[motif] ?? motif);
+  const filter = {
+    theme,
+    ratingAround: currentPuzzleRating(deps.db),
+    limit: PUZZLE_BATCH_SIZE + taken.size,
+  };
+  return listPuzzles(deps.db, filter, deps.shuffleRandom)
+    .puzzles.filter((puzzle) => !taken.has(puzzle.id))
+    .slice(0, PUZZLE_BATCH_SIZE)
+    .map(puzzleEntryOf);
+}
+
 export class TrainingRun implements PracticeRunPort {
   private position = 0;
   private solved = 0;
@@ -275,7 +360,8 @@ export class TrainingRun implements PracticeRunPort {
 
   /**
    * `runId` is the `training_runs` row this queue keeps current; a single item the coach served
-   * has none and is never persisted.
+   * has none and is never persisted. An `endless` queue has no length: it draws its next batch when
+   * the student asks for the item after the last one.
    */
   private constructor(
     private readonly deps: TrainingDeps,
@@ -283,6 +369,7 @@ export class TrainingRun implements PracticeRunPort {
     private readonly queue: QueueEntry[],
     readonly runId: number | null,
     private readonly runMotif: string | null = null,
+    private readonly endless: boolean = false,
   ) {
     this.clock = deps.clock ?? systemClock;
     this.served = this.serve(0);
@@ -291,7 +378,7 @@ export class TrainingRun implements PracticeRunPort {
   // A queue that would hold nothing is refused, so the board never shows an item that is not there.
   // A new queue ends any run still open as replaced.
   static begin(deps: TrainingDeps, input: TrainingInput): TrainingRun {
-    const queue = TrainingRun.materialize(deps, input);
+    const { entries: queue, endless } = TrainingRun.materialize(deps, input);
     if (queue.length === 0) {
       const what = input.mode === "srs" ? "no review card is due" : "no puzzle matches";
       throw new ActivityError("empty_queue", what);
@@ -313,7 +400,7 @@ export class TrainingRun implements PracticeRunPort {
         startedAt,
       });
       const runMotif = input.mode === "puzzles" ? (input.motif ?? null) : null;
-      const run = new TrainingRun(deps, input.mode, queue, runId, runMotif);
+      const run = new TrainingRun(deps, input.mode, queue, runId, runMotif, endless);
       run.save();
       return run;
     })();
@@ -338,43 +425,29 @@ export class TrainingRun implements PracticeRunPort {
     return new TrainingRun(deps, "puzzles", [entry], null);
   }
 
-  private static materialize(deps: TrainingDeps, input: TrainingInput): QueueEntry[] {
+  private static materialize(deps: TrainingDeps, input: TrainingInput): DrawnQueue {
     if (input.mode === "srs") {
-      return deps.desk
-        .listDueCards(DUE_QUEUE_SIZE)
-        .map((card) => ({ kind: "card", cardId: card.id }));
+      const due = deps.desk.listDueCards(DUE_QUEUE_SIZE);
+      return { entries: due.map((card) => ({ kind: "card", cardId: card.id })), endless: false };
     }
-    if (input.mode === "openings" && !input.color) {
-      throw new ActivityError("empty_queue", "choose White or Black for the opening drill");
-    }
-    const limit = input.size ?? DEFAULT_DRILL_SIZE;
-    const random = deps.shuffleRandom ?? Math.random;
-    const listed = (filter: PuzzleFilter | RatingSampleFilter): PuzzleSummary[] =>
-      listPuzzles(deps.db, filter, random).puzzles;
-    let puzzles: PuzzleSummary[];
     if (input.mode === "openings") {
-      const openingNames = openingNamesOfStart(deps.db, input);
-      puzzles = listed({ motif: `opening-${input.color}`, openingNames, limit });
-    } else {
-      if (input.motif !== undefined && !isFixedPracticeMotif(input.motif)) {
-        if (!hasStoredMotifOrTheme(deps.db, input.motif)) {
-          throw new ActivityError("empty_queue", "no puzzle matches");
-        }
+      if (!input.color) {
+        throw new ActivityError("empty_queue", "choose White or Black for the opening drill");
       }
-      const ratingAround = currentPuzzleRating(deps.db);
-      const theme = input.motif && (THEME_OF_MOTIF[input.motif] ?? input.motif);
-      puzzles = listed({ theme, ratingAround, limit });
-      // A motif no theme row names yet, such as the library's unrated ones, stays reachable.
-      if (puzzles.length === 0 && input.motif !== undefined) {
-        puzzles = listed({ motif: input.motif, limit });
+      const openingNames = openingNamesOfStart(deps.db, input);
+      return drawFixedSet(deps, { motif: `opening-${input.color}`, openingNames });
+    }
+    if (input.motif !== undefined && !isFixedPracticeMotif(input.motif)) {
+      if (!hasStoredMotifOrTheme(deps.db, input.motif)) {
+        throw new ActivityError("empty_queue", "no puzzle matches");
       }
     }
-    return puzzles.map((p) => ({
-      kind: "puzzle",
-      id: p.id,
-      motif: p.motif,
-      difficulty: p.difficulty,
-    }));
+    const rated = drawRatedBatch(deps, input.motif, new Set());
+    // A motif no theme row names yet, such as the library's unrated ones, stays reachable as a set.
+    if (rated.length === 0 && input.motif !== undefined) {
+      return drawFixedSet(deps, { motif: input.motif });
+    }
+    return { entries: rated, endless: true };
   }
 
   state(activityId: number): TrainingActivity {
@@ -415,7 +488,7 @@ export class TrainingRun implements PracticeRunPort {
       wrong_tries: s.tries
         .filter((attempt) => !attempt.correct)
         .map(({ ply, uci, san }): WrongTry => ({ ply, uci, san })),
-      queue_outcomes: this.queue.map(
+      queue_outcomes: this.itemsShown().map(
         (_entry, index): QueueOutcome =>
           this.outcomes[index] ?? (index === this.position ? "current" : "pending"),
       ),
@@ -425,9 +498,17 @@ export class TrainingRun implements PracticeRunPort {
     };
   }
 
+  // The items the progress draws: a queue with a length shows all of it, one without shows only
+  // what has been served, so it never draws an item that is not there yet.
+  private itemsShown(): QueueEntry[] {
+    return this.endless ? this.queue.slice(0, this.position + 1) : this.queue;
+  }
+
   private playedLine(s: Served): PlayedMove[] {
-    if (s.item.kind === "puzzle")
-      return lineFrom(s.item.fen, playedSolution(s.attempt as AttemptState));
+    if (s.attempt) {
+      const start = s.item.kind === "puzzle" ? s.item.fen : s.item.prompt_fen;
+      return lineFrom(start, playedSolution(s.attempt));
+    }
     const right = s.tries.find((attempt) => attempt.correct);
     if (!right || s.gaveUp) return [];
     return [{ ply: 0, uci: right.uci, san: right.san ?? right.uci, by: "student" }];
@@ -518,7 +599,7 @@ export class TrainingRun implements PracticeRunPort {
       throw new ActivityError("item_finished", "this item is already over");
     }
     let expectedUci: string;
-    if (s.item.kind === "card") {
+    if (s.item.kind === "card" && !s.attempt) {
       const card = getCard(this.deps.db, s.item.card_id);
       if (!card) throw new ActivityError("card_not_found", `card ${s.item.card_id} does not exist`);
       expectedUci = card.expectedUci;
@@ -573,7 +654,8 @@ export class TrainingRun implements PracticeRunPort {
     });
   }
 
-  // The last item's next ends the queue: the summary is written once, here.
+  // The last item's next ends a queue with a length: the summary is written once, here. A queue
+  // without one draws its next batch there instead, and ends only when nothing new is left to draw.
   next(): void {
     const s = this.served;
     if (this.summary !== null) {
@@ -587,13 +669,27 @@ export class TrainingRun implements PracticeRunPort {
       throw new ActivityError("item_unfinished", "answer this item before moving on");
     }
     this.transition(() => {
-      if (this.position === this.queue.length - 1) {
+      if (this.position === this.queue.length - 1 && !this.refill()) {
         this.finish();
         return;
       }
       this.position += 1;
       this.served = this.serve(this.position);
     });
+  }
+
+  // Appends the next batch to the queue and to the run's stored items; false when there is none.
+  private refill(): boolean {
+    if (!this.endless) return false;
+    const taken = new Set(
+      this.queue.flatMap((entry) => (entry.kind === "puzzle" ? [entry.id] : [])),
+    );
+    const added = drawRatedBatch(this.deps, this.runMotif ?? undefined, taken);
+    if (added.length === 0) return false;
+    if (this.runId !== null)
+      appendTrainingRunItems(this.deps.db, this.runId, added.map(storedItemOf));
+    this.queue.push(...added);
+    return true;
   }
 
   /** The student left the queue; a finished queue keeps the reason it already has. */
@@ -685,6 +781,10 @@ export class TrainingRun implements PracticeRunPort {
     if (!isLegalUci(s.fen, uci)) {
       throw new ActivityError("illegal_move", `${uci} is not legal in this position`);
     }
+    if (s.attempt) {
+      this.tryCardLine(s, item, s.attempt, uci);
+      return;
+    }
     const card = getCard(this.deps.db, item.card_id);
     if (!card) throw new ActivityError("card_not_found", `card ${item.card_id} does not exist`);
     const correct = uci === card.expectedUci;
@@ -692,25 +792,76 @@ export class TrainingRun implements PracticeRunPort {
     if (correct) this.finishCard(s, item.exposure_id, false);
   }
 
+  // One step of a card reviewed through its puzzle's line, graded as the puzzle's own step is: a
+  // wrong try keeps the step, a right one plays the reply. Only the ending is a card's, rated by
+  // the student, so no attempt, rating move or new card is written.
+  private tryCardLine(
+    s: Served,
+    item: TrainingItem & { kind: "card" },
+    before: AttemptState,
+    uci: string,
+  ): void {
+    const outcome = tryPuzzleMove(before, uci);
+    if (!outcome.accepted) {
+      const code = outcome.reason === "illegal" ? "illegal_move" : "item_finished";
+      throw new ActivityError(code, `the card refused ${uci}: ${outcome.reason}`);
+    }
+    this.recordTry(s, before.cursor, uci, outcome.correct, before.fen);
+    s.attempt = outcome.state;
+    if (!outcome.correct) return;
+    s.fen = outcome.state.fen;
+    s.explore.restart(s.fen);
+    if (outcome.state.status === "in_progress") {
+      s.status = "in_progress";
+      s.shown = [];
+      s.lastMove = outcome.reply;
+      return;
+    }
+    s.lastMove = uci;
+    this.finishCard(s, item.exposure_id, false);
+  }
+
   // The desk grades one answer per serving, so it is handed the first try: that is what the review
-  // row's `correct` means. A card given up before any try is answered with the null move.
-  // A hinted solve keeps the desk's grade but never counts as first try.
+  // row's `correct` means. A card given up before any try is answered with the null move. A card
+  // reviewed through a line is also told whether every step was right first time, since the first
+  // move alone cannot say that a later one was missed. A hinted solve keeps the desk's grade but
+  // never counts as first try.
   private finishCard(s: Served, exposureId: string, gaveUp: boolean): void {
-    const result = this.deps.desk.answer(exposureId, s.tries[0]?.uci ?? NO_MOVE_UCI);
+    const line = s.attempt;
+    const lineRight = !gaveUp && (line?.wrongTries ?? 0) === 0;
+    const result = this.deps.desk.answer(exposureId, s.tries[0]?.uci ?? NO_MOVE_UCI, lineRight);
     this.closeItem(s, s.tries.at(-1)?.uci ?? null, result.correct && !s.hinted);
     s.gaveUp = gaveUp;
     this.attachReasoning(s);
-    // A right answer stays on the board, as a puzzle's last move does. A card given up keeps the
-    // prompt position instead: `solution_line` is played from `fen`, so the client animates it.
-    if (!gaveUp) s.fen = fenAfter(s.fen, [result.expected_uci]);
-    s.explore.restart(s.fen);
+    if (line) this.placeLineEnding(s, line, gaveUp);
+    else this.placeMoveEnding(s, result, gaveUp);
     s.status = gaveUp ? "failed" : "solved";
-    s.expected = gaveUp ? { uci: result.expected_uci, san: result.expected_san } : null;
-    s.lastMove = gaveUp ? null : result.expected_uci;
-    s.solutionLine = gaveUp ? [result.expected_uci] : null;
     s.suggestedQuality = suggestedQualityOf(gaveUp, result.correct, s.hinted);
     this.tally(!gaveUp);
     this.wake = true;
+  }
+
+  // A right answer stays on the board, as a puzzle's last move does. A card given up keeps the
+  // prompt position instead: `solution_line` is played from `fen`, so the client animates it.
+  private placeMoveEnding(s: Served, result: AnswerResult, gaveUp: boolean): void {
+    if (!gaveUp) s.fen = fenAfter(s.fen, [result.expected_uci]);
+    s.explore.restart(s.fen);
+    s.expected = gaveUp ? { uci: result.expected_uci, san: result.expected_san } : null;
+    s.lastMove = gaveUp ? null : result.expected_uci;
+    s.solutionLine = gaveUp ? [result.expected_uci] : null;
+  }
+
+  // A line solved already rests on its last move. One given up keeps the position of the step it
+  // stopped at, and `solution_line` holds the moves left from there.
+  private placeLineEnding(s: Served, line: AttemptState, gaveUp: boolean): void {
+    if (!gaveUp) return;
+    const state = giveUp(line);
+    const expectedUci = state.solution[state.cursor] as string;
+    s.attempt = state;
+    s.explore.restart(s.fen);
+    s.expected = { uci: expectedUci, san: sanFor(state.fen, expectedUci) };
+    s.lastMove = null;
+    s.solutionLine = solutionLineOf(state);
   }
 
   private tryPuzzle(s: Served, item: TrainingItem & { kind: "puzzle" }, uci: string): void {
@@ -761,7 +912,7 @@ export class TrainingRun implements PracticeRunPort {
     amendPendingNotification(
       this.deps.db,
       { sessionId: sink.sessionId(), type: "srs_answer", cardId: s.item.card_id },
-      { reasoning: this.reasoning(s) },
+      { ...missedStepOfCard(s, s.item.prompt_fen), reasoning: this.reasoning(s) },
     );
   }
 
@@ -864,7 +1015,8 @@ export class TrainingRun implements PracticeRunPort {
 
   private serve(index: number): Served {
     const entry = this.queue[index] as QueueEntry;
-    const position = { position_in_queue: index + 1, queue_length: this.queue.length };
+    const position = { position_in_queue: index + 1 };
+    const length = { queue_length: this.queue.length };
     const servedAt = this.clock.now();
     const ledger = (
       item: Omit<Parameters<typeof openTrainingItem>[1], "servedAt">,
@@ -891,6 +1043,7 @@ export class TrainingRun implements PracticeRunPort {
     });
     if (entry.kind === "card") {
       const card = this.deps.desk.serveCard(entry.cardId);
+      const line = puzzleLineOfCard(this.deps.db, card.cardId);
       return {
         item: {
           kind: "card",
@@ -900,13 +1053,14 @@ export class TrainingRun implements PracticeRunPort {
           student_color: card.studentColor,
           rating_preview: this.deps.desk.previewRatings(card.cardId),
           ...position,
+          ...length,
         },
         status: "prompt",
         fen: card.promptFen,
         orientation: card.studentColor,
         lastMove: null,
         expected: null,
-        attempt: null,
+        attempt: line ? startAttempt(card.promptFen, line) : null,
         ...ledger(
           {
             kind: "card",
@@ -932,6 +1086,7 @@ export class TrainingRun implements PracticeRunPort {
         rating: puzzle.rating,
         opening_name: puzzle.openingName,
         ...position,
+        ...(this.endless ? {} : length),
       },
       status: "prompt",
       fen: puzzle.fen,

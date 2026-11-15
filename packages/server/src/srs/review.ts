@@ -88,15 +88,17 @@ export class ReviewDesk {
     };
   }
 
-  // The grade is an exact UCI comparison, promotion piece included.
-  answer(exposureId: string, uci: string): AnswerResult {
+  // The grade is an exact UCI comparison, promotion piece included. A card reviewed through its
+  // puzzle's whole line is also told whether every step went right first time: the first move
+  // alone cannot say that a later one was missed.
+  answer(exposureId: string, uci: string, lineRightFirstTime: boolean = true): AnswerResult {
     const exposure = this.requireExposure(exposureId);
     if (exposure.answeredUci !== null) {
       throw new SrsError("exposure_answered", "this serving of the card was already answered");
     }
     const card = this.requireCard(exposure.cardId);
     exposure.answeredUci = uci;
-    exposure.correct = uci === card.expectedUci;
+    exposure.correct = uci === card.expectedUci && lineRightFirstTime;
     const expectedSan = sanFor(card.promptFen, card.expectedUci);
     this.notify({
       type: "srs_answer",

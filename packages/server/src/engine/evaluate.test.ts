@@ -105,6 +105,14 @@ describe("evaluatePlayerMove", () => {
     await evaluatePlayerMove(engine, OPENING, "e2e4", "w");
     expect(engine.requests).toHaveLength(2);
     expect(engine.requests.map((request) => request.capMs)).toEqual([undefined, undefined]);
+    expect(engine.requests.every((request) => !("capMs" in request))).toBe(true);
+  });
+
+  it("sends both searches with the time cap when one is given", async () => {
+    const engine = new RecordingSearcher();
+    await evaluatePlayerMove(engine, OPENING, "e2e4", "w", 2000);
+    expect(engine.requests).toHaveLength(2);
+    expect(engine.requests.map((request) => request.capMs)).toEqual([2000, 2000]);
   });
 });
 

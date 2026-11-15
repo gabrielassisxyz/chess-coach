@@ -17,6 +17,7 @@ import { positionKey } from "./from-games.js";
 import {
   CONCESSION_ALLOWANCE_CP,
   repertoireCoverage,
+  repertoireCoveredPercent,
   SOUNDNESS_FLOOR_CONCESSION_CP,
   soundnessFromConcession,
 } from "./repertoire-coverage.js";
@@ -701,5 +702,65 @@ describe("pinned coverage scores", () => {
 
   it("leaves a prepared line rarer than 1 in 50 out of the covered share", () => {
     expect(pinnedScoresWithRareReply().coverage().covered_percent).toBe(80);
+  });
+});
+
+describe("the covered share of the variations of an opening", () => {
+  // 3...Bc5 comes in 6 games of 10 and 3...Nf6 in 4. A variation answers the one it is given and
+  // leaves the other open, so a line ends at the answer and the other reply is a gap.
+  function answeringOnly(line: readonly string[], san: string, reach: number): StoredVariation {
+    return new StoredVariation()
+      .setup()
+      .reply(SETUP, "Bc5", { reach: 0.6 })
+      .reply(SETUP, "Nf6", { reach: 0.4 })
+      .own(line, san, { reach });
+  }
+
+  it("covers a reply when any of the variations answers it", () => {
+    const bishop = answeringOnly(GIUOCO, "c3", 0.6);
+    const knight = answeringOnly(TWO_KNIGHTS, "Ng5", 0.4);
+
+    // 4.c3 ends its line at 0.6 against a gap of 0.4, and 4.Ng5 at 0.4 against a gap of 0.6; with
+    // both, no reply is left open and the two lines end at 1.
+    expect(repertoireCoveredPercent(db, [bishop.id])).toBe(60);
+    expect(repertoireCoveredPercent(db, [knight.id])).toBe(40);
+    expect(repertoireCoveredPercent(db, [bishop.id, knight.id])).toBe(100);
+  });
+
+  it("is the share of the variation itself for an opening of one variation", () => {
+    const bishop = answeringOnly(GIUOCO, "c3", 0.6);
+
+    expect(repertoireCoveredPercent(db, [bishop.id])).toBe(bishop.coverage().covered_percent);
+    expect(repertoireCoveredPercent(db, [branching().id])).toBe(100);
+  });
+
+  it("lists a reply that two variations leave open once", () => {
+    const first = answeringOnly(GIUOCO, "c3", 0.6);
+    const second = answeringOnly(GIUOCO, "c3", 0.6);
+
+    // The gap 3...Nf6 holds 0.4 whichever variation stores it; counted for each it would read 42.9.
+    expect(repertoireCoveredPercent(db, [first.id, second.id])).toBe(60);
+  });
+
+  it("follows the older variation where two answer one position differently", () => {
+    const older = answeringOnly(GIUOCO, "c3", 0.6);
+    // The newer variation answers 3...Bc5 with 4.d3 and leaves 4...Nf6 open.
+    const newer = answeringOnly(GIUOCO, "d3", 0.6).reply([...GIUOCO, "d3"], "Nf6", { reach: 0.3 });
+
+    expect(repertoireCoveredPercent(db, [newer.id])).toBe(0);
+    expect(repertoireCoveredPercent(db, [older.id, newer.id])).toBe(60);
+    expect(repertoireCoveredPercent(db, [newer.id, older.id])).toBe(60);
+  });
+
+  it("follows the likelier answer over an older one", () => {
+    const older = answeringOnly(GIUOCO, "c3", 0.5);
+    const newer = answeringOnly(GIUOCO, "d3", 0.6).reply([...GIUOCO, "d3"], "Nf6", { reach: 0.3 });
+
+    expect(repertoireCoveredPercent(db, [older.id, newer.id])).toBe(0);
+  });
+
+  it("reads nothing stored as null", () => {
+    expect(repertoireCoveredPercent(db, [new StoredVariation().id])).toBeNull();
+    expect(repertoireCoveredPercent(db, [])).toBeNull();
   });
 });
