@@ -706,7 +706,8 @@ describe("a hub with a problem", () => {
     render(<Practice server={api(null)} {...hubProps} fetchHealth={fetchHealth} />);
     const card = await screen.findByRole("alert", { name: "Engine missing" });
     expect(card.textContent).toContain("Stockfish isn't running");
-    for (const name of ["Review 4 cards", /^Healthy mix/, /^Fork\b/]) {
+    // The weakness card has no improvement area here, so its one button is Start a healthy mix.
+    for (const name of ["Review 4 cards", /^Healthy mix/, /^Fork\b/, "Start a healthy mix"]) {
       const button = await screen.findByRole("button", { name });
       expect((button as HTMLButtonElement).disabled).toBe(true);
     }
@@ -3016,7 +3017,7 @@ describe("the hub's frame", () => {
     },
   );
 
-  it("draws the Overview in order: title, problem cards, tiles, Due cards, Puzzle themes", async () => {
+  it("draws the Overview in order: title, problem cards, tiles, Due cards, Puzzles by weakness, Puzzle themes", async () => {
     const missing = async () => ({
       status: "ok" as const,
       version: "test",
