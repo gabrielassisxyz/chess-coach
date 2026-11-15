@@ -124,6 +124,81 @@ describe("useLoaded", () => {
     expect(screen.getByText("fresh-value")).toBeTruthy();
   });
 
+  it("ignores an earlier call rejecting after a newer call resolved", async () => {
+    const first = deferred<string>();
+    const stale = deferred<string>();
+    const latest = deferred<string>();
+    const fetcher = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(stale.promise)
+      .mockReturnValueOnce(latest.promise);
+    let savedRetry: (() => void) | null = null;
+    render(
+      <Probe
+        fetcher={fetcher}
+        onState={(state) => {
+          if (state.status === "failed") savedRetry = state.retry;
+        }}
+      />,
+    );
+    await act(async () => {
+      first.reject(new Error("first failed"));
+    });
+    act(() => {
+      savedRetry?.();
+    });
+    act(() => {
+      savedRetry?.();
+    });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      latest.resolve("fresh-value");
+      await latest.promise;
+    });
+    expect(screen.getByText("fresh-value")).toBeTruthy();
+
+    await act(async () => {
+      stale.reject(new Error("late failure"));
+      await stale.promise.catch(() => undefined);
+    });
+    expect(screen.getByText("fresh-value")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows the failure and the button again when the retry fails too, and recovers on a third press", async () => {
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const third = deferred<string>();
+    const fetcher = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(third.promise);
+    render(<Probe fetcher={fetcher} />);
+    await act(async () => {
+      first.reject(new Error("down"));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(screen.getByRole("status").textContent).toBe("loading");
+    await act(async () => {
+      second.reject(new Error("still down"));
+    });
+    expect(screen.getByRole("alert").textContent).toBe("failed");
+    expect(screen.queryByRole("status")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    await act(async () => {
+      third.resolve("recovered");
+      await third.promise;
+    });
+    expect(screen.getByText("recovered")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("ignores an earlier fetcher resolving after the fetcher changes", async () => {
     const first = deferred<string>();
     const second = deferred<string>();

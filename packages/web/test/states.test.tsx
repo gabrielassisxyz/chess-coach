@@ -148,6 +148,32 @@ describe("Practice states", () => {
     expect(within(card).getByRole("radio", { name: /opening trap, 4 puzzles/i })).toBeTruthy();
   });
 
+  it("keeps the motif card on its error and Try again when the retry fails too, then recovers on a third press", async () => {
+    const fetchMotifs = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("x"))
+      .mockRejectedValueOnce(new Error("y"))
+      .mockResolvedValueOnce([{ motif: "opening_trap", count: 4 }]);
+    render(<Practice server={serverApi()} {...hub} fetchMotifs={fetchMotifs} />);
+    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
+    await within(card).findByRole("alert");
+
+    fireEvent.click(within(card).getByRole("button", { name: "Try again" }));
+    const again = await within(card).findByRole("alert");
+    expect(again.textContent).toBe(
+      "The motif list could not be loaded. You can still drill with Any motif.",
+    );
+    expect(within(card).queryByRole("status")).toBeNull();
+    expect(fetchMotifs).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(within(card).getByRole("button", { name: "Try again" }));
+    expect(
+      await within(card).findByRole("radio", { name: /opening trap, 4 puzzles/i }),
+    ).toBeTruthy();
+    expect(within(card).queryByRole("alert")).toBeNull();
+    expect(fetchMotifs).toHaveBeenCalledTimes(3);
+  });
+
   it("says to restart the server when no puzzle is loaded at all", async () => {
     render(<Practice server={serverApi()} {...hub} fetchMotifs={async () => []} />);
     expect(await screen.findByText(/Restart the server/)).toBeTruthy();

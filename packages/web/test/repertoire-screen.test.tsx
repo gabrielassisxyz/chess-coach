@@ -180,6 +180,28 @@ describe("the openings menu on the hub", () => {
     await screen.findByText("No opening is stored yet. Generate the Italian repertoire first.");
   });
 
+  it("offers no Try again in the openings note while it loads or after it loaded", async () => {
+    const waiting = new Promise<never>(() => undefined);
+    const { unmount } = render(
+      <Practice server={serverApi(null)} {...hubProps} fetchRepertoires={() => waiting} />,
+    );
+    const loading = await screen.findByRole("region", { name: "White openings" });
+    expect(loading.textContent).toContain("Loading openings.");
+    expect(within(loading).queryByRole("button", { name: "Try again" })).toBeNull();
+    unmount();
+
+    render(<Practice server={serverApi(null)} {...hubProps} />);
+    const loaded = await whiteOpenings();
+    expect(within(loaded).getByRole("heading", { name: "Italian Game" })).toBeTruthy();
+    expect(within(loaded).queryByRole("button", { name: "Try again" })).toBeNull();
+
+    cleanup();
+    render(<Practice server={serverApi(null)} {...hubProps} fetchRepertoires={async () => []} />);
+    const empty = await screen.findByRole("region", { name: "White openings" });
+    await screen.findByText("No opening is stored yet. Generate the Italian repertoire first.");
+    expect(within(empty).queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
   it("retries only repertoires when Try again is pressed on White openings", async () => {
     let resolveSecond: (value: typeof repertoireList) => void = () => undefined;
     const secondCall = new Promise<typeof repertoireList>((resolve) => {
