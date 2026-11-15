@@ -278,3 +278,95 @@ describe("016_training_run_outcomes", () => {
     ]);
   });
 });
+
+describe("026_training_run_left", () => {
+  const REASONS = ["finished", "ended", "discarded", "replaced", "left"];
+
+  // Opened as the server opens it, with foreign keys enforced: training_items.run_id points at
+  // training_runs, so a rebuild of that table would fail or lose the rows pointing at it.
+  function databaseAt025(): BetterSqlite3.Database {
+    const all = listMigrations(defaultMigrationsDir);
+    const upTo025 = migrationsDir(
+      Object.fromEntries(
+        all
+          .filter((name) => name < "026")
+          .map((name) => [name, readFileSync(join(defaultMigrationsDir, name), "utf8")]),
+      ),
+    );
+    const db = new BetterSqlite3(join(tmp, "at-025.db"));
+    db.pragma("foreign_keys = ON");
+    runMigrations(db, upTo025);
+    return db;
+  }
+
+  function emptyDatabase(): BetterSqlite3.Database {
+    const db = new BetterSqlite3(join(tmp, "empty.db"));
+    db.pragma("foreign_keys = ON");
+    runMigrations(db, defaultMigrationsDir);
+    return db;
+  }
+
+  // Explicit ids with gaps, so a copy that lets SQLite number the rows again is caught.
+  function insertRun(db: BetterSqlite3.Database, id: number, reason: string | null): void {
+    db.prepare(
+      `INSERT INTO training_runs (id, mode, motif, color, size, items_json, position, solved, failed,
+         current_json, started_at, updated_at, ended_at, ended_reason, outcomes_json)
+       VALUES (?, 'puzzles', 'fork', NULL, 2, '[{"kind":"puzzle","id":"p1"}]', 1, 1, 0,
+         '{"item_id":1}', '2026-10-01T00:00:00.000Z', '2026-10-01T00:01:00.000Z', ?, ?, '["solved"]')`,
+    ).run(id, reason === null ? null : "2026-10-01T00:02:00.000Z", reason);
+  }
+
+  const runs = (db: BetterSqlite3.Database): unknown[] =>
+    db.prepare("SELECT * FROM training_runs ORDER BY id").all();
+
+  it("keeps every stored run with its id and reason, and every item still points at its run", () => {
+    const db = databaseAt025();
+    insertRun(db, 3, "finished");
+    insertRun(db, 7, null);
+    insertRun(db, 12, "ended");
+    insertRun(db, 15, "discarded");
+    insertRun(db, 20, "replaced");
+    for (const [itemId, runId] of [
+      [5, 3],
+      [9, 7],
+      [10, 20],
+    ]) {
+      db.prepare(
+        `INSERT INTO training_items (id, kind, puzzle_id, served_at, run_id)
+         VALUES (?, 'puzzle', 'p1', '2026-10-01T00:00:00.000Z', ?)`,
+      ).run(itemId, runId);
+    }
+    const runsBefore = runs(db);
+    const itemsBefore = db.prepare("SELECT * FROM training_items ORDER BY id").all();
+
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("026_training_run_left.sql");
+
+    expect(runs(db)).toEqual(runsBefore);
+    expect(db.prepare("SELECT * FROM training_items ORDER BY id").all()).toEqual(itemsBefore);
+    expect(db.prepare("SELECT id, ended_reason FROM training_runs ORDER BY id").all()).toEqual([
+      { id: 3, ended_reason: "finished" },
+      { id: 7, ended_reason: null },
+      { id: 12, ended_reason: "ended" },
+      { id: 15, ended_reason: "discarded" },
+      { id: 20, ended_reason: "replaced" },
+    ]);
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+    db.close();
+  });
+
+  it.each([
+    ["a database at 025", databaseAt025],
+    ["an empty database", emptyDatabase],
+  ])("accepts left on %s, with every older reason, and refuses an unknown one", (_name, open) => {
+    const db = open();
+    runMigrations(db, defaultMigrationsDir);
+    REASONS.forEach((reason, index) => {
+      expect(() => insertRun(db, index + 1, reason)).not.toThrow();
+    });
+    expect(() => insertRun(db, 99, "abandoned")).toThrow(/CHECK/);
+    expect(db.prepare("SELECT ended_reason FROM training_runs ORDER BY id").all()).toEqual(
+      REASONS.map((ended_reason) => ({ ended_reason })),
+    );
+    db.close();
+  });
+});

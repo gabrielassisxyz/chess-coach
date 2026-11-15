@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { AppOptions } from "./app.js";
 import { buildApp } from "./app.js";
-import type { Clock } from "./clock.js";
+import { type Clock, systemClock } from "./clock.js";
 import type { Database } from "./db/open.js";
+import { endRunsLeftOpenAtStart } from "./db/training.js";
 import type { Searcher } from "./engine/uci.js";
 import type { NotificationSink } from "./game/notifications.js";
 import { type EvaluateMove, ImportGrader } from "./import/grader.js";
@@ -79,6 +80,13 @@ export function composeServer(options: ComposeOptions): ComposedServer {
     positions: openingNames.size,
     branch_points: repertoireBranches.length,
   });
+  // Before the server listens: no board survives a restart, so a run still open belongs to the
+  // process that is gone.
+  const runsLeft = endRunsLeftOpenAtStart(
+    options.db,
+    (options.clock ?? systemClock).now().toISOString(),
+  );
+  log.info("training.runs_left", { count: runsLeft });
 
   const generateOpenings = () => generateOpeningPuzzles(options.db, options.engine, openingNames);
   const generateExplorerOpenings = () =>

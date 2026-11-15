@@ -11,7 +11,6 @@ import { type CoachNotification, renderNotifications } from "../coach/notify.js"
 import { appendChatMessage, createCoachSession, listChatTail } from "../db/chat.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { getCard, insertCard, updateSchedule } from "../db/srs.js";
-import { findOpenTrainingRun } from "../db/training.js";
 import { GameService } from "../game/service.js";
 import { type Log, RecordingLog, silentLog } from "../log.js";
 import { importLichessPuzzles } from "../puzzles/lichess-import.js";
@@ -106,6 +105,16 @@ const training = (state: ActivityState | null): TrainingActivity => {
   return state;
 };
 
+// The run that is still open, as its row stores the queue it was drawn with.
+function openRun(): { items: { kind: string; id: string | number }[] } | null {
+  const row = db
+    .prepare("SELECT items_json FROM training_runs WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")
+    .get() as { items_json: string } | undefined;
+  return row
+    ? { items: JSON.parse(row.items_json) as { kind: string; id: string | number }[] }
+    : null;
+}
+
 const code = async (run: Promise<unknown>): Promise<string> => {
   try {
     await run;
@@ -173,15 +182,23 @@ describe("queue materialization", () => {
         await activity.startTraining({ mode: "puzzles", motif: theme, size: 5 }),
       );
       expect(near.run_motif).toBe(theme);
-      expect(
-        (findOpenTrainingRun(db)?.items ?? []).map((item) => (item as { id: string }).id).sort(),
-      ).toEqual(["near-0", "near-1", "near-2", "near-3", "near-4"]);
+      expect((openRun()?.items ?? []).map((item) => (item as { id: string }).id).sort()).toEqual([
+        "near-0",
+        "near-1",
+        "near-2",
+        "near-3",
+        "near-4",
+      ]);
       await activity.endTraining();
       setPuzzleRating(db, 1800, T0.toISOString());
       await activity.startTraining({ mode: "puzzles", motif: theme, size: 5 });
-      expect(
-        (findOpenTrainingRun(db)?.items ?? []).map((item) => (item as { id: string }).id).sort(),
-      ).toEqual(["far-0", "far-1", "far-2", "far-3", "far-4"]);
+      expect((openRun()?.items ?? []).map((item) => (item as { id: string }).id).sort()).toEqual([
+        "far-0",
+        "far-1",
+        "far-2",
+        "far-3",
+        "far-4",
+      ]);
     },
   );
 
@@ -198,9 +215,7 @@ describe("queue materialization", () => {
     addPuzzle("trap-only", "opening_trap", BACK_RANK, ["a1a8"]);
     const { activity } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "fork", size: 5 });
-    const forkIds = (findOpenTrainingRun(db)?.items ?? [])
-      .map((item) => (item as { id: string }).id)
-      .sort();
+    const forkIds = (openRun()?.items ?? []).map((item) => (item as { id: string }).id).sort();
     expect(forkIds).toEqual([
       "fork-near-0",
       "fork-near-1",
@@ -210,9 +225,7 @@ describe("queue materialization", () => {
     ]);
     await activity.endTraining();
     await activity.startTraining({ mode: "puzzles", motif: "opening_trap" });
-    const trapIds = (findOpenTrainingRun(db)?.items ?? []).map(
-      (item) => (item as { id: string }).id,
-    );
+    const trapIds = (openRun()?.items ?? []).map((item) => (item as { id: string }).id);
     expect(trapIds).toEqual(["trap-only"]);
   });
 
@@ -1312,7 +1325,7 @@ describe("the puzzles a queue draws from", () => {
   }
 
   const queueIds = (): string[] =>
-    (findOpenTrainingRun(db)?.items ?? []).map((item) => (item as { id: string }).id).sort();
+    (openRun()?.items ?? []).map((item) => (item as { id: string }).id).sort();
 
   const numbered = (prefix: string, count: number): string[] =>
     Array.from({ length: count }, (_, i) => `${prefix}${i}`);
@@ -1355,7 +1368,7 @@ describe("the puzzles a queue draws from", () => {
     expect(await code(activity.startTraining({ mode: "puzzles", motif: "nope" }))).toBe(
       "empty_queue",
     );
-    expect(findOpenTrainingRun(db)).toBeNull();
+    expect(openRun()).toBeNull();
   });
 
   it("samples a theme around the student's rating", async () => {
@@ -1429,7 +1442,7 @@ describe("an opening drill of one family", () => {
   }
 
   const queueIds = (): string[] =>
-    (findOpenTrainingRun(db)?.items ?? []).map((item) => (item as { id: string }).id).sort();
+    (openRun()?.items ?? []).map((item) => (item as { id: string }).id).sort();
 
   function fillDrills(): void {
     addOpeningPuzzle("it1", "white", "Italian Game");
@@ -1514,7 +1527,7 @@ describe("an opening drill of one family", () => {
       "unknown_opening",
     );
     expect(activity.current()).toBeNull();
-    expect(findOpenTrainingRun(db)).toBeNull();
+    expect(openRun()).toBeNull();
   });
 
   it("refuses the unnamed entry for a colour whose positions all have a name", async () => {
@@ -1533,7 +1546,7 @@ describe("an opening drill of one family", () => {
     const running = training(
       await activity.startTraining({ mode: "openings", color: "white", opening: "Italian Game" }),
     );
-    const runBefore = findOpenTrainingRun(db);
+    const runBefore = openRun();
     expect(
       await code(
         activity.startTraining({ mode: "openings", color: "white", opening: "Vienna Game" }),
@@ -1543,50 +1556,8 @@ describe("an opening drill of one family", () => {
       kind: "training",
       activity_id: running.activity_id,
     });
-    expect(findOpenTrainingRun(db)).toEqual(runBefore);
+    expect(openRun()).toEqual(runBefore);
     expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 1 });
-  });
-
-  it("resumes a paused family run with the items it started with, without storing the family", async () => {
-    fillDrills();
-    const started = training(
-      await setup().activity.startTraining({
-        mode: "openings",
-        color: "white",
-        opening: "Italian Game",
-      }),
-    );
-    const stored = findOpenTrainingRun(db);
-    const order = (stored?.items ?? []).map((item) => (item as { id: string }).id);
-    expect(order.toSorted()).toEqual(["it1", "it2", "it3"]);
-    expect(stored).toMatchObject({ mode: "openings", color: "white", motif: null });
-
-    // The drill grows and another family arrives while the run is paused: neither joins it.
-    addOpeningPuzzle("it4", "white", "Italian Game: Evans Gambit");
-    addOpeningPuzzle("sic2", "white", "Sicilian Defense");
-    const restarted = setup().activity;
-    expect(restarted.pausedTraining()).toMatchObject({
-      mode: "openings",
-      color: "white",
-      position: 0,
-      size: 3,
-    });
-    const resumed = training(await restarted.resumeTraining());
-    expect(resumed.item).toMatchObject({
-      puzzle_id: started.item.kind === "puzzle" ? started.item.puzzle_id : "",
-      position_in_queue: 1,
-      queue_length: 3,
-    });
-    expect(findOpenTrainingRun(db)?.items).toEqual(stored?.items);
-
-    const served: string[] = [];
-    let state = resumed;
-    for (let step = 0; step < order.length; step++) {
-      if (state.item.kind === "puzzle") served.push(state.item.puzzle_id);
-      await restarted.trainingTry("a1a8", state.activity_id);
-      state = training(await restarted.nextTrainingItem(state.activity_id));
-    }
-    expect(served).toEqual(order);
   });
 });
 

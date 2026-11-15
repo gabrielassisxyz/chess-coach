@@ -280,25 +280,6 @@ export const TrainingActivitySchema = z.object({
   repertoire: RepertoireDrillSchema.optional(),
 });
 
-// A practice queue that is open but not on the board. `position` is the 0-based index of the item
-// it stopped on and `size` the length of its queue, so the hub reads "position + 1 of size". A
-// repertoire drill counts moves instead: `size` moves served, `position` of them finished, and it
-// names the repertoire, the scope and the level it was started with.
-export const PausedTrainingSchema = z.object({
-  run_id: z.number().int().positive(),
-  mode: TrainingModeSchema,
-  motif: z.string().nullable(),
-  color: ColorSchema.nullable(),
-  position: z.number().int().nonnegative(),
-  size: z.number().int().positive(),
-  solved: z.number().int().nonnegative(),
-  failed: z.number().int().nonnegative(),
-  repertoire_id: z.number().int().positive().optional(),
-  scope: RepertoireScopeSchema.optional(),
-  level: RepertoireLevelSchema.optional(),
-});
-export type PausedTraining = z.infer<typeof PausedTrainingSchema>;
-
 export const DemoActivitySchema = z.object({
   kind: z.literal("demo"),
   ...boardFields,

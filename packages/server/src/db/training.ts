@@ -69,22 +69,6 @@ export function insertTrainingTry(db: Database, itemId: number, attempt: Trainin
   ).run({ ...attempt, itemId, correct: attempt.correct ? 1 : 0 });
 }
 
-// In the order they were dropped, so a resumed item continues the same count.
-export function listTrainingTries(db: Database, itemId: number): TrainingTry[] {
-  const rows = db
-    .prepare(
-      `SELECT seq, at_ms, ply, uci, correct FROM training_tries WHERE item_id = ? ORDER BY seq`,
-    )
-    .all(itemId) as { seq: number; at_ms: number; ply: number; uci: string; correct: number }[];
-  return rows.map((row) => ({
-    seq: row.seq,
-    atMs: row.at_ms,
-    ply: row.ply,
-    uci: row.uci,
-    correct: row.correct === 1,
-  }));
-}
-
 export function linkItemMessage(db: Database, itemId: number, messageId: number): void {
   db.prepare("INSERT OR IGNORE INTO item_messages (item_id, message_id) VALUES (?, ?)").run(
     itemId,
@@ -133,7 +117,8 @@ export function amendPendingNotification(
   return true;
 }
 
-export type RunEndReason = "finished" | "ended" | "discarded" | "replaced";
+// `discarded` is only read: it comes from the rows written while a paused run could be discarded.
+export type RunEndReason = "finished" | "ended" | "discarded" | "replaced" | "left";
 
 export interface StoredRunItem {
   kind: "card" | "puzzle" | "repertoire";
@@ -195,11 +180,15 @@ export function insertTrainingRun(
   return row.id;
 }
 
+// Only an open run is written. A step that completes after its run ended, such as a try that waited
+// on the engine while the board moved on, finds the row closed and leaves it as the record of where
+// the run stopped. The step that finishes a run closes it before its own save, so that last save is
+// dropped too; the answers that led to it were saved by their own steps.
 export function saveTrainingRun(db: Database, runId: number, progress: RunProgress): void {
   db.prepare(
     `UPDATE training_runs SET position = @position, solved = @solved, failed = @failed,
        outcomes_json = @outcomesJson, current_json = @currentJson, updated_at = @updatedAt
-     WHERE id = @runId`,
+     WHERE id = @runId AND ended_at IS NULL`,
   ).run({
     position: progress.position,
     solved: progress.solved,
@@ -224,55 +213,18 @@ export function endTrainingRun(
   ).run(endedAt, reason, endedAt, runId);
 }
 
-export function endOpenTrainingRuns(db: Database, reason: RunEndReason, endedAt: string): void {
-  db.prepare(
-    `UPDATE training_runs SET ended_at = ?, ended_reason = ?, updated_at = ?
-     WHERE ended_at IS NULL`,
-  ).run(endedAt, reason, endedAt);
+export function endOpenTrainingRuns(db: Database, reason: RunEndReason, endedAt: string): number {
+  return db
+    .prepare(
+      `UPDATE training_runs SET ended_at = ?, ended_reason = ?, updated_at = ?
+       WHERE ended_at IS NULL`,
+    )
+    .run(endedAt, reason, endedAt).changes;
 }
 
-interface TrainingRunDbRow {
-  id: number;
-  mode: TrainingRunRow["mode"];
-  motif: string | null;
-  color: TrainingRunRow["color"];
-  size: number;
-  items_json: string;
-  position: number;
-  solved: number;
-  failed: number;
-  outcomes_json: string;
-  current_json: string;
-  started_at: string;
-  updated_at: string;
-}
-
-export function findOpenTrainingRun(db: Database): TrainingRunRow | null {
-  const row = db
-    .prepare("SELECT * FROM training_runs WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")
-    .get() as TrainingRunDbRow | undefined;
-  if (!row) return null;
-  return {
-    id: row.id,
-    mode: row.mode,
-    motif: row.motif,
-    color: row.color,
-    size: row.size,
-    items: JSON.parse(row.items_json) as StoredRunItem[],
-    position: row.position,
-    solved: row.solved,
-    failed: row.failed,
-    outcomes: JSON.parse(row.outcomes_json) as ItemOutcome[],
-    currentJson: row.current_json,
-    startedAt: row.started_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-// A resumed item keeps logging exploration under its own row, after the events already there.
-export function lastExplorationSeq(db: Database, itemId: number): number {
-  const row = db
-    .prepare("SELECT MAX(seq) AS seq FROM exploration_events WHERE item_id = ?")
-    .get(itemId) as { seq: number | null };
-  return row.seq ?? 0;
+// A run still open when the server starts was on a board that went with the last process, and no
+// command brings it back, so the start ends it. What was answered stays rated and the rest due.
+// Returns how many runs it ended.
+export function endRunsLeftOpenAtStart(db: Database, endedAt: string): number {
+  return endOpenTrainingRuns(db, "left", endedAt);
 }

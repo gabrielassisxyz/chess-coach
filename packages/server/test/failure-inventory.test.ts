@@ -129,23 +129,19 @@ const INVENTORY: FailureCase[] = [
       {
         file: "server/src/activity/training-runs.test.ts",
         titles: [
-          "keeps the run row current at start, answer, next and finish across restarts",
-          "restores a single-move puzzle at the same item after a restart",
-          "restores a multi-move puzzle at the same step after a restart",
-          "re-serves a restored card with a fresh exposure",
+          "keeps the run row current at start, answer, next and finish",
+          "ends every open run as left when the server starts",
         ],
       },
       {
         file: "server/test/ws/training-hub.test.ts",
         titles: [
-          "offers the run in the bootstrap after a server restart and resumes it at the same item",
+          "shows no training in the bootstrap after a server restart in the middle of a run",
         ],
       },
       {
         file: "server/src/activity/repertoire-session.test.ts",
-        titles: [
-          "pauses a repertoire drill on restart and resumes it on the same move with its progress",
-        ],
+        titles: ["ends a repertoire drill as left when the server starts"],
       },
     ],
   },
