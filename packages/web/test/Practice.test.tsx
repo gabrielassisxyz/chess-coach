@@ -244,6 +244,7 @@ const hubProps = {
   fetchProgress: async () => progressOf(),
   fetchRepertoires: async () => [],
   fetchRepertoireList: async () => ({ repertoires: [], met: [] }),
+  fetchOpeningPuzzles: async () => ({ entries: [] }),
   fetchRatingHistory: async () => ratingHistoryOf(),
   fetchThemeStats: async () => overviewThemeStatsOf(),
   fetchFoundPositions: async () => noFoundPositions,

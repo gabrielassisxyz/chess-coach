@@ -22,6 +22,7 @@ import {
   type FoundStartRequest,
   fetchFoundPositionsFromServer,
 } from "../state/found-api.js";
+import type { FetchOpeningPuzzles } from "../state/opening-puzzles-api.js";
 import {
   openingsDueOf,
   PRACTICE_ENTRY_LABEL,
@@ -68,7 +69,7 @@ export interface PracticeHubProps {
   progress: Loaded<ProgressResponse>;
   engineMissing: boolean;
   // A repertoire start carries its scope in `motif`, names its repertoire and, above one
-  // variation, its level.
+  // variation, its level; a puzzle queue of one opening carries its Lichess tag there.
   starting: {
     mode: TrainingMode;
     motif: string;
@@ -79,6 +80,11 @@ export interface PracticeHubProps {
   failure: string | null;
   onStart(mode: TrainingMode, motif: string): void;
   onStartRepertoire(repertoireId: number, scope: RepertoireScope, level?: RepertoireLevel): void;
+  // Starts the puzzles of one Lichess opening tag. A hub given none draws no puzzle block on the
+  // Openings page.
+  onStartOpeningPuzzles?: ((tag: string) => void) | undefined;
+  // Where the puzzles of each opening are counted; the server's by default.
+  fetchOpeningPuzzles?: FetchOpeningPuzzles | undefined;
   foundPositions?: FoundPositionsProps | undefined;
   now?: Date;
   // The answer the Openings page and the count beside its entry read, and the call that builds a
@@ -175,6 +181,16 @@ function OpeningsPage({
         addVariation={hub.addVariation}
         fetchAddable={hub.fetchAddableOpenings}
         fetchCoverage={hub.fetchCoverage}
+        openingPuzzles={
+          hub.onStartOpeningPuzzles
+            ? {
+                fetchPuzzles: hub.fetchOpeningPuzzles,
+                onStart: hub.onStartOpeningPuzzles,
+                starting: starting?.mode === "puzzles" ? starting.motif : null,
+                engineMissing: hub.engineMissing,
+              }
+            : undefined
+        }
       />
       {failure}
     </>
@@ -204,6 +220,7 @@ function useStartsByPage(props: PracticeHubProps, page: PracticePage) {
     ...props,
     onStart: pressedHere(props.onStart),
     onStartRepertoire: pressedHere(props.onStartRepertoire),
+    onStartOpeningPuzzles: props.onStartOpeningPuzzles && pressedHere(props.onStartOpeningPuzzles),
     foundPositions: foundPositions
       ? { ...foundPositions, onStart: pressedHere(foundPositions.onStart) }
       : undefined,
