@@ -382,7 +382,11 @@
 - Bold marks structure (a bullet lead-in, a table header), never emphasis mid-sentence.
 - No process narration anywhere a stranger can read it: no task ids, phase names, review
   rounds, or references to a session. Commit and PR text describe the problem and the
-  change, never how the work was organised.
+  change, never how the work was organised. The `pr-text` job refuses task ids
+  (`chess-coach-` plus 3 to 8 lowercase letters or digits) in the PR title, body and
+  commits (`bin/task-id-guard`); the scratch names `chess-coach-tools`,
+  `chess-coach-probe-`, `chess-coach-ideas-`, `chess-coach-tests-<pid>-<random>` and
+  `chess-coach-tmp` are allowlisted.
 - Comment density is low by default: the non-obvious only, the why and not the what.
 
 ## Git & secrets
