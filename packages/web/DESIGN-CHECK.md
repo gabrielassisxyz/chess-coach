@@ -200,10 +200,10 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   by position (`nth-child` in `games.css`) and sizes the ones it keeps the same way, so adding,
   removing or moving a column means renumbering those selectors, or the wrong columns show on a
   phone.
-- **Tokens nothing references from `src`.** `--duration-fast`, `--leading-heading`,
-  `--status-ready`, `--status-busy` and `--overlay-premove` have no user in the stylesheets or
-  code. They are the prototype's values, kept for states that are not drawn yet (busy and
-  ready dots, premove); delete them if those never land. The four `--overlay-arrow-*` tokens
+- **Tokens nothing references from `src`.** `--duration-fast`, `--leading-heading` and
+  `--overlay-premove` have no user in the stylesheets or code. `--status-ready` and
+  `--status-busy` are now used beside `--status-error` for the solved-first-try bar on
+  Improvement areas and Strengths. The four `--overlay-arrow-*` tokens
   are read by `Board.tsx` through `getComputedStyle`, so they have no `var()` caller.
   `--space-12` is gone, and no `review__` or `train__` name survives.
 - **Placeholder tab.** "Routine" is a disabled tab tagged "soon"; the screen behind it does
@@ -217,8 +217,8 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   window. The Overview opens first, with three tiles over the older Due cards card and a Puzzle
   themes section holding the older Puzzles by motif card; Puzzle themes in the navigation shows the
   Overview scrolled to that section. The Openings page holds the openings menu and the older
-  Italian drill row, and the five other pages are a title and a sentence saying the page is not
-  built yet. The older cards are mounted on their pages unchanged. The openings menu for the
+  Italian drill row, Improvement areas and Strengths show the ranked puzzle theme tables, and the
+  three other pages are a title and a sentence saying the page is not built yet. The older cards are mounted on their pages unchanged. The openings menu for the
   repertoire line drill is built on the same card rules as before;
   its Practice cells were re-read against the markup and `repertoire.css` and hold. So were the
   cells for the list of openings met in the student's games, under White openings: a block with a
@@ -265,5 +265,15 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   nothing for it. Its states (loading, not read, nothing stored, no gap) follow Rule 15: not read
   is one sentence in the error tone paired with a Try again button inside the panel, and only the
   reading failure uses the error tone.
+- **Improvement areas and Strengths** sit inside the Stats group of the Practice hub. Each draws
+  a `screen__title`, a `screen__note` subtitle and the four-window control (`7 days`, `30 days`,
+  `90 days`, `All`), over a `surface-1` bordered panel whose grid (`minmax(0, 1fr) 56px 104px
+  140px 104px`, `16px` gap, `56px` row min-height) holds ranked theme rows with mono figures,
+  `--quality-best`/`--quality-blunder` rating deltas, the `4px` `--status-*` bar and a `Train`
+  button. Loading (`role="status"`), error (`role="alert"` + `Try again`) and empty (`--measure`
+  note + `Start a healthy mix`) follow Rule 15 inside the same panel. Under 900 px the
+  description, bar and Played count hide, and buttons take `min-height: 44px`. `56px`, `104px`,
+  `140px`, `36px`, `2px`, `10px`, `20px` and `80px` size data cells and panel states rather than
+  layout spacing. M1 and M2 print nothing for them.
 - **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
   and a model setting exist.
