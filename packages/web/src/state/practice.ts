@@ -5,6 +5,7 @@ import type {
   ExploredEvent,
   ProgressResponse,
   TrainingActivity,
+  TrainingItem,
   TrainingMode,
   TrainingStatus,
 } from "@chess-coach/shared";
@@ -27,10 +28,6 @@ export const fetchMotifsFromServer: FetchMotifs = async () => {
   const body = (await response.json()) as { motifs?: unknown };
   return Array.isArray(body.motifs) ? (body.motifs as MotifCount[]) : [];
 };
-
-export type DrillSize = 5 | 10 | 20;
-export const DRILL_SIZES: readonly DrillSize[] = [5, 10, 20];
-export const DEFAULT_DRILL_SIZE: DrillSize = 10;
 
 // Opening drills are their own card, so their puzzles stay out of the motif rows.
 export const OPENING_MOTIFS = {
@@ -320,6 +317,12 @@ export function boardOf(training: TrainingActivity): TrainingActivity {
   return { ...training, fen: training.exploring.fen };
 }
 
+// Whether asking for the next item on this one ends the queue. A queue drawn around the student's
+// rating has no length, so no item is its last: the server adds puzzles and ends it only when
+// it has none left to add.
+export const endsQueue = (item: TrainingItem): boolean =>
+  item.queue_length !== undefined && item.position_in_queue === item.queue_length;
+
 export function trainingView(training: TrainingActivity): TrainingView {
   const { item, status, summary } = training;
   const answered = status === "solved" || status === "failed";
@@ -334,7 +337,7 @@ export function trainingView(training: TrainingActivity): TrainingView {
     canRate: card && answered && !ended,
     canAdvance: !ended && (answered || (card && status === "rated")),
     open,
-    advanceLabel: item.position_in_queue === item.queue_length ? "Finish" : "Next",
+    advanceLabel: endsQueue(item) ? "Finish" : "Next",
     summary,
   };
 }

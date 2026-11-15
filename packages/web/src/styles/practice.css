@@ -142,24 +142,6 @@
   background: var(--accent);
 }
 
-.practice__sizes {
-  display: flex;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  gap: var(--space-1);
-}
-
-.practice__size {
-  min-width: 2.5rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.practice__size[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--surface-2);
-}
-
 .practice__opening {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

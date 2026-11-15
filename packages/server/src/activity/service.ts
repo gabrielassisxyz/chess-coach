@@ -24,7 +24,6 @@ import { ActivityError } from "./errors.js";
 import { RepertoireSession } from "./repertoire-session.js";
 import { demoState, liveGameState, reviewState } from "./state.js";
 import {
-  type DrillSize,
   type PracticeRunPort,
   type TrainingDeps,
   type TrainingItemRef,
@@ -253,7 +252,6 @@ export class ActivityService {
     motif?: string;
     color?: PlayerColor;
     opening?: string;
-    size?: DrillSize;
     repertoireId?: number;
     scope?: RepertoireScope;
     level?: RepertoireLevel;

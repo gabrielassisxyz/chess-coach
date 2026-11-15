@@ -481,7 +481,7 @@ async function playWidePass(
 }
 
 interface DrillProgress {
-  pass: number[];
+  pass: (number | undefined)[];
   outcomes: TrainingActivity["queue_outcomes"];
   left: number;
   right: number;
