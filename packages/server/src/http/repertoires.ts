@@ -17,11 +17,12 @@ import {
 import { type Clock, systemClock } from "../clock.js";
 import type { Database } from "../db/open.js";
 import { listDrillRepertoires, listRepertoireDrillMoves } from "../db/repertoire-cards.js";
-import { listMetOpenings } from "../db/repertoires.js";
+import { findRepertoireBuild, listMetOpenings } from "../db/repertoires.js";
 import {
   listRepertoireBranches,
   NO_REPERTOIRE_BRANCH_BOOK,
   type RepertoireBranchBook,
+  repertoireRootOf,
 } from "../openings/from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames } from "../openings/names.js";
 import { repertoireCoverage } from "../openings/repertoire-coverage.js";
@@ -112,13 +113,19 @@ export function registerRepertoireRoutes(
     );
     const met = listMetOpenings(db);
     return {
-      repertoires: units.map(({ variation, moves }) => ({
-        id: variation.id,
-        side: variation.side,
-        group_name: variation.group_name,
-        variation_name: variation.variation_name,
-        moves: repertoireScopeCounts(moves, now, introducedInWindow),
-      })),
+      repertoires: units.map(({ variation, moves }) => {
+        const build = findRepertoireBuild(db, variation.id);
+        return {
+          id: variation.id,
+          side: variation.side,
+          group_name: variation.group_name,
+          variation_name: variation.variation_name,
+          moves: repertoireScopeCounts(moves, now, introducedInWindow),
+          points: build.points,
+          root: repertoireRootOf(db, variation),
+          branch: build.branch,
+        };
+      }),
       groups: groupSummaries(units, now, introducedInWindow),
       sides: sideSummaries(units, now, introducedInWindow),
       found: foundSummary(units, foundRepertoireIdsOf(met), now, introducedInWindow),

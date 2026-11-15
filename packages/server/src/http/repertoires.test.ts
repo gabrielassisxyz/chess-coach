@@ -156,6 +156,9 @@ describe("GET /api/repertoires", () => {
         group_name: "Italian Game",
         variation_name: "Classical Variation (4.c3)",
         moves: { recommended: 5, due: 5, all: 6 },
+        points: null,
+        root: null,
+        branch: null,
       },
       {
         id: wide,
@@ -163,6 +166,9 @@ describe("GET /api/repertoires", () => {
         group_name: "Italian Game",
         variation_name: "Wide",
         moves: { recommended: 10, due: 11, all: 12 },
+        points: null,
+        root: null,
+        branch: null,
       },
     ]);
   });
@@ -178,6 +184,48 @@ describe("GET /api/repertoires", () => {
       met: [],
       branches: [],
     });
+  });
+});
+
+describe("GET /api/repertoires: what each unit was built with and from", () => {
+  const BRANCH = [...SETUP, "Bc5", "d3"];
+
+  it("returns the points, the root and the branch of each unit, and null where a unit has none", async () => {
+    // Built before the points were stored: its points and branch are null, and so is its root,
+    // since the Italian's setup is no root.
+    const before = addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+    const branched = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Giuoco Pianissimo (4.d3)",
+      points: { effectiveness: 3, soundness: 2, learnability: 1 },
+      branch: BRANCH,
+    }).id;
+    const rooted = addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    db.prepare(
+      `UPDATE repertoires SET points_effectiveness = 1, points_soundness = 1,
+         points_learnability = 4 WHERE id = ?`,
+    ).run(rooted);
+
+    const response = await getRepertoires();
+
+    expect(response.statusCode).toBe(200);
+    const listed = RepertoiresResponseSchema.parse(response.json()).repertoires;
+    expect(listed.map(({ id, points, root, branch }) => ({ id, points, root, branch }))).toEqual([
+      { id: before, points: null, root: null, branch: null },
+      {
+        id: branched,
+        points: { effectiveness: 3, soundness: 2, learnability: 1 },
+        root: null,
+        branch: BRANCH,
+      },
+      {
+        id: rooted,
+        points: { effectiveness: 1, soundness: 1, learnability: 4 },
+        root: ["e4", "d5"],
+        branch: null,
+      },
+    ]);
   });
 });
 

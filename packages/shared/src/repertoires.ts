@@ -22,12 +22,30 @@ export const RepertoireScopeCountsSchema = z.object({
 });
 export type RepertoireScopeCounts = z.infer<typeof RepertoireScopeCountsSchema>;
 
+// The style points a unit was built with: whole numbers the generator makes add up to 6, which is
+// its rule to check and not the list's, since a stored split must stay readable if the rule moves.
+export const RepertoireUnitPointsSchema = z.object({
+  effectiveness: z.number().int().nonnegative(),
+  soundness: z.number().int().nonnegative(),
+  learnability: z.number().int().nonnegative(),
+});
+export type RepertoireUnitPoints = z.infer<typeof RepertoireUnitPointsSchema>;
+
+// `points`, `root` and `branch` say what the unit was built with and from, and a rebuild posts them
+// again: `points` is null for a unit built before they were stored, `root` is the SAN list a unit of
+// another opening starts from and null for a variation of the Italian, `branch` is the line a
+// variation of the Italian was built at and null for any other unit. Posting a unit's `root` or
+// `branch` with `rebuild` rebuilds that unit; posting neither rebuilds the first Italian variation.
+// The server always sends all three; a fixture need not carry them.
 export const RepertoireSummarySchema = z.object({
   id: z.number().int().positive(),
   side: z.enum(["white", "black"]),
   group_name: z.string(),
   variation_name: z.string(),
   moves: RepertoireScopeCountsSchema,
+  points: RepertoireUnitPointsSchema.nullable().optional(),
+  root: z.array(z.string().min(1)).min(1).nullable().optional(),
+  branch: z.array(z.string().min(1)).min(1).nullable().optional(),
 });
 export type RepertoireSummary = z.infer<typeof RepertoireSummarySchema>;
 
