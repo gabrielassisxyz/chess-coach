@@ -11,7 +11,12 @@ import type {
   TrainingSummary,
   WrongTry,
 } from "@chess-coach/shared";
-import { isFixedPracticeMotif, UNNAMED_OPENING } from "@chess-coach/shared";
+import {
+  isFixedPracticeMotif,
+  LICHESS_PRACTICE_MOTIFS,
+  MIX_PRACTICE_MOTIF,
+  UNNAMED_OPENING,
+} from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { type Clock, systemClock } from "../clock.js";
 import type {
@@ -410,6 +415,70 @@ function drawBoostedPuzzles(
   return [...picked.values()];
 }
 
+// Mix practice draws equally from the improvement areas of the last 30 days, read again for
+// every batch. When fewer than three are listed, the fourteen motif themes with the fewest
+// attempts in the same window complete the list, list order on ties, so a student with no
+// history starts from the first three of that list.
+const MIX_PRACTICE_MIN_THEMES = 3;
+
+function mixPracticeThemes(deps: TrainingDeps): string[] {
+  const stats = computeThemeStats(deps.db, BOOST_WINDOW_DAYS, deps.clock ?? systemClock);
+  const areas = [...stats.improvement_areas];
+  if (areas.length >= MIX_PRACTICE_MIN_THEMES) return areas;
+  const playedByTheme = new Map(stats.themes.map((entry) => [entry.theme, entry.played] as const));
+  const candidates = LICHESS_PRACTICE_MOTIFS.map((entry, index) => ({
+    theme: entry.theme,
+    played: playedByTheme.get(entry.theme) ?? 0,
+    index,
+  }))
+    .filter((candidate) => !areas.includes(candidate.theme))
+    .sort((a, b) => a.played - b.played || a.index - b.index)
+    .map((candidate) => candidate.theme);
+  return [...areas, ...candidates.slice(0, MIX_PRACTICE_MIN_THEMES - areas.length)];
+}
+
+// One batch of mix practice: each theme holds its even share, the extra puzzles going to the
+// weakest themes first. A puzzle the run or the batch already holds is not taken twice, and a
+// theme that yields fewer puzzles than its share passes the rest to the other themes in the same
+// order, so the batch keeps its length while any theme still has puzzles left.
+function drawMixPracticeBatch(deps: TrainingDeps, taken: ReadonlySet<string>): QueueEntry[] {
+  const themes = mixPracticeThemes(deps);
+  if (themes.length === 0) return [];
+  const base = Math.floor(PUZZLE_BATCH_SIZE / themes.length);
+  const extra = PUZZLE_BATCH_SIZE % themes.length;
+  const shares = themes.map((_, index) => base + (index < extra ? 1 : 0));
+  const ratingAround = currentPuzzleRating(deps.db);
+  const random = deps.shuffleRandom ?? Math.random;
+  const picked = new Map<string, PuzzleSummary>();
+  themes.forEach((theme, index) => {
+    const wanted = shares[index] as number;
+    const limit = wanted + taken.size + picked.size;
+    const drawn = listPuzzles(deps.db, { theme, ratingAround, limit }, deps.shuffleRandom);
+    const fresh = drawn.puzzles.filter((puzzle) => !taken.has(puzzle.id) && !picked.has(puzzle.id));
+    for (const puzzle of fresh.slice(0, wanted)) picked.set(puzzle.id, puzzle);
+  });
+  let shortfall = PUZZLE_BATCH_SIZE - picked.size;
+  let stalled = false;
+  while (shortfall > 0 && !stalled) {
+    stalled = true;
+    for (const theme of themes) {
+      if (shortfall === 0) break;
+      const limit = shortfall + taken.size + picked.size;
+      const drawn = listPuzzles(deps.db, { theme, ratingAround, limit }, deps.shuffleRandom);
+      const fresh = drawn.puzzles.filter(
+        (puzzle) => !taken.has(puzzle.id) && !picked.has(puzzle.id),
+      );
+      for (const puzzle of fresh.slice(0, shortfall)) {
+        picked.set(puzzle.id, puzzle);
+        shortfall -= 1;
+        stalled = false;
+      }
+      if (shortfall === 0) break;
+    }
+  }
+  return shuffledBatchEntries([...picked.values()].map(puzzleEntryOf), random);
+}
+
 // Fisher-Yates over a copy, so the boosted puzzles of a batch sit at no fixed positions.
 function shuffledBatchEntries(entries: readonly QueueEntry[], random: () => number): QueueEntry[] {
   const shuffled = [...entries];
@@ -432,6 +501,7 @@ function drawRatedBatch(
   motif: string | undefined,
   taken: ReadonlySet<string>,
 ): QueueEntry[] {
+  if (motif === MIX_PRACTICE_MOTIF) return drawMixPracticeBatch(deps, taken);
   const theme = motif && (THEME_OF_MOTIF[motif] ?? motif);
   const ratingAround = currentPuzzleRating(deps.db);
   const boosted = motif === undefined ? drawBoostedPuzzles(deps, ratingAround, taken) : [];
@@ -537,14 +607,19 @@ export class TrainingRun implements PracticeRunPort {
       const openingNames = openingNamesOfStart(deps.db, input);
       return drawFixedSet(deps, { motif: `opening-${input.color}`, openingNames });
     }
-    if (input.motif !== undefined && !isFixedPracticeMotif(input.motif)) {
+    if (
+      input.motif !== undefined &&
+      input.motif !== MIX_PRACTICE_MOTIF &&
+      !isFixedPracticeMotif(input.motif)
+    ) {
       if (!hasStoredMotifOrTheme(deps.db, input.motif)) {
         throw new ActivityError("empty_queue", "no puzzle matches");
       }
     }
     const rated = drawRatedBatch(deps, input.motif, new Set());
     // A motif no theme row names yet, such as the library's unrated ones, stays reachable as a set.
-    if (rated.length === 0 && input.motif !== undefined) {
+    // Mix practice never falls back to a set: it has no stored motif and an empty batch is refused.
+    if (rated.length === 0 && input.motif !== undefined && input.motif !== MIX_PRACTICE_MOTIF) {
       return drawFixedSet(deps, { motif: input.motif });
     }
     return { entries: rated, endless: true };

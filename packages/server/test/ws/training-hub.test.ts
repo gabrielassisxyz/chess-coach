@@ -1,7 +1,12 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ANALYSIS_BUDGET_MS, ClientCommandSchema, ServerEventSchema } from "@chess-coach/shared";
+import {
+  ANALYSIS_BUDGET_MS,
+  ClientCommandSchema,
+  MIX_PRACTICE_MOTIF,
+  ServerEventSchema,
+} from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActivityService } from "../../src/activity/service.js";
@@ -916,5 +921,73 @@ describe("analysis over the socket", () => {
     });
     // The page parses every frame with this schema, which drops a field it does not name.
     expect(ServerEventSchema.parse(analysis)).toEqual(analysis);
+  });
+});
+
+describe("mix practice over the socket", () => {
+  function mixSeededDatabase(): Database {
+    const db = seededDatabase();
+    const insertPuzzle = db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, difficulty_rating)
+       VALUES (?, 'test', 'tactics', 'easy', ?, '["a1a8"]', '["Ra8#"]', 'why', 1200)`,
+    );
+    const insertTheme = db.prepare(
+      "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, 1200, ?)",
+    );
+    for (const theme of ["advancedPawn", "attackingF2F7", "capturingDefender"]) {
+      for (let i = 0; i < 12; i++) {
+        const id = `${theme}-${String(i).padStart(2, "0")}`;
+        insertPuzzle.run(id, BACK_RANK);
+        insertTheme.run(theme, id);
+      }
+    }
+    return db;
+  }
+
+  it("starts a mix queue with no length and the reserved motif as its run motif", async () => {
+    const db = mixSeededDatabase();
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c1",
+        mode: "puzzles",
+        motif: MIX_PRACTICE_MOTIF,
+      }),
+    );
+    const started = ServerEventSchema.parse(await next("training"));
+    expect(started).toMatchObject({
+      type: "training",
+      mode: "puzzles",
+      status: "prompt",
+      item: { kind: "puzzle", position_in_queue: 1 },
+    });
+    expect(started).not.toHaveProperty("item.queue_length");
+    expect(ServerEventSchema.parse(await next("activity"))).toMatchObject({
+      type: "activity",
+      state: { kind: "training", run_motif: "mix-practice" },
+    });
+    expect(db.prepare("SELECT motif FROM training_runs").all()).toEqual([
+      { motif: "mix-practice" },
+    ]);
+    socket.close();
+  });
+
+  it("refuses a mix start with empty_queue when no theme has a puzzle", async () => {
+    const server = await start();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c1",
+        mode: "puzzles",
+        motif: MIX_PRACTICE_MOTIF,
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "empty_queue", command_id: "c1" });
+    socket.close();
   });
 });
