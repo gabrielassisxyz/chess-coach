@@ -37,7 +37,9 @@ const entryOf = (
   theme,
   played,
   first_try: firstTry,
-  rating_avg: performance,
+  // The average rating of the puzzles differs from the performance, so a card that read the wrong
+  // field would show the wrong number.
+  rating_avg: performance - 25,
   performance,
   ranked,
 });
@@ -666,6 +668,28 @@ describe("what a refused theme start tells the student", () => {
     expect(startFailureText("puzzles", "", "empty_queue", null)).toBe(
       "There are no puzzles to drill. Restart the server to load the puzzle library.",
     );
+  });
+});
+
+describe("the design checklist", () => {
+  const checklist = readFileSync(join(import.meta.dirname, "../DESIGN-CHECK.md"), "utf8");
+
+  it("records the re-check of the Practice column for the weakness card and the Puzzle themes section", () => {
+    const paragraphs = checklist.split("\n\n");
+    const recheck = paragraphs.find(
+      (paragraph) =>
+        paragraph.startsWith("The Practice column was re-checked") &&
+        paragraph.includes("Puzzles by weakness") &&
+        paragraph.includes("Puzzle themes"),
+    );
+    expect(recheck).toBeDefined();
+    expect(recheck).toContain("Phone column");
+    expect(recheck).toContain("M1 and M2 print nothing");
+  });
+
+  it("no longer describes the Overview as holding a motif card", () => {
+    expect(checklist).not.toContain("Puzzles by motif");
+    expect(checklist).not.toContain("empty library motif rows");
   });
 });
 
