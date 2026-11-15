@@ -20,7 +20,7 @@ import type { FastifyInstance } from "fastify";
 import { ActivityError } from "../activity/errors.js";
 import type { ActivityService } from "../activity/service.js";
 import { type Clock, systemClock } from "../clock.js";
-import type { CoachEventListener, PermissionRequest } from "../coach/session.js";
+import type { ChatRowListener, CoachEventListener, PermissionRequest } from "../coach/session.js";
 import { recordDivider } from "../coach/transcript.js";
 import { type ChatMessage, listChatTail } from "../db/chat.js";
 import type { Database } from "../db/open.js";
@@ -43,6 +43,7 @@ export interface CoachPort {
   newConversation(tab: CoachTab): void;
   resolvePermission(requestId: string, allow: boolean): boolean;
   onEvent(listener: CoachEventListener): () => void;
+  onRow(listener: ChatRowListener): () => void;
   onPermissionRequest(listener: (request: PermissionRequest) => void): () => void;
   ensureSessionId(tab: CoachTab): number;
   flushNotifications(): void;
@@ -222,9 +223,13 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
       if (client.readyState === OPEN) client.send(payload);
     }
   };
+  const broadcastRow = (row: ChatMessage, tab: CoachTab): void => {
+    broadcast(frame({ type: "chat_row", tab, entry: toEntry(row) }));
+  };
   const unsubscribeEvents = coach.onEvent((event, tab) =>
     broadcast(frame(numbering.next(event, tab))),
   );
+  const unsubscribeRows = coach.onRow(broadcastRow);
   const unsubscribePermissions = coach.onPermissionRequest((request) =>
     broadcast(
       frame({
@@ -242,6 +247,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
   app.addHook("onClose", async () => {
     unsubscribeActivity();
     unsubscribeEvents();
+    unsubscribeRows();
     unsubscribePermissions();
   });
 
@@ -253,7 +259,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
   // Written after the command succeeded, so a refused start leaves no rule behind.
   const divide = (tab: CoachTab, label: string): void => {
     const row = recordDivider(db, coach.ensureSessionId(tab), label, options.clock ?? systemClock);
-    broadcast(frame({ type: "chat_row", tab, entry: toEntry(row) }));
+    broadcastRow(row, tab);
   };
 
   const bootstrap = (): string => {

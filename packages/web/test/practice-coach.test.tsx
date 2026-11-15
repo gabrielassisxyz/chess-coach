@@ -263,6 +263,27 @@ describe("a puzzle solved first try", () => {
     expect(screen.queryByRole("button", { name: ASK_COACH_LABEL })).toBeNull();
     expect(screen.getByText(PRACTICE_WAITING_LABEL)).toBeTruthy();
   });
+
+  it("renders the ask button with its literal label", () => {
+    openOnPractice(quiet("offered"));
+    expect(screen.getByRole("button", { name: "Pedir comentário do coach" })).toBeTruthy();
+  });
+
+  it("renders no ask button after a refresh when the comment was already requested", () => {
+    const { container } = render(<App />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: quiet("requested"),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+    expect(screen.getByText("puzzle solved")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Pedir comentário do coach" })).toBeNull();
+    expect(container.querySelector(".coach-actions")).toBeNull();
+  });
 });
 
 const LINE_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

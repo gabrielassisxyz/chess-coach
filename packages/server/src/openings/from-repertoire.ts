@@ -8,6 +8,7 @@ import {
   type RepertoireCardSweep,
 } from "../db/repertoire-cards.js";
 import {
+  copyRepertoireBuild,
   countRepertoireOwnMovesBySan,
   createRepertoireVariation,
   deleteRepertoireGroupVariations,
@@ -460,6 +461,8 @@ interface RepertoireForcedMove {
   san: string;
   /** The name the move gives the variation, by which a rerun finds it. */
   variationName: string;
+  /** The line the variation is built at, ending on this move, which a rebuild must name again. */
+  branch: readonly string[];
 }
 
 /** What one stored unit is built around: where it starts and what it is called. */
@@ -544,6 +547,7 @@ function forcedItalianUnit(branch: readonly string[], names: OpeningNames): Repe
     uci: move.uci,
     san: move.san,
     variationName,
+    branch: checked.branch,
   };
   return { ...unit, forced };
 }
@@ -617,6 +621,19 @@ function assertGroupHoldsRoot(db: Database, unit: RepertoireUnit): void {
   throw new RepertoireRootConflictError(
     `${unit.groupName} already holds the unit of ${other}, another root the book gives the same name`,
   );
+}
+
+/**
+ * The root a stored unit was built from, which a rebuild must post again, read back from its setup
+ * rows: for a unit of a root they are the root. Every variation of the Italian starts from the same
+ * setup, so none has a root, and a run cut short at the start can leave an even part of that setup
+ * that looks like a short root, which only the group tells apart. A unit whose run stored no setup
+ * row has nothing to read, and so has none.
+ */
+export function repertoireRootOf(db: Database, variation: RepertoireRow): string[] | null {
+  if (variation.group_name === REPERTOIRE_GROUP_ITALIAN) return null;
+  const setup = repertoireSetupLine(db, variation.id);
+  return checkRepertoireRoot(setup).ok ? setup : null;
 }
 
 function repertoireVariationName(
@@ -708,6 +725,8 @@ class RepertoireWalk {
         side: "white",
         groupName: this.unit.groupName,
         variationName: forced.variationName,
+        points: this.points,
+        branch: forced.branch,
       });
     }
     // Nothing is stored yet, so the plan rule has no say in this first name; once the walk stores
@@ -721,6 +740,7 @@ class RepertoireWalk {
       side: "white",
       groupName: this.unit.groupName,
       variationName: this.variationNameAfter(choice.move),
+      points: this.points,
     });
   }
 
@@ -1111,6 +1131,7 @@ function swapInRebuiltUnit(
   return db.transaction(() => {
     const oldMoves = listRepertoireOwnMoveKeys(db, stored.id);
     if (!unit.forced) renameUnitVariation(db, unit.groupName, stored.id, built.variation_name);
+    copyRepertoireBuild(db, built.id, stored.id);
     moveRepertoirePositionsOnto(db, stored.id, built.id);
     return deleteRepertoireCardsNoVariationPlays(db, oldMoves);
   })();

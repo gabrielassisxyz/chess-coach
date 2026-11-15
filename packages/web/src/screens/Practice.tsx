@@ -187,29 +187,29 @@ function Hub({
   const engineMissing = notice?.reason === "stockfish_missing";
 
   return (
-    <div className="practice__chooser">
-      <h2 className="screen__title">Practice</h2>
-      <p className="screen__note">Pick a session. The board appears once an item starts.</p>
-      {notice && engineMissing ? (
-        <EngineMissingCard notice={notice} onRetry={() => setRetries((count) => count + 1)} />
-      ) : null}
-      {login ? <CoachLoginCard fix={login.fix} onCheckAgain={login.checkAgain} /> : null}
-      <PracticeHub
-        progress={progress}
-        motifs={motifs}
-        repertoires={repertoires}
-        engineMissing={engineMissing}
-        starting={starting}
-        failure={failure}
-        size={size}
-        onSize={setSize}
-        onStart={begin}
-        onStartRepertoire={beginRepertoire}
-        openingDrills={openingDrills}
-        onStartOpening={beginOpening}
-        fetchRepertoireList={fetchRepertoireList}
-      />
-    </div>
+    <PracticeHub
+      problems={
+        <>
+          {notice && engineMissing ? (
+            <EngineMissingCard notice={notice} onRetry={() => setRetries((count) => count + 1)} />
+          ) : null}
+          {login ? <CoachLoginCard fix={login.fix} onCheckAgain={login.checkAgain} /> : null}
+        </>
+      }
+      progress={progress}
+      motifs={motifs}
+      repertoires={repertoires}
+      engineMissing={engineMissing}
+      starting={starting}
+      failure={failure}
+      size={size}
+      onSize={setSize}
+      onStart={begin}
+      onStartRepertoire={beginRepertoire}
+      openingDrills={openingDrills}
+      onStartOpening={beginOpening}
+      fetchRepertoireList={fetchRepertoireList}
+    />
   );
 }
 

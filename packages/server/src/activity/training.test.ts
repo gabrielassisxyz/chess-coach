@@ -14,7 +14,7 @@ import { getCard, insertCard, updateSchedule } from "../db/srs.js";
 import { GameService } from "../game/service.js";
 import { type Log, RecordingLog, silentLog } from "../log.js";
 import { importLichessPuzzles } from "../puzzles/lichess-import.js";
-import { setPuzzleRating } from "../puzzles/rating.js";
+import { currentPuzzleRating, setPuzzleRating } from "../puzzles/rating.js";
 import { ReviewDesk } from "../srs/review.js";
 import { ActivityService } from "./service.js";
 
@@ -25,6 +25,23 @@ const FORK = "r2qk2r/pQp1ppbp/6p1/1N3P2/2p2B2/8/PPn2P1P/R4K1R w kq - 2 14";
 // its last move a1c1 is played.
 const FEN_AFTER_D4_FROM_START = "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1";
 const FORK_PUZZLE_SOLVED_FEN = "r2q1k1r/pQN1ppbp/6p1/5P2/2p2B2/8/PPn2P1P/2R2K1R b - - 2 15";
+const FORK_LINE = ["b5c7", "e8f8", "a1c1"];
+// The fork puzzle once the student played b5c7 and the reply e8f8 came back.
+const FORK_PUZZLE_AFTER_REPLY_FEN = "r2q1k1r/pQN1ppbp/6p1/5P2/2p2B2/8/PPn2P1P/R4K1R w - - 1 15";
+// A Lichess puzzle of five plies (Bxd6 Bxd6 Ne4+ Ke1 Nxd6): the shape of a card that came back
+// asking its first move alone.
+const LICHESS_FORK = "r3kb1r/pp1b1ppp/n2Npn2/8/2P2B2/4PN2/PP1K1PPP/R4B1R b kq - 1 16";
+const LICHESS_FORK_LINE = ["f8d6", "f4d6", "f6e4", "d2e1", "e4d6"];
+const LICHESS_FORK_AFTER_FIRST_REPLY =
+  "r3k2r/pp1b1ppp/n2Bpn2/8/2P5/4PN2/PP1K1PPP/R4B1R b kq - 0 17";
+const LICHESS_FORK_AFTER_SECOND_REPLY =
+  "r3k2r/pp1b1ppp/n2Bp3/8/2P1n3/4PN2/PP3PPP/R3KB1R b kq - 2 18";
+const LICHESS_FORK_SOLVED = "r3k2r/pp1b1ppp/n2np3/8/2P5/4PN2/PP3PPP/R3KB1R w kq - 0 19";
+// A quiet move, a quiet reply and then a back-rank mate that either rook delivers.
+const TWO_MATES = "6k1/5ppp/8/8/4n3/8/5PPP/RR4K1 w - - 0 1";
+const TWO_MATES_LINE = ["h2h3", "e4c5", "a1a8"];
+const TWO_MATES_BY_B_ROOK = "1R4k1/5ppp/8/2n5/8/7P/5PP1/R5K1 b - - 2 2";
+const TWO_ROOK_BACK_RANK = "6k1/5ppp/8/8/8/8/5PPP/RR4K1 w - - 0 1";
 
 let tmp: string;
 let db: Database;
@@ -65,6 +82,25 @@ function addCard(expectedUci = "d2d4"): number {
     classification: "inaccuracy",
     explanation: null,
     createdAt: T0.toISOString(),
+  });
+  return (card as { id: number }).id;
+}
+
+// A card the way a missed puzzle leaves it: the puzzle's position and first move, and its id.
+function addPuzzleCard(puzzleId: string | null, fen: string, expectedUci: string): number {
+  const card = insertCard(db, {
+    sourceKind: "teaching",
+    sourceGameId: null,
+    sourceMoveId: null,
+    promptFen: fen,
+    studentColor: fen.split(" ")[1] === "b" ? "black" : "white",
+    playedUci: null,
+    expectedUci,
+    cpLoss: null,
+    classification: null,
+    explanation: null,
+    createdAt: T0.toISOString(),
+    puzzleId,
   });
   return (card as { id: number }).id;
 }
@@ -422,6 +458,248 @@ describe("a card item", () => {
     const { activity } = setup();
     await activity.startTraining({ mode: "srs" });
     expect(await code(activity.trainingTry("e2e5"))).toBe("illegal_move");
+  });
+
+  it("asks every move of the puzzle's line, plays the replies and offers the rating only at the end", async () => {
+    addPuzzle("lichess-db:03oA5", "fork", LICHESS_FORK, LICHESS_FORK_LINE);
+    addPuzzleCard("lichess-db:03oA5", LICHESS_FORK, "f8d6");
+    const { activity, rows } = setup();
+    const served = training(await activity.startTraining({ mode: "srs" }));
+    const exposure = (served.item as { exposure_id: string }).exposure_id;
+    expect(served).toMatchObject({ fen: LICHESS_FORK, orientation: "black", moves: [] });
+
+    const first = training(await activity.trainingTry("f8d6"));
+    expect(first).toMatchObject({
+      status: "in_progress",
+      input_enabled: true,
+      fen: LICHESS_FORK_AFTER_FIRST_REPLY,
+      last_move: { from: "f4", to: "d6" },
+      suggested_quality: null,
+    });
+    expect(await code(activity.rateCard(exposure, 4))).toBe("exposure_unanswered");
+    expect(await code(activity.nextTrainingItem())).toBe("item_unfinished");
+
+    const second = training(await activity.trainingTry("f6e4"));
+    expect(second).toMatchObject({
+      status: "in_progress",
+      fen: LICHESS_FORK_AFTER_SECOND_REPLY,
+      last_move: { from: "d2", to: "e1" },
+    });
+
+    const done = training(await activity.trainingTry("e4d6"));
+    expect(done).toMatchObject({
+      status: "solved",
+      input_enabled: false,
+      fen: LICHESS_FORK_SOLVED,
+      last_move: { from: "e4", to: "d6" },
+      suggested_quality: 4,
+    });
+    expect(done.moves?.map((move) => move.uci)).toEqual(LICHESS_FORK_LINE);
+    expect(rows().map((row) => row.type)).toEqual(["srs_answer"]);
+    expect(training(await activity.rateCard(exposure, 4)).status).toBe("rated");
+  });
+
+  it("asks the whole line of the card a missed puzzle leaves", async () => {
+    addPuzzle("fk:3", "fork", FORK, FORK_LINE);
+    const { activity } = setup();
+    await activity.startTrainingItem({ kind: "puzzle", id: "fk:3" });
+    await activity.trainingTry("f4e5");
+    await activity.trainingShowSolution();
+    await activity.endTraining();
+    await activity.startTraining({ mode: "srs" });
+    const mid = training(await activity.trainingTry("b5c7"));
+    expect(mid).toMatchObject({ status: "in_progress", fen: FORK_PUZZLE_AFTER_REPLY_FEN });
+  });
+
+  it("plays the next move of the line after a right move that is not the last, and stays open", async () => {
+    addPuzzle("fk:3", "fork", FORK, FORK_LINE);
+    addPuzzleCard("fk:3", FORK, "b5c7");
+    const { activity } = setup();
+    const served = training(await activity.startTraining({ mode: "srs" }));
+    const mid = training(await activity.trainingTry("b5c7"));
+    expect(mid).toMatchObject({
+      status: "in_progress",
+      input_enabled: true,
+      turn: "white",
+      fen: FORK_PUZZLE_AFTER_REPLY_FEN,
+      last_move: { from: "e8", to: "f8" },
+      exploring: { fen: FORK_PUZZLE_AFTER_REPLY_FEN, line_san: [] },
+      expected: null,
+      gave_up: false,
+      tries: 0,
+    });
+    expect(mid.legal_moves.length).toBeGreaterThan(0);
+    expect(mid.moves).toEqual([
+      { ply: 0, uci: "b5c7", san: "Nxc7+", by: "student" },
+      { ply: 1, uci: "e8f8", san: "Kf8", by: "reply" },
+    ]);
+    expect(mid.item).toEqual(served.item);
+    expect(activity.current()).toEqual(mid);
+  });
+
+  it("keeps the card open at the step of a wrong try and lists the try beside its ply", async () => {
+    addPuzzle("fk:3", "fork", FORK, FORK_LINE);
+    addPuzzleCard("fk:3", FORK, "b5c7");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const mid = training(await activity.trainingTry("b5c7"));
+    const wrong = training(await activity.trainingTry("a1b1"));
+    expect(wrong).toMatchObject({
+      status: "in_progress",
+      input_enabled: true,
+      fen: mid.fen,
+      tries: 1,
+      last_try: { uci: "a1b1", san: "Rb1", correct: false },
+    });
+    expect(wrong.wrong_tries).toEqual([{ ply: 2, uci: "a1b1", san: "Rb1" }]);
+    expect(wrong.moves).toEqual(mid.moves);
+    expect(db.prepare("SELECT ply, uci, correct FROM training_tries ORDER BY seq").all()).toEqual([
+      { ply: 0, uci: "b5c7", correct: 1 },
+      { ply: 2, uci: "a1b1", correct: 0 },
+    ]);
+  });
+
+  it("ends solved on the last move of the line, which stays on the board", async () => {
+    addPuzzle("fk:3", "fork", FORK, FORK_LINE);
+    addPuzzleCard("fk:3", FORK, "b5c7");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingTry("b5c7");
+    const done = training(await activity.trainingTry("a1c1"));
+    expect(done).toMatchObject({
+      status: "solved",
+      input_enabled: false,
+      legal_moves: [],
+      fen: FORK_PUZZLE_SOLVED_FEN,
+      last_move: { from: "a1", to: "c1" },
+      exploring: { fen: FORK_PUZZLE_SOLVED_FEN, line_san: [] },
+      expected: null,
+    });
+    expect(done.moves?.map((move) => [move.uci, move.by])).toEqual([
+      ["b5c7", "student"],
+      ["e8f8", "reply"],
+      ["a1c1", "student"],
+    ]);
+  });
+
+  it("ends solved on any checkmate at the last step, and shows the one the student played", async () => {
+    addPuzzle("mm:3", "mate", TWO_MATES, TWO_MATES_LINE);
+    addPuzzleCard("mm:3", TWO_MATES, "h2h3");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingTry("h2h3");
+    const done = training(await activity.trainingTry("b1b8"));
+    expect(done).toMatchObject({
+      status: "solved",
+      fen: TWO_MATES_BY_B_ROOK,
+      last_move: { from: "b1", to: "b8" },
+    });
+    expect(done.moves?.at(-1)).toMatchObject({ ply: 2, uci: "b1b8", by: "student" });
+    expect(JSON.stringify(done.moves)).not.toContain("a1a8");
+  });
+
+  it("ends a card given up at a later step as failed, at that step, with the rest of the line", async () => {
+    addPuzzle("lichess-db:03oA5", "fork", LICHESS_FORK, LICHESS_FORK_LINE);
+    addPuzzleCard("lichess-db:03oA5", LICHESS_FORK, "f8d6");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingTry("f8d6");
+    const given = training(await activity.trainingShowSolution());
+    expect(given).toMatchObject({
+      status: "failed",
+      input_enabled: false,
+      legal_moves: [],
+      gave_up: true,
+      fen: LICHESS_FORK_AFTER_FIRST_REPLY,
+      exploring: { fen: LICHESS_FORK_AFTER_FIRST_REPLY },
+      last_move: null,
+      expected: { uci: "f6e4", san: "Ne4+" },
+      solution_line: ["f6e4", "d2e1", "e4d6"],
+      suggested_quality: 0,
+    });
+    expect(given.moves?.map((move) => move.uci)).toEqual(["f8d6", "f4d6"]);
+    const board = new Chess(given.fen);
+    for (const uci of given.solution_line ?? []) {
+      board.move({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
+    }
+    expect(board.fen()).toBe(LICHESS_FORK_SOLVED);
+    expect(await code(activity.trainingTry("f6e4"))).toBe("item_finished");
+  });
+
+  it("shows the whole line from the start to a card given up before any move", async () => {
+    addPuzzle("lichess-db:03oA5", "fork", LICHESS_FORK, LICHESS_FORK_LINE);
+    addPuzzleCard("lichess-db:03oA5", LICHESS_FORK, "f8d6");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const given = training(await activity.trainingShowSolution());
+    expect(given).toMatchObject({
+      status: "failed",
+      fen: LICHESS_FORK,
+      expected: { uci: "f8d6", san: "Bxd6" },
+      solution_line: LICHESS_FORK_LINE,
+      moves: [],
+    });
+  });
+
+  it("grades a card with no puzzle on its own move, even where a stored puzzle starts the same", async () => {
+    addPuzzle("fk:3", "fork", FORK, FORK_LINE);
+    addPuzzleCard(null, FORK, "b5c7");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const done = training(await activity.trainingTry("b5c7"));
+    expect(done.status).toBe("solved");
+    expect(done.moves).toEqual([{ ply: 0, uci: "b5c7", san: "Nxc7+", by: "student" }]);
+  });
+
+  // Both rooks mate on the back rank: a puzzle takes either on its last step, a card of one move
+  // only the move it stores.
+  it("grades a card whose puzzle has one move on its own move, so only that move solves it", async () => {
+    addPuzzle("bk:1", "mate", TWO_ROOK_BACK_RANK, ["a1a8"]);
+    addPuzzleCard("bk:1", TWO_ROOK_BACK_RANK, "a1a8");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const other = training(await activity.trainingTry("b1b8"));
+    expect(other).toMatchObject({ status: "prompt", tries: 1 });
+    const done = training(await activity.trainingTry("a1a8"));
+    expect(done.status).toBe("solved");
+    expect(done.moves).toHaveLength(1);
+  });
+
+  it("grades a card whose puzzle is gone on its own move", async () => {
+    addPuzzleCard("gone:3", FORK, "b5c7");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    const done = training(await activity.trainingTry("b5c7"));
+    expect(done.status).toBe("solved");
+    expect(done.moves).toHaveLength(1);
+  });
+
+  describe("when the stored puzzle is not the line the card was made from", () => {
+    const gradedOnItsOwnMove = async (): Promise<void> => {
+      const { activity } = setup();
+      await activity.startTraining({ mode: "srs" });
+      const done = training(await activity.trainingTry("b5c7"));
+      expect(done.status).toBe("solved");
+      expect(done.moves).toHaveLength(1);
+    };
+
+    it("grades on its own move a card whose puzzle now starts from another position", async () => {
+      addPuzzle("moved:3", "fork", FORK.replace(" kq ", " - "), FORK_LINE);
+      addPuzzleCard("moved:3", FORK, "b5c7");
+      await gradedOnItsOwnMove();
+    });
+
+    it("grades on its own move a card whose puzzle now starts with another move", async () => {
+      addPuzzle("moved:3", "fork", FORK, ["f4e5", "e8f8", "a1c1"]);
+      addPuzzleCard("moved:3", FORK, "b5c7");
+      await gradedOnItsOwnMove();
+    });
+
+    it("grades on its own move a card whose puzzle line ends on the opponent's reply", async () => {
+      addPuzzle("even:4", "fork", FORK, [...FORK_LINE, "d8d7"]);
+      addPuzzleCard("even:4", FORK, "b5c7");
+      await gradedOnItsOwnMove();
+    });
   });
 });
 
@@ -1127,6 +1405,151 @@ describe("graded tries", () => {
     expect(db.prepare("SELECT correct FROM srs_reviews").get()).toEqual({ correct: 0 });
   });
 
+  // The line a card of several moves is reviewed through; the first move alone cannot tell these apart.
+  async function reviewLineCard() {
+    addPuzzle("fk:3", "fork", FORK, FORK_LINE);
+    addPuzzleCard("fk:3", FORK, "b5c7");
+    const harness = setup();
+    const start = training(await harness.activity.startTraining({ mode: "srs" }));
+    return { ...harness, exposure: exposureOf(start) };
+  }
+  const reviewRow = () => db.prepare("SELECT answered_uci, correct FROM srs_reviews").get();
+
+  it("suggests 4 for a card of several moves right at every step, and its review counts as correct", async () => {
+    const { activity, exposure } = await reviewLineCard();
+    await activity.trainingTry("b5c7");
+    const done = training(await activity.trainingTry("a1c1"));
+    expect(done).toMatchObject({ status: "solved", suggested_quality: 4, tries: 0 });
+    await activity.rateCard(exposure, 4);
+    expect(reviewRow()).toEqual({ answered_uci: "b5c7", correct: 1 });
+  });
+
+  it("suggests 2 and counts the review wrong when a later step had a wrong try after a right first move", async () => {
+    const { activity, exposure } = await reviewLineCard();
+    await activity.trainingTry("b5c7");
+    await activity.trainingTry("a1b1");
+    const done = training(await activity.trainingTry("a1c1"));
+    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, tries: 1 });
+    await activity.rateCard(exposure, 2);
+    expect(reviewRow()).toEqual({ answered_uci: "b5c7", correct: 0 });
+  });
+
+  it("answers with the first try of the first step when that step was missed before it was found", async () => {
+    const { activity, exposure } = await reviewLineCard();
+    await activity.trainingTry("f4e5");
+    await activity.trainingTry("b5c7");
+    const done = training(await activity.trainingTry("a1c1"));
+    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, tries: 1 });
+    await activity.rateCard(exposure, 2);
+    expect(reviewRow()).toEqual({ answered_uci: "f4e5", correct: 0 });
+  });
+
+  it("suggests 0 and counts the review wrong when the solution was shown at a later step", async () => {
+    const { activity, exposure } = await reviewLineCard();
+    await activity.trainingTry("b5c7");
+    const done = training(await activity.trainingShowSolution());
+    expect(done).toMatchObject({ status: "failed", suggested_quality: 0, gave_up: true });
+    await activity.rateCard(exposure, 0);
+    expect(reviewRow()).toEqual({ answered_uci: "b5c7", correct: 0 });
+  });
+
+  it("answers a card of several moves shown before any try with the null move", async () => {
+    const { activity, exposure } = await reviewLineCard();
+    await activity.trainingShowSolution();
+    await activity.rateCard(exposure, 0);
+    expect(reviewRow()).toEqual({ answered_uci: "0000", correct: 0 });
+  });
+
+  it("writes no attempt, moves no rating, creates no card and tells the coach once for a card of several moves", async () => {
+    addPuzzle("fk:3", "fork", FORK, FORK_LINE, 1400);
+    addPuzzleCard("fk:3", FORK, "b5c7");
+    const { activity, notes } = setup();
+    const ratingBefore = currentPuzzleRating(db);
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingTry("b5c7");
+    await activity.trainingTry("a1b1");
+    const done = training(await activity.trainingTry("a1c1"));
+    expect(db.prepare("SELECT COUNT(*) AS n FROM puzzle_attempts").get()).toEqual({ n: 0 });
+    // A second card for this puzzle would be dropped by the unique puzzle id, so this count only
+    // guards a card made by another route.
+    expect(db.prepare("SELECT COUNT(*) AS n FROM srs_cards").get()).toEqual({ n: 1 });
+    expect(
+      db.prepare("SELECT value FROM settings WHERE key = 'puzzle_rating'").get(),
+    ).toBeUndefined();
+    expect(currentPuzzleRating(db)).toBe(ratingBefore);
+    expect(done).toMatchObject({ student_rating: ratingBefore, rating_change: null });
+    expect(notes().map((note) => note.type)).toEqual(["srs_answer"]);
+  });
+
+  it("tells the coach of a card of several moves at the step where the first wrong try was", async () => {
+    const { activity, notes } = await reviewLineCard();
+    await activity.trainingTry("b5c7");
+    await activity.trainingTry("a1b1");
+    await activity.trainingTry("a1c1");
+    expect(notes()).toMatchObject([
+      {
+        type: "srs_answer",
+        prompt_fen: FORK_PUZZLE_AFTER_REPLY_FEN,
+        answered_uci: "a1b1",
+        answered_san: "Rb1",
+        expected_uci: "a1c1",
+        expected_san: "Rc1",
+        correct: false,
+      },
+    ]);
+    const text = renderNotifications(notes());
+    expect(text).toContain("missed review card 1 on the first try with Rb1, then found Rc1.");
+    expect(text).toContain(`Position (FEN): ${FORK_PUZZLE_AFTER_REPLY_FEN}`);
+  });
+
+  it("tells the coach of a card of several moves at the step where the solution was shown", async () => {
+    const { activity, notes } = await reviewLineCard();
+    await activity.trainingTry("b5c7");
+    await activity.trainingShowSolution();
+    expect(notes()).toMatchObject([
+      {
+        type: "srs_answer",
+        prompt_fen: FORK_PUZZLE_AFTER_REPLY_FEN,
+        expected_uci: "a1c1",
+        expected_san: "Rc1",
+        correct: false,
+      },
+    ]);
+    const text = renderNotifications(notes());
+    expect(text).toContain("gave up on review card 1 and was shown Rc1.");
+    expect(text).toContain(`Position (FEN): ${FORK_PUZZLE_AFTER_REPLY_FEN}`);
+  });
+
+  it("tells the coach of a card of several moves missed at its first step on the card's own move", async () => {
+    const { activity, notes } = await reviewLineCard();
+    await activity.trainingTry("f4e5");
+    await activity.trainingTry("b5c7");
+    await activity.trainingTry("a1c1");
+    expect(notes()).toMatchObject([
+      { prompt_fen: FORK, answered_uci: "f4e5", expected_uci: "b5c7", correct: false },
+    ]);
+    expect(renderNotifications(notes())).toContain("on the first try with Be5, then found Nxc7+.");
+  });
+
+  it("leaves the notification of a card of one move as the desk wrote it", async () => {
+    addCard("d2d4");
+    const { activity, notes } = setup();
+    await activity.startTraining({ mode: "srs" });
+    await activity.trainingTry("e2e4");
+    await activity.trainingTry("d2d4");
+    expect(notes()).toMatchObject([
+      {
+        type: "srs_answer",
+        prompt_fen: START_FEN,
+        answered_uci: "e2e4",
+        answered_san: "e4",
+        expected_uci: "d2d4",
+        expected_san: "d4",
+        correct: false,
+      },
+    ]);
+  });
+
   it("writes one notification per item, after the last try, carrying every try", async () => {
     addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);
     addCard("d2d4");
@@ -1218,6 +1641,19 @@ describe("hint", () => {
     const done = training(await activity.trainingTry("d2d4"));
     expect(done).toMatchObject({ status: "solved", suggested_quality: 2, hint_square: null });
     expect(db.prepare("SELECT hinted FROM training_items").get()).toEqual({ hinted: 1 });
+  });
+
+  it("marks the origin of the move the current step asks for on a card of several moves", async () => {
+    addPuzzle("fk:3", "fork", FORK, FORK_LINE);
+    addPuzzleCard("fk:3", FORK, "b5c7");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "srs" });
+    expect(training(await activity.trainingHint()).hint_square).toBe("b5");
+    expect(training(await activity.trainingTry("b5c7")).hint_square).toBeNull();
+    expect(training(await activity.trainingHint()).hint_square).toBe("a1");
+    const done = training(await activity.trainingTry("a1c1"));
+    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, hint_square: null });
+    expect(await code(activity.trainingHint())).toBe("item_finished");
   });
 
   it("refuses a hint once the item is finished", async () => {

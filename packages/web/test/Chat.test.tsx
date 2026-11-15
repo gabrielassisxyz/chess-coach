@@ -1,10 +1,20 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Chat } from "../src/components/Chat.js";
-import type { ServerApi } from "../src/hooks/useServer.js";
+import { type ServerApi, useServer } from "../src/hooks/useServer.js";
 import { initialChatState } from "../src/state/transcript.js";
+import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 
 afterEach(cleanup);
+
+function LivePracticeChat() {
+  const server = useServer({
+    url: "ws://test/api/ws",
+    createSocket: createFakeSocket,
+    tab: "practice",
+  });
+  return <Chat server={server} open />;
+}
 
 function api(overrides: Partial<ServerApi> = {}): ServerApi {
   return {
@@ -370,6 +380,287 @@ describe("coach Markdown", () => {
         expect(server.newConversation).toHaveBeenCalledTimes(1);
         expect(screen.queryByTestId("fresh-start-card")).toBeNull();
       });
+    });
+  });
+
+  describe("turn_start boundaries and line card placement", () => {
+    const FEN_1 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+    const FEN_2 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
+
+    beforeEach(() => {
+      FakeSocket.reset();
+    });
+
+    const mountPractice = () => {
+      const rendered = render(<LivePracticeChat />);
+      act(() => FakeSocket.latest.open());
+      return rendered;
+    };
+
+    const receiveBootstrap = (practice: Record<string, unknown>[]) => {
+      act(() =>
+        FakeSocket.latest.receive({
+          type: "bootstrap",
+          conversations: { play: [], games: [], practice },
+          activity: null,
+        }),
+      );
+    };
+
+    const row = (
+      seq: number,
+      role: "user" | "assistant" | "system",
+      kind: "text" | "tool_use" | "tool_result" | "notification",
+      content: unknown,
+    ) => ({
+      id: seq,
+      seq,
+      role,
+      kind,
+      content,
+      created_at: new Date(Date.now() - (30 - seq) * 1000).toISOString(),
+    });
+
+    const offerEntries = (startSeq: number, toolUseId: string, fen: string, moves: string[]) => {
+      const rows = [
+        row(startSeq, "assistant", "tool_use", {
+          toolUseId,
+          name: "mcp__chess__show_position",
+          input: { fen },
+        }),
+        row(startSeq + 1, "user", "tool_result", {
+          toolUseId,
+          output: JSON.stringify({ offered: true, start_fen: fen, moves: [] }),
+        }),
+      ];
+      if (moves.length > 0) {
+        const moveId = `${toolUseId}-m`;
+        rows.push(
+          row(startSeq + 2, "assistant", "tool_use", {
+            toolUseId: moveId,
+            name: "mcp__chess__make_move",
+            input: { san: moves.join(" ") },
+          }),
+          row(startSeq + 3, "user", "tool_result", {
+            toolUseId: moveId,
+            output: JSON.stringify({ offered: true, start_fen: fen, moves }),
+          }),
+        );
+      }
+      return rows;
+    };
+
+    const orderedBlocks = (container: HTMLElement) =>
+      [
+        ...container.querySelectorAll(
+          ".message--user, .message--assistant, [data-testid='line-card']",
+        ),
+      ].map((el) => ({
+        kind: el.getAttribute("data-testid") === "line-card" ? "line-card" : "message",
+        text: el.textContent ?? "",
+      }));
+
+    it("keeps a notification turn's line card under its own message after bootstrap refresh", () => {
+      const { container } = mountPractice();
+      receiveBootstrap([
+        row(1, "user", "notification", { type: "puzzle_result", puzzle_id: "p1" }),
+        row(2, "system", "text", { turn_start: "2026-01-01T00:00:02.000Z" }),
+        ...offerEntries(3, "u1", FEN_1, ["e5"]),
+        row(7, "assistant", "text", { text: "Puzzle 1 explanation" }),
+        row(8, "user", "notification", { type: "puzzle_result", puzzle_id: "p2" }),
+        row(9, "system", "text", { turn_start: "2026-01-01T00:00:09.000Z" }),
+        row(10, "assistant", "text", { text: "Puzzle 2 explanation" }),
+      ]);
+
+      expect(screen.queryByRole("separator")).toBeNull();
+      expect(orderedBlocks(container)).toEqual([
+        { kind: "message", text: "Puzzle 1 explanation" },
+        { kind: "line-card", text: "Show line on boarde5" },
+        { kind: "message", text: "Puzzle 2 explanation" },
+      ]);
+    });
+
+    it("keeps a live notification turn's line card under its own message when turn_start arrives live", () => {
+      const { container } = mountPractice();
+
+      const sendEvent = (seq: number, messageId: number, event: Record<string, unknown>) =>
+        FakeSocket.latest.receive({
+          type: "chat",
+          tab: "practice",
+          message_id: messageId,
+          seq,
+          event,
+        });
+
+      act(() => {
+        FakeSocket.latest.receive({
+          type: "chat_row",
+          tab: "practice",
+          entry: row(1, "system", "text", { turn_start: "2026-01-01T00:00:01.000Z" }),
+        });
+        sendEvent(1, 10, {
+          kind: "tool_use",
+          tool_use_id: "u1",
+          name: "mcp__chess__show_position",
+          input: { fen: FEN_1 },
+        });
+        sendEvent(2, 10, {
+          kind: "tool_result",
+          tool_use_id: "u1",
+          output: JSON.stringify({ offered: true, start_fen: FEN_1, moves: [] }),
+        });
+        sendEvent(3, 10, {
+          kind: "tool_use",
+          tool_use_id: "u1-m",
+          name: "mcp__chess__make_move",
+          input: { san: "Nc6" },
+        });
+        sendEvent(4, 10, {
+          kind: "tool_result",
+          tool_use_id: "u1-m",
+          output: JSON.stringify({ offered: true, start_fen: FEN_1, moves: ["Nc6"] }),
+        });
+        sendEvent(5, 10, { kind: "text_delta", text: "Puzzle 1 live" });
+        sendEvent(6, 10, { kind: "turn_end", usage: { input_tokens: 1, output_tokens: 1 } });
+
+        FakeSocket.latest.receive({
+          type: "chat_row",
+          tab: "practice",
+          entry: row(2, "system", "text", { turn_start: "2026-01-01T00:00:02.000Z" }),
+        });
+        sendEvent(7, 11, { kind: "text_delta", text: "Puzzle 2 live" });
+        sendEvent(8, 11, { kind: "turn_end", usage: { input_tokens: 1, output_tokens: 1 } });
+      });
+
+      expect(screen.queryByRole("separator")).toBeNull();
+      expect(orderedBlocks(container)).toEqual([
+        { kind: "message", text: "Puzzle 1 live" },
+        { kind: "line-card", text: "Show line on boardNc6" },
+        { kind: "message", text: "Puzzle 2 live" },
+      ]);
+    });
+
+    it("does not displace a turn's line card when a notification row is stored mid-turn", () => {
+      const { container } = mountPractice();
+      receiveBootstrap([
+        row(1, "user", "notification", { type: "puzzle_result", puzzle_id: "p1" }),
+        row(2, "system", "text", { turn_start: "2026-01-01T00:00:02.000Z" }),
+        ...offerEntries(3, "u1", FEN_1, ["e5"]),
+        row(7, "user", "notification", { type: "puzzle_result", puzzle_id: "p2-mid" }),
+        row(8, "assistant", "text", { text: "Puzzle 1 still owns this card" }),
+        row(9, "system", "text", { turn_start: "2026-01-01T00:00:09.000Z" }),
+        row(10, "assistant", "text", { text: "Puzzle 2 later" }),
+      ]);
+
+      expect(screen.queryByRole("separator")).toBeNull();
+      expect(orderedBlocks(container)).toEqual([
+        { kind: "message", text: "Puzzle 1 still owns this card" },
+        { kind: "line-card", text: "Show line on boarde5" },
+        { kind: "message", text: "Puzzle 2 later" },
+      ]);
+    });
+
+    it("renders nothing for turn_start rows while keeping visible dividers", () => {
+      const { container } = mountPractice();
+      receiveBootstrap([
+        row(1, "system", "text", { turn_start: "2026-01-01T00:00:01.000Z" }),
+        row(2, "system", "text", { label: "Practice queue", at: "2026-01-01T10:15:00.000Z" }),
+        row(3, "system", "text", { turn_start: "2026-01-01T00:00:03.000Z" }),
+        row(4, "assistant", "text", { text: "Ready" }),
+      ]);
+
+      const separators = screen.getAllByRole("separator");
+      expect(separators).toHaveLength(1);
+      expect(separators[0]?.textContent).toContain("Practice queue");
+      const columnChildren = [...(container.querySelector(".chat__column")?.children ?? [])];
+      expect(columnChildren.map((el) => el.className)).toEqual([
+        "chat__divider",
+        "message message--assistant message--markdown",
+        "",
+      ]);
+    });
+
+    it("keeps each turn's card under its own message when two consecutive turns offer lines", () => {
+      const { container } = mountPractice();
+      receiveBootstrap([
+        row(1, "system", "text", { turn_start: "2026-01-01T00:00:01.000Z" }),
+        ...offerEntries(2, "u1", FEN_1, ["Nf3"]),
+        row(6, "assistant", "text", { text: "Turn 1 message" }),
+        row(7, "system", "text", { turn_start: "2026-01-01T00:00:07.000Z" }),
+        ...offerEntries(8, "u2", FEN_2, ["d4"]),
+        row(12, "assistant", "text", { text: "Turn 2 message" }),
+      ]);
+
+      expect(orderedBlocks(container)).toEqual([
+        { kind: "message", text: "Turn 1 message" },
+        { kind: "line-card", text: "Show line on boardNf3" },
+        { kind: "message", text: "Turn 2 message" },
+        { kind: "line-card", text: "Show line on boardd4" },
+      ]);
+      const buttons = screen.getAllByRole("button", { name: "Show line on board" });
+      fireEvent.click(buttons[0] as HTMLElement);
+      fireEvent.click(buttons[1] as HTMLElement);
+      expect(FakeSocket.latest.sent).toEqual([
+        expect.objectContaining({ type: "show_line", fen: FEN_1, moves: ["Nf3"] }),
+        expect.objectContaining({ type: "show_line", fen: FEN_2, moves: ["d4"] }),
+      ]);
+    });
+
+    it("renders legacy transcripts without turn_start markers unchanged", () => {
+      const { container } = mountPractice();
+      receiveBootstrap([
+        row(1, "user", "text", { text: "First question" }),
+        ...offerEntries(2, "u1", FEN_1, ["e5"]),
+        row(6, "assistant", "text", { text: "First answer" }),
+        row(7, "user", "text", { text: "Second question" }),
+        row(8, "assistant", "text", { text: "Second answer" }),
+      ]);
+
+      expect(screen.queryByRole("separator")).toBeNull();
+      expect(orderedBlocks(container)).toEqual([
+        { kind: "message", text: "First question" },
+        { kind: "message", text: "First answer" },
+        { kind: "line-card", text: "Show line on boarde5" },
+        { kind: "message", text: "Second question" },
+        { kind: "message", text: "Second answer" },
+      ]);
+    });
+
+    it("renders two line cards in order when one coach turn offers two lines", () => {
+      const { container } = mountPractice();
+      receiveBootstrap([
+        row(1, "system", "text", { turn_start: "2026-01-01T00:00:01.000Z" }),
+        ...offerEntries(2, "u1", FEN_1, ["Nf3", "Nc6"]),
+        ...offerEntries(6, "u2", FEN_2, ["d4", "d5"]),
+        row(10, "assistant", "text", { text: "Compare these two lines" }),
+      ]);
+
+      expect(screen.getAllByTestId("line-card")).toHaveLength(2);
+      expect(orderedBlocks(container)).toEqual([
+        { kind: "message", text: "Compare these two lines" },
+        { kind: "line-card", text: "Show line on boardNf3 Nc6" },
+        { kind: "line-card", text: "Show line on boardd4 d5" },
+      ]);
+      const buttons = screen.getAllByRole("button", { name: "Show line on board" });
+      fireEvent.click(buttons[0] as HTMLElement);
+      fireEvent.click(buttons[1] as HTMLElement);
+      expect(FakeSocket.latest.sent).toEqual([
+        expect.objectContaining({ type: "show_line", fen: FEN_1, moves: ["Nf3", "Nc6"] }),
+        expect.objectContaining({ type: "show_line", fen: FEN_2, moves: ["d4", "d5"] }),
+      ]);
+    });
+
+    it("renders the SAN of each move of its line inside the card", () => {
+      mountPractice();
+      receiveBootstrap([
+        row(1, "system", "text", { turn_start: "2026-01-01T00:00:01.000Z" }),
+        ...offerEntries(2, "u1", FEN_1, ["e5", "Nf3", "Nc6"]),
+        row(6, "assistant", "text", { text: "Main line" }),
+      ]);
+
+      const card = screen.getByTestId("line-card");
+      expect(card.textContent).toContain("e5 Nf3 Nc6");
+      expect(card.querySelector(".line-card__moves")?.textContent).toBe("e5 Nf3 Nc6");
     });
   });
 });

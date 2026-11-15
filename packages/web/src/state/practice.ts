@@ -369,3 +369,5 @@ export function startFailureText(
 
 export const OFFLINE_START_TEXT =
   "The server is not connected. Wait until the chat header says connected, then try again.";
+
+export const NEEDS_ENGINE_TEXT = "Needs the engine to grade answers.";

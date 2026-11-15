@@ -1,6 +1,7 @@
 import type { ActivityState } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { BoardFactory } from "../src/components/Board.js";
 import { Chat } from "../src/components/Chat.js";
 import { useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
@@ -39,6 +40,21 @@ const transcript = [
 ];
 
 const LINE_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+const AFTER_E4_E5 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
+
+// The position the board was last given, by the first draw or by a later set.
+function recordingBoard(shown: string[]): BoardFactory {
+  return (_element, config) => {
+    shown.push(String(config.fen));
+    return {
+      set: (next: { fen?: unknown }) => {
+        if (next.fen) shown.push(String(next.fen));
+      },
+      getFen: () => String(config.fen).split(" ")[0],
+      destroy: () => {},
+    } as never;
+  };
+}
 
 // A practice conversation where the coach offered a line: show_position, two moves, then its words.
 const offeredLineRows = [
@@ -161,6 +177,53 @@ describe("browser refresh", () => {
       summary: null,
     });
     expect(server.activity).toMatchObject({ kind: "training", exposure_id: "ex-1" });
+  });
+
+  it("restores a card in the middle of its line at the step it was on, with the moves played so far", () => {
+    const server = refreshInto({
+      kind: "training",
+      ...board,
+      fen: AFTER_E4_E5,
+      last_move: { from: "e7", to: "e5" },
+      legal_moves: legalMovesOf(AFTER_E4_E5),
+      mode: "srs",
+      item: {
+        kind: "card",
+        card_id: 7,
+        exposure_id: "ex-1",
+        prompt_fen: START_FEN,
+        student_color: "white",
+        rating_preview: { "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 72 },
+        position_in_queue: 2,
+        queue_length: 3,
+      },
+      status: "in_progress",
+      served_at: "2026-03-01T00:00:00.000Z",
+      exposure_id: "ex-1",
+      expected: null,
+      exploring: { fen: AFTER_E4_E5, line_san: [], trail: [] },
+      tries: 0,
+      last_try: { uci: "e2e4", san: "e4", correct: true },
+      gave_up: false,
+      solution_line: null,
+      suggested_quality: null,
+      hint_square: null,
+      summary: null,
+      moves: [
+        { ply: 0, uci: "e2e4", san: "e4", by: "student" },
+        { ply: 1, uci: "e7e5", san: "e5", by: "reply" },
+      ],
+      wrong_tries: [],
+    });
+    expect(server.activity).toMatchObject({ status: "in_progress", fen: AFTER_E4_E5 });
+
+    const shown: string[] = [];
+    render(<Practice server={server} createBoard={recordingBoard(shown)} />);
+    expect(screen.getByRole("heading", { name: "Card 2 of 3" })).toBeTruthy();
+    expect(shown.at(-1)).toBe(AFTER_E4_E5);
+    expect(screen.getByRole("list", { name: "Moves" }).textContent).toMatch(/e4.*e5/);
+    expect(screen.getByRole("button", { name: "View solution" })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
   });
 
   it("restores a puzzle in training at its cursor", () => {

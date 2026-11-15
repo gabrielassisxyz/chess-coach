@@ -402,23 +402,29 @@ export class ActivityService {
   private stepTraining(
     expectedActivityId: number | undefined,
     cause: string,
-    step: (run: PracticeRunPort) => void | Promise<void>,
+    step: (run: PracticeRunPort) => void | Promise<() => boolean>,
   ): Promise<ActivityState> {
     return this.enqueue("training", async () => {
       const run = this.requireTraining(expectedActivityId);
-      // A step that does not wait publishes in the same turn it changed the run, so no command for
-      // another board can come in between. One that waited on the engine finds the board as it is
-      // now: if the student left the drill meanwhile, its run has ended and the row stays as it was
-      // left, and the board that replaced it is not taken back.
+      // Publish the synchronous change immediately so background work such as an engine flag check
+      // never delays the board; any follow-up runs later on this queue if the run is still open.
       const pending = step(run);
+      const published = this.publish(run.state((this.state as ActivityState).activity_id), cause);
       if (pending) {
-        await pending;
-        if (this.run !== run) {
-          if (this.state) return this.state;
-          throw new ActivityError("not_in_training", "the drill left the board during its step");
-        }
+        void pending
+          .then((apply) =>
+            this.enqueue("training", async () => {
+              if (this.run !== run || this.state?.kind !== "training") return;
+              if (apply()) {
+                this.publish(run.state(this.state.activity_id), "trainingFlag");
+              }
+            }),
+          )
+          .catch((error) => {
+            this.log.error("activity.listener_failed", error, { cause });
+          });
       }
-      return this.publish(run.state((this.state as ActivityState).activity_id), cause);
+      return published;
     });
   }
 

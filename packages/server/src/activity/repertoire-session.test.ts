@@ -29,9 +29,11 @@ import {
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { endRunsLeftOpenAtStart } from "../db/training.js";
+import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
 import { GameService } from "../game/service.js";
 import { importFinishedGame } from "../import/pgn.js";
 import { positionKey } from "../openings/from-games.js";
+import { NO_OPENING_NAMES, parseOpeningTable } from "../openings/names.js";
 import { ReviewDesk } from "../srs/review.js";
 import { review } from "../srs/sm2.js";
 import {
@@ -44,6 +46,7 @@ import {
   type RepertoireTryJudge,
   repertoireIntroductionsInWindow,
   repertoireScopeCounts,
+  repertoireTryJudge,
   selectRepertoireDrillMoves,
 } from "./repertoire-session.js";
 import { ActivityService } from "./service.js";
@@ -298,6 +301,10 @@ class GatedRepertoireJudge extends FakeRepertoireJudge {
   release(loss: number): void {
     for (const resolve of this.releases.splice(0)) resolve(loss);
   }
+
+  releaseNext(loss: number): void {
+    this.releases.shift()?.(loss);
+  }
 }
 
 // The same table, with an engine whose every search fails, as a missing or faulted Stockfish does.
@@ -305,6 +312,39 @@ class FailingRepertoireJudge extends FakeRepertoireJudge {
   override async cpLoss(fen: string, uci: string): Promise<number> {
     await super.cpLoss(fen, uci);
     throw new Error("the engine stopped answering");
+  }
+}
+
+// Stands in for the evaluation engine when exercising `repertoireTryJudge`: records every search
+// request and answers by position key, carrying `cutByTime` when told.
+class RecordingDrillEngine implements Searcher {
+  readonly requests: SearchRequest[] = [];
+  private readonly answers = new Map<
+    string,
+    { bestmove: string; score: number; depth?: number; cutByTime?: boolean }
+  >();
+
+  write(
+    key: string,
+    bestmove: string,
+    score: number,
+    options: { depth?: number; cutByTime?: boolean } = {},
+  ): this {
+    this.answers.set(key, { bestmove, score, ...options });
+    return this;
+  }
+
+  async search(request: SearchRequest): Promise<SearchResult> {
+    this.requests.push(request);
+    const scripted = this.answers.get(positionKey(request.fen));
+    if (!scripted) return { fen: request.fen, bestmove: null, lines: [] };
+    return {
+      fen: request.fen,
+      bestmove: scripted.bestmove,
+      lines: [{ moves: [scripted.bestmove], score: scripted.score }],
+      ...(scripted.depth === undefined ? {} : { depth: scripted.depth }),
+      ...(scripted.cutByTime === undefined ? {} : { cutByTime: scripted.cutByTime }),
+    };
   }
 }
 
@@ -327,6 +367,10 @@ function addFinishedGame(): number {
 
 const settle = async (until: () => boolean): Promise<void> => {
   for (let i = 0; i < 100 && !until(); i++) await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+const flushMicrotasks = async (): Promise<void> => {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
 };
 
 const notificationCount = (): number =>
@@ -878,6 +922,7 @@ describe("a repertoire drill", () => {
         answer: null,
         hint: { kind: "none" },
         flagged_opening: null,
+        flagged_sound: false,
       });
       expect(state.expected).toBeNull();
     }
@@ -910,7 +955,7 @@ describe("a repertoire drill", () => {
     expect(cardOf("e4 e5", "Nf3")).toMatchObject({ repetitions: 0, interval_hours: 4 });
   });
 
-  it("flags a good try that reaches another named opening, but not a blunder or an unnamed position", async () => {
+  it("warns on any sound try, naming another opening when known, and leaves a blunder plain", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
     const judge = new FakeRepertoireJudge(
@@ -919,7 +964,7 @@ describe("a repertoire drill", () => {
         [keyAfter("e4 e5 Nf3 Nc6", "Bb5")]: "Ruy Lopez",
         [keyAfter("e4 e5 Nf3 Nc6", "d4")]: "Scotch Game",
       },
-      { f1b5: 12, d2d4: 300 },
+      { f1b5: 12, d2d4: 300, a2a3: 20 },
     );
     const service = boot(judge);
     let state = await start(service, id, "due");
@@ -927,13 +972,28 @@ describe("a repertoire drill", () => {
     expect(drillOf(state).opening_name).toBe("King's Pawn Game");
 
     state = await play(service, state, "Bb5");
-    expect(drillOf(state).flagged_opening).toBe("Ruy Lopez");
+    expect(drillOf(state)).toMatchObject({ flagged_opening: null, flagged_sound: false });
+    await flushMicrotasks();
+    state = training(service.current());
+    expect(drillOf(state)).toMatchObject({ flagged_opening: "Ruy Lopez", flagged_sound: true });
     expect(state.input_enabled).toBe(true);
+
     state = await play(service, state, "d4");
-    expect(drillOf(state).flagged_opening).toBeNull();
+    expect(drillOf(state)).toMatchObject({ flagged_opening: null, flagged_sound: false });
+    await flushMicrotasks();
+    state = training(service.current());
+    expect(drillOf(state)).toMatchObject({ flagged_opening: null, flagged_sound: false });
+
+    state = await play(service, state, "a3");
+    await flushMicrotasks();
+    state = training(service.current());
+    expect(drillOf(state)).toMatchObject({ flagged_opening: null, flagged_sound: true });
+
     state = await play(service, state, "h3");
-    expect(drillOf(state).flagged_opening).toBeNull();
-    expect(judge.searched).toEqual(["f1b5", "d2d4"]);
+    await flushMicrotasks();
+    state = training(service.current());
+    expect(drillOf(state)).toMatchObject({ flagged_opening: null, flagged_sound: false });
+    expect(judge.searched).toEqual(["f1b5", "d2d4", "a2a3", "h2h3"]);
   });
 
   it("ends the drill when the board moves on while a wrong try waits on the engine, and the late flag changes nothing", async () => {
@@ -944,15 +1004,18 @@ describe("a repertoire drill", () => {
     const service = boot(judge);
     const state = await start(service, id, "due");
 
-    const tried = service.trainingTry(uciOf(state.fen, "Bb5"), state.activity_id);
-    await settle(() => judge.searched.length > 0);
+    const tried = training(await service.trainingTry(uciOf(state.fen, "Bb5"), state.activity_id));
+    expect(tried.last_try).toMatchObject({ san: "Bb5", correct: false });
+    expect(drillOf(tried)).toMatchObject({ flagged_opening: null, flagged_sound: false });
+    expect(judge.searched).toEqual(["f1b5"]);
+
     const board = await service.openGame(gameId);
     const leftRow = wholeRun();
     expect(runEnds()).toEqual([{ ended_reason: "left", ended_at: T0.toISOString() }]);
 
     now = new Date(T0.getTime() + HOUR_MS);
     judge.release(12);
-    expect(await tried).toBe(board);
+    await flushMicrotasks();
 
     expect(service.current()).toBe(board);
     expect(wholeRun()).toEqual(leftRow);
@@ -983,7 +1046,7 @@ describe("a repertoire drill", () => {
     ]);
   });
 
-  it("gives up on the flag when the engine is slower than its budget, and keeps the try", async () => {
+  it("gives up on the warning when the engine is slower than its budget, and keeps the try", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
     const judge = new GatedRepertoireJudge(RUY_LOPEZ_JUDGE_NAMES(), {});
@@ -991,11 +1054,20 @@ describe("a repertoire drill", () => {
     const state = await start(service, id, "due");
     vi.useFakeTimers();
     try {
-      const tried = service.trainingTry(uciOf(state.fen, "Bb5"), state.activity_id);
-      await vi.advanceTimersByTimeAsync(REPERTOIRE_FLAG_BUDGET_MS);
-      const after = training(await tried);
+      const immediate = training(
+        await service.trainingTry(uciOf(state.fen, "Bb5"), state.activity_id),
+      );
       expect(judge.searched).toEqual(["f1b5"]);
-      expect(drillOf(after).flagged_opening).toBeNull();
+      expect(drillOf(immediate)).toMatchObject({ flagged_opening: null, flagged_sound: false });
+      expect(immediate.last_try).toMatchObject({ san: "Bb5", correct: false });
+      expect(immediate.input_enabled).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(REPERTOIRE_FLAG_BUDGET_MS);
+      judge.release(10);
+      await flushMicrotasks();
+
+      const after = training(service.current());
+      expect(drillOf(after)).toMatchObject({ flagged_opening: null, flagged_sound: false });
       expect(after.last_try).toMatchObject({ san: "Bb5", correct: false });
       expect(after.input_enabled).toBe(true);
     } finally {
@@ -1404,7 +1476,7 @@ describe("recording the first attempts of a repertoire drill", () => {
 });
 
 describe("flagging a repertoire try", () => {
-  it("does not flag a try that reaches the expected line's own opening, named by the table or by the line", async () => {
+  it("warns without naming an opening when a sound try reaches the expected line's own opening", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS, (_lineText, san) => san === "c3" || san === "d4");
     // A table that gives 4.c3 and 4.d3 one name, and none to 5.d4, which the line calls the
@@ -1415,34 +1487,184 @@ describe("flagging a repertoire try", () => {
         [keyAfter("e4 e5 Nf3 Nc6 Bc4 Bc5", "d3")]: "Giuoco Piano",
         [keyAfter("e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6", "d3")]: "Italian Game",
       },
-      { d2d3: 10 },
+      { d2d3: 10, a2a3: 1000 },
     );
     const service = boot(judge);
     let state = await start(service, id, "due");
     expect(lineSan(state)).toEqual(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]);
+
     state = await play(service, state, "d3");
-    expect(drillOf(state).flagged_opening).toBeNull();
+    await flushMicrotasks();
+    state = training(service.current());
+    expect(drillOf(state)).toMatchObject({ flagged_opening: null, flagged_sound: true });
+
     state = await play(service, state, "c3");
     expect(lineSan(state)).toEqual(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"]);
     state = await play(service, state, "d3");
-    expect(drillOf(state).flagged_opening).toBeNull();
-    expect(judge.searched).toEqual([]);
+    await flushMicrotasks();
+    state = training(service.current());
+    expect(drillOf(state)).toMatchObject({ flagged_opening: null, flagged_sound: true });
+
+    state = await play(service, state, "a3");
+    await flushMicrotasks();
+    state = training(service.current());
+    expect(drillOf(state)).toMatchObject({ flagged_opening: null, flagged_sound: false });
+    expect(judge.searched).toEqual(["d2d3", "d2d3", "a2a3"]);
   });
 
-  it("flags a try that loses exactly the margin, and not one that loses a centipawn more", async () => {
+  it("warns on a try that loses exactly the margin, and not one that loses a centipawn more", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
     const judge = new FakeRepertoireJudge(
       { ...RUY_LOPEZ_JUDGE_NAMES(), [keyAfter("e4 e5 Nf3 Nc6", "d4")]: "Scotch Game" },
-      { f1b5: REPERTOIRE_FLAG_CP, d2d4: REPERTOIRE_FLAG_CP + 1 },
+      {
+        f1b5: REPERTOIRE_FLAG_CP,
+        d2d4: REPERTOIRE_FLAG_CP + 1,
+        a2a3: REPERTOIRE_FLAG_CP,
+        h2h3: REPERTOIRE_FLAG_CP + 1,
+      },
     );
     const service = boot(judge);
     let state = await start(service, id, "due");
+
     state = await play(service, state, "Bb5");
-    expect(drillOf(state).flagged_opening).toBe("Ruy Lopez");
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: "Ruy Lopez",
+      flagged_sound: true,
+    });
+
     state = await play(service, state, "d4");
-    expect(drillOf(state).flagged_opening).toBeNull();
-    expect(judge.searched).toEqual(["f1b5", "d2d4"]);
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: false,
+    });
+
+    state = await play(service, state, "a3");
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: true,
+    });
+
+    state = await play(service, state, "h3");
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: false,
+    });
+    expect(judge.searched).toEqual(["f1b5", "d2d4", "a2a3", "h2h3"]);
+  });
+
+  it("publishes the wrong try before the engine finishes, then delivers the sound-move warning later", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const judge = new GatedRepertoireJudge({}, {});
+    const service = boot(judge);
+    const published: TrainingActivity[] = [];
+    service.onState((s) => {
+      if (s?.kind === "training") published.push(s);
+    });
+    const state = await start(service, id, "due");
+    published.length = 0;
+
+    const immediate = training(
+      await service.trainingTry(uciOf(state.fen, "a3"), state.activity_id),
+    );
+    expect(judge.searched).toEqual(["a2a3"]);
+    expect(published).toHaveLength(1);
+    expect(immediate).toBe(published[0]);
+    expect(immediate.last_try).toEqual({ uci: "a2a3", san: "a3", correct: false });
+    expect(immediate.tries).toBe(1);
+    expect(drillOf(immediate)).toMatchObject({ flagged_opening: null, flagged_sound: false });
+
+    judge.release(15);
+    await settle(() => published.length === 2);
+    expect(published).toHaveLength(2);
+    const warned = published[1] as TrainingActivity;
+    expect(warned.last_try).toEqual({ uci: "a2a3", san: "a3", correct: false });
+    expect(warned.tries).toBe(1);
+    expect(drillOf(warned)).toMatchObject({ flagged_opening: null, flagged_sound: true });
+    expect(service.current()).toBe(warned);
+  });
+
+  it("ignores a late engine answer once another try or the right move follows", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4" || san === "c3");
+    const judge = new GatedRepertoireJudge({}, {});
+    const service = boot(judge);
+    const state = await start(service, id, "due");
+
+    await play(service, state, "a3");
+    await play(service, state, "h3");
+    expect(judge.searched).toEqual(["a2a3", "h2h3"]);
+
+    judge.releaseNext(10);
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: false,
+    });
+
+    judge.releaseNext(1000);
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: false,
+    });
+
+    await play(service, training(service.current()), "a3");
+    const afterRight = await play(service, training(service.current()), "Bc4");
+    judge.releaseNext(10);
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: false,
+    });
+    expect(afterRight.last_try).toMatchObject({ san: "Bc4", correct: true });
+  });
+
+  it("rates a sound unnamed wrong try as a miss and brings the move back on a later pass", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const judge = new FakeRepertoireJudge({}, { a2a3: 15 });
+    const service = boot(judge);
+    let state = await start(service, id, "due");
+
+    state = await play(service, state, "a3");
+    await flushMicrotasks();
+    state = training(service.current());
+    expect(drillOf(state)).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: true,
+      moves_wrong: 1,
+      moves_left: 1,
+    });
+    expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({
+      repetitions: 0,
+      interval_hours: 4,
+    });
+    expect(firstAttempts()).toEqual([attemptOf("e4 e5 Nf3 Nc6", "Bc4", id, 0)]);
+
+    state = await play(service, state, "Bc4");
+    expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({
+      repetitions: 0,
+      interval_hours: 4,
+    });
+
+    state = await next(service, state);
+    expect(state.item).toMatchObject({ position_in_queue: 2 });
+    expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null, moves_left: 1 });
+    state = await play(service, state, "Bc4");
+    expect(drillOf(state)).toMatchObject({ moves_left: 0 });
+    expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({
+      repetitions: 0,
+      reviews: 3,
+    });
+    state = await next(service, state);
+    expect(drillOf(state).result).toEqual({ practised: 1, first_try_right: 0 });
+    expect(firstAttempts()).toEqual([attemptOf("e4 e5 Nf3 Nc6", "Bc4", id, 0)]);
   });
 
   it("leaves a try unflagged when the engine search fails, and still answers with the drill", async () => {
@@ -1452,11 +1674,65 @@ describe("flagging a repertoire try", () => {
     const service = boot(judge);
     let state = await start(service, id, "due");
     state = await play(service, state, "Bb5");
+    await flushMicrotasks();
     expect(judge.searched).toEqual(["f1b5"]);
     expect(state.last_try).toMatchObject({ san: "Bb5", correct: false });
-    expect(drillOf(state).flagged_opening).toBeNull();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: false,
+    });
     expect(state.input_enabled).toBe(true);
     expect(service.current()).toBe(state);
+  });
+
+  it("caps both searches of the real judge at 2000 ms", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const engine = new RecordingDrillEngine();
+    const service = boot(repertoireTryJudge(NO_OPENING_NAMES, engine));
+    const state = await start(service, id, "due");
+    engine.write(positionKey(state.fen), "f1c4", 30);
+    engine.write(keyAfter("e4 e5 Nf3 Nc6", "a3"), "a7a6", -15);
+
+    await play(service, state, "a3");
+    await flushMicrotasks();
+
+    expect(engine.requests).toHaveLength(2);
+    expect(engine.requests.map((request) => request.capMs)).toEqual([2000, 2000]);
+  });
+
+  it("flags a sound try and leaves a blunder plain when the engine's answers are cut by time", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const names = parseOpeningTable(
+      [
+        "eco\tname\tpgn\tuci\tepd",
+        `C50\tItalian Game\t-\t-\t${keyAfter("e4 e5 Nf3 Nc6", "Bc4")}`,
+        `C60\tRuy Lopez\t-\t-\t${keyAfter("e4 e5 Nf3 Nc6", "Bb5")}`,
+        `C44\tScotch Game\t-\t-\t${keyAfter("e4 e5 Nf3 Nc6", "d4")}`,
+      ].join("\n"),
+    );
+    const engine = new RecordingDrillEngine();
+    const service = boot(repertoireTryJudge(names, engine));
+    let state = await start(service, id, "due");
+    engine.write(positionKey(state.fen), "f1c4", 30, { depth: 8, cutByTime: true });
+    engine.write(keyAfter("e4 e5 Nf3 Nc6", "Bb5"), "a7a6", -10, { depth: 8, cutByTime: true });
+    engine.write(keyAfter("e4 e5 Nf3 Nc6", "d4"), "e5d4", 70, { depth: 8, cutByTime: true });
+
+    state = await play(service, state, "Bb5");
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: "Ruy Lopez",
+      flagged_sound: true,
+    });
+
+    state = await play(service, training(service.current()), "d4");
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: false,
+    });
+    expect(engine.requests.map((request) => request.capMs)).toEqual([2000, 2000, 2000, 2000]);
   });
 });
 

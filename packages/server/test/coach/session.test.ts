@@ -13,11 +13,13 @@ import {
 import { COACH_TOOL_NAMES } from "../../src/coach/tools.js";
 import {
   appendChatMessage,
+  type ChatMessage,
   createCoachSession,
   findLatestOpenSession,
   listChatTail,
 } from "../../src/db/chat.js";
 import { type Database, openDatabase } from "../../src/db/open.js";
+import { type TurnNotification, writeNotification } from "../../src/game/notifications.js";
 import { GameService } from "../../src/game/service.js";
 import { RecordingLog, silentLog } from "../../src/log.js";
 import { contentDir } from "../../src/paths.js";
@@ -64,8 +66,10 @@ describe("CoachSession", () => {
     const rows = listChatTail(db, row?.id ?? -1, 50);
     expect(rows.map((r) => `${r.role}:${r.kind}`)).toEqual([
       "user:text",
+      "system:text",
       "assistant:text",
       "user:text",
+      "system:text",
       "assistant:text",
       "assistant:tool_use",
       "user:tool_result",
@@ -82,7 +86,10 @@ describe("CoachSession", () => {
     await session.start();
     await session.send("hello", "play");
     const row = findLatestOpenSession(db);
-    expect(listChatTail(db, row?.id ?? -1, 1)[0]?.role).toBe("user");
+    expect(listChatTail(db, row?.id ?? -1, 10).map((r) => `${r.role}:${r.kind}`)).toEqual([
+      "user:text",
+      "system:text",
+    ]);
     await vi.waitFor(() => expect(sdk.userTexts).toEqual(["hello"]));
     await session.stop();
   });
@@ -216,6 +223,51 @@ describe("CoachSession", () => {
     await session.start();
     const tail = listChatTail(db, row.id, 5);
     expect(tail.map((r) => r.kind)).toEqual(["text", "incomplete"]);
+    await session.stop();
+  });
+
+  it("appends an incomplete row when the last row is a dangling turn_start marker", async () => {
+    const { db, dataDir, sdk } = setup();
+    const row = createCoachSession(db, { promptVersion: (await versionOf()).version });
+    appendChatMessage(db, row.id, {
+      role: "system",
+      kind: "text",
+      contentJson: JSON.stringify({ turn_start: "2026-01-01T00:00:00.000Z" }),
+    });
+    const session = new CoachSession({
+      db,
+      query: sdk.query,
+      contentDir: contentDir(),
+      dataDir,
+      world: makeWorld(db).world,
+      env: {},
+      log: silentLog,
+    });
+    await session.start();
+    const tail = listChatTail(db, row.id, 5);
+    expect(tail.map((r) => `${r.role}:${r.kind}`)).toEqual(["system:text", "system:incomplete"]);
+    await session.stop();
+  });
+
+  it("leaves a transcript ending on a divider alone", async () => {
+    const { db, dataDir, sdk } = setup();
+    const row = createCoachSession(db, { promptVersion: (await versionOf()).version });
+    appendChatMessage(db, row.id, {
+      role: "system",
+      kind: "text",
+      contentJson: JSON.stringify({ label: "New game", at: "2026-01-01T00:00:00.000Z" }),
+    });
+    const session = new CoachSession({
+      db,
+      query: sdk.query,
+      contentDir: contentDir(),
+      dataDir,
+      world: makeWorld(db).world,
+      env: {},
+      log: silentLog,
+    });
+    await session.start();
+    expect(listChatTail(db, row.id, 5)).toHaveLength(1);
     await session.stop();
   });
 
@@ -608,5 +660,96 @@ describe("per-tab conversations", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("turn_start boundaries", () => {
+  const sampleNotification = (ply: number): TurnNotification => ({
+    type: "turn",
+    game_id: 1,
+    ply,
+    move_number: Math.ceil(ply / 2),
+    player_san: `m${ply}`,
+    player_uci: "e2e4",
+    cp_loss: 10,
+    classification: "great",
+    best_san: "e4",
+    engine_reply_san: "e5",
+    fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+  });
+
+  it("stores and broadcasts via onRow one turn_start row per SDK delivery before that turn's rows, including folded notifications", async () => {
+    const gated = new GatedSdk();
+    const { db, session, events } = setup({ query: gated.query });
+    const rowsEmitted: { row: ChatMessage; tab: string }[] = [];
+    const timeline: string[] = [];
+    const stopRows = session.onRow((row, tab) => {
+      rowsEmitted.push({ row, tab });
+      timeline.push(`row:${row.seq}`);
+    });
+    session.onEvent((event) => {
+      timeline.push(`event:${event.kind}`);
+    });
+
+    await session.start();
+    const sessionId = session.ensureSessionId("play");
+    writeNotification(db, sessionId, sampleNotification(1));
+    session.flushNotifications();
+    await vi.waitFor(() => expect(gated.userTexts).toHaveLength(1));
+
+    // Two notifications arriving mid-turn fold into a single second delivery.
+    writeNotification(db, sessionId, sampleNotification(3));
+    writeNotification(db, sessionId, sampleNotification(5));
+    session.flushNotifications();
+    expect(rowsEmitted).toHaveLength(1);
+
+    gated.release();
+    await vi.waitFor(() => expect(gated.userTexts).toHaveLength(2));
+    expect(rowsEmitted).toHaveLength(2);
+
+    gated.release();
+    await vi.waitFor(() => expect(turnsEnded(events)).toBe(2));
+
+    for (const { row, tab } of rowsEmitted) {
+      expect(tab).toBe("play");
+      expect(row.role).toBe("system");
+      expect(row.kind).toBe("text");
+      const content = JSON.parse(row.contentJson) as { turn_start?: unknown };
+      expect(typeof content.turn_start).toBe("string");
+      expect(Number.isNaN(Date.parse(content.turn_start as string))).toBe(false);
+    }
+
+    stopRows();
+    const afterTwoTurns = listChatTail(db, sessionId, 50);
+    const turnStartSeqs = afterTwoTurns
+      .filter((r) => r.role === "system" && r.kind === "text")
+      .map((r) => r.seq);
+    expect(turnStartSeqs).toEqual(rowsEmitted.map((e) => e.row.seq));
+
+    const firstStartIdx = afterTwoTurns.findIndex((r) => r.seq === turnStartSeqs[0]);
+    const secondStartIdx = afterTwoTurns.findIndex((r) => r.seq === turnStartSeqs[1]);
+    expect(afterTwoTurns.slice(0, firstStartIdx).map((r) => r.kind)).toEqual(["notification"]);
+    expect(
+      afterTwoTurns.slice(firstStartIdx + 1, secondStartIdx).filter((r) => r.role === "assistant")
+        .length,
+    ).toBeGreaterThan(0);
+    expect(afterTwoTurns.slice(secondStartIdx + 1).some((r) => r.role === "assistant")).toBe(true);
+
+    // Each turn_start emission arrives before any SDK event of that turn.
+    const firstEmitPos = timeline.indexOf(`row:${turnStartSeqs[0]}`);
+    const firstTurnEndPos = timeline.indexOf("event:turn_end");
+    const secondEmitPos = timeline.indexOf(`row:${turnStartSeqs[1]}`);
+    const secondTurnEndPos = timeline.lastIndexOf("event:turn_end");
+    expect(firstEmitPos).toBe(0);
+    expect(firstTurnEndPos).toBeGreaterThan(firstEmitPos);
+    expect(secondEmitPos).toBeGreaterThan(firstTurnEndPos);
+    expect(secondTurnEndPos).toBeGreaterThan(secondEmitPos);
+
+    await session.send("one more", "play");
+    await vi.waitFor(() => expect(gated.userTexts).toHaveLength(3));
+    gated.release();
+    await vi.waitFor(() => expect(turnsEnded(events)).toBe(3));
+    expect(rowsEmitted).toHaveLength(2);
+    await session.stop();
   });
 });

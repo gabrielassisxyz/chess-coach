@@ -16,10 +16,27 @@ export interface RepertoireRow {
   variation_name: string;
 }
 
+/** The style points a variation was built with; the generator's own type has the same shape. */
+export interface StoredRepertoirePoints {
+  effectiveness: number;
+  soundness: number;
+  learnability: number;
+}
+
 export interface NewRepertoire {
   side: RepertoireSide;
   groupName: string;
   variationName: string;
+  /** What the run weighed White's candidates by; left out, the unit keeps none, as one built before they were stored. */
+  points?: StoredRepertoirePoints | null;
+  /** The line of the Italian a variation is built at, ending on White's forced move; null for any other unit. */
+  branch?: readonly string[] | null;
+}
+
+/** What a stored variation was built with: each is null for a unit built before they were stored. */
+export interface StoredRepertoireBuild {
+  points: StoredRepertoirePoints | null;
+  branch: string[] | null;
 }
 
 /** Where a row sits: the same position reached by a likelier line replaces these fields only. */
@@ -99,7 +116,9 @@ export function findFirstRepertoireVariation(
   groupName: string,
 ): RepertoireRow | undefined {
   return db
-    .prepare("SELECT * FROM repertoires WHERE side = ? AND group_name = ? ORDER BY id LIMIT 1")
+    .prepare(
+      "SELECT id, side, group_name, variation_name FROM repertoires WHERE side = ? AND group_name = ? ORDER BY id LIMIT 1",
+    )
     .get(side, groupName) as RepertoireRow | undefined;
 }
 
@@ -111,7 +130,9 @@ export function findRepertoireVariationByName(
   variationName: string,
 ): RepertoireRow | undefined {
   return db
-    .prepare("SELECT * FROM repertoires WHERE side = ? AND group_name = ? AND variation_name = ?")
+    .prepare(
+      "SELECT id, side, group_name, variation_name FROM repertoires WHERE side = ? AND group_name = ? AND variation_name = ?",
+    )
     .get(side, groupName, variationName) as RepertoireRow | undefined;
 }
 
@@ -124,7 +145,8 @@ export function findRepertoireVariationPlaying(
 ): RepertoireRow | undefined {
   return db
     .prepare(
-      `SELECT r.* FROM repertoires r JOIN repertoire_positions p ON p.repertoire_id = r.id
+      `SELECT r.id, r.side, r.group_name, r.variation_name
+       FROM repertoires r JOIN repertoire_positions p ON p.repertoire_id = r.id
        WHERE r.side = ? AND r.group_name = ? AND p.kind = 'own' AND p.position_key = ?
          AND p.move_uci = ?
        ORDER BY r.id LIMIT 1`,
@@ -134,8 +156,21 @@ export function findRepertoireVariationPlaying(
 
 export function createRepertoireVariation(db: Database, repertoire: NewRepertoire): RepertoireRow {
   const inserted = db
-    .prepare("INSERT INTO repertoires (side, group_name, variation_name) VALUES (?, ?, ?)")
-    .run(repertoire.side, repertoire.groupName, repertoire.variationName);
+    .prepare(
+      `INSERT INTO repertoires
+         (side, group_name, variation_name, points_effectiveness, points_soundness,
+          points_learnability, branch_san)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      repertoire.side,
+      repertoire.groupName,
+      repertoire.variationName,
+      repertoire.points?.effectiveness ?? null,
+      repertoire.points?.soundness ?? null,
+      repertoire.points?.learnability ?? null,
+      repertoire.branch ? JSON.stringify(repertoire.branch) : null,
+    );
   return {
     id: Number(inserted.lastInsertRowid),
     side: repertoire.side,
@@ -579,6 +614,48 @@ export function repertoireSetupLine(db: Database, repertoireId: number): string[
   return rows.map((row) => row.move_san);
 }
 
+/** What a variation was built with, read back from its row; each is null for a unit built before they were stored. */
+export function findRepertoireBuild(db: Database, repertoireId: number): StoredRepertoireBuild {
+  const row = db
+    .prepare(
+      `SELECT points_effectiveness, points_soundness, points_learnability, branch_san
+       FROM repertoires WHERE id = ?`,
+    )
+    .get(repertoireId) as
+    | {
+        points_effectiveness: number | null;
+        points_soundness: number | null;
+        points_learnability: number | null;
+        branch_san: string | null;
+      }
+    | undefined;
+  if (!row) return { points: null, branch: null };
+  // The migration stores the three together or not at all, so one missing means the unit has none.
+  const { points_effectiveness: effectiveness, points_soundness: soundness } = row;
+  const { points_learnability: learnability } = row;
+  const points =
+    effectiveness === null || soundness === null || learnability === null
+      ? null
+      : { effectiveness, soundness, learnability };
+  return {
+    points,
+    branch: row.branch_san === null ? null : (JSON.parse(row.branch_san) as string[]),
+  };
+}
+
+/** Gives one variation the points and branch of another: what a rebuild's new rows were built with. */
+export function copyRepertoireBuild(db: Database, fromId: number, toId: number): void {
+  db.prepare(
+    `UPDATE repertoires AS target SET
+       points_effectiveness = source.points_effectiveness,
+       points_soundness = source.points_soundness,
+       points_learnability = source.points_learnability,
+       branch_san = source.branch_san
+     FROM repertoires AS source
+     WHERE source.id = ? AND target.id = ?`,
+  ).run(fromId, toId);
+}
+
 /** Whether a run got past the root of a unit: a run cut short at the start stored only its setup. */
 export function repertoireHoldsMovesBeyondSetup(db: Database, repertoireId: number): boolean {
   return (
@@ -604,7 +681,9 @@ export interface RepertoireUnitRoot {
  */
 export function listRepertoireUnitRoots(db: Database, side: RepertoireSide): RepertoireUnitRoot[] {
   const units = db
-    .prepare("SELECT * FROM repertoires WHERE side = ? ORDER BY id")
+    .prepare(
+      "SELECT id, side, group_name, variation_name FROM repertoires WHERE side = ? ORDER BY id",
+    )
     .all(side) as RepertoireRow[];
   const setup = db.prepare(
     "SELECT move_uci FROM repertoire_positions WHERE repertoire_id = ? AND source = 'setup' ORDER BY ply",

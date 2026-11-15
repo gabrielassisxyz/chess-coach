@@ -18,6 +18,8 @@ export interface CardRecord {
   intervalHours: number;
   easeFactor: number;
   repetitions: number;
+  /** The puzzle the card was born from; no foreign key, so it can name a puzzle that is gone. */
+  puzzleId: string | null;
 }
 
 export interface NewCard {
@@ -53,6 +55,7 @@ interface CardRow {
   interval_hours: number;
   ease_factor: number;
   repetitions: number;
+  puzzle_id: string | null;
 }
 
 function toCard(row: CardRow): CardRecord {
@@ -73,6 +76,7 @@ function toCard(row: CardRow): CardRecord {
     intervalHours: row.interval_hours,
     easeFactor: row.ease_factor,
     repetitions: row.repetitions,
+    puzzleId: row.puzzle_id,
   };
 }
 
