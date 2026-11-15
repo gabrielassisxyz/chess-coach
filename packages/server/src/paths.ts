@@ -24,3 +24,10 @@ export function contentDir(): string {
   const override = process.env.CHESS_COACH_CONTENT_DIR;
   return override ? resolve(override) : join(resolveAppRoot(), "content");
 }
+
+// The evaluation cache is a file apart from the app's own database, which it would otherwise
+// grow by tens of gigabytes. Unset means the engine answers every analysis.
+export function evalCachePath(): string | null {
+  const override = process.env.CHESS_COACH_EVAL_CACHE;
+  return override ? resolve(override) : null;
+}

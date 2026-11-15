@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { ThrowingEvalCache } from "../../test/support/eval-cache-fixture.js";
 import {
   FakeEngineProcess,
   loadFixture,
   replayFixture,
 } from "../../test/support/fake-engine-process.js";
+import { poolGameEngine } from "../game/engine.js";
 import { classifyCpLoss, evaluatePlayerMove } from "./evaluate.js";
+import { EnginePool } from "./pool.js";
 import { type Searcher, type SearchRequest, type SearchResult, UciEngine } from "./uci.js";
 
 /** Answers every search with one scored line and keeps the requests it was sent. */
@@ -113,6 +116,22 @@ describe("evaluatePlayerMove", () => {
     await evaluatePlayerMove(engine, OPENING, "e2e4", "w", 2000);
     expect(engine.requests).toHaveLength(2);
     expect(engine.requests.map((request) => request.capMs)).toEqual([2000, 2000]);
+  });
+});
+
+describe("grading and the evaluation cache", () => {
+  // A grade has to stay comparable within a game, so it is always the engine's at one depth, even
+  // for a position the cache holds. Both ways the entry point grades are tried over a pool whose
+  // cache fails the test when it is read: the evaluation lane itself, and the game's engine.
+  it("never reads the cache, whether it grades through the lane or through the game's engine", async () => {
+    const cache = new ThrowingEvalCache();
+    const behavior = replayFixture(loadFixture("opening"));
+    const pool = new EnginePool(() => new FakeEngineProcess(behavior), {}, cache);
+    const throughLane = await evaluatePlayerMove(pool.evaluation, OPENING, "e2e4", "w");
+    const throughGame = await poolGameEngine(pool).evaluate(OPENING, "e2e4", "w");
+    expect(throughLane).toMatchObject({ evalBeforeCp: 39, evalAfterCp: 32, cpLoss: 7 });
+    expect(throughGame).toEqual(throughLane);
+    expect(cache.calls).toBe(0);
   });
 });
 

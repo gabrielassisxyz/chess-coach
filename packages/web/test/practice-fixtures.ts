@@ -180,6 +180,7 @@ export function repertoireActivity(options: RepertoireActivityOptions = {}): Tra
       hint: { kind: "none" },
       flagged_opening: null,
       flagged_sound: false,
+      answered: null,
       moves_left: 4,
       moves_right: 0,
       moves_wrong: 0,

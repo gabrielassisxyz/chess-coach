@@ -2,6 +2,7 @@ import type { RepertoireDrill } from "@chess-coach/shared";
 import { describe, expect, it } from "vitest";
 import { practiceIdleLabel, startFailureText, trainingView } from "../src/state/practice.js";
 import {
+  answeredLineOf,
   drillFactsOf,
   hintLabelOf,
   nextEndsDrill,
@@ -197,5 +198,33 @@ describe("what the hub and the coach say", () => {
     expect(
       startFailureText("repertoire", "all", "not_in_training", "training is not available"),
     ).toContain("Training could not start.");
+  });
+});
+
+describe("the answered idea", () => {
+  const lineOf = (options: Parameters<typeof repertoireActivity>[0]) => {
+    const training = repertoireActivity(options);
+    return answeredLineOf(training, training.repertoire as RepertoireDrill);
+  };
+
+  it("draws nothing before any move is answered or when none is stored", () => {
+    expect(lineOf({})).toBeNull();
+    expect(lineOf({ drill: { answered: { san: "c3", idea: null } } })).toBeNull();
+  });
+
+  it("words the answered move with its number and idea", () => {
+    expect(lineOf({ drill: { answered: { san: "c3", idea: "Prepare d4." } } })).toEqual({
+      title: "Why 4.c3",
+      body: "Prepare d4.",
+    });
+  });
+
+  it("numbers a shown new move from the line played so far", () => {
+    expect(
+      lineOf({
+        sans: ["e4", "e5"],
+        drill: { answered: { san: "Nf3", idea: "Develop." } },
+      }),
+    ).toEqual({ title: "Why 2.Nf3", body: "Develop." });
   });
 });

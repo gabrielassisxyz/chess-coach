@@ -85,6 +85,23 @@ const INVENTORY: FailureCase[] = [
     ],
   },
   {
+    name: "evaluation cache unset, missing or damaged",
+    proofs: [
+      {
+        file: "server/src/engine/eval-cache.test.ts",
+        titles: [
+          "with the setting unset logs one eval_cache.unavailable and misses every lookup",
+          "with the file absent logs one eval_cache.unavailable naming the path",
+          "answers a damaged row with a miss and a failure in the log, never an error",
+        ],
+      },
+      {
+        file: "server/src/engine/pool.test.ts",
+        titles: ["searches exactly as before when the setting is unset or the file is absent"],
+      },
+    ],
+  },
+  {
     name: "WebSocket dropped mid-turn",
     proofs: [
       {

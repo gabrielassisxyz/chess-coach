@@ -454,6 +454,13 @@ function repertoireHintOf(ask: DrillAsk | null, asked: DrillMoveState | null): R
   return { kind: "move", uci: asked.move.uci, san: asked.move.san };
 }
 
+// The stored idea of a move, trimmed, or null when none is stored. Never the placeholder the
+// first hint shows, so the web can draw nothing for it.
+function repertoireAnsweredIdeaOf(move: RepertoireDrillMove): string | null {
+  const idea = move.idea?.trim();
+  return idea ? idea : null;
+}
+
 const uciOfRepertoireMove = (move: Move): string => `${move.from}${move.to}${move.promotion ?? ""}`;
 
 /**
@@ -474,6 +481,9 @@ export class RepertoireSession implements PracticeRunPort {
   private closed = false;
   // Set while a transition writes, so the coach is woken once the rows are committed.
   private wake = false;
+  // The move just answered, with its stored idea, until the next move is answered. Null before
+  // any answer and at the start of a pass.
+  private answered: { san: string; idea: string | null } | null = null;
 
   // `repertoire` is the one the drill was started from: its side is the side of every variation
   // the level covers, and a pass with nothing asked yet falls back to it.
@@ -627,6 +637,7 @@ export class RepertoireSession implements PracticeRunPort {
       hint: repertoireHintOf(ask, asked),
       flagged_opening: ask?.flagged ?? null,
       flagged_sound: ask?.flaggedSound ?? false,
+      answered: this.answered,
       moves_left: count((state) => state.stage !== "done"),
       moves_right: count((state) => state.rating === "right"),
       moves_wrong: count((state) => state.rating === "wrong"),
@@ -728,6 +739,9 @@ export class RepertoireSession implements PracticeRunPort {
     const { ask, state } = this.requireAsk();
     this.transition(() => {
       ask.hint = ask.hint === 0 ? 1 : 2;
+      if (ask.hint === 2) {
+        this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
+      }
       this.missByHint(ask, state);
     });
   }
@@ -737,6 +751,7 @@ export class RepertoireSession implements PracticeRunPort {
     const { ask, state } = this.requireAsk();
     this.transition(() => {
       ask.hint = 2;
+      this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
       this.missByHint(ask, state);
     });
   }
@@ -788,6 +803,7 @@ export class RepertoireSession implements PracticeRunPort {
     this.recordTry(pass, uci, true);
     if (!ask.attempted) this.rateFirstAttempt(state, true);
     ask.attempted = true;
+    this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
     if (state.stage === "intro") state.stage = "test";
     const board = new Chess(pass.fen);
     const played = applyUci(board, uci);
@@ -897,6 +913,7 @@ export class RepertoireSession implements PracticeRunPort {
       servedAt: servedAt.toISOString(),
       runId: this.runId,
     });
+    this.answered = null;
     const pass: DrillPass = {
       itemId,
       servedAtMs: servedAt.getTime(),
@@ -948,8 +965,10 @@ export class RepertoireSession implements PracticeRunPort {
     };
     pass.variation = state.move.variation;
     pass.openingName = state.move.openingName;
-    // Showing a new move with its answer is what makes it known.
+    // Showing a new move with its answer is what makes it known, and showing counts as
+    // answering for the idea shown after each answer.
     if (state.stage === "intro") {
+      this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
       introduceRepertoireCard(this.deps.db, state.move, this.clock.now().toISOString());
     }
   }
