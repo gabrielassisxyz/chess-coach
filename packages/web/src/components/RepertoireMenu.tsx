@@ -66,7 +66,6 @@ export interface OpeningAdds {
   retryRefresh(): Promise<void>;
   // The adds whose last run stopped short: their drill is partial, and adding again resumes it.
   unfinished: ReadonlySet<string>;
-  // The add being built, if any.
   adding: { key: string; origin: AddOrigin } | null;
   outcome: AddOutcome | null;
   add(request: AddRequest): Promise<void>;

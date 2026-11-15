@@ -86,7 +86,7 @@ function foundCountsOf(
   positions: readonly ListedFoundPosition[],
   now: Date,
 ): FoundPositionCounts {
-  const ofColour = listListedFoundPositions(db, { color: query.color });
+  const ofColour = listListedFoundPositions(db, { color: query.color, opening: query.opening });
   const inPhase = (phase: ListedFoundPosition["phase"]): number =>
     ofColour.filter((position) => position.phase === phase).length;
   const reached = ofColour.filter((position) => position.fromRepeat).length;
@@ -124,7 +124,8 @@ export function registerFoundPositionRoutes(
       if (!parsed.success) {
         await reply.code(400).send({
           error: "invalid_filter",
-          message: "color is white or black, and phase is opening, middlegame or endgame",
+          message:
+            "color is white or black, phase is opening, middlegame or endgame, and opening is 1 to 120 characters",
         });
         return undefined;
       }

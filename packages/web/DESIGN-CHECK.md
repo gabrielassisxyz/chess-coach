@@ -257,7 +257,8 @@ name, pill and Add on one line with the moves under the name. M1 and M2 still fi
 - **The Practice hub** is a frame: a navigation of eight entries in two groups, Train and
   Stats, sticky beside a page column of at most 1440 px that shows one page at a time, the page
   scrolling as a whole and only the navigation scrolling by itself when it is taller than the
-  window. The Overview opens first, with three tiles over the older Due cards card and a Puzzle
+  window. The Overview opens first, with four tiles (Day streak, Puzzle rating, Solved first try,
+  Cards remembered) over the Due cards card (with its Coming up 7-day forecast) and a Puzzle
   themes section holding the older Puzzles by motif card; Puzzle themes in the navigation shows the
   Overview scrolled to that section. The Openings page is built as described in the check above,
   Improvement areas and Strengths show the ranked puzzle theme tables, and the three other pages
@@ -294,5 +295,13 @@ name, pill and Add on one line with the moves under the name. M1 and M2 still fi
   description, bar and Played count hide, and buttons take `min-height: 44px`. `56px`, `104px`,
   `140px`, `36px`, `2px`, `10px`, `20px` and `80px` size data cells and panel states rather than
   layout spacing. M1 and M2 print nothing for them.
+- **Practice Overview tiles and Due cards forecast** were re-checked for the Practice and Phone
+  columns against the markup and `practice-hub.css`. All four tiles use `--surface-1`, `--border`,
+  `--font-mono`, `--text-1`/`--text-2`, `--quality-best`/`--quality-blunder` deltas, `--status-ready`
+  / `--status-error` / `--surface-2` / `--accent` indicators, wrap their value rows cleanly, and
+  stack two by two (`repeat(2, minmax(0, 1fr))`) under 900 px; Due cards separates the 7-day
+  forecast with a `1px solid var(--surface-2)` top border, uses `--accent` on today and
+  `--surface-2` on upcoming days, and leaves partial data without alerts when rating history or
+  theme stats fail. M1 and M2 still print nothing.
 - **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
   and a model setting exist.
