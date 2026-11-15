@@ -18,6 +18,7 @@ import "./styles/board.css";
 import "./styles/layout.css";
 import "./styles/practice.css";
 import "./styles/practice-hub.css";
+import "./styles/practice-openings.css";
 import "./styles/repertoire.css";
 import "./styles/games.css";
 import "./styles/play.css";
