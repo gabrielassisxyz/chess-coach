@@ -92,10 +92,12 @@ function hintLine(drill: RepertoireDrill): { title: string; body: string } | nul
 // A plain miss says nothing here: only a flagged try, a hint or a new move has words.
 function openCard(training: TrainingActivity, drill: RepertoireDrill): StateCard {
   const hint = hintLine(drill);
-  if (drill.flagged_opening) {
+  if (drill.flagged_opening || drill.flagged_sound) {
     return {
       tone: "neutral",
-      title: `Good move, but that is the ${drill.flagged_opening}`,
+      title: drill.flagged_opening
+        ? `Good move, but that is the ${drill.flagged_opening}`
+        : "Good move, but this line plays another move",
       body: hint?.body ?? "It is not the move of this line. Try again.",
     };
   }
