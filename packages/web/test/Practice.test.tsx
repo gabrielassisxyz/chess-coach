@@ -6,8 +6,10 @@ import {
   type MetOpening,
   type OpeningDrill,
   type OpeningDrillsResponse,
+  type PuzzleRatingHistoryResponse,
   type RepertoireSummary,
   type RepertoiresResponse,
+  type ThemeStatsResponse,
   type TrainingActivity,
   UNNAMED_OPENING,
 } from "@chess-coach/shared";
@@ -20,6 +22,10 @@ import { type ServerApi, useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
 import { formatInterval, NONE, nextBatchParts, trainingView } from "../src/state/practice.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
+import {
+  fetchPuzzleRatingHistoryFromServer,
+  ratingSparklinePoints,
+} from "../src/state/puzzle-rating-api.js";
 import {
   type AddedOpening,
   addOpeningToServer,
@@ -42,7 +48,10 @@ import {
 
 afterEach(cleanup);
 // The hub stores the page it shows, which would open the next test's hub on it.
-afterEach(() => window.localStorage.removeItem(PRACTICE_PAGE_STORAGE_KEY));
+afterEach(() => {
+  window.localStorage.removeItem(PRACTICE_PAGE_STORAGE_KEY);
+  vi.unstubAllGlobals();
+});
 
 const board = {
   activity_id: 4,
@@ -206,24 +215,55 @@ const spyBoard: BoardFactory = (_element, config) => {
 
 const noMotifs = async () => [];
 
+const ratingHistoryOf = (
+  ratings: readonly number[] = [1408, 1412, 1410, 1418, 1422, 1428, 1432],
+  change = (ratings.at(-1) ?? 0) - (ratings[0] ?? 0),
+): PuzzleRatingHistoryResponse => ({
+  current: ratings.at(-1) ?? 1200,
+  points: ratings.map((rating, index) => ({
+    day: `2026-02-${String(23 + index).padStart(2, "0")}`,
+    rating,
+  })),
+  low: Math.min(...ratings),
+  high: Math.max(...ratings),
+  change,
+});
+
+const overviewThemeStatsOf = (
+  overall: { played: number; first_try: number } = { played: 64, first_try: 41 },
+  overallPrevious: { played: number; first_try: number } | null = { played: 50, first_try: 30 },
+): ThemeStatsResponse => ({
+  days: "30",
+  overall: { ...overall, rating_avg: 1410, performance: 1420 },
+  overall_previous: overallPrevious
+    ? { ...overallPrevious, rating_avg: 1385, performance: 1390 }
+    : null,
+  themes: [],
+  improvement_areas: [],
+  strengths: [],
+  unranked: 0,
+});
+
 const hubProps = {
   fetchProgress: async () => progressOf(),
   fetchMotifs: async () => motifCounts,
   fetchRepertoires: async () => [],
   fetchRepertoireList: async () => ({ repertoires: [], met: [] }),
   fetchOpeningDrills: async () => ({ white: [], black: [] }),
+  fetchRatingHistory: async () => ratingHistoryOf(),
+  fetchThemeStats: async () => overviewThemeStatsOf(),
 };
 
 const practiceNav = (): HTMLElement =>
   screen.getByRole("navigation", { name: "Practice sections" });
 
 describe("the hub", () => {
-  it("shows the due numbers from the progress summary", async () => {
+  it("shows the due numbers and 7-day forecast from the progress summary", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-03-01T12:00:00") });
     try {
       render(<Practice server={api(null)} {...hubProps} />);
       const due = await screen.findByRole("region", { name: "Due cards" });
-      expect(await within(due).findByText("4")).toBeTruthy();
+      expect(await within(due).findByText("4", { selector: "strong" })).toBeTruthy();
       expect(due.textContent).toContain("due now · from 3 games");
       expect(within(due).getByText("Blunders").nextSibling?.textContent).toBe("2");
       expect(within(due).getByText("Mistakes").nextSibling?.textContent).toBe("1");
@@ -236,10 +276,63 @@ describe("the hub", () => {
       expect(within(due).queryByText("Remembered, 30 days")).toBeNull();
       expect(due.textContent).not.toContain("83%");
       expect(within(due).getByRole("button", { name: "Review 4 cards" })).toBeTruthy();
+
+      expect(within(due).getByText("Coming up · next 7 days")).toBeTruthy();
+      const columns = [...due.querySelectorAll(".practice-forecast__day")] as HTMLElement[];
+      expect(columns.length).toBe(7);
+      expect(columns.map((c) => c.querySelector(".practice-forecast__count")?.textContent)).toEqual(
+        ["4", "1", "0", "2", "0", "0", "0"],
+      );
+      expect(columns.map((c) => c.querySelector(".practice-forecast__label")?.textContent)).toEqual(
+        ["Today", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+      );
+      expect(
+        columns.map(
+          (c) => (c.querySelector(".practice-forecast__bar") as HTMLElement).style.height,
+        ),
+      ).toEqual(["40px", "10px", "2px", "20px", "2px", "2px", "2px"]);
+      expect(columns.map((c) => c.getAttribute("data-today"))).toEqual([
+        "true",
+        "false",
+        "false",
+        "false",
+        "false",
+        "false",
+        "false",
+      ]);
     } finally {
       vi.useRealTimers();
     }
   });
+
+  it("draws 2 px bars for the 7-day forecast when every day is zero", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-03-04T12:00:00") });
+    try {
+      render(
+        <Practice
+          server={api(null)}
+          {...hubProps}
+          fetchProgress={async () => progressOf({ due_now: 0, due_next_7d: [0, 0, 0, 0, 0, 0, 0] })}
+        />,
+      );
+      const due = await screen.findByRole("region", { name: "Due cards" });
+      await within(due).findByText("Coming up · next 7 days");
+      const columns = [...due.querySelectorAll(".practice-forecast__day")] as HTMLElement[];
+      expect(columns.map((c) => c.querySelector(".practice-forecast__label")?.textContent)).toEqual(
+        ["Today", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue"],
+      );
+      expect(
+        columns.map(
+          (c) => (c.querySelector(".practice-forecast__bar") as HTMLElement).style.height,
+        ),
+      ).toEqual(["2px", "2px", "2px", "2px", "2px", "2px", "2px"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  const tileElementOf = (label: string): HTMLElement =>
+    screen.getByText(label, { selector: "dt" }).closest(".practice-tile") as HTMLElement;
 
   // The value beside each tile's label, and the line under it where the tile has one.
   const tileOf = (label: string): string[] => {
@@ -251,27 +344,245 @@ describe("the hub", () => {
     return values;
   };
 
-  it("shows the day streak, the puzzle rating and the cards remembered in a row of three tiles", async () => {
+  it("shows all four overview tiles with streak bars, rating change, solved first try and cards remembered", async () => {
     const progress = progressOf({ correct_rate_30d: 0.836, correct_rate_7d: 0.5, total: 38 }, 1432);
-    render(<Practice server={api(null)} {...hubProps} fetchProgress={async () => progress} />);
+    const history = ratingHistoryOf([1408, 1412, 1410, 1418, 1422, 1428, 1432], 24);
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchProgress={async () => progress}
+        fetchRatingHistory={async () => history}
+      />,
+    );
     const streak = await screen.findByText("Day streak");
     const tiles = streak.closest("dl") as HTMLElement;
     expect([...tiles.children].map((tile) => tile.querySelector("dt")?.textContent)).toEqual([
       "Day streak",
       "Puzzle rating",
+      "Solved first try",
       "Cards remembered",
     ]);
-    expect(tileOf("Day streak")).toEqual(["2 days"]);
-    expect(tileOf("Puzzle rating")).toEqual(["1432"]);
-    expect(tileOf("Cards remembered")).toEqual(["84%", "38 cards in rotation"]);
+
+    await within(tileElementOf("Puzzle rating")).findByText("7 days");
+    await within(tileElementOf("Solved first try")).findByText("30 days");
+
+    expect(tileOf("Day streak")).toEqual(["2 days · best 11", ""]);
+    const streakBars = [
+      ...within(tileElementOf("Day streak")).getByLabelText("Last 7 days").children,
+    ] as HTMLElement[];
+    expect(streakBars.map((bar) => bar.getAttribute("data-active"))).toEqual([
+      "false",
+      "false",
+      "false",
+      "false",
+      "false",
+      "true",
+      "true",
+    ]);
+    expect(streakBars.map((bar) => bar.getAttribute("data-today"))).toEqual([
+      "false",
+      "false",
+      "false",
+      "false",
+      "false",
+      "false",
+      "true",
+    ]);
+
+    expect(tileOf("Puzzle rating")).toEqual(["1432 ▲ 24 7 days", ""]);
+    expect(
+      tileElementOf("Puzzle rating")
+        .querySelector(".practice-tile__delta")
+        ?.getAttribute("data-direction"),
+    ).toBe("up");
+    const polyline = tileElementOf("Puzzle rating").querySelector("polyline");
+    expect(polyline?.getAttribute("points")).toBe(
+      "0.0,25.0 33.3,21.3 66.7,23.2 100.0,15.8 133.3,12.2 166.7,6.7 200.0,3.0",
+    );
+    expect(ratingSparklinePoints([{ day: "2026-02-23", rating: 1400 }])).toBeNull();
+
+    expect(tileOf("Solved first try")).toEqual(["64% ▲ 4 30 days", ""]);
+    expect(
+      tileElementOf("Solved first try")
+        .querySelector(".practice-tile__delta")
+        ?.getAttribute("data-direction"),
+    ).toBe("up");
+    const solvedFill = tileElementOf("Solved first try").querySelector(
+      ".practice-tile__split-solved",
+    ) as HTMLElement;
+    expect(solvedFill.style.width).toBe("64%");
+
+    expect(tileOf("Cards remembered")).toEqual(["84% ▲ 9 30 days", "38 cards in rotation"]);
+    expect(
+      tileElementOf("Cards remembered")
+        .querySelector(".practice-tile__delta")
+        ?.getAttribute("data-direction"),
+    ).toBe("up");
   });
 
-  it("shows the no-value dash for cards with no review in 30 days, and one day or card in the singular", async () => {
-    const progress = { ...progressOf({ correct_rate_30d: null, total: 1 }), streak_days: 1 };
-    render(<Practice server={api(null)} {...hubProps} fetchProgress={async () => progress} />);
-    await screen.findByText("Day streak");
-    expect(tileOf("Day streak")).toEqual(["1 day"]);
+  it("shows downward deltas in red for rating, solved first try and cards remembered", async () => {
+    const progress = progressOf({
+      correct_rate_30d: 0.7,
+      correct_rate_prev_30d: 0.75,
+      total: 12,
+    });
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchProgress={async () => progress}
+        fetchRatingHistory={async () =>
+          ratingHistoryOf([1500, 1495, 1490, 1488, 1485, 1484, 1482], -18)
+        }
+        fetchThemeStats={async () =>
+          overviewThemeStatsOf({ played: 60, first_try: 30 }, { played: 60, first_try: 33 })
+        }
+      />,
+    );
+
+    await screen.findByText("Puzzle rating");
+    await within(tileElementOf("Puzzle rating")).findByText("▼ 18");
+    expect(
+      tileElementOf("Puzzle rating")
+        .querySelector(".practice-tile__delta")
+        ?.getAttribute("data-direction"),
+    ).toBe("down");
+
+    await within(tileElementOf("Solved first try")).findByText("▼ 5");
+    expect(
+      tileElementOf("Solved first try")
+        .querySelector(".practice-tile__delta")
+        ?.getAttribute("data-direction"),
+    ).toBe("down");
+
+    expect(tileOf("Cards remembered")).toEqual(["70% ▼ 5 30 days", "12 cards in rotation"]);
+    expect(
+      tileElementOf("Cards remembered")
+        .querySelector(".practice-tile__delta")
+        ?.getAttribute("data-direction"),
+    ).toBe("down");
+  });
+
+  it("draws no arrow when delta is zero or the earlier window has no data, and shows singular units", async () => {
+    const progress = {
+      ...progressOf({ correct_rate_30d: null, correct_rate_prev_30d: null, total: 1 }),
+      streak_days: 1,
+      streak_best: 1,
+      activity_7d: [false, false, false, false, false, true, false],
+    };
+    const view = render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchProgress={async () => progress}
+        fetchRatingHistory={async () =>
+          ratingHistoryOf([1400, 1400, 1400, 1400, 1400, 1400, 1400], 0)
+        }
+        fetchThemeStats={async () => overviewThemeStatsOf({ played: 10, first_try: 6 }, null)}
+      />,
+    );
+    await screen.findByText("Puzzle rating");
+    await within(tileElementOf("Puzzle rating")).findByText("7 days");
+    await within(tileElementOf("Solved first try")).findByText("30 days");
+
+    expect(tileOf("Day streak")).toEqual(["1 day · best 1", ""]);
+    const bars = [
+      ...within(tileElementOf("Day streak")).getByLabelText("Last 7 days").children,
+    ] as HTMLElement[];
+    expect(bars.at(-1)?.getAttribute("data-active")).toBe("false");
+    expect(bars.at(-1)?.getAttribute("data-today")).toBe("true");
+    expect(tileOf("Puzzle rating")).toEqual(["1200 7 days", ""]);
+    expect(tileElementOf("Puzzle rating").querySelector(".practice-tile__delta")).toBeNull();
+    expect(tileOf("Solved first try")).toEqual(["60% 30 days", ""]);
+    expect(tileElementOf("Solved first try").querySelector(".practice-tile__delta")).toBeNull();
     expect(tileOf("Cards remembered")).toEqual([NONE, "1 card in rotation"]);
+    expect(tileElementOf("Cards remembered").querySelector(".practice-tile__delta")).toBeNull();
+    view.unmount();
+
+    const emptyStats = vi.fn(async () =>
+      overviewThemeStatsOf({ played: 0, first_try: 0 }, { played: 0, first_try: 0 }),
+    );
+    const secondView = render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchProgress={async () =>
+          progressOf({ correct_rate_30d: 0.8, correct_rate_prev_30d: null, total: 10 })
+        }
+        fetchThemeStats={emptyStats}
+      />,
+    );
+    await screen.findByText("Solved first try");
+    await waitFor(() => expect(emptyStats).toHaveBeenCalled());
+    expect(tileOf("Solved first try")).toEqual([NONE]);
+    expect(tileElementOf("Solved first try").querySelector(".practice-tile__split")).toBeNull();
+    expect(tileOf("Cards remembered")).toEqual(["80% 30 days", "10 cards in rotation"]);
+    expect(tileElementOf("Cards remembered").querySelector(".practice-tile__delta")).toBeNull();
+    secondView.unmount();
+
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchProgress={async () =>
+          progressOf({ correct_rate_30d: 0.8, correct_rate_prev_30d: 0.8, total: 10 })
+        }
+        fetchThemeStats={async () =>
+          overviewThemeStatsOf({ played: 10, first_try: 6 }, { played: 10, first_try: 6 })
+        }
+      />,
+    );
+    await screen.findByText("Solved first try");
+    await within(tileElementOf("Solved first try")).findByText("60%");
+    expect(tileElementOf("Solved first try").querySelector(".practice-tile__delta")).toBeNull();
+    expect(tileOf("Cards remembered")).toEqual(["80% 30 days", "10 cards in rotation"]);
+    expect(tileElementOf("Cards remembered").querySelector(".practice-tile__delta")).toBeNull();
+  });
+
+  it("keeps the numbers it has when rating history or theme statistics fail, without showing an alert", async () => {
+    const progress = progressOf({ correct_rate_30d: 0.836, total: 38 }, 1432);
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchProgress={async () => progress}
+        fetchRatingHistory={async () => {
+          throw new Error("rating down");
+        }}
+        fetchThemeStats={async () => {
+          throw new Error("stats down");
+        }}
+      />,
+    );
+
+    await screen.findByText("Puzzle rating");
+    await waitFor(() => {
+      expect(tileOf("Puzzle rating")).toEqual(["1432"]);
+    });
+    expect(tileElementOf("Puzzle rating").querySelector(".practice-tile__delta")).toBeNull();
+    expect(tileElementOf("Puzzle rating").querySelector("svg")).toBeNull();
+    expect(tileOf("Solved first try")).toEqual([NONE]);
+    expect(tileElementOf("Solved first try").querySelector(".practice-tile__split")).toBeNull();
+    expect(tileElementOf("Solved first try").querySelector(".practice-tile__delta")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("fetches /api/puzzles/rating/history for the chosen window, parses the schema and rejects errors", async () => {
+    const payload = ratingHistoryOf();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => payload })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ bad: true }) })
+      .mockResolvedValueOnce({ ok: false, status: 503 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchPuzzleRatingHistoryFromServer("7")).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("/api/puzzles/rating/history?days=7");
+    await expect(fetchPuzzleRatingHistoryFromServer("30")).rejects.toThrow();
+    await expect(fetchPuzzleRatingHistoryFromServer("90")).rejects.toThrow(
+      "puzzle rating history: 503",
+    );
   });
 
   it("draws no tile while the numbers load or after they failed, and the Due cards card says so", async () => {
@@ -3507,8 +3818,58 @@ describe("the hub's frame styles", () => {
     expect(declared(phone, ".practice-nav__group")).toMatchObject({ display: "contents" });
     expect(declared(phone, ".practice-nav__label")).toMatchObject({ display: "none" });
     expect(declared(phone, ".practice-nav__entry")).toMatchObject({ "min-height": "44px" });
-    for (const grid of [".practice-page__cards", ".practice-tiles"]) {
-      expect(declared(phone, grid)).toMatchObject({ "grid-template-columns": "minmax(0, 1fr)" });
-    }
+    expect(declared(desktop, ".practice-tiles")).toMatchObject({
+      "grid-template-columns": "repeat(auto-fit, minmax(200px, 1fr))",
+      gap: "var(--space-3)",
+    });
+    expect(token("--space-3")).toBe("0.75rem");
+    expect(declared(desktop, '.practice-tile__delta[data-direction="up"]')).toMatchObject({
+      color: "var(--quality-best)",
+    });
+    expect(declared(desktop, '.practice-tile__delta[data-direction="down"]')).toMatchObject({
+      color: "var(--quality-blunder)",
+    });
+    expect(declared(desktop, ".practice-tile__streak-bars")).toMatchObject({
+      gap: "var(--space-1)",
+    });
+    expect(token("--space-1")).toBe("0.25rem");
+    expect(declared(desktop, ".practice-tile__streak-day")).toMatchObject({
+      height: "6px",
+      background: "var(--surface-2)",
+    });
+    expect(declared(desktop, '.practice-tile__streak-day[data-active="true"]')).toMatchObject({
+      background: "var(--status-ready)",
+    });
+    expect(
+      declared(desktop, '.practice-tile__streak-day[data-active="true"][data-today="true"]'),
+    ).toMatchObject({
+      background: "var(--accent)",
+    });
+    expect(declared(desktop, ".practice-tile__spark")).toMatchObject({
+      height: "16px",
+    });
+    expect(declared(desktop, ".practice-tile__split")).toMatchObject({
+      height: "6px",
+    });
+    expect(declared(desktop, ".practice-tile__split-solved")).toMatchObject({
+      background: "var(--status-ready)",
+    });
+    expect(declared(desktop, ".practice-tile__split-rest")).toMatchObject({
+      background: "var(--status-error)",
+    });
+    expect(declared(desktop, ".practice-forecast")).toMatchObject({
+      "border-top": "1px solid var(--surface-2)",
+    });
+    expect(
+      declared(desktop, '.practice-forecast__day[data-today="true"] .practice-forecast__bar'),
+    ).toMatchObject({
+      background: "var(--accent)",
+    });
+    expect(declared(phone, ".practice-tiles")).toMatchObject({
+      "grid-template-columns": "repeat(2, minmax(0, 1fr))",
+    });
+    expect(declared(phone, ".practice-page__cards")).toMatchObject({
+      "grid-template-columns": "minmax(0, 1fr)",
+    });
   });
 });

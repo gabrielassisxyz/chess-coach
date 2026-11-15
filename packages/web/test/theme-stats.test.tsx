@@ -162,11 +162,12 @@ describe("Improvement areas and Strengths pages", () => {
       <Practice server={serverApi(null)} {...baseHubProps} fetchThemeStats={fetchThemeStats} />,
     );
 
-    // Lazy until opened: overview mount does not fetch theme stats.
-    expect(fetchThemeStats).not.toHaveBeenCalled();
+    // Overview fetches its 30-day tile once on mount; Improvement areas and Strengths stay lazy until opened.
+    await waitFor(() => expect(fetchThemeStats).toHaveBeenCalledTimes(1));
+    expect(fetchThemeStats).toHaveBeenCalledWith("30");
 
     openPracticePage("Improvement areas");
-    await waitFor(() => expect(fetchThemeStats).toHaveBeenCalledWith("30"));
+    await waitFor(() => expect(fetchThemeStats).toHaveBeenCalledTimes(2));
 
     const title = screen.getByRole("heading", { level: 2, name: "Improvement areas" });
     const page = title.closest(".practice-page") as HTMLElement;
@@ -459,6 +460,7 @@ describe("Improvement areas and Strengths pages", () => {
     let release!: (value: ThemeStatsResponse) => void;
     const fetchThemeStats = vi
       .fn<() => Promise<ThemeStatsResponse>>()
+      .mockRejectedValueOnce(new Error("down"))
       .mockRejectedValueOnce(new Error("down"))
       .mockImplementationOnce(
         () =>

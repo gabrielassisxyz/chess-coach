@@ -38,13 +38,21 @@ import {
 } from "../state/practice.js";
 import { stateCardOf } from "../state/practice-item.js";
 import { type FetchProgress, fetchProgressFromServer } from "../state/progress-api.js";
+import {
+  type FetchPuzzleRatingHistory,
+  fetchPuzzleRatingHistoryFromServer,
+} from "../state/puzzle-rating-api.js";
 import { repertoireCardOf } from "../state/repertoire-drill.js";
 import {
   type FetchRepertoireList,
   type FetchRepertoires,
   fetchRepertoiresFromServer,
 } from "../state/repertoires-api.js";
-import { type FetchThemeStats, fetchThemeStatsFromServer } from "../state/theme-stats-api.js";
+import {
+  DEFAULT_THEME_WINDOW,
+  type FetchThemeStats,
+  fetchThemeStatsFromServer,
+} from "../state/theme-stats-api.js";
 
 export interface PracticeProps {
   server: ServerApi;
@@ -57,7 +65,9 @@ export interface PracticeProps {
   fetchRepertoireList?: FetchRepertoireList | undefined;
   // The drills from the student's games, grouped by opening family; the server's by default.
   fetchOpeningDrills?: FetchOpeningDrills;
-  // Ranked puzzle theme stats for Improvement areas and Strengths; the server's by default.
+  // 7-day puzzle rating history for the Overview tile; the server's by default.
+  fetchRatingHistory?: FetchPuzzleRatingHistory | undefined;
+  // Ranked puzzle theme stats for Overview and Improvement areas / Strengths; the server's by default.
   fetchThemeStats?: FetchThemeStats | undefined;
   fetchHealth?: FetchHealth | undefined;
 }
@@ -171,15 +181,26 @@ function Hub({
   fetchRepertoires,
   fetchRepertoireList,
   fetchOpeningDrills,
+  fetchRatingHistory,
   fetchThemeStats,
   fetchHealth,
 }: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress" | "fetchRepertoires">> &
   Required<Pick<PracticeProps, "fetchOpeningDrills">> &
-  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList" | "fetchThemeStats">) {
+  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList"> & {
+    fetchRatingHistory: FetchPuzzleRatingHistory;
+    fetchThemeStats: FetchThemeStats;
+  }) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
   const repertoires = useLoaded(fetchRepertoires);
   const openingDrills = useLoaded(fetchOpeningDrills);
+  const loadRatingHistory = useCallback(() => fetchRatingHistory("7"), [fetchRatingHistory]);
+  const loadOverviewThemeStats = useCallback(
+    () => fetchThemeStats(DEFAULT_THEME_WINDOW),
+    [fetchThemeStats],
+  );
+  const ratingHistory = useLoaded(loadRatingHistory);
+  const overviewThemeStats = useLoaded(loadOverviewThemeStats);
   const [retries, setRetries] = useState(0);
   const notice = serviceNotice(useHealth(retries, fetchHealth ? { fetchHealth } : {}));
   const login = useCoachLogin(server);
@@ -199,6 +220,8 @@ function Hub({
       progress={progress}
       motifs={motifs}
       repertoires={repertoires}
+      ratingHistory={ratingHistory}
+      overviewThemeStats={overviewThemeStats}
       engineMissing={engineMissing}
       starting={starting}
       failure={failure}
@@ -402,6 +425,7 @@ export function Practice({
   fetchRepertoires = fetchRepertoiresFromServer,
   fetchRepertoireList,
   fetchOpeningDrills = fetchOpeningDrillsFromServer,
+  fetchRatingHistory = fetchPuzzleRatingHistoryFromServer,
   fetchThemeStats = fetchThemeStatsFromServer,
   fetchHealth,
 }: PracticeProps) {
@@ -463,6 +487,7 @@ export function Practice({
           fetchRepertoires={fetchRepertoires}
           fetchRepertoireList={fetchRepertoireList}
           fetchOpeningDrills={fetchOpeningDrills}
+          fetchRatingHistory={fetchRatingHistory}
           fetchThemeStats={fetchThemeStats}
           fetchHealth={fetchHealth}
         />
