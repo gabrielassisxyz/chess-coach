@@ -51,7 +51,8 @@ function subtitleOf(kind: ThemeStatsPageKind, overallRating: number | null): str
   return `Themes where your rating is furthest above your overall ${yardstick}. Up to 8 themes, each with 8 or more played.`;
 }
 
-function emptyMessageOf(kind: ThemeStatsPageKind, data: ThemeStatsResponse): string {
+// The Overview's weakness card says the same thing when it has nothing to list.
+export function emptyMessageOf(kind: ThemeStatsPageKind, data: ThemeStatsResponse): string {
   if (data.overall.played === 0 || data.themes.length === 0) {
     return "No puzzle played in this period yet.";
   }

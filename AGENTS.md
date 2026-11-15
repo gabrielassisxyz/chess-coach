@@ -251,12 +251,31 @@
   strongest first; both lists break a tie by more attempts and hold at most 8 theme keys. A theme is
   compared with the overall performance of the same window, never with the Elo puzzle rating, which
   is on another scale.
+- **Overview themes:** the Puzzles by weakness card and the Puzzle themes section of the Overview
+  (`components/PracticeWeakness.tsx`, `components/PracticeThemes.tsx`) draw the one 30-day
+  `GET /api/puzzles/themes/stats` answer that the hub already reads for the Solved first try tile, so
+  a Try again in the card reads it again for all three. The card lists the first 5 `improvement_areas`
+  with name, `performance`, a bar and the first-try share, the first row selected until another is
+  pressed; Train and the selected theme's name in lower case sends `start_training {mode: "puzzles",
+  motif: <theme key>}` and Mix practice sends `motif: "mix-practice"`. With no improvement area the
+  card says why in the Improvement areas page's sentences and offers Start a healthy mix and no Mix
+  practice; a read that failed says `Your theme statistics could not be loaded.` with Try again in the
+  card. The section draws the Healthy mix card, which sends `start_training {mode: "puzzles"}` with no
+  motif and shows `overall.first_try` over `overall.played` (no figure when nothing was played), then
+  one tile for each of the 54 themes of the table, in its six groups and order, each sending
+  `start_training {mode: "puzzles", motif: <key>}`. A tile shows its first-try share in the colour of
+  its band (green from 70, amber from 55, red under it), `new` when the answer does not list the
+  theme, and no figure while the answer is loading or failed. The note counts the themes of the table
+  the answer lists out of 54, so a theme outside the table, as `mate`, adds nothing. None of the
+  starts has a size. The web no longer reads `GET /api/puzzles/motifs`, which stays on the server, and
+  `Practice` takes no `fetchMotifs`.
 - **Practice hub:** with no item on the board, Practice is a frame: a navigation of eight entries in
   two groups (Train: Overview, Puzzle themes, From my games, Openings; Stats: Dashboard, Improvement
   areas, Strengths, Openings played) beside a column that shows one page at a time
   (`components/PracticeHub.tsx`, `state/practice-page.ts`). Four pages are built: the Overview (the
   day streak, puzzle rating and cards remembered from `GET /api/progress` as three tiles, the Due
-  cards card, and a Puzzle themes section holding the Puzzles by motif card), which Puzzle themes
+  cards card with the Puzzles by weakness card beside it, and a Puzzle themes section, see Overview
+  themes), which Puzzle themes
   shows scrolled to that section, Openings (below), and Improvement areas and Strengths. From my
   games, Dashboard and Openings played only say they are not built yet. The Openings entry shows
   the repertoire moves due now, the sum of `sides[].moves.due` in the `GET /api/repertoires` answer

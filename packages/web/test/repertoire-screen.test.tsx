@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { TrainingActivity } from "@chess-coach/shared";
+import type { ThemeStatsResponse, TrainingActivity } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
@@ -9,7 +9,6 @@ import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
   CLASSICAL_VARIATION,
   italianRepertoire,
-  motifCounts,
   openPracticePage,
   progressOf,
   repertoireActivity,
@@ -27,9 +26,17 @@ afterEach(() => {
 const listed = async () => repertoireList;
 const hubProps = {
   fetchProgress: async () => progressOf(),
-  fetchMotifs: async () => motifCounts,
   fetchRepertoires: listed,
   fetchRepertoireList: async () => repertoireAnswer(),
+  fetchThemeStats: async (): Promise<ThemeStatsResponse> => ({
+    days: "30",
+    overall: { played: 0, first_try: 0, rating_avg: null, performance: null },
+    overall_previous: null,
+    themes: [],
+    improvement_areas: [],
+    strengths: [],
+    unranked: 0,
+  }),
 };
 
 const seen: { fen?: string; drawable?: { autoShapes?: unknown[] } }[] = [];
@@ -150,15 +157,15 @@ describe("the openings page on the hub", () => {
       ).disabled,
     ).toBe(true);
     openPracticePage("Overview");
-    const motifStart = screen.getByRole("button", { name: "Start any motif" });
-    expect((motifStart as HTMLButtonElement).disabled).toBe(true);
+    const mixStart = screen.getByRole("button", { name: /^Healthy mix/ });
+    expect((mixStart as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("waits while another card starts a session", async () => {
     render(<Practice server={serverApi(null)} {...hubProps} />);
     const group = await whiteOpenings();
     openPracticePage("Overview");
-    fireEvent.click(await screen.findByRole("button", { name: "Start any motif" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Healthy mix/ }));
     openPracticePage("Openings");
     expect(
       (within(group).getByRole("button", { name: "Train 10, Italian Game" }) as HTMLButtonElement)
@@ -288,13 +295,13 @@ describe("the openings page on the hub", () => {
       .mockRejectedValueOnce(new Error("down"))
       .mockReturnValueOnce(secondCall);
     const fetchProgress = vi.fn(hubProps.fetchProgress);
-    const fetchMotifs = vi.fn(hubProps.fetchMotifs);
+    const fetchThemeStats = vi.fn(hubProps.fetchThemeStats);
 
     render(
       <Practice
         server={serverApi(null)}
         fetchProgress={fetchProgress}
-        fetchMotifs={fetchMotifs}
+        fetchThemeStats={fetchThemeStats}
         fetchRepertoireList={fetchRepertoireList}
       />,
     );
@@ -306,7 +313,7 @@ describe("the openings page on the hub", () => {
     expect(screen.getByRole("status").textContent).toBe("Loading your openings.");
     expect(fetchRepertoireList).toHaveBeenCalledTimes(2);
     expect(fetchProgress).toHaveBeenCalledTimes(1);
-    expect(fetchMotifs).toHaveBeenCalledTimes(1);
+    expect(fetchThemeStats).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       resolveSecond(repertoireAnswer());
