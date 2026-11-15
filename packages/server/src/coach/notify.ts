@@ -174,7 +174,38 @@ function renderReasoning(reasoning: TrainingReasoning, played: string, correct: 
     reasoning.explored.length === 0
       ? ["Explored: nothing"]
       : ["Explored:", ...reasoning.explored.map(exploredLine)];
-  return [...wrote, ...explored, ...triesLines(reasoning, played, correct)].join("\n");
+  return [
+    ...wrote,
+    ...explored,
+    ...triesLines(reasoning, played, correct),
+    hintLine(reasoning),
+    ...drawnLines(reasoning),
+  ].join("\n");
+}
+
+function hintLine(reasoning: TrainingReasoning): string {
+  const atMs = reasoning.hint_at_ms ?? null;
+  if (atMs === null || atMs === undefined) return "Hint used: no";
+  return `Hint used: yes (${explorationOffset(atMs)})`;
+}
+
+function drawnShapeText(shape: DrawnShape): string {
+  const kind = shape.dest ? "arrow" : "circle";
+  const squares = shape.dest ? `${shape.orig}-${shape.dest}` : shape.orig;
+  return `${shape.color} ${kind} ${squares}`;
+}
+
+function drawnLines(reasoning: TrainingReasoning): string[] {
+  const drawings = reasoning.drawings ?? [];
+  if (drawings.length === 0) return [];
+  return [
+    "Drawn:",
+    ...drawings.map((snapshot) => {
+      const offset = explorationOffset(snapshot.at_ms);
+      if (snapshot.shapes.length === 0) return offset;
+      return `${offset}  ${snapshot.shapes.map(drawnShapeText).join(", ")}`;
+    }),
+  ];
 }
 
 /** One step of the student's scratch play; `line` is the whole line after a move, else null. */
@@ -192,15 +223,31 @@ export interface TriedMove {
   correct: boolean;
 }
 
+/** One hand-drawn shape on the board: an arrow when `dest` is set, a circle when absent. */
+export interface DrawnShape {
+  orig: string;
+  dest?: string | undefined;
+  color: string;
+}
+
+/** One snapshot of the student's hand drawings; `at_ms` is measured from when the item was served. */
+export interface DrawnSnapshot {
+  at_ms: number;
+  shapes: DrawnShape[];
+}
+
 /**
  * What the student typed and tried on the board while an item was open. `tries` and `gave_up` are
- * absent from rows written before a move was graded on drop.
+ * absent from rows written before a move was graded on drop. `hint_at_ms` is null when no hint was
+ * given; `drawings` holds the snapshots the student drew, oldest first.
  */
 export interface TrainingReasoning {
   messages: string[];
   explored: ExploredEvent[];
   tries?: TriedMove[];
   gave_up?: boolean;
+  hint_at_ms?: number | null;
+  drawings?: DrawnSnapshot[];
 }
 
 /** Row content written when the student answers a review card; the coach comments on a miss. */

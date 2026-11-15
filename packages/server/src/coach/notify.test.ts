@@ -252,6 +252,7 @@ describe("the student's reasoning in a training result", () => {
         "+22s  1... Nc6",
         "+25s  reset",
         "Answer: Nf3 (wrong)",
+        "Hint used: no",
         "Practice notification: follow During Practice.",
       ].join("\n"),
     );
@@ -322,6 +323,7 @@ describe("the tries in a training result", () => {
         "+10s  c2c4 (wrong)",
         "+15s  d4 (right)",
         "Solution shown: no",
+        "Hint used: no",
         "Practice notification: follow During Practice.",
       ].join("\n"),
     );
@@ -454,5 +456,103 @@ describe("difficulty change", () => {
     const down = { ...change, from_elo: 650, to_elo: 600, reason: "streak_down" as const };
     const text = renderNotifications([turn(1), down]);
     expect(text).toContain("from 650 to 600 because the student lost the last two games");
+  });
+});
+
+describe("hint and drawings in a training result", () => {
+  const card: SrsAnswerNotification = {
+    type: "srs_answer",
+    card_id: 7,
+    prompt_fen: FEN,
+    answered_uci: "d2d4",
+    answered_san: "d4",
+    expected_uci: "d2d4",
+    expected_san: "d4",
+    correct: true,
+  };
+
+  it("prints Hint used no when no hint was given, even on a row written before hints existed", () => {
+    const text = renderSrsAnswer({
+      ...card,
+      reasoning: { messages: [], explored: [], tries: [], gave_up: false },
+    });
+    expect(text).toContain("Hint used: no");
+    const legacy = renderSrsAnswer({
+      ...card,
+      reasoning: { messages: [], explored: [] } as never,
+    });
+    expect(legacy).toContain("Hint used: no");
+  });
+
+  it("prints Hint used yes with its offset after a hint", () => {
+    const text = renderSrsAnswer({
+      ...card,
+      reasoning: { messages: [], explored: [], tries: [], gave_up: false, hint_at_ms: 8_400 },
+    });
+    expect(text).toContain("Hint used: yes (+8s)");
+  });
+
+  it("lists every drawn snapshot in order, an arrow with its squares and a circle with one", () => {
+    const text = renderSrsAnswer({
+      ...card,
+      reasoning: {
+        messages: [],
+        explored: [],
+        tries: [],
+        gave_up: false,
+        hint_at_ms: null,
+        drawings: [
+          { at_ms: 4_000, shapes: [{ orig: "e4", dest: "e5", color: "red" }] },
+          {
+            at_ms: 9_600,
+            shapes: [
+              { orig: "d5", color: "green" },
+              { orig: "e2", dest: "e4", color: "green" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(text).toContain("Hint used: no\nDrawn:\n+4s  red arrow e4-e5\n+10s  green circle d5, green arrow e2-e4");
+    expect(text.indexOf("Drawn:")).toBeGreaterThan(text.indexOf("Hint used: no"));
+  });
+
+  it("prints no Drawn section when nothing was drawn", () => {
+    const text = renderSrsAnswer({
+      ...card,
+      reasoning: { messages: [], explored: [], tries: [], gave_up: false, hint_at_ms: null },
+    });
+    expect(text).toContain("Hint used: no");
+    expect(text).not.toContain("Drawn:");
+  });
+
+  it("adds Hint used and Drawn to a puzzle result the ask button wrote", () => {
+    const asked: PuzzleResultNotification = {
+      type: "puzzle_result",
+      puzzle_id: "f1",
+      motif: "fork",
+      difficulty: "easy",
+      fen: FEN,
+      solved: true,
+      answered_uci: ["d2d4"],
+      expected_uci: null,
+      expected_san: null,
+      first_try: true,
+      tries: 0,
+      gave_up: false,
+      reasoning: {
+        messages: [],
+        explored: [],
+        tries: [],
+        gave_up: false,
+        hint_at_ms: null,
+        drawings: [{ at_ms: 3_000, shapes: [{ orig: "c3", color: "blue" }] }],
+      },
+      requested: true,
+      solution_san: ["d4"],
+    };
+    const text = renderPuzzleResult(asked);
+    expect(text).toContain("Hint used: no");
+    expect(text).toContain("Drawn:\n+3s  blue circle c3");
   });
 });

@@ -23,7 +23,11 @@ import {
   positionsAlong,
   promotionsFor,
 } from "../state/play.js";
-import { convertKnightArrowShape, reconcileHandKnightArrows } from "./knight-arrow.js";
+import {
+  convertKnightArrowShape,
+  logicalKnightShape,
+  reconcileHandKnightArrows,
+} from "./knight-arrow.js";
 import { PromotionChooser } from "./PromotionChooser.js";
 
 export type BoardFactory = (element: HTMLElement, config: Config) => Api;
@@ -65,6 +69,8 @@ export interface BoardProps {
   prefs?: BoardPrefs | undefined;
   // App arrows stay separate from the student's own drawings.
   shapes?: readonly DrawShape[] | undefined;
+  // Called with the student's hand drawings, as logical squares and colours, when they change.
+  onDrawChange?: ((shapes: DrawShape[]) => void) | undefined;
   createBoard?: BoardFactory | undefined;
 }
 
@@ -247,6 +253,7 @@ export function Board({
   badge = null,
   prefs = DEFAULT_BOARD_PREFS,
   shapes = NO_SHAPES,
+  onDrawChange,
   createBoard = Chessground,
 }: BoardProps) {
   const facing = orientation ?? activity.orientation;
@@ -272,8 +279,19 @@ export function Board({
     prefs,
     shapes,
     pausing,
+    onDrawChange,
   });
-  latest.current = { activity, onMove, bothSides, hintSquare, facing, prefs, shapes, pausing };
+  latest.current = {
+    activity,
+    onMove,
+    bothSides,
+    hintSquare,
+    facing,
+    prefs,
+    shapes,
+    pausing,
+    onDrawChange,
+  };
 
   const handleDrawChange = useRef((drawnShapes: DrawShape[]) => {
     const { shapes: next, changed } = reconcileHandKnightArrows(
@@ -284,6 +302,8 @@ export function Board({
     );
     handDrawingsRef.current = next;
     if (changed) apiRef.current?.setShapes?.(next);
+    // Report the logical squares and colour, not the rendered customSvg form.
+    latest.current.onDrawChange?.(next.map((shape) => logicalKnightShape(shape)));
   });
 
   useEffect(() => {

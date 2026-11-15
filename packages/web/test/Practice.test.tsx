@@ -11,6 +11,7 @@ import {
   type TrainingActivity,
 } from "@chess-coach/shared";
 
+import type { DrawShape } from "@lichess-org/chessground/draw";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type BoardFactory, MOVE_PAUSE_MS } from "../src/components/Board.js";
@@ -1197,6 +1198,52 @@ describe("grading on drop", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("hand drawings", () => {
+  it("sends drawings 500 ms after the last change with logical squares and colours", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const server = api(puzzle());
+      const changes: ((shapes: DrawShape[]) => void)[] = [];
+      const capture: BoardFactory = (element, config) => {
+        if (config.drawable?.onChange) changes.push(config.drawable.onChange);
+        return spyBoard(element, config);
+      };
+      render(<Practice server={server} createBoard={capture} fetchMotifs={noMotifs} />);
+      expect(changes.length).toBeGreaterThan(0);
+      const sendDraw = changes[changes.length - 1] as (shapes: DrawShape[]) => void;
+      act(() => sendDraw([{ orig: "e4", dest: "e5", brush: "red" }]));
+      act(() => sendDraw([{ orig: "e4", dest: "e5", brush: "red" } as DrawShape, { orig: "d5", brush: "green" } as DrawShape]));
+      expect(server.send).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "drawings" }),
+      );
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      const drawingsCalls = vi
+        .mocked(server.send)
+        .mock.calls.filter(([command]) => command.type === "drawings");
+      expect(drawingsCalls).toHaveLength(1);
+      expect(drawingsCalls[0]?.[0]).toEqual({
+        type: "drawings",
+        activity_id: 4,
+        shapes: [
+          { orig: "e4", dest: "e5", color: "red" },
+          { orig: "d5", color: "green" },
+        ],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends nothing on Play or Games: no drawings command leaves those screens", () => {
+    for (const file of ["src/screens/Play.tsx", "src/screens/Games.tsx"]) {
+      expect(readFileSync(file, "utf8")).not.toContain("drawings");
+    }
+    expect(readFileSync("src/hooks/usePracticeBoard.ts", "utf8")).toContain("drawings");
   });
 });
 
