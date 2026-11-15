@@ -907,13 +907,16 @@ describe("a coach demo over training", () => {
   });
 });
 
+const listedRepertoires = async () => repertoireList;
+
 // The page as the browser builds it: a socket, the bootstrap frame, and the screen on top.
 function Connected() {
   const server = useServer({ url: "ws://test/api/ws", createSocket: createFakeSocket });
-  return <Practice server={server} {...hubProps} />;
+  return <Practice server={server} {...hubProps} fetchRepertoires={listedRepertoires} />;
 }
 
-describe("a paused session", () => {
+// The server still reports a run it paused; the hub neither shows it nor lets it hold a start.
+describe("a paused session the server reports", () => {
   const paused: PausedTraining = {
     run_id: 3,
     mode: "puzzles",
@@ -925,7 +928,7 @@ describe("a paused session", () => {
     failed: 1,
   };
 
-  function bootInto(activity: TrainingActivity | null, pausedTraining: PausedTraining | null) {
+  function bootInto(pausedTraining: PausedTraining | null) {
     FakeSocket.reset();
     render(<Connected />);
     act(() => FakeSocket.latest.open());
@@ -933,71 +936,124 @@ describe("a paused session", () => {
       FakeSocket.latest.receive({
         type: "bootstrap",
         conversations: { play: [], games: [], practice: [] },
-        activity,
+        activity: null,
         paused_training: pausedTraining,
       }),
     );
     return FakeSocket.latest;
   }
 
-  it("shows the resume card from a bootstrap carrying a paused run", async () => {
-    bootInto(null, paused);
-    const resume = await screen.findByRole("region", { name: "Paused session" });
-    expect(within(resume).getByText("Resume: Puzzles · 3 of 5")).toBeTruthy();
-    expect(within(resume).getByText("1 right, 1 missed so far")).toBeTruthy();
-  });
+  // Waits for every part of the hub that decides a button's state, then reads them all.
+  async function hubButtons(): Promise<string[]> {
+    await screen.findByRole("button", { name: "Review 4 cards" });
+    await screen.findByRole("heading", { name: "Italian Game" });
+    await screen.findByText("Generate the Italian drill first");
+    return screen
+      .getAllByRole("button")
+      .map(
+        (button) =>
+          `${button.getAttribute("aria-label") ?? button.textContent}: ${(button as HTMLButtonElement).disabled ? "disabled" : "enabled"}`,
+      );
+  }
 
-  it("sends resume_training and discard_training from its buttons", async () => {
-    const socket = bootInto(null, paused);
-    const resume = await screen.findByRole("region", { name: "Paused session" });
-    fireEvent.click(within(resume).getByRole("button", { name: "Resume" }));
-    fireEvent.click(within(resume).getByRole("button", { name: "Discard" }));
-    expect(socket.sent.map((frame) => (frame as { type: string }).type)).toEqual([
-      "resume_training",
-      "discard_training",
-    ]);
-  });
-
-  it("leaves the card out with no paused run, and while the board is training", async () => {
-    bootInto(null, null);
+  it("draws no card and no Resume or Discard from a bootstrap carrying a paused run", async () => {
+    bootInto(paused);
     await screen.findByRole("region", { name: "Due cards" });
     expect(screen.queryByRole("region", { name: "Paused session" })).toBeNull();
-    cleanup();
-    bootInto(card(), paused);
-    expect(screen.queryByRole("region", { name: "Due cards" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Paused session" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /resume|discard/i })).toBeNull();
+    expect(screen.queryByText(/Resume:|missed so far/)).toBeNull();
   });
 
-  it("drops the card once an activity update says nothing is paused", async () => {
-    const socket = bootInto(null, paused);
-    await screen.findByRole("region", { name: "Paused session" });
-    act(() => socket.receive({ type: "activity", state: null, paused_training: null }));
+  it("draws nothing for a run an activity update reports paused later", async () => {
+    const socket = bootInto(null);
+    await screen.findByRole("region", { name: "Due cards" });
+    act(() => socket.receive({ type: "activity", state: null, paused_training: paused }));
     expect(screen.queryByRole("region", { name: "Paused session" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /resume|discard/i })).toBeNull();
+  });
+
+  it("leaves every button of the hub as it is without a paused run", async () => {
+    bootInto(null);
+    const without = await hubButtons();
+    cleanup();
+    bootInto(paused);
+    const reported = await hubButtons();
+    expect(reported).toEqual(without);
+    expect(reported).toContain("Review 4 cards: enabled");
+    expect(reported).toContain("Start any motif: enabled");
+    expect(reported).toContain("Recommended 10: enabled");
+  });
+
+  it.each([
+    ["Review 4 cards", { type: "start_training", mode: "srs", size: 10 }],
+    ["Start any motif", { type: "start_training", mode: "puzzles", size: 10 }],
+    [
+      "Recommended 10",
+      { type: "start_training", mode: "repertoire", repertoire_id: 3, scope: "recommended" },
+    ],
+  ])("sends the start of %s and nothing else", async (name, command) => {
+    const socket = bootInto(paused);
+    await hubButtons();
+    fireEvent.click(screen.getByRole("button", { name }));
+    // The socket stamps each frame with a command id of its own.
+    expect(socket.sent).toHaveLength(1);
+    expect(socket.sent[0]).toMatchObject(command);
   });
 });
 
 describe("finishing a queue", () => {
-  it("sends end_training after the summary and lands on the hub with the last-session line", () => {
-    window.localStorage.clear();
+  const ended = () => puzzle({ status: "solved", summary: { solved: 5, failed: 0 } });
+
+  function lastItemServer(): ServerApi {
     const last = puzzle({ status: "solved" });
     if (last.item.kind === "puzzle") {
       last.item.position_in_queue = 5;
       last.item.queue_length = 5;
     }
-    const server = api(last);
+    return api(last);
+  }
+
+  it("sends end_training once after the summary and lands on the hub with no last-session line", () => {
+    const server = lastItemServer();
     const { rerender } = render(<Practice server={server} {...hubProps} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "Finish training" }));
     expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
 
-    const finished = api(puzzle({ status: "solved", summary: { solved: 5, failed: 0 } }));
+    const finished = api(ended());
     rerender(<Practice server={finished} {...hubProps} createBoard={spyBoard} />);
+    // The same ended item arriving again must not end the run a second time.
+    rerender(
+      <Practice server={{ ...finished, activity: ended() }} {...hubProps} createBoard={spyBoard} />,
+    );
+    expect(finished.send).toHaveBeenCalledTimes(1);
     expect(finished.send).toHaveBeenCalledWith({ type: "end_training", activity_id: 4 });
 
     rerender(<Practice server={api(null)} {...hubProps} createBoard={spyBoard} />);
     expect(screen.queryByTestId("summary")).toBeNull();
-    expect(screen.getByTestId("last-session").textContent).toContain("5 solved, 0 failed");
+    expect(screen.queryByTestId("last-session")).toBeNull();
+    expect(screen.queryByText(/Last session/)).toBeNull();
     expect(screen.getByRole("region", { name: "Due cards" })).toBeTruthy();
-    window.localStorage.clear();
+  });
+
+  it("neither reads nor writes a tally of the queue in the browser", () => {
+    const touched: string[] = [];
+    const reads = vi.spyOn(Storage.prototype, "getItem");
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    try {
+      const { rerender } = render(
+        <Practice server={lastItemServer()} {...hubProps} createBoard={spyBoard} />,
+      );
+      rerender(<Practice server={api(ended())} {...hubProps} createBoard={spyBoard} />);
+      rerender(<Practice server={api(null)} {...hubProps} createBoard={spyBoard} />);
+      touched.push(
+        ...reads.mock.calls.map(([key]) => key),
+        ...writes.mock.calls.map(([key]) => key),
+      );
+    } finally {
+      reads.mockRestore();
+      writes.mockRestore();
+    }
+    expect(touched.filter((key) => key.includes("last-session"))).toEqual([]);
   });
 });
 

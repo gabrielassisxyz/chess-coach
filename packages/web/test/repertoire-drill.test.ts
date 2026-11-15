@@ -1,14 +1,6 @@
-import type { PausedTraining, RepertoireDrill } from "@chess-coach/shared";
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  lastSessionText,
-  loadLastSession,
-  practiceIdleLabel,
-  resumeLabelOf,
-  saveLastSession,
-  startFailureText,
-  trainingView,
-} from "../src/state/practice.js";
+import type { RepertoireDrill } from "@chess-coach/shared";
+import { describe, expect, it } from "vitest";
+import { practiceIdleLabel, startFailureText, trainingView } from "../src/state/practice.js";
 import {
   drillFactsOf,
   hintLabelOf,
@@ -25,8 +17,6 @@ import {
   repertoireActivity,
   repertoireList,
 } from "./practice-fixtures.js";
-
-afterEach(() => window.localStorage.clear());
 
 const drillOf = (overrides: Partial<RepertoireDrill> = {}): RepertoireDrill =>
   repertoireActivity({ drill: overrides }).repertoire as RepertoireDrill;
@@ -200,45 +190,6 @@ describe("the state card", () => {
 });
 
 describe("what the hub and the coach say", () => {
-  it("counts a repertoire session in moves, and a puzzle queue as before", () => {
-    expect(lastSessionText({ solved: 9, failed: 3, unit: "moves" })).toBe(
-      "Last session: 12 moves practised, 9 right first try",
-    );
-    expect(lastSessionText({ solved: 1, failed: 0, unit: "moves" })).toBe(
-      "Last session: 1 move practised, 1 right first try",
-    );
-    expect(lastSessionText({ solved: 5, failed: 0 })).toBe("Last session: 5 solved, 0 failed");
-  });
-
-  it("keeps the unit of a repertoire session across a reload, and drops anything else", () => {
-    saveLastSession({ solved: 9, failed: 3, unit: "moves" });
-    expect(loadLastSession()).toEqual({ solved: 9, failed: 3, unit: "moves" });
-    window.localStorage.setItem(
-      "chess-coach:last-session",
-      JSON.stringify({ solved: 1, failed: 2, unit: "elephants" }),
-    );
-    expect(loadLastSession()).toEqual({ solved: 1, failed: 2 });
-    saveLastSession({ solved: 5, failed: 0 });
-    expect(loadLastSession()).toEqual({ solved: 5, failed: 0 });
-  });
-
-  it("counts a paused drill in moves done", () => {
-    const paused: PausedTraining = {
-      run_id: 1,
-      mode: "repertoire",
-      motif: null,
-      color: "white",
-      position: 0,
-      size: 1,
-      solved: 0,
-      failed: 0,
-    };
-    expect(resumeLabelOf(paused)).toBe("Resume: Repertoire · 0 of 1 moves done");
-    expect(resumeLabelOf({ ...paused, mode: "puzzles", position: 2, size: 5 })).toBe(
-      "Resume: Puzzles · 3 of 5",
-    );
-  });
-
   it("words a line that ended for the coach panel, not as a solved puzzle", () => {
     const over = { status: "solved" as const, input_enabled: false, legal_moves: [] };
     expect(practiceIdleLabel(repertoireActivity({ training: over }))).toBe("line finished");

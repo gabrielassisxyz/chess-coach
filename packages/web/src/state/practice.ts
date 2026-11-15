@@ -2,7 +2,6 @@ import type {
   ActivityState,
   ErrorCode,
   ExploredEvent,
-  PausedTraining,
   ProgressResponse,
   TrainingActivity,
   TrainingMode,
@@ -231,21 +230,6 @@ export function trainingOf(activity: ActivityState | null): TrainingActivity | n
   return activity?.kind === "training" ? activity : null;
 }
 
-const MODE_LABEL: Record<TrainingMode, string> = {
-  srs: "Due cards",
-  puzzles: "Puzzles",
-  openings: "Opening drill",
-  repertoire: "Repertoire",
-};
-
-// A repertoire drill counts moves, not items: `position` of its `size` moves are finished.
-export function resumeLabelOf(paused: PausedTraining): string {
-  if (paused.mode === "repertoire") {
-    return `Resume: ${MODE_LABEL.repertoire} · ${paused.position} of ${paused.size} moves done`;
-  }
-  return `Resume: ${MODE_LABEL[paused.mode]} · ${paused.position + 1} of ${paused.size}`;
-}
-
 export function formatElapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -373,61 +357,3 @@ export function startFailureText(
 
 export const OFFLINE_START_TEXT =
   "The server is not connected. Wait until the chat header says connected, then try again.";
-
-export interface LastSession {
-  solved: number;
-  failed: number;
-  // A repertoire drill counts moves, and its "solved" is a move right at the first try.
-  unit?: "moves" | undefined;
-}
-
-export function lastSessionText(last: LastSession): string {
-  if (last.unit === "moves") {
-    const practised = last.solved + last.failed;
-    const moves = practised === 1 ? "move" : "moves";
-    return `Last session: ${practised} ${moves} practised, ${last.solved} right first try`;
-  }
-  return `Last session: ${last.solved} solved, ${last.failed} failed`;
-}
-
-const LAST_SESSION_KEY = "chess-coach:last-session";
-
-function storage(): Storage | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null;
-  }
-}
-
-// The finished queue's tally, kept so the hub can show it after the run ends.
-export function loadLastSession(): LastSession | null {
-  const store = storage();
-  if (!store) return null;
-  try {
-    const raw = store.getItem(LAST_SESSION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<LastSession>;
-    if (typeof parsed.solved !== "number" || typeof parsed.failed !== "number") return null;
-    const unit = parsed.unit === "moves" ? { unit: "moves" as const } : {};
-    return { solved: parsed.solved, failed: parsed.failed, ...unit };
-  } catch {
-    return null;
-  }
-}
-
-export function saveLastSession(summary: LastSession): void {
-  try {
-    storage()?.setItem(LAST_SESSION_KEY, JSON.stringify(summary));
-  } catch {
-    // A full or blocked store must not break the end of a queue.
-  }
-}
-
-export function clearLastSession(): void {
-  try {
-    storage()?.removeItem(LAST_SESSION_KEY);
-  } catch {
-    // Clearing is best effort; a stale line is harmless.
-  }
-}

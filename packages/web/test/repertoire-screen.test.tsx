@@ -1,13 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PausedTraining, TrainingActivity } from "@chess-coach/shared";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { TrainingActivity } from "@chess-coach/shared";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
-import { useServer } from "../src/hooks/useServer.js";
 import { Practice } from "../src/screens/Practice.js";
-import { loadLastSession } from "../src/state/practice.js";
-import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import {
   CLASSICAL_VARIATION,
   italianRepertoire,
@@ -534,54 +531,14 @@ describe("the end of a session", () => {
     expect(screen.getByTestId("summary").textContent).toBe("1 move practised, 1 right first try");
   });
 
-  it("ends the run and lands on the hub with the same words, kept across a reload", () => {
+  it("ends the run once and lands on the hub with no last-session line", () => {
     const { server, rerender } = renderDrill(finished());
+    expect(server.send).toHaveBeenCalledTimes(1);
     expect(server.send).toHaveBeenCalledWith({ type: "end_training", activity_id: 6 });
-    expect(loadLastSession()).toEqual({ solved: 9, failed: 3, unit: "moves" });
 
     rerender(<Practice server={serverApi(null)} {...hubProps} createBoard={spyBoard} />);
-    expect(screen.getByTestId("last-session").textContent).toBe(
-      "Last session: 12 moves practised, 9 right first try",
-    );
-  });
-});
-
-function Connected() {
-  const server = useServer({ url: "ws://test/api/ws", createSocket: createFakeSocket });
-  return <Practice server={server} {...hubProps} />;
-}
-
-describe("a paused line drill", () => {
-  const paused: PausedTraining = {
-    run_id: 3,
-    mode: "repertoire",
-    motif: null,
-    color: "white",
-    position: 2,
-    size: 12,
-    solved: 2,
-    failed: 1,
-    repertoire_id: 3,
-    scope: "recommended",
-  };
-
-  it("offers Resume counting moves, not items", async () => {
-    FakeSocket.reset();
-    render(<Connected />);
-    act(() => FakeSocket.latest.open());
-    act(() =>
-      FakeSocket.latest.receive({
-        type: "bootstrap",
-        conversations: { play: [], games: [], practice: [] },
-        activity: null,
-        paused_training: paused,
-      }),
-    );
-    const resume = await screen.findByRole("region", { name: "Paused session" });
-    expect(within(resume).getByText("Resume: Repertoire · 2 of 12 moves done")).toBeTruthy();
-    fireEvent.click(within(resume).getByRole("button", { name: "Resume" }));
-    expect(FakeSocket.latest.sent.map((frame) => (frame as { type: string }).type)).toContain(
-      "resume_training",
-    );
+    expect(screen.queryByTestId("summary")).toBeNull();
+    expect(screen.queryByTestId("last-session")).toBeNull();
+    expect(screen.getByRole("region", { name: "Due cards" })).toBeTruthy();
   });
 });
