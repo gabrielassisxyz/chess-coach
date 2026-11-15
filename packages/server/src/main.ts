@@ -18,7 +18,12 @@ import { GameService } from "./game/service.js";
 import { ChessComSource, httpFetcher } from "./import/chesscom.js";
 import { ImportGrader } from "./import/grader.js";
 import { createFileLog, pruneLogs } from "./log.js";
-import { httpExplorerFetcher, systemExplorerClock } from "./openings/explorer-client.js";
+import { listAddableOpenings } from "./openings/addable-openings.js";
+import {
+  CachedExplorer,
+  httpExplorerFetcher,
+  systemExplorerClock,
+} from "./openings/explorer-client.js";
 import { generateExplorerPuzzles } from "./openings/from-explorer.js";
 import { generateOpeningPuzzles } from "./openings/from-games.js";
 import { generateItalianPuzzles } from "./openings/from-italian.js";
@@ -136,6 +141,19 @@ const generateRepertoireOpenings = (
     openingNames,
     { root, branch, rebuild, points },
   );
+// The token is read per request, so saving one in Connections lights the shares up with no
+// restart; without one the route answers with null shares and makes no call.
+const listAddable = () => {
+  const token = resolveLichessToken(db);
+  const explorer = token
+    ? new CachedExplorer(
+        httpExplorerFetcher(token),
+        join(dataDir(), "explorer-cache"),
+        systemExplorerClock,
+      )
+    : null;
+  return listAddableOpenings(db, openingNames, explorer);
+};
 // Each run starts its own Claude sessions, so nothing here holds a process open between runs.
 const runRepertoireIdeas = () =>
   generateRepertoireIdeas(db, sdkIdeaSession(query, { cwd: dataDir() }), log);
@@ -214,6 +232,7 @@ const app = buildApp({
   generateItalianOpenings,
   generateRepertoireOpenings,
   generateRepertoireIdeas: runRepertoireIdeas,
+  listAddableOpenings: listAddable,
   connections: {
     chessCom: httpFetcher(),
     explorerFor: (token) => httpExplorerFetcher(token),
