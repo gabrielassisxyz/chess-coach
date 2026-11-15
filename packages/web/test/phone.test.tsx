@@ -4,7 +4,11 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { Chat } from "../src/components/Chat.js";
-import { COACH_OPEN_STORAGE_KEY, PHONE_QUERY } from "../src/state/coach-panel.js";
+import {
+  COACH_HUB_OPEN_STORAGE_KEY,
+  COACH_OPEN_STORAGE_KEY,
+  PHONE_QUERY,
+} from "../src/state/coach-panel.js";
 import { FakeSocket } from "./fake-socket.js";
 import { liveGame } from "./fixtures.js";
 import { serverApi } from "./server-api.js";
@@ -90,6 +94,19 @@ describe("coach bar on a phone", () => {
     fireEvent.click(screen.getByRole("button", { name: /Expand coach panel/ }));
     fireEvent.click(screen.getByRole("button", { name: "Collapse coach panel" }));
     expect(screen.queryByTestId("coach-unread")).toBeNull();
+  });
+
+  it("writes neither stored choice from the hub", () => {
+    window.localStorage.setItem(COACH_OPEN_STORAGE_KEY, "true");
+    render(<App />);
+    connect();
+    fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+    expect(screen.getByTestId("coach-bar-line")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Expand coach panel/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse coach panel" }));
+    expect(screen.getByTestId("coach-bar-line")).toBeTruthy();
+    expect(window.localStorage.getItem(COACH_OPEN_STORAGE_KEY)).toBe("true");
+    expect(window.localStorage.getItem(COACH_HUB_OPEN_STORAGE_KEY)).toBeNull();
   });
 
   it("falls back to the idle words while the coach has said nothing", () => {
