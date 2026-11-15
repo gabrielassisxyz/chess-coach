@@ -1940,6 +1940,19 @@ describe("a puzzle queue without an end", () => {
     expect(eleventh.activity_id).toBe(tenth.activity_id);
   });
 
+  it("draws only the puzzles the run lacks when fewer than ten are left", async () => {
+    for (const id of named("p", 15)) addRated(id, 1200);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles" }));
+    await advanceTo(activity, start, 10);
+    const eleventh = await solveAndAdvance(activity);
+    expect(eleventh.item).toMatchObject({ position_in_queue: 11 });
+    const stored = storedIds();
+    expect(stored).toHaveLength(15);
+    expect(new Set(stored).size).toBe(15);
+    expect(storedSize()).toBe(15);
+  });
+
   it("draws the next batch around the rating the student has by then", async () => {
     for (const id of named("low", 12)) addRated(id, 1100);
     for (const id of named("high", 12)) addRated(id, 1900);
@@ -1959,6 +1972,7 @@ describe("a puzzle queue without an end", () => {
     const { activity, rows } = setup();
     const start = training(await activity.startTraining({ mode: "puzzles" }));
     const last = await advanceTo(activity, start, 25);
+    expect(storedIds()).toHaveLength(25);
     expect(new Set(storedIds()).size).toBe(25);
     expect(storedSize()).toBe(25);
     const answered = training(await activity.trainingTry("a1a8", last.activity_id));
@@ -2024,6 +2038,8 @@ describe("a puzzle queue without an end", () => {
     async (_name, start, motif) => {
       addPuzzle("a", motif, BACK_RANK, ["a1a8"]);
       addPuzzle("b", motif, BACK_RANK, ["a1a8"]);
+      // Rated puzzles a queue that went on past its end would draw from.
+      for (const id of named("r", 12)) addRated(id, 1200);
       const { activity, rows } = setup();
       const first = training(await activity.startTraining(start));
       expect(first.item).toMatchObject({ position_in_queue: 1, queue_length: 2 });
@@ -2043,6 +2059,7 @@ describe("a puzzle queue without an end", () => {
 
   it("ends a run of due cards and a single item on their last item, as before", async () => {
     addCard();
+    for (const id of named("r", 12)) addRated(id, 1200);
     const { activity } = setup();
     const card = training(await activity.startTraining({ mode: "srs" }));
     expect(card.item).toMatchObject({ queue_length: 1 });
