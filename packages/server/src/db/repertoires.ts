@@ -250,8 +250,9 @@ function openRunsOfRepertoireUnit(db: Database, repertoireId: number): number[] 
 
 /**
  * Deletes one unit and what would dangle after it, in one transaction: a failure leaves the unit,
- * its cards and the runs as they were. Its positions and its games' reviews go through the cascade,
- * a card goes once no unit stores its move, and an open run that points at the unit is discarded.
+ * its cards and the runs as they were. Its positions, its games' reviews and the drill's first
+ * attempts under it go through the cascade, a card goes once no unit stores its move, and an open
+ * run that points at the unit is discarded.
  * Reviewing those games again is the caller's, after the commit: a review can wait on the explorer
  * and the engine.
  */

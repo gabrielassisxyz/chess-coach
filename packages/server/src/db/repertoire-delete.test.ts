@@ -16,6 +16,7 @@ import { runMigrations } from "./migrate.js";
 import type { Database } from "./open.js";
 import {
   findRepertoireCard,
+  insertRepertoireFirstAttempt,
   introduceRepertoireCard,
   saveRepertoireCardReview,
 } from "./repertoire-cards.js";
@@ -250,7 +251,17 @@ function tablesSnapshot() {
     cards: all("SELECT * FROM repertoire_cards ORDER BY id"),
     runs: all("SELECT * FROM training_runs ORDER BY id"),
     reviews: all("SELECT * FROM repertoire_game_reviews ORDER BY game_id"),
+    attempts: all("SELECT * FROM repertoire_first_attempts ORDER BY id"),
   };
+}
+
+// A first attempt the line drill rated under a unit.
+function insertAttempt(repertoireId: number, before: string[], san: string): void {
+  insertRepertoireFirstAttempt(
+    db,
+    { ...moveOf(before, san), repertoireId, correct: true },
+    "2026-11-13T10:00:00.000Z",
+  );
 }
 
 const count = (sql: string, ...params: unknown[]): number =>
@@ -270,6 +281,8 @@ describe("deleteRepertoireUnit", () => {
     insertReview(first, mcconnell, "in_book");
     insertReview(italianGame, italian, "in_book");
     insertReview(second, mcconnell, "departed");
+    insertAttempt(mcconnell, MCCONNELL_ROOT, "Nc3");
+    insertAttempt(italian, [...ITALIAN_SETUP, "Bc5"], "c3");
 
     const deletion = deleteRepertoireUnit(db, mcconnell, DELETED_AT);
 
@@ -280,6 +293,10 @@ describe("deleteRepertoireUnit", () => {
       runsEnded: 0,
       gamesToReview: [first, second],
     });
+    // The drill's first attempts under the unit go with it through the same cascade.
+    expect(db.prepare("SELECT repertoire_id FROM repertoire_first_attempts").all()).toEqual([
+      { repertoire_id: italian },
+    ]);
     expect(count("SELECT COUNT(*) AS n FROM repertoires WHERE id = ?", mcconnell)).toBe(0);
     expect(
       count("SELECT COUNT(*) AS n FROM repertoire_positions WHERE repertoire_id = ?", mcconnell),
@@ -399,6 +416,7 @@ describe("deleteRepertoireUnit", () => {
     });
     insertReview(addGame(MCCONNELL_LINE), mcconnell, "in_book");
     insertReview(addGame(ITALIAN_LINE), italian, "in_book");
+    insertAttempt(mcconnell, MCCONNELL_ROOT, "Nc3");
     const before = tablesSnapshot();
     // The cards are swept last, after the runs were ended and the unit deleted.
     db.exec(`CREATE TRIGGER forced_failure BEFORE DELETE ON repertoire_cards
