@@ -161,7 +161,24 @@ const code = async (run: Promise<unknown>): Promise<string> => {
 };
 
 describe("queue materialization", () => {
-  it("serves a queue of ten puzzles when the inventory is larger", async () => {
+  it("serves a first batch of ten puzzles, with no length, when the inventory is larger", async () => {
+    for (let i = 0; i < 12; i++) {
+      const id = `p${String(i).padStart(2, "0")}`;
+      addPuzzle(id, "fork", BACK_RANK, ["a1a8"], 1200);
+      db.prepare("INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)").run(
+        "fork",
+        1200,
+        id,
+      );
+    }
+    const { activity } = setup();
+    const state = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    expect(state.item).toMatchObject({ kind: "puzzle", position_in_queue: 1 });
+    expect(state.item).not.toHaveProperty("queue_length");
+    expect(openRun()?.items).toHaveLength(10);
+  });
+
+  it("holds a set of ten, and says so, when the motif has unrated puzzles only", async () => {
     for (let i = 0; i < 12; i++)
       addPuzzle(`p${String(i).padStart(2, "0")}`, "fork", BACK_RANK, ["a1a8"]);
     const { activity } = setup();
@@ -205,7 +222,7 @@ describe("queue materialization", () => {
       const insertTheme = db.prepare(
         "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)",
       );
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 10; i++) {
         addPuzzle(`near-${i}`, "tactics", BACK_RANK, ["a1a8"], 1150);
         insertTheme.run(theme, 1150, `near-${i}`);
         addPuzzle(`far-${i}`, "tactics", BACK_RANK, ["a1a8"], 1800);
@@ -214,27 +231,17 @@ describe("queue materialization", () => {
       addPuzzle("other", "fork", BACK_RANK, ["a1a8"], 1200);
       insertTheme.run("fork", 1200, "other");
       const { activity } = setup();
-      const near = training(
-        await activity.startTraining({ mode: "puzzles", motif: theme, size: 5 }),
-      );
+      const ids = (prefix: string): string[] =>
+        Array.from({ length: 10 }, (_, i) => `${prefix}-${i}`);
+      const storedIds = (): string[] =>
+        (openRun()?.items ?? []).map((item) => (item as { id: string }).id).sort();
+      const near = training(await activity.startTraining({ mode: "puzzles", motif: theme }));
       expect(near.run_motif).toBe(theme);
-      expect((openRun()?.items ?? []).map((item) => (item as { id: string }).id).sort()).toEqual([
-        "near-0",
-        "near-1",
-        "near-2",
-        "near-3",
-        "near-4",
-      ]);
+      expect(storedIds()).toEqual(ids("near"));
       await activity.endTraining();
       setPuzzleRating(db, 1800, T0.toISOString());
-      await activity.startTraining({ mode: "puzzles", motif: theme, size: 5 });
-      expect((openRun()?.items ?? []).map((item) => (item as { id: string }).id).sort()).toEqual([
-        "far-0",
-        "far-1",
-        "far-2",
-        "far-3",
-        "far-4",
-      ]);
+      await activity.startTraining({ mode: "puzzles", motif: theme });
+      expect(storedIds()).toEqual(ids("far"));
     },
   );
 
@@ -242,7 +249,7 @@ describe("queue materialization", () => {
     const insertTheme = db.prepare(
       "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)",
     );
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 10; i++) {
       addPuzzle(`fork-near-${i}`, "fork", BACK_RANK, ["a1a8"], 1180);
       insertTheme.run("fork", 1180, `fork-near-${i}`);
       addPuzzle(`fork-far-${i}`, "fork", BACK_RANK, ["a1a8"], 2200);
@@ -250,15 +257,9 @@ describe("queue materialization", () => {
     }
     addPuzzle("trap-only", "opening_trap", BACK_RANK, ["a1a8"]);
     const { activity } = setup();
-    await activity.startTraining({ mode: "puzzles", motif: "fork", size: 5 });
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
     const forkIds = (openRun()?.items ?? []).map((item) => (item as { id: string }).id).sort();
-    expect(forkIds).toEqual([
-      "fork-near-0",
-      "fork-near-1",
-      "fork-near-2",
-      "fork-near-3",
-      "fork-near-4",
-    ]);
+    expect(forkIds).toEqual(Array.from({ length: 10 }, (_, i) => `fork-near-${i}`));
     await activity.endTraining();
     await activity.startTraining({ mode: "puzzles", motif: "opening_trap" });
     const trapIds = (openRun()?.items ?? []).map((item) => (item as { id: string }).id);
@@ -1183,27 +1184,29 @@ describe("the training state a client renders", () => {
     expect(getCard(db, id)?.intervalHours).toBe(item.rating_preview["3"]);
   });
 
-  it("sizes a puzzle or opening drill at 5, 10 or 20 and defaults to 10", async () => {
-    for (let i = 0; i < 25; i++)
-      addPuzzle(`p${String(i).padStart(2, "0")}`, "fork", BACK_RANK, ["a1a8"]);
-    for (const [size, length] of [
-      [5, 5],
-      [20, 20],
-      [undefined, 10],
+  it("holds ten positions of a set fixed at the start, whatever the inventory", async () => {
+    for (let i = 0; i < 25; i++) {
+      const id = String(i).padStart(2, "0");
+      addPuzzle(`fork${id}`, "fork", BACK_RANK, ["a1a8"]);
+      addPuzzle(`white${id}`, "opening-white", BACK_RANK, ["a1a8"]);
+      addPuzzle(`italian${id}`, "opening-italian", BACK_RANK, ["a1a8"]);
+    }
+    for (const start of [
+      { mode: "puzzles", motif: "fork" },
+      { mode: "puzzles", motif: "opening-italian" },
+      { mode: "openings", color: "white" },
     ] as const) {
       const { activity } = setup();
-      const state = training(
-        await activity.startTraining({ mode: "puzzles", motif: "fork", ...(size ? { size } : {}) }),
-      );
-      expect(state.item).toMatchObject({ queue_length: length });
+      const state = training(await activity.startTraining(start));
+      expect(state.item).toMatchObject({ position_in_queue: 1, queue_length: 10 });
       await activity.endTraining();
     }
   });
 
-  it("ignores size for review cards", async () => {
+  it("serves every due card of a review queue, up to twenty", async () => {
     for (let i = 0; i < 7; i++) addCard();
     const { activity } = setup();
-    const state = training(await activity.startTraining({ mode: "srs", size: 5 }));
+    const state = training(await activity.startTraining({ mode: "srs" }));
     expect(state.item).toMatchObject({ queue_length: 7 });
   });
 });
@@ -1772,7 +1775,7 @@ describe("the puzzles a queue draws from", () => {
   ])("serves the %s motif from the %s theme", async (motif, theme) => {
     for (const id of numbered("themed", 5)) addThemed(id, theme, 1200);
     addPuzzle("stored", motif, BACK_RANK, ["a1a8"], 1200);
-    await setup().activity.startTraining({ mode: "puzzles", motif, size: 5 });
+    await setup().activity.startTraining({ mode: "puzzles", motif });
     expect(queueIds()).toEqual(numbered("themed", 5));
   });
 
@@ -1808,41 +1811,36 @@ describe("the puzzles a queue draws from", () => {
   });
 
   it("samples a theme around the student's rating", async () => {
-    for (const id of numbered("near", 5)) addThemed(id, "fork", 1100);
-    for (const id of numbered("far", 5)) addThemed(id, "fork", 1800);
-    await setup().activity.startTraining({ mode: "puzzles", motif: "fork", size: 5 });
-    expect(queueIds()).toEqual(numbered("near", 5));
+    for (const id of numbered("near", 10)) addThemed(id, "fork", 1100);
+    for (const id of numbered("far", 10)) addThemed(id, "fork", 1800);
+    await setup().activity.startTraining({ mode: "puzzles", motif: "fork" });
+    expect(queueIds()).toEqual(numbered("near", 10));
   });
 
   it("follows the student's current rating, not the default", async () => {
-    for (const id of numbered("near", 5)) addThemed(id, "fork", 1100);
-    for (const id of numbered("far", 5)) addThemed(id, "fork", 1800);
+    for (const id of numbered("near", 10)) addThemed(id, "fork", 1100);
+    for (const id of numbered("far", 10)) addThemed(id, "fork", 1800);
     setPuzzleRating(db, 1800, T0.toISOString());
-    await setup().activity.startTraining({ mode: "puzzles", motif: "fork", size: 5 });
-    expect(queueIds()).toEqual(numbered("far", 5));
+    await setup().activity.startTraining({ mode: "puzzles", motif: "fork" });
+    expect(queueIds()).toEqual(numbered("far", 10));
   });
 
   it("samples an Any queue around the rating, without opening material", async () => {
-    for (const id of numbered("near", 5)) addPuzzle(id, "endgame", BACK_RANK, ["a1a8"], 1100);
-    for (const id of numbered("far", 5)) addPuzzle(id, "endgame", BACK_RANK, ["a1a8"], 1800);
+    for (const id of numbered("near", 10)) addPuzzle(id, "endgame", BACK_RANK, ["a1a8"], 1100);
+    for (const id of numbered("far", 10)) addPuzzle(id, "endgame", BACK_RANK, ["a1a8"], 1800);
     addPuzzle("drill", "opening-white", BACK_RANK, ["a1a8"], 1100);
-    await setup().activity.startTraining({ mode: "puzzles", size: 5 });
-    expect(queueIds()).toEqual(numbered("near", 5));
+    await setup().activity.startTraining({ mode: "puzzles" });
+    expect(queueIds()).toEqual(numbered("near", 10));
   });
 
-  it("honours the size in a sampled queue", async () => {
+  it("draws a first batch of ten from a themed queue and from an Any queue", async () => {
     for (const id of numbered("near", 12)) addThemed(id, "fork", 1100);
     const { activity } = setup();
-    const themed = training(
-      await activity.startTraining({ mode: "puzzles", motif: "fork", size: 5 }),
-    );
-    expect(themed.item.queue_length).toBe(5);
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    expect(queueIds()).toHaveLength(10);
     await activity.endTraining();
-    const any = training(await activity.startTraining({ mode: "puzzles", size: 20 }));
-    expect(any.item.queue_length).toBe(12);
-    await activity.endTraining();
-    const fallback = training(await activity.startTraining({ mode: "puzzles" }));
-    expect(fallback.item.queue_length).toBe(10);
+    await activity.startTraining({ mode: "puzzles" });
+    expect(queueIds()).toHaveLength(10);
   });
 
   it("refuses an Any queue when only opening material is left", async () => {
@@ -1864,6 +1862,204 @@ describe("the puzzles a queue draws from", () => {
     addThemed("w2", "opening-white", 2500);
     await setup().activity.startTraining({ mode: "openings", color: "white" });
     expect(queueIds()).toEqual(["w1", "w2"]);
+  });
+});
+
+describe("a puzzle queue without an end", () => {
+  const named = (prefix: string, count: number): string[] =>
+    Array.from({ length: count }, (_, i) => `${prefix}${String(i).padStart(3, "0")}`);
+
+  function addRated(id: string, rating: number, theme?: string): void {
+    addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], rating);
+    if (theme === undefined) return;
+    db.prepare("INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)").run(
+      theme,
+      rating,
+      id,
+    );
+  }
+
+  const storedIds = (): string[] =>
+    (openRun()?.items ?? []).map((item) => (item as { id: string }).id);
+
+  const storedSize = (): number =>
+    (
+      db.prepare("SELECT size FROM training_runs ORDER BY id DESC LIMIT 1").get() as {
+        size: number;
+      }
+    ).size;
+
+  // Solves the puzzle on the board and asks for the one after it.
+  async function solveAndAdvance(activity: ActivityService): Promise<TrainingActivity> {
+    const solved = training(await activity.trainingTry("a1a8"));
+    return training(await activity.nextTrainingItem(solved.activity_id));
+  }
+
+  async function advanceTo(
+    activity: ActivityService,
+    start: TrainingActivity,
+    position: number,
+  ): Promise<TrainingActivity> {
+    let state = start;
+    while (state.item.position_in_queue < position) state = await solveAndAdvance(activity);
+    return state;
+  }
+
+  it.each([
+    ["no motif", undefined],
+    ["a Lichess theme", "mateIn2"],
+    ["a library motif", "fork"],
+  ])("starts a queue of %s with ten puzzles and no length", async (_name, motif) => {
+    for (const id of named("p", 25)) addRated(id, 1200, motif);
+    const { activity } = setup();
+    const state = training(
+      await activity.startTraining({ mode: "puzzles", ...(motif ? { motif } : {}) }),
+    );
+    expect(state.item).toMatchObject({ kind: "puzzle", position_in_queue: 1 });
+    expect(state.item).not.toHaveProperty("queue_length");
+    expect(storedIds()).toHaveLength(10);
+  });
+
+  it("draws ten more when the next item is asked on the tenth, none of them already in the run", async () => {
+    for (const id of named("p", 25)) addRated(id, 1200);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles" }));
+    const tenth = await advanceTo(activity, start, 10);
+    const firstBatch = storedIds();
+    expect(firstBatch).toHaveLength(10);
+    const eleventh = await solveAndAdvance(activity);
+    expect(eleventh).toMatchObject({ status: "prompt", summary: null });
+    expect(eleventh.item).toMatchObject({ position_in_queue: 11 });
+    expect(eleventh.item).not.toHaveProperty("queue_length");
+    const stored = storedIds();
+    expect(stored).toHaveLength(20);
+    expect(stored.slice(0, 10)).toEqual(firstBatch);
+    expect(new Set(stored).size).toBe(20);
+    expect(storedSize()).toBe(20);
+    expect(eleventh.item).toMatchObject({ puzzle_id: stored[10] });
+    expect(eleventh.activity_id).toBe(tenth.activity_id);
+  });
+
+  it("draws the next batch around the rating the student has by then", async () => {
+    for (const id of named("low", 12)) addRated(id, 1100);
+    for (const id of named("high", 12)) addRated(id, 1900);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles" }));
+    expect(storedIds().every((id) => id.startsWith("low"))).toBe(true);
+    await advanceTo(activity, start, 10);
+    setPuzzleRating(db, 1900, T0.toISOString());
+    await solveAndAdvance(activity);
+    const second = storedIds().slice(10);
+    expect(second).toHaveLength(10);
+    expect(second.every((id) => id.startsWith("high"))).toBe(true);
+  });
+
+  it("finishes the run, with its summary, when a refill finds no puzzle", async () => {
+    for (const id of named("p", 25)) addRated(id, 1200);
+    const { activity, rows } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles" }));
+    const last = await advanceTo(activity, start, 25);
+    expect(new Set(storedIds()).size).toBe(25);
+    expect(storedSize()).toBe(25);
+    const answered = training(await activity.trainingTry("a1a8", last.activity_id));
+    expect(rows().filter((r) => r.type === "training_summary")).toEqual([]);
+    const ended = training(await activity.nextTrainingItem(answered.activity_id));
+    expect(ended.summary).toEqual({ solved: 25, failed: 0 });
+    expect(ended.input_enabled).toBe(false);
+    expect(rows().filter((r) => r.type === "training_summary")).toEqual([
+      { type: "training_summary", mode: "puzzles", solved: 25, failed: 0 },
+    ]);
+    expect(db.prepare("SELECT ended_reason, size FROM training_runs").all()).toEqual([
+      { ended_reason: "finished", size: 25 },
+    ]);
+  });
+
+  it("refuses to start with no puzzle to draw, and writes no run", async () => {
+    const { activity } = setup();
+    expect(await code(activity.startTraining({ mode: "puzzles" }))).toBe("empty_queue");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 0 });
+  });
+
+  it("carries the outcomes of the items served so far, and never a pending one", async () => {
+    for (const id of named("p", 25)) addRated(id, 1200);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles" }));
+    expect(start.queue_outcomes).toEqual(["current"]);
+    const solved = training(await activity.trainingTry("a1a8", start.activity_id));
+    expect(solved.queue_outcomes).toEqual(["solved"]);
+    const second = training(await activity.nextTrainingItem(start.activity_id));
+    expect(second.item).toMatchObject({ position_in_queue: 2 });
+    expect(second.item).not.toHaveProperty("queue_length");
+    expect(second.queue_outcomes).toEqual(["solved", "current"]);
+    const given = training(await activity.trainingShowSolution(start.activity_id));
+    expect(given.queue_outcomes).toEqual(["solved", "failed"]);
+    const third = training(await activity.nextTrainingItem(start.activity_id));
+    const eleventh = await advanceTo(activity, third, 11);
+    expect(eleventh.queue_outcomes).toEqual([
+      "solved",
+      "failed",
+      ...Array.from({ length: 8 }, () => "solved"),
+      "current",
+    ]);
+  });
+
+  it("ends as ended, with no summary, when the student stops in the middle of a refill", async () => {
+    for (const id of named("p", 25)) addRated(id, 1200);
+    const { activity, rows } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles" }));
+    await advanceTo(activity, start, 11);
+    expect(await activity.endTraining()).toBeNull();
+    expect(db.prepare("SELECT ended_reason, size FROM training_runs").all()).toEqual([
+      { ended_reason: "ended", size: 20 },
+    ]);
+    expect(rows().filter((r) => r.type === "training_summary")).toEqual([]);
+  });
+
+  it.each([
+    ["the Italian drill", { mode: "puzzles", motif: "opening-italian" }, "opening-italian"],
+    ["a library motif no theme names", { mode: "puzzles", motif: "opening_trap" }, "opening_trap"],
+    ["an opening drill", { mode: "openings", color: "white" }, "opening-white"],
+  ] as const)(
+    "keeps %s to its length and ends it on its last item",
+    async (_name, start, motif) => {
+      addPuzzle("a", motif, BACK_RANK, ["a1a8"]);
+      addPuzzle("b", motif, BACK_RANK, ["a1a8"]);
+      const { activity, rows } = setup();
+      const first = training(await activity.startTraining(start));
+      expect(first.item).toMatchObject({ position_in_queue: 1, queue_length: 2 });
+      expect(first.queue_outcomes).toEqual(["current", "pending"]);
+      await activity.trainingTry("a1a8", first.activity_id);
+      const second = training(await activity.nextTrainingItem(first.activity_id));
+      expect(second.item).toMatchObject({ position_in_queue: 2, queue_length: 2 });
+      await activity.trainingTry("a1a8", first.activity_id);
+      const ended = training(await activity.nextTrainingItem(first.activity_id));
+      expect(ended.summary).toEqual({ solved: 2, failed: 0 });
+      expect(rows().filter((r) => r.type === "training_summary")).toHaveLength(1);
+      expect(db.prepare("SELECT ended_reason, size FROM training_runs").all()).toEqual([
+        { ended_reason: "finished", size: 2 },
+      ]);
+    },
+  );
+
+  it("ends a run of due cards and a single item on their last item, as before", async () => {
+    addCard();
+    const { activity } = setup();
+    const card = training(await activity.startTraining({ mode: "srs" }));
+    expect(card.item).toMatchObject({ queue_length: 1 });
+    await activity.trainingTry("d2d4", card.activity_id);
+    expect(training(await activity.nextTrainingItem(card.activity_id)).summary).toEqual({
+      solved: 1,
+      failed: 0,
+    });
+    await activity.endTraining();
+    addPuzzle("fk:0", "fork", BACK_RANK, ["a1a8"], 1200);
+    const single = training(await activity.startTrainingItem({ kind: "puzzle", id: "fk:0" }));
+    expect(single.item).toMatchObject({ position_in_queue: 1, queue_length: 1 });
+    await activity.trainingTry("a1a8", single.activity_id);
+    expect(training(await activity.nextTrainingItem(single.activity_id)).summary).toEqual({
+      solved: 1,
+      failed: 0,
+    });
   });
 });
 
@@ -1922,8 +2118,8 @@ describe("an opening drill of one family", () => {
     expect(queueIds()).toEqual(["it1", "it2", "it3", "none1", "none2", "sic1"]);
   });
 
-  it("holds the family to the size asked for", async () => {
-    for (let i = 0; i < 8; i++) addOpeningPuzzle(`sic${i}`, "white", "Sicilian Defense");
+  it("holds the family to ten positions", async () => {
+    for (let i = 0; i < 12; i++) addOpeningPuzzle(`sic${i}`, "white", "Sicilian Defense");
     addOpeningPuzzle("it1", "white", "Italian Game");
     const { activity } = setup();
     const state = training(
@@ -1931,10 +2127,9 @@ describe("an opening drill of one family", () => {
         mode: "openings",
         color: "white",
         opening: "Sicilian Defense",
-        size: 5,
       }),
     );
-    expect(state.item.queue_length).toBe(5);
+    expect(state.item.queue_length).toBe(10);
     expect(queueIds().every((id) => id.startsWith("sic"))).toBe(true);
   });
 

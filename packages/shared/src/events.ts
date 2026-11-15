@@ -312,14 +312,15 @@ export const UndoCommandSchema = z.object({
 // group or side; without one it drills that variation alone. The other modes ignore all three. An
 // opening drill may name one opening family of its colour, or UNNAMED_OPENING for the positions with
 // no name; without one it drills every position of the colour. The other modes ignore `opening`.
-export const StartTrainingCommandSchema = z.object({
+// A queue has no size to choose: the object is strict so that a client still sending the retired
+// `size` is refused instead of being served a queue it did not ask for.
+export const StartTrainingCommandSchema = z.strictObject({
   type: z.literal("start_training"),
   command_id: commandId,
   mode: TrainingModeSchema,
   motif: z.string().min(1).max(64).optional(),
   color: z.enum(["white", "black"]).optional(),
   opening: z.string().min(1).max(MAX_OPENING_FAMILY_LENGTH).optional(),
-  size: z.union([z.literal(5), z.literal(10), z.literal(20)]).optional(),
   repertoire_id: z.number().int().positive().optional(),
   scope: RepertoireScopeSchema.optional(),
   level: RepertoireLevelSchema.optional(),

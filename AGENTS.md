@@ -205,6 +205,21 @@
   bootstrap nor the activity event carries a run that is not on the board; `discarded` is only in
   rows written before they were removed and in the runs a unit's delete ends (Deleting a unit). A
   single item the coach serves is not persisted.
+  A puzzle queue drawn around the student's rating, of no motif or of a theme the sampler finds, has
+  no size and no end of its own. `start_training` takes no `size`: its schema is strict, so a frame
+  that still carries one is refused with `invalid_command`. The run starts with a batch of 10
+  (`PUZZLE_BATCH_SIZE`), and `next` on the last item draws 10 more the same way, around the rating
+  the student has by then, appends them to `training_runs.items_json` (and counts them in `size`)
+  and serves the first. None of them is a puzzle the run holds: `drawRatedBatch` asks the sampler
+  for the batch plus as many puzzles as the run holds, up to its 50 per call, and drops those the
+  run has, so past 40 items a refill can come back short. A refill that finds no puzzle finishes the
+  run with its summary, as the last item of any queue does; the student otherwise stops it with End.
+  The items of such a run carry `position_in_queue` and no `queue_length`, `queue_outcomes` holds the
+  items served so far, and the web heads an item `Puzzle N` with no total, draws one progress
+  segment per item served, and never offers Finish training. Every other queue keeps a length and
+  ends on its last item: the due cards (20), the opening drills, the Italian drill and a motif that
+  no theme row names (`opening_trap`), which hold 10 positions at most, and a single item the coach
+  serves.
 - **Repertoire drill:** `start_training {mode: "repertoire", repertoire_id, scope}` runs a stored
   variation as passes from move 1 (`activity/repertoire-session.ts`): the server plays Black and every
   White move not asked, and stops on the moves still to find. `recommended` takes at most 10 due moves,
