@@ -29,9 +29,11 @@ import {
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { endRunsLeftOpenAtStart } from "../db/training.js";
+import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
 import { GameService } from "../game/service.js";
 import { importFinishedGame } from "../import/pgn.js";
 import { positionKey } from "../openings/from-games.js";
+import { NO_OPENING_NAMES, parseOpeningTable } from "../openings/names.js";
 import { ReviewDesk } from "../srs/review.js";
 import { review } from "../srs/sm2.js";
 import {
@@ -44,6 +46,7 @@ import {
   type RepertoireTryJudge,
   repertoireIntroductionsInWindow,
   repertoireScopeCounts,
+  repertoireTryJudge,
   selectRepertoireDrillMoves,
 } from "./repertoire-session.js";
 import { ActivityService } from "./service.js";
@@ -309,6 +312,39 @@ class FailingRepertoireJudge extends FakeRepertoireJudge {
   override async cpLoss(fen: string, uci: string): Promise<number> {
     await super.cpLoss(fen, uci);
     throw new Error("the engine stopped answering");
+  }
+}
+
+// Stands in for the evaluation engine when exercising `repertoireTryJudge`: records every search
+// request and answers by position key, carrying `cutByTime` when told.
+class RecordingDrillEngine implements Searcher {
+  readonly requests: SearchRequest[] = [];
+  private readonly answers = new Map<
+    string,
+    { bestmove: string; score: number; depth?: number; cutByTime?: boolean }
+  >();
+
+  write(
+    key: string,
+    bestmove: string,
+    score: number,
+    options: { depth?: number; cutByTime?: boolean } = {},
+  ): this {
+    this.answers.set(key, { bestmove, score, ...options });
+    return this;
+  }
+
+  async search(request: SearchRequest): Promise<SearchResult> {
+    this.requests.push(request);
+    const scripted = this.answers.get(positionKey(request.fen));
+    if (!scripted) return { fen: request.fen, bestmove: null, lines: [] };
+    return {
+      fen: request.fen,
+      bestmove: scripted.bestmove,
+      lines: [{ moves: [scripted.bestmove], score: scripted.score }],
+      ...(scripted.depth === undefined ? {} : { depth: scripted.depth }),
+      ...(scripted.cutByTime === undefined ? {} : { cutByTime: scripted.cutByTime }),
+    };
   }
 }
 
@@ -1647,6 +1683,56 @@ describe("flagging a repertoire try", () => {
     });
     expect(state.input_enabled).toBe(true);
     expect(service.current()).toBe(state);
+  });
+
+  it("caps both searches of the real judge at 2000 ms", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const engine = new RecordingDrillEngine();
+    const service = boot(repertoireTryJudge(NO_OPENING_NAMES, engine));
+    const state = await start(service, id, "due");
+    engine.write(positionKey(state.fen), "f1c4", 30);
+    engine.write(keyAfter("e4 e5 Nf3 Nc6", "a3"), "a7a6", -15);
+
+    await play(service, state, "a3");
+    await flushMicrotasks();
+
+    expect(engine.requests).toHaveLength(2);
+    expect(engine.requests.map((request) => request.capMs)).toEqual([2000, 2000]);
+  });
+
+  it("flags a sound try and leaves a blunder plain when the engine's answers are cut by time", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "Bc4");
+    const names = parseOpeningTable(
+      [
+        "eco\tname\tpgn\tuci\tepd",
+        `C50\tItalian Game\t-\t-\t${keyAfter("e4 e5 Nf3 Nc6", "Bc4")}`,
+        `C60\tRuy Lopez\t-\t-\t${keyAfter("e4 e5 Nf3 Nc6", "Bb5")}`,
+        `C44\tScotch Game\t-\t-\t${keyAfter("e4 e5 Nf3 Nc6", "d4")}`,
+      ].join("\n"),
+    );
+    const engine = new RecordingDrillEngine();
+    const service = boot(repertoireTryJudge(names, engine));
+    let state = await start(service, id, "due");
+    engine.write(positionKey(state.fen), "f1c4", 30, { depth: 8, cutByTime: true });
+    engine.write(keyAfter("e4 e5 Nf3 Nc6", "Bb5"), "a7a6", -10, { depth: 8, cutByTime: true });
+    engine.write(keyAfter("e4 e5 Nf3 Nc6", "d4"), "e5d4", 70, { depth: 8, cutByTime: true });
+
+    state = await play(service, state, "Bb5");
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: "Ruy Lopez",
+      flagged_sound: true,
+    });
+
+    state = await play(service, training(service.current()), "d4");
+    await flushMicrotasks();
+    expect(drillOf(training(service.current()))).toMatchObject({
+      flagged_opening: null,
+      flagged_sound: false,
+    });
+    expect(engine.requests.map((request) => request.capMs)).toEqual([2000, 2000, 2000, 2000]);
   });
 });
 

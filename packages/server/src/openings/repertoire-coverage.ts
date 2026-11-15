@@ -68,31 +68,47 @@ interface StoredRowSql {
   losses: number | null;
 }
 
-function loadStoredTree(db: Database, repertoireId: number): StoredTree {
+// The rows of several variations make one tree, so that a reply is covered when any of them answers
+// it. Where two store the same thing the likelier row stands and the older variation keeps a tie, as
+// `mergeRepertoireUnitMoves` settles a shared move for the drill. A reply is listed once, since a
+// gap listed twice would count twice. Two variations that answer one position with different moves
+// leave the walk one of them to follow, and the other's answer is a branch it does not visit. One
+// variation stores each move once, so for one the tree is its rows.
+function loadStoredTree(db: Database, repertoireIds: readonly number[]): StoredTree {
   const rows = db
     .prepare(
       `SELECT id, kind, position_key, line_san, move_uci, move_san, reach, source, cp_loss,
               wins, draws, losses
-       FROM repertoire_positions WHERE repertoire_id = ? ORDER BY id`,
+       FROM repertoire_positions
+       WHERE repertoire_id IN (SELECT value FROM json_each(?))
+       ORDER BY repertoire_id, id`,
     )
-    .all(repertoireId) as StoredRowSql[];
+    .all(JSON.stringify(repertoireIds)) as StoredRowSql[];
   const tree: StoredTree = { ownAt: new Map(), repliesAt: new Map() };
   for (const row of rows) {
     if (row.kind === "own") {
-      tree.ownAt.set(row.position_key, storedOwnOf(row));
+      const held = tree.ownAt.get(row.position_key);
+      if (!held || row.reach > held.reach) tree.ownAt.set(row.position_key, storedOwnOf(row));
       continue;
     }
-    const listed = tree.repliesAt.get(row.position_key) ?? [];
-    listed.push({
-      id: row.id,
-      uci: row.move_uci,
-      san: row.move_san,
-      reach: row.reach,
-      source: row.source,
-    });
-    tree.repliesAt.set(row.position_key, listed);
+    storeReplyOf(tree, row);
   }
   return tree;
+}
+
+function storeReplyOf(tree: StoredTree, row: StoredRowSql): void {
+  const reply: StoredReply = {
+    id: row.id,
+    uci: row.move_uci,
+    san: row.move_san,
+    reach: row.reach,
+    source: row.source,
+  };
+  const listed = tree.repliesAt.get(row.position_key) ?? [];
+  const heldAt = listed.findIndex((held) => held.uci === reply.uci);
+  if (heldAt < 0) listed.push(reply);
+  else if (reply.reach > (listed[heldAt]?.reach ?? 0)) listed[heldAt] = reply;
+  tree.repliesAt.set(row.position_key, listed);
 }
 
 function storedOwnOf(row: StoredRowSql): StoredOwn {
@@ -387,7 +403,7 @@ function positionOf(node: WalkNode): CoveragePosition {
  */
 export function repertoireCoverage(db: Database, repertoireId: number): RepertoireCoverage | null {
   if (!findDrillRepertoire(db, repertoireId)) return null;
-  const nodes = new StoredTreeWalk(loadStoredTree(db, repertoireId)).run();
+  const nodes = new StoredTreeWalk(loadStoredTree(db, [repertoireId])).run();
   const gaps = gapsOf(nodes);
   return {
     repertoire_id: repertoireId,
@@ -400,4 +416,18 @@ export function repertoireCoverage(db: Database, repertoireId: number): Repertoi
     start: startOf(nodes),
     positions: nodes.map(positionOf),
   };
+}
+
+/**
+ * The covered share of the variations walked together, read as `repertoireCoverage` reads it for
+ * one variation: the games that end in a prepared line over those and the gaps. For the variations
+ * of an opening a reply is covered when any of them answers it. Null when nothing is stored.
+ * Read-only over the stored moves, and without the positions and scores the list does not show.
+ */
+export function repertoireCoveredPercent(
+  db: Database,
+  repertoireIds: readonly number[],
+): number | null {
+  const nodes = new StoredTreeWalk(loadStoredTree(db, repertoireIds)).run();
+  return coveredPercentOf(nodes, gapsOf(nodes));
 }

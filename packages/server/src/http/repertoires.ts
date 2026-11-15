@@ -1,6 +1,7 @@
 import type {
   RepertoireBranch,
   RepertoireCoverage,
+  RepertoireFigures,
   RepertoireFoundSummary,
   RepertoireGroupSummary,
   RepertoireSideSummary,
@@ -26,6 +27,12 @@ import {
 } from "../openings/from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames } from "../openings/names.js";
 import { repertoireCoverage } from "../openings/repertoire-coverage.js";
+import {
+  repertoireGroupFigures,
+  repertoireGroupLine,
+  repertoireVariationFigures,
+  repertoireVariationLine,
+} from "./repertoire-summary.js";
 
 export interface RepertoireRouteOptions {
   clock?: Clock;
@@ -40,23 +47,52 @@ export interface RepertoireRouteOptions {
 const sameGroup = (a: RepertoireUnitMoves, b: RepertoireUnitMoves): boolean =>
   a.variation.side === b.variation.side && a.variation.group_name === b.variation.group_name;
 
+// The oldest variation of each group: the units arrive oldest first.
+const firstUnitsOfGroups = (units: readonly RepertoireUnitMoves[]): RepertoireUnitMoves[] =>
+  units.filter((unit, index) => units.findIndex((other) => sameGroup(other, unit)) === index);
+
+interface UnitWithFigures {
+  unit: RepertoireUnitMoves;
+  figures: RepertoireFigures;
+}
+
+// An opening of one variation has the numbers of that variation, so the walk of its moves is not
+// made twice.
+function groupFigures(
+  db: Database,
+  members: readonly UnitWithFigures[],
+  now: Date,
+): RepertoireFigures {
+  const [only, ...others] = members;
+  if (only && others.length === 0) return only.figures;
+  return repertoireGroupFigures(
+    db,
+    members.map((member) => member.unit),
+    now,
+  );
+}
+
 function groupSummaries(
-  units: readonly RepertoireUnitMoves[],
+  db: Database,
+  entries: readonly UnitWithFigures[],
   now: Date,
   introducedInWindow: number,
 ): RepertoireGroupSummary[] {
-  const firsts = units.filter(
-    (unit, index) => units.findIndex((other) => sameGroup(other, unit)) === index,
-  );
-  return firsts.map((first) => ({
-    side: first.variation.side,
-    group_name: first.variation.group_name,
-    moves: repertoireScopeCounts(
-      mergeRepertoireUnitMoves(units.filter((unit) => sameGroup(unit, first))),
-      now,
-      introducedInWindow,
-    ),
-  }));
+  const firsts = firstUnitsOfGroups(entries.map((entry) => entry.unit));
+  return firsts.map((first) => {
+    const members = entries.filter((entry) => sameGroup(entry.unit, first));
+    return {
+      side: first.variation.side,
+      group_name: first.variation.group_name,
+      moves: repertoireScopeCounts(
+        mergeRepertoireUnitMoves(members.map((member) => member.unit)),
+        now,
+        introducedInWindow,
+      ),
+      ...groupFigures(db, members, now),
+      line: repertoireGroupLine(db, first.variation),
+    };
+  });
 }
 
 function sideSummaries(
@@ -112,8 +148,12 @@ export function registerRepertoireRoutes(
       }),
     );
     const met = listMetOpenings(db);
+    const entries = units.map(
+      (unit): UnitWithFigures => ({ unit, figures: repertoireVariationFigures(db, unit, now) }),
+    );
+    const firstIds = new Set(firstUnitsOfGroups(units).map((first) => first.variation.id));
     return {
-      repertoires: units.map(({ variation, moves }) => {
+      repertoires: entries.map(({ unit: { variation, moves }, figures }) => {
         const build = findRepertoireBuild(db, variation.id);
         return {
           id: variation.id,
@@ -121,12 +161,14 @@ export function registerRepertoireRoutes(
           group_name: variation.group_name,
           variation_name: variation.variation_name,
           moves: repertoireScopeCounts(moves, now, introducedInWindow),
+          ...figures,
+          line: repertoireVariationLine(db, variation, build.branch, firstIds.has(variation.id)),
           points: build.points,
           root: repertoireRootOf(db, variation),
           branch: build.branch,
         };
       }),
-      groups: groupSummaries(units, now, introducedInWindow),
+      groups: groupSummaries(db, entries, now, introducedInWindow),
       sides: sideSummaries(units, now, introducedInWindow),
       found: foundSummary(units, foundRepertoireIdsOf(met), now, introducedInWindow),
       met: met.map((opening) => ({
