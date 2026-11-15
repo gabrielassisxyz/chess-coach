@@ -284,6 +284,41 @@ describe("Board drawing", () => {
   });
 });
 
+describe("Board try mark", () => {
+  function badgeStyle(square: string, orientation: "white" | "black"): CSSStyleDeclaration {
+    const recorder = new RecordingBoard();
+    render(
+      <Board
+        activity={liveGame({ orientation })}
+        onMove={vi.fn()}
+        badge={{ square, kind: "check" }}
+        createBoard={recorder.factory}
+      />,
+    );
+    return screen.getByTestId("square-badge").style;
+  }
+
+  it("centres the mark on the destination corner for a try to c4 shown from White", () => {
+    const style = badgeStyle("c4", "white");
+    expect(style.left).toBe("37.5%");
+    expect(style.top).toBe("50%");
+  });
+
+  it("centres the mark on the destination corner for a try to c4 shown from Black", () => {
+    const style = badgeStyle("c4", "black");
+    expect(style.left).toBe("75%");
+    expect(style.top).toBe("37.5%");
+  });
+
+  it("keeps the mark fully inside the board for h8 shown from White", () => {
+    const style = badgeStyle("h8", "white");
+    // With the existing translate(-50%, -50%), the centre sits half a badge in from each
+    // edge, so the 28 px box ends at the board's right and top edges.
+    expect(style.left).toBe("calc(100% - 14px)");
+    expect(style.top).toBe("14px");
+  });
+});
+
 describe("Board lifecycle", () => {
   it("keeps exactly one instance and one move callback after a Strict Mode double mount", () => {
     const recorder = new RecordingBoard();
