@@ -1130,7 +1130,7 @@ describe("hand drawings", () => {
         if (config.drawable?.onChange) changes.push(config.drawable.onChange);
         return spyBoard(element, config);
       };
-      render(<Practice server={server} createBoard={capture} fetchMotifs={noMotifs} />);
+      render(<Practice server={server} createBoard={capture} {...hubProps} />);
       expect(changes.length).toBeGreaterThan(0);
       const sendDraw = changes[changes.length - 1] as (shapes: DrawShape[]) => void;
       act(() => sendDraw([{ orig: "e4", dest: "e5", brush: "red" }]));
@@ -1142,7 +1142,11 @@ describe("hand drawings", () => {
       );
       expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "drawings" }));
       act(() => {
-        vi.advanceTimersByTime(500);
+        vi.advanceTimersByTime(450);
+      });
+      expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "drawings" }));
+      act(() => {
+        vi.advanceTimersByTime(50);
       });
       const drawingsCalls = vi
         .mocked(server.send)

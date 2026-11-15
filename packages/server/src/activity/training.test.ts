@@ -2079,6 +2079,18 @@ describe("drawings and hint in the reasoning", () => {
       ),
     ).toBe("stale_activity");
   });
+
+  it("refuses drawings once the run has ended with its summary", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "srs" }));
+    const answered = training(await activity.trainingTry("d2d4", start.activity_id));
+    const done = training(await activity.nextTrainingItem(answered.activity_id));
+    expect(done.summary).not.toBeNull();
+    expect(await code(activity.trainingDrawings([{ orig: "e4", color: "green" }]))).toBe(
+      "not_in_training",
+    );
+  });
 });
 
 describe("move list, progress and rating", () => {
