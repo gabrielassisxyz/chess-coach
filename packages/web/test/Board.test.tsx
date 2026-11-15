@@ -282,6 +282,57 @@ describe("Board drawing", () => {
     act(() => lastConfig.drawable?.onChange?.([{ orig: "g1", dest: "f3", brush: "green" }]));
     expect(setShapes.mock.calls.at(-1)?.[0]).toEqual([]);
   });
+
+  it("reports each hand-drawn shape's logical squares and colour, not its rendered form", () => {
+    const reported: DrawShape[][] = [];
+    let lastConfig!: Config;
+    const factory: BoardFactory = (_element, config) => {
+      lastConfig = config;
+      return {
+        set: (next: Config) => {
+          lastConfig = next;
+        },
+        setShapes: vi.fn(),
+        destroy: vi.fn(),
+      } as unknown as Api;
+    };
+    render(
+      <Board
+        activity={liveGame()}
+        onMove={vi.fn()}
+        onDrawChange={(shapes) => reported.push(shapes)}
+        createBoard={factory}
+      />,
+    );
+    const drawn: DrawShape[] = [
+      { orig: "g1", dest: "f3", brush: "green" },
+      { orig: "e4", dest: "e5", brush: "red" },
+      { orig: "d5", brush: "green" },
+    ];
+    act(() => lastConfig.drawable?.onChange?.(drawn));
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toEqual([
+      { orig: "g1", dest: "f3", brush: "green" },
+      { orig: "e4", dest: "e5", brush: "red" },
+      { orig: "d5", brush: "green" },
+    ]);
+    for (const shape of reported[0] ?? []) {
+      expect(shape.customSvg).toBeUndefined();
+    }
+  });
+
+  it("reports nothing without an onDrawChange listener", () => {
+    let lastConfig!: Config;
+    const factory: BoardFactory = (_element, config) => {
+      lastConfig = config;
+      return {
+        set: () => {},
+        destroy: vi.fn(),
+      } as unknown as Api;
+    };
+    render(<Board activity={liveGame()} onMove={vi.fn()} createBoard={factory} />);
+    act(() => lastConfig.drawable?.onChange?.([{ orig: "e4", dest: "e5", brush: "red" }]));
+  });
 });
 
 describe("Board try mark", () => {

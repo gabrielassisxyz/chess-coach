@@ -352,6 +352,7 @@ function Item({
             badge={board.badge}
             prefs={prefs}
             shapes={shapes}
+            onDrawChange={board.onDrawChange}
             createBoard={createBoard}
           />
           <PuzzleBoardBar

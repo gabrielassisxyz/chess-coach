@@ -1990,6 +1990,109 @@ describe("hint", () => {
   });
 });
 
+describe("drawings and hint in the reasoning", () => {
+  it("keeps each snapshot with its offset and skips one identical to the previous", async () => {
+    addCard("d2d4");
+    const clock = steppingClock();
+    const { activity, notes } = setup(clock);
+    await activity.startTraining({ mode: "srs" });
+    clock.advance(4);
+    await activity.trainingDrawings([{ orig: "e4", dest: "e5", color: "red" }]);
+    clock.advance(2);
+    await activity.trainingDrawings([{ orig: "e4", dest: "e5", color: "red" }]);
+    clock.advance(4);
+    await activity.trainingDrawings([{ orig: "d5", color: "green" }]);
+    await activity.trainingTry("d2d4");
+    const note = notes().at(-1) as { reasoning?: { drawings?: unknown[]; hint_at_ms?: unknown } };
+    expect(note.reasoning?.drawings).toEqual([
+      { at_ms: 4_000, shapes: [{ orig: "e4", dest: "e5", color: "red" }] },
+      { at_ms: 10_000, shapes: [{ orig: "d5", color: "green" }] },
+    ]);
+    expect(note.reasoning?.hint_at_ms).toBeNull();
+  });
+
+  it("keeps at most 30 snapshots, the newest replacing the last one kept", async () => {
+    addCard("d2d4");
+    const clock = steppingClock();
+    const { activity, notes } = setup(clock);
+    await activity.startTraining({ mode: "srs" });
+    for (let n = 0; n < 31; n++) {
+      clock.advance(1);
+      const square = `a${(n % 8) + 1}` as string;
+      await activity.trainingDrawings([{ orig: square, color: "green" }]);
+    }
+    await activity.trainingTry("d2d4");
+    const note = notes().at(-1) as { reasoning?: { drawings?: { at_ms: number }[] } };
+    expect(note.reasoning?.drawings).toHaveLength(30);
+    expect(note.reasoning?.drawings?.[29]).toEqual({
+      at_ms: 31_000,
+      shapes: [{ orig: "a7", color: "green" }],
+    });
+    expect(note.reasoning?.drawings?.[28]).toEqual({
+      at_ms: 29_000,
+      shapes: [{ orig: "a5", color: "green" }],
+    });
+  });
+
+  it("records the hint offset in the reasoning and prints it on the notification", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const clock = steppingClock();
+    const { activity, notes } = setup(clock);
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    clock.advance(8);
+    await activity.trainingHint();
+    clock.advance(2);
+    await activity.trainingTry("a1a8");
+    const note = notes().at(-1) as {
+      reasoning?: { hint_at_ms?: unknown; drawings?: unknown[] };
+      first_try?: boolean;
+    };
+    expect(note.first_try).toBe(false);
+    expect(note.reasoning?.hint_at_ms).toBe(8_000);
+    expect(note.reasoning?.drawings).toEqual([]);
+  });
+
+  it("accepts drawings after the item ended while it is still on the board", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, notes } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    await activity.trainingTry("a1a8");
+    await activity.trainingDrawings([{ orig: "e4", color: "green" }], start.activity_id);
+    expect(notes()).toHaveLength(0);
+    await activity.trainingAskCoach(start.activity_id);
+    const note = notes().at(-1) as { reasoning?: { drawings?: unknown[] } };
+    expect(note.reasoning?.drawings).toEqual([
+      { at_ms: 0, shapes: [{ orig: "e4", color: "green" }] },
+    ]);
+  });
+
+  it("refuses drawings off training and on a stale activity", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    expect(await code(activity.trainingDrawings([{ orig: "e4", color: "green" }]))).toBe(
+      "not_in_training",
+    );
+    const start = training(await activity.startTraining({ mode: "srs" }));
+    expect(
+      await code(
+        activity.trainingDrawings([{ orig: "e4", color: "green" }], start.activity_id + 1),
+      ),
+    ).toBe("stale_activity");
+  });
+
+  it("refuses drawings once the run has ended with its summary", async () => {
+    addCard("d2d4");
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "srs" }));
+    const answered = training(await activity.trainingTry("d2d4", start.activity_id));
+    const done = training(await activity.nextTrainingItem(answered.activity_id));
+    expect(done.summary).not.toBeNull();
+    expect(await code(activity.trainingDrawings([{ orig: "e4", color: "green" }]))).toBe(
+      "not_in_training",
+    );
+  });
+});
+
 describe("move list, progress and rating", () => {
   it("carries the played line and the wrong tries beside the ply they were graded at", async () => {
     addPuzzle("f1", "fork", FORK, ["b5c7", "e8f8", "a1c1"]);

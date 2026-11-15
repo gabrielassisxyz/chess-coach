@@ -392,6 +392,29 @@ export const HintCommandSchema = z.object({
   activity_id: activityId,
 });
 
+// The student's hand drawings on the Practice board, sent when they change. Each shape is an
+// arrow (with dest) or a circle (without), in one of the four drawing colours. At most 32 shapes
+// travel in one snapshot; anything else is refused by validation.
+export const DrawingColorSchema = z.enum(["green", "red", "blue", "yellow"]);
+export type DrawingColor = z.infer<typeof DrawingColorSchema>;
+
+export const DrawnShapeSchema = z.object({
+  orig: square,
+  dest: square.optional(),
+  color: DrawingColorSchema,
+});
+export type DrawnShape = z.infer<typeof DrawnShapeSchema>;
+
+export const MAX_DRAWING_SHAPES = 32;
+
+export const DrawingsCommandSchema = z.object({
+  type: z.literal("drawings"),
+  command_id: commandId,
+  activity_id: activityId,
+  shapes: z.array(DrawnShapeSchema).max(MAX_DRAWING_SHAPES),
+});
+export type DrawingsCommand = z.infer<typeof DrawingsCommandSchema>;
+
 // Asks the coach to comment on the ended item that was solved first try, which stays quiet until
 // asked. Sent as its own command because a say would not tell the coach which position was solved.
 export const AskCoachAboutItemCommandSchema = z.object({
@@ -470,6 +493,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   TryMoveCommandSchema,
   ShowSolutionCommandSchema,
   HintCommandSchema,
+  DrawingsCommandSchema,
   AskCoachAboutItemCommandSchema,
   RateCardCommandSchema,
   NextTrainingItemCommandSchema,
