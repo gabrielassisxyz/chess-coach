@@ -1477,7 +1477,7 @@ describe("GET /api/openings/played", () => {
     const app = Fastify();
     registerPlayedOpeningsRoute(app, store, { names: playedNames, clock });
     try {
-      for (const query of ["?days=14", "?days=abc", "?days=", "?days=7&days=30"]) {
+      for (const query of ["?days=14", "?days=365", "?days=abc", "?days=", "?days=7&days=30"]) {
         const response = await app.inject({ method: "GET", url: `/api/openings/played${query}` });
         expect(response.statusCode).toBe(400);
         expect(response.json()).toMatchObject({ error: "invalid_days" });

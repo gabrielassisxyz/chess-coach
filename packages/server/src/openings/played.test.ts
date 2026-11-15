@@ -29,6 +29,9 @@ const names = parseOpeningTable(
     `C55\tItalian Game: Two Knights Defense\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6\te2e4\t${fenKey(fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"))}`,
     `C50\tItalian Game: Giuoco Piano\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5\te2e4\t${fenKey(fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"))}`,
     `B01\tScandinavian Defense\t1. e4 d5\te2e4\t${fenKey(fenAfter("e4", "d5"))}`,
+    `C00\tFrench Defense\t1. e4 e6\te2e4\t${fenKey(fenAfter("e4", "e6"))}`,
+    `B10\tCaro-Kann Defense\t1. e4 c6\te2e4\t${fenKey(fenAfter("e4", "c6"))}`,
+    `B02\tAlekhine Defense\t1. e4 Nf6\te2e4\t${fenKey(fenAfter("e4", "Nf6"))}`,
     "",
   ].join("\n"),
 );
@@ -231,5 +234,53 @@ describe("listPlayedOpenings", () => {
     expect(italian?.variations.find((row) => row.name === "Giuoco Piano")?.line).toBe(
       "1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5",
     );
+  });
+
+  it("separates the window from either date column alone", () => {
+    // Played recently but started long ago: inside the week only when played_at leads.
+    const playedRecently = addGame(ITALIAN_KNIGHTS, "white", "played-recent", daysAgo(2));
+    db.prepare("UPDATE games SET started_at = ? WHERE id = ?").run(daysAgo(200), playedRecently);
+    // Started recently but played long ago: outside the week, since played_at leads.
+    const playedLongAgo = addGame(ITALIAN_GIUOCO, "white", "played-old", daysAgo(200));
+    db.prepare("UPDATE games SET started_at = ? WHERE id = ?").run(daysAgo(2), playedLongAgo);
+    const week = listPlayedOpenings(db, names, "7", clock);
+    expect(week.white.games).toBe(1);
+    expect(week.white.mine[0]?.variations.map((row) => row.name)).toEqual(["Two Knights Defense"]);
+  });
+
+  it("orders by games descending, then by name, for openings and for variations", () => {
+    const fixtures: Array<[string, string]> = [
+      ['[Result "1-0"]\n\n1. e4 d5 1-0', "s1"],
+      ['[Result "1-0"]\n\n1. e4 e6 1-0', "f1"],
+      ['[Result "1-0"]\n\n1. e4 e6 1-0', "f2"],
+      ['[Result "1-0"]\n\n1. e4 c6 1-0', "c1"],
+      ['[Result "1-0"]\n\n1. e4 c6 1-0', "c2"],
+      ['[Result "1-0"]\n\n1. e4 Nf6 1-0', "a1"],
+    ];
+    for (const [pgn, id] of fixtures) addGame(pgn, "white", id, daysAgo(1));
+    addGame(ITALIAN_KNIGHTS, "white", "k1", daysAgo(1));
+    addGame(ITALIAN_KNIGHTS, "white", "k2", daysAgo(1));
+    addGame(ITALIAN_GIUOCO, "white", "g1", daysAgo(1));
+    const { white } = listPlayedOpenings(db, names, "30", clock);
+    expect(white.against.map((entry) => entry.opening)).toEqual([
+      "Caro-Kann Defense",
+      "French Defense",
+      "Alekhine Defense",
+      "Scandinavian Defense",
+    ]);
+    expect(white.mine[0]?.variations.map((row) => row.name)).toEqual([
+      "Two Knights Defense",
+      "Giuoco Piano",
+    ]);
+  });
+
+  it("takes the line from the most recent game when move orders differ", () => {
+    const nf3First = '[Result "1-0"]\n\n1. Nf3 Nc6 2. e4 e5 3. Bc4 Nf6 1-0';
+    // The newer game is stored first, so a rule that lets the last stored game win fails.
+    addGame(nf3First, "white", "newer", daysAgo(1));
+    addGame(ITALIAN_KNIGHTS, "white", "older", daysAgo(5));
+    const [italian] = listPlayedOpenings(db, names, "30", clock).white.mine;
+    expect(italian?.line).toBe("1.Nf3 Nc6 2.e4 e5 3.Bc4");
+    expect(italian?.variations[0]?.line).toBe("1.Nf3 Nc6 2.e4 e5 3.Bc4 Nf6");
   });
 });
