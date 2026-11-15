@@ -95,6 +95,23 @@ class FakeEngine implements Searcher {
   }
 }
 
+/** Holds every search until `open`, so another run can store the same position meanwhile. */
+class HeldEngine extends FakeEngine {
+  private open: () => void = () => {};
+  private readonly gate = new Promise<void>((resolve) => {
+    this.open = resolve;
+  });
+
+  override async search(request: SearchRequest): Promise<SearchResult> {
+    await this.gate;
+    return super.search(request);
+  }
+
+  release(): void {
+    this.open();
+  }
+}
+
 let tmp: string;
 let db: Database;
 beforeEach(() => {
@@ -302,6 +319,19 @@ describe("generateOpeningPuzzles: which positions are found", () => {
         reached_games: 2,
       });
     }
+  });
+
+  it("counts a game that reached a position twice as one game", async () => {
+    importGame(WHITE_ONE, "white", "w1");
+    // Back at 2...Nc6 a second time at ply 9, after the knights went home.
+    const shuffled = importGame(SHUFFLED_WHITE, "white", "shuffled");
+    grade(shuffled, 5, "best");
+    grade(shuffled, 9, "best");
+    await generateOpeningPuzzles(db, new FakeEngine());
+    expect(foundAt(fenAfter("e4", "e5", "Nf3", "Nc6"))).toMatchObject({
+      reached_games: 2,
+      best_games: 1,
+    });
   });
 
   it("never records the position before ply 1, whatever the number of games or the move played there", async () => {
@@ -570,6 +600,21 @@ describe("generateOpeningPuzzles: later runs", () => {
     expect(foundAt(position)).toMatchObject({ from_mistake: 1, from_repeat: 1, listed: 1 });
     expect(acceptedAt(position)).toEqual(legal.slice(0, 5));
     expect(puzzleAt(position)?.solution_uci).toBe(JSON.stringify([legal[0]]));
+  });
+
+  it("keeps the moves of the run that stored a position first when two runs overlap", async () => {
+    grade(importGame(WHITE_ONE, "white", "w1"), 9, "mistake");
+    const position = fenAfter("e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6");
+    // The slow run's five moves would leave the position off the list; the stored one move lists it.
+    const slow = new HeldEngine();
+    slow.below = [0, 1, 2, 3, 4];
+    const overtaken = generateOpeningPuzzles(db, slow);
+    await generateOpeningPuzzles(db, new FakeEngine());
+    slow.release();
+    await expect(overtaken).resolves.toMatchObject({ candidates: 1, searched: 1, listed: 1 });
+    expect(foundRows()).toHaveLength(1);
+    expect(acceptedAt(position)).toEqual(legalMoves(position).slice(0, 1));
+    expect(foundAt(position).listed).toBe(1);
   });
 
   it("keeps a stored position no rule finds any more, with its flags cleared, off the list", async () => {
