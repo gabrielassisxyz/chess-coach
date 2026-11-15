@@ -4,6 +4,7 @@ import type { PuzzleRatingWindow, ThemeStatsResponse } from "@chess-coach/shared
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Practice } from "../src/screens/Practice.js";
+import { motifLabel } from "../src/state/practice.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
   fetchThemeStatsFromServer,
@@ -291,6 +292,46 @@ describe("Improvement areas and Strengths pages", () => {
 
     fireEvent.click(within(periodGroup).getByRole("button", { name: "7 days" }));
     await waitFor(() => expect(fetchThemeStats).toHaveBeenCalledWith("7"));
+  });
+
+  it("names a theme the table does not hold from its key and trains that key", async () => {
+    const key = "someNewLichessTheme";
+    const server = serverApi(null);
+    const fetchThemeStats = vi.fn(async (days: PuzzleRatingWindow) =>
+      statsFixture({
+        days,
+        themes: [
+          {
+            theme: key,
+            played: 12,
+            first_try: 6,
+            rating_avg: 1300,
+            performance: 1300,
+            ranked: true,
+          },
+        ],
+        improvement_areas: [key],
+        strengths: [],
+        unranked: 0,
+      }),
+    );
+
+    render(<Practice server={server} {...baseHubProps} fetchThemeStats={fetchThemeStats} />);
+    openPracticePage("Improvement areas");
+    await waitFor(() => expect(fetchThemeStats).toHaveBeenCalledWith("30"));
+
+    const name = motifLabel(key);
+    expect(name).not.toBe("");
+    expect(name).not.toBe(key);
+    const row = (await screen.findByText(name)).closest("li") as HTMLElement;
+    expect(row.getAttribute("data-theme")).toBe(key);
+
+    fireEvent.click(within(row).getByRole("button", { name: "Train" }));
+    expect(server.send).toHaveBeenCalledWith({
+      type: "start_training",
+      mode: "puzzles",
+      motif: key,
+    });
   });
 
   it("sends start_training with mode puzzles and the row's theme when Train is pressed", async () => {
