@@ -10,9 +10,11 @@ import type { Clock } from "../clock.js";
 import { type CoachNotification, renderNotifications } from "../coach/notify.js";
 import { appendChatMessage, createCoachSession, listChatTail } from "../db/chat.js";
 import { type Database, openDatabase } from "../db/open.js";
+import { listPuzzles, recordPuzzleAttempt } from "../db/puzzles.js";
 import { getCard, insertCard, updateSchedule } from "../db/srs.js";
 import { GameService } from "../game/service.js";
 import { type Log, RecordingLog, silentLog } from "../log.js";
+import { computeThemeStats } from "../progress/theme-stats.js";
 import { importLichessPuzzles } from "../puzzles/lichess-import.js";
 import { currentPuzzleRating, setPuzzleRating } from "../puzzles/rating.js";
 import { ReviewDesk } from "../srs/review.js";
@@ -105,7 +107,19 @@ function addPuzzleCard(puzzleId: string | null, fen: string, expectedUci: string
   return (card as { id: number }).id;
 }
 
-function setup(clock: Clock = fixedClock, log: Log = silentLog) {
+// Deterministic source for the shuffles of a puzzle queue, so a run is the same on every test run.
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function setup(clock: Clock = fixedClock, log: Log = silentLog, shuffleRandom?: () => number) {
   const game = new GameService({ db, engine: new ScriptedEngine(["e7e5"]) });
   const session = createCoachSession(db, { promptVersion: "v" });
   const notifications = { sessionId: () => session.id };
@@ -114,7 +128,7 @@ function setup(clock: Clock = fixedClock, log: Log = silentLog) {
   const activity = new ActivityService({
     db,
     game,
-    training: { desk, notifications, clock, onNotification: flushed },
+    training: { desk, notifications, clock, onNotification: flushed, shuffleRandom },
     log,
   });
   const rows = () =>
@@ -312,6 +326,300 @@ describe("queue materialization", () => {
     });
     expect(state.legal_moves).toHaveLength(20);
     expect(state.exposure_id).toBe((state.item as { exposure_id: string }).exposure_id);
+  });
+
+  describe("an unthemed queue that leans on the improvement areas", () => {
+    const daysBeforeT0 = (days: number): string =>
+      new Date(T0.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+    let historyCount = 0;
+
+    // A rated puzzle at the student's rating, served under each theme it carries: `puzzles.themes`
+    // is what the unthemed sample and the statistics read, `puzzle_themes` what a themed draw reads.
+    function addThemed(id: string, themes: readonly string[]): void {
+      addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+      db.prepare("UPDATE puzzles SET themes = ? WHERE id = ?").run(themes.join(" "), id);
+      const insertTheme = db.prepare(
+        "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)",
+      );
+      for (const theme of themes) insertTheme.run(theme, 1200, id);
+    }
+
+    // `<pool>-00`, `<pool>-01`, ...; a pool with no theme is the unthemed sample. The ids tell the
+    // two kinds apart: a pool whose puzzles carry `opening` is never returned by the unthemed
+    // sample, so it can only have come from a themed draw.
+    function addPool(pool: string, count: number, themes: readonly string[] = []): void {
+      for (let i = 0; i < count; i++) {
+        const id = `${pool}-${String(i).padStart(2, "0")}`;
+        if (themes.length > 0) addThemed(id, themes);
+        else addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+      }
+    }
+
+    // Attempts on puzzles of the student's own that no draw can serve (popularity 0): they put a
+    // theme on the statistics without adding to any pool.
+    function addHistory(theme: string, played: number, firstTry: number, daysAgo = 1): void {
+      for (let i = 0; i < played; i++) {
+        const id = `history-${historyCount++}`;
+        const right = i < firstTry;
+        addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+        db.prepare("UPDATE puzzles SET themes = ?, popularity = 0 WHERE id = ?").run(theme, id);
+        recordPuzzleAttempt(db, {
+          puzzleId: id,
+          attemptedAt: daysBeforeT0(daysAgo),
+          solved: right,
+          answered: [],
+          failedPly: right ? null : 0,
+          firstTry: right,
+          tries: right ? 0 : 1,
+          gaveUp: !right,
+        });
+      }
+    }
+
+    // Each theme missed 8 times in 8, the fewest a theme needs to be ranked, against a theme solved
+    // first try every time, so the overall figure they are measured against sits well above them.
+    function listAsWeakDaysAgo(daysAgo: number, ...themes: string[]): void {
+      for (const theme of themes) addHistory(theme, 8, 0, daysAgo);
+      addHistory("hangingPiece", 16, 16, daysAgo);
+    }
+
+    const listAsWeak = (...themes: string[]): void => listAsWeakDaysAgo(1, ...themes);
+
+    const improvementAreas = (): string[] =>
+      [...computeThemeStats(db, "30", fixedClock).improvement_areas].sort();
+
+    const storedIds = (): string[] =>
+      (openRun()?.items ?? []).map((item) => (item as { id: string }).id);
+
+    const inPool = (ids: readonly string[], pool: string): string[] =>
+      ids.filter((id) => id.startsWith(`${pool}-`));
+
+    const withSeed = (seed: number) => setup(fixedClock, silentLog, seededRandom(seed));
+
+    // Solves the ten puzzles of the first batch and asks for the one after the last, which draws
+    // the second batch.
+    async function passTheTenth(
+      activity: ActivityService,
+      start: TrainingActivity,
+    ): Promise<TrainingActivity> {
+      let state = start;
+      for (let served = 0; served < 10; served++) {
+        const solved = training(await activity.trainingTry("a1a8", state.activity_id));
+        state = training(await activity.nextTrainingItem(solved.activity_id));
+      }
+      return state;
+    }
+
+    it("draws 3 of every batch of 10 from two listed themes, 2 for one and 1 for the other, and 7 from the unthemed sample", async () => {
+      addPool("deflection", 12, ["deflection", "opening"]);
+      addPool("pin", 12, ["pin", "opening"]);
+      addPool("plain", 40);
+      listAsWeak("deflection", "pin");
+      expect(improvementAreas()).toEqual(["deflection", "pin"]);
+      const perTheme = (ids: readonly string[]): number[] =>
+        [inPool(ids, "deflection").length, inPool(ids, "pin").length].sort((a, b) => a - b);
+      const { activity } = withSeed(1);
+      const start = training(await activity.startTraining({ mode: "puzzles" }));
+      const first = storedIds();
+      expect(first).toHaveLength(10);
+      expect(inPool(first, "plain")).toHaveLength(7);
+      expect(perTheme(first)).toEqual([1, 2]);
+      await passTheTenth(activity, start);
+      expect(improvementAreas()).toEqual(["deflection", "pin"]);
+      const second = storedIds().slice(10);
+      expect(second).toHaveLength(10);
+      expect(inPool(second, "plain")).toHaveLength(7);
+      expect(perTheme(second)).toEqual([1, 2]);
+    });
+
+    it("takes one puzzle from each of three listed themes", async () => {
+      for (const theme of ["deflection", "pin", "skewer"]) addPool(theme, 12, [theme, "opening"]);
+      addPool("plain", 40);
+      listAsWeak("deflection", "pin", "skewer");
+      expect(improvementAreas()).toEqual(["deflection", "pin", "skewer"]);
+      const { activity } = withSeed(2);
+      await activity.startTraining({ mode: "puzzles" });
+      const ids = storedIds();
+      expect(inPool(ids, "deflection")).toHaveLength(1);
+      expect(inPool(ids, "pin")).toHaveLength(1);
+      expect(inPool(ids, "skewer")).toHaveLength(1);
+      expect(inPool(ids, "plain")).toHaveLength(7);
+    });
+
+    it("starts the turns at a theme drawn with the shuffle source, so either theme can have the extra place", async () => {
+      addPool("deflection", 12, ["deflection", "opening"]);
+      addPool("pin", 12, ["pin", "opening"]);
+      addPool("plain", 40);
+      listAsWeak("deflection", "pin");
+      // The first value of seed 7 is below one half and that of seed 1 above it.
+      const placesOf = async (seed: number): Promise<number[]> => {
+        const { activity } = withSeed(seed);
+        await activity.startTraining({ mode: "puzzles" });
+        const ids = storedIds();
+        await activity.endTraining();
+        return [inPool(ids, "deflection").length, inPool(ids, "pin").length];
+      };
+      expect(await placesOf(7)).toEqual([2, 1]);
+      expect(await placesOf(1)).toEqual([1, 2]);
+    });
+
+    it("holds none of those puzzles when no theme is listed as an improvement area", async () => {
+      addPool("deflection", 12, ["deflection", "opening"]);
+      addPool("plain", 40);
+      // Missed every time, but 7 attempts are too few for a theme to be ranked.
+      addHistory("deflection", 7, 0);
+      addHistory("hangingPiece", 16, 16);
+      expect(improvementAreas()).toEqual([]);
+      const { activity } = withSeed(1);
+      const start = training(await activity.startTraining({ mode: "puzzles" }));
+      expect(inPool(storedIds(), "plain")).toHaveLength(10);
+      await passTheTenth(activity, start);
+      expect(storedIds()).toHaveLength(20);
+      expect(inPool(storedIds(), "plain")).toHaveLength(20);
+    });
+
+    it("reads the attempts of the last 30 days: older ones list nothing", async () => {
+      addPool("pin", 12, ["pin", "opening"]);
+      addPool("plain", 40);
+      listAsWeakDaysAgo(40, "pin");
+      expect(improvementAreas()).toEqual([]);
+      const { activity } = withSeed(1);
+      await activity.startTraining({ mode: "puzzles" });
+      expect(inPool(storedIds(), "plain")).toHaveLength(10);
+      await activity.endTraining();
+      listAsWeakDaysAgo(20, "pin");
+      expect(improvementAreas()).toEqual(["pin"]);
+      await activity.startTraining({ mode: "puzzles" });
+      expect(inPool(storedIds(), "pin")).toHaveLength(3);
+    });
+
+    it("builds a batch exactly as before when nothing is listed", async () => {
+      addPool("plain", 40);
+      const asBefore = listPuzzles(db, { ratingAround: 1200, limit: 10 }, seededRandom(3));
+      const { activity } = withSeed(3);
+      await activity.startTraining({ mode: "puzzles" });
+      expect(storedIds()).toHaveLength(10);
+      expect(storedIds()).toEqual(asBefore.puzzles.map((puzzle) => puzzle.id));
+    });
+
+    it("draws from a theme that entered the list after the run started, in the next batch", async () => {
+      addPool("skewer", 12, ["skewer", "opening"]);
+      addPool("plain", 40);
+      const { activity } = withSeed(3);
+      const start = training(await activity.startTraining({ mode: "puzzles" }));
+      expect(inPool(storedIds(), "plain")).toHaveLength(10);
+      listAsWeak("skewer");
+      expect(improvementAreas()).toEqual(["skewer"]);
+      await passTheTenth(activity, start);
+      expect(improvementAreas()).toEqual(["skewer"]);
+      const second = storedIds().slice(10);
+      expect(second).toHaveLength(10);
+      expect(inPool(second, "skewer")).toHaveLength(3);
+      expect(inPool(second, "plain")).toHaveLength(7);
+    });
+
+    it.each([1, 2, 3, 4, 5, 6])(
+      "serves no puzzle twice in two batches when one puzzle carries both listed themes (seed %i)",
+      async (seed) => {
+        // The only puzzle of either theme, and also part of the unthemed sample.
+        addThemed("both-00", ["deflection", "pin"]);
+        addPool("plain", 25);
+        listAsWeak("deflection", "pin");
+        expect(improvementAreas()).toEqual(["deflection", "pin"]);
+        const { activity } = withSeed(seed);
+        const start = training(await activity.startTraining({ mode: "puzzles" }));
+        expect(storedIds()).toContain("both-00");
+        await passTheTenth(activity, start);
+        const ids = storedIds();
+        expect(ids).toHaveLength(20);
+        expect(new Set(ids).size).toBe(20);
+      },
+    );
+
+    // The listed theme `skewer` has no puzzle anywhere; its places go to the unthemed sample.
+    const withMissingTheme: [string, string[], [number, number]][] = [
+      ["one of two listed themes", ["deflection", "skewer"], [1, 2]],
+      ["the only listed theme", ["skewer"], [0, 0]],
+    ];
+    it.each(withMissingTheme)(
+      "still holds 10 puzzles when %s has no puzzle in the database",
+      async (_name, listed, [fewest, most]) => {
+        addPool("deflection", 12, ["deflection", "opening"]);
+        addPool("plain", 40);
+        listAsWeak(...listed);
+        expect(improvementAreas()).toEqual([...listed].sort());
+        const { activity } = withSeed(1);
+        await activity.startTraining({ mode: "puzzles" });
+        const ids = storedIds();
+        const deflections = inPool(ids, "deflection").length;
+        expect(ids).toHaveLength(10);
+        expect(deflections).toBeGreaterThanOrEqual(fewest);
+        expect(deflections).toBeLessThanOrEqual(most);
+        expect(inPool(ids, "plain")).toHaveLength(10 - deflections);
+      },
+    );
+
+    it("skips the opening phase when it is the only listed theme", async () => {
+      addPool("opening", 12, ["opening"]);
+      addPool("plain", 40);
+      listAsWeak("opening");
+      expect(improvementAreas()).toEqual(["opening"]);
+      const { activity } = withSeed(1);
+      const start = training(await activity.startTraining({ mode: "puzzles" }));
+      expect(inPool(storedIds(), "plain")).toHaveLength(10);
+      await passTheTenth(activity, start);
+      expect(inPool(storedIds(), "opening")).toEqual([]);
+      expect(storedIds()).toHaveLength(20);
+    });
+
+    it("puts the boosted puzzles at different positions in runs seeded differently", async () => {
+      addPool("deflection", 12, ["deflection", "opening"]);
+      addPool("pin", 12, ["pin", "opening"]);
+      addPool("plain", 40);
+      listAsWeak("deflection", "pin");
+      const positionsOf = async (seed: number): Promise<number[]> => {
+        const { activity } = withSeed(seed);
+        await activity.startTraining({ mode: "puzzles" });
+        const ids = storedIds();
+        await activity.endTraining();
+        return ids.flatMap((id, position) => (id.startsWith("plain-") ? [] : [position]));
+      };
+      const first = await positionsOf(1);
+      const second = await positionsOf(2);
+      expect(first).toHaveLength(3);
+      expect(second).toHaveLength(3);
+      expect(first).not.toEqual(second);
+      expect(await positionsOf(1)).toEqual(first);
+    });
+
+    it("keeps the run unthemed: its motif is NULL and the activity shows no theme", async () => {
+      addPool("deflection", 12, ["deflection", "opening"]);
+      addPool("plain", 40);
+      listAsWeak("deflection");
+      const { activity } = withSeed(4);
+      const start = training(await activity.startTraining({ mode: "puzzles" }));
+      expect(inPool(storedIds(), "deflection")).toHaveLength(3);
+      expect(start.run_motif).toBeNull();
+      expect(db.prepare("SELECT motif FROM training_runs").all()).toEqual([{ motif: null }]);
+      const eleventh = await passTheTenth(activity, start);
+      expect(inPool(storedIds().slice(10), "deflection")).toHaveLength(3);
+      expect(eleventh.run_motif).toBeNull();
+      expect(db.prepare("SELECT motif FROM training_runs").all()).toEqual([{ motif: null }]);
+    });
+
+    it("builds a queue of a chosen motif as before, from the themed draw alone", async () => {
+      addPool("fork", 25, ["fork"]);
+      addPool("deflection", 12, ["deflection", "opening"]);
+      listAsWeak("deflection");
+      expect(improvementAreas()).toEqual(["deflection"]);
+      const { activity } = withSeed(5);
+      const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+      expect(start.run_motif).toBe("fork");
+      expect(inPool(storedIds(), "fork")).toHaveLength(10);
+      await passTheTenth(activity, start);
+      expect(storedIds()).toHaveLength(20);
+      expect(inPool(storedIds(), "fork")).toHaveLength(20);
+    });
   });
 });
 
