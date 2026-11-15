@@ -3157,6 +3157,16 @@ describe("a drill of the positions from games narrowed to one opening", () => {
     expect(runCount()).toBe(0);
   });
 
+  it("refuses a prefix of a family that is not the family, and writes no run", async () => {
+    fillThree();
+    const { activity } = setup();
+    expect(
+      await code(activity.startTraining({ mode: "found", scope: "all", opening: "Italian" })),
+    ).toBe("empty_queue");
+    expect(activity.current()).toBeNull();
+    expect(runCount()).toBe(0);
+  });
+
   it("treats an opening with a quote as a literal value, not as SQL", async () => {
     fillThree();
     const { activity } = setup();

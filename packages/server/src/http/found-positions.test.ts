@@ -514,6 +514,34 @@ describe("GET /api/found-positions narrowed to one opening", () => {
     expect(drillQueue("all", { opening: "French Defense" })).toEqual([]);
   });
 
+  it("lists nothing for a prefix of a family that is not the family", async () => {
+    fillThree();
+    const answer = await list("?opening=Italian");
+    expect(answer.positions).toEqual([]);
+    expect(answer.counts).toMatchObject({ total: 0, all: 0 });
+  });
+
+  it("counts a left-out position in left_out only when its name matches the filter", async () => {
+    fillThree();
+    addFound("own:out-italian", {
+      openingName: "Italian Game: Evans Gambit",
+      listed: false,
+      keptPuzzle: true,
+    });
+    addFound("own:out-scandi", {
+      openingName: "Scandinavian Defense",
+      listed: false,
+      keptPuzzle: true,
+    });
+    expect((await list("?opening=Italian%20Game")).counts.left_out).toBe(1);
+    expect((await list("?opening=Italian%20Game%3A%20Evans%20Gambit")).counts.left_out).toBe(1);
+    expect(
+      (await list("?opening=Italian%20Game%3A%20Two%20Knights%20Defense")).counts.left_out,
+    ).toBe(0);
+    expect((await list("?opening=French%20Defense")).counts.left_out).toBe(0);
+    expect((await list()).counts.left_out).toBe(2);
+  });
+
   it("treats an opening with a quote as a literal value, not as SQL", async () => {
     fillThree();
     const answer = await list("?opening=%27%20OR%20%271%27%3D%271");
