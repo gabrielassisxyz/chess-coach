@@ -1,4 +1,4 @@
-import type { HealthResponse } from "@chess-coach/shared";
+import type { AddableOpeningsResponse, HealthResponse } from "@chess-coach/shared";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Database } from "./db/open.js";
@@ -7,7 +7,11 @@ import { registerClientLogRoute } from "./http/client-log.js";
 import { type ConnectionRoutesOptions, registerConnectionRoutes } from "./http/connections.js";
 import { registerGameRoutes } from "./http/games.js";
 import { type ImportRoutesOptions, registerImportRoutes } from "./http/import.js";
-import { registerOpeningDrillRoutes, registerOpeningRoutes } from "./http/openings.js";
+import {
+  registerAddableOpeningsRoute,
+  registerOpeningDrillRoutes,
+  registerOpeningRoutes,
+} from "./http/openings.js";
 import { registerProgressRoutes } from "./http/progress.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
 import { registerRepertoireRoutes } from "./http/repertoires.js";
@@ -60,6 +64,11 @@ export interface AppOptions {
     rebuild?: boolean,
     points?: RepertoirePoints,
   ) => Promise<RepertoireResult>;
+  /**
+   * Lists the openings Black can leave the 1.e4 path with; without it the route answers from
+   * the database alone, with null shares.
+   */
+  listAddableOpenings?: () => Promise<AddableOpeningsResponse>;
   /** Writes the idea of each stored White move through the model; only asked for by name, never at boot. */
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>;
   log?: Log;
@@ -94,6 +103,10 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   });
 
   if (options.db) {
+    registerAddableOpeningsRoute(app, options.db, {
+      names: options.openingNames ?? NO_OPENING_NAMES,
+      ...(options.listAddableOpenings ? { list: options.listAddableOpenings } : {}),
+    });
     registerCardRoutes(app, options.db);
     registerGameRoutes(app, options.db, options.openingNames ?? NO_OPENING_NAMES);
     registerOpeningDrillRoutes(app, options.db);

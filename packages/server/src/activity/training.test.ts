@@ -151,6 +151,85 @@ describe("queue materialization", () => {
     );
     expect(await code(activity.startTraining({ mode: "srs" }))).toBe("empty_queue");
     expect(activity.current()).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 0 });
+  });
+
+  it.each(["mateIn2", "deflection", "rookEndgame", "enPassant"])(
+    "serves %s from puzzle_themes drawn around the student's rating",
+    async (theme) => {
+      const insertTheme = db.prepare(
+        "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)",
+      );
+      for (let i = 0; i < 5; i++) {
+        addPuzzle(`near-${i}`, "tactics", BACK_RANK, ["a1a8"], 1150);
+        insertTheme.run(theme, 1150, `near-${i}`);
+        addPuzzle(`far-${i}`, "tactics", BACK_RANK, ["a1a8"], 1800);
+        insertTheme.run(theme, 1800, `far-${i}`);
+      }
+      addPuzzle("other", "fork", BACK_RANK, ["a1a8"], 1200);
+      insertTheme.run("fork", 1200, "other");
+      const { activity } = setup();
+      const near = training(
+        await activity.startTraining({ mode: "puzzles", motif: theme, size: 5 }),
+      );
+      expect(near.run_motif).toBe(theme);
+      expect(
+        (findOpenTrainingRun(db)?.items ?? []).map((item) => (item as { id: string }).id).sort(),
+      ).toEqual(["near-0", "near-1", "near-2", "near-3", "near-4"]);
+      await activity.endTraining();
+      setPuzzleRating(db, 1800, T0.toISOString());
+      await activity.startTraining({ mode: "puzzles", motif: theme, size: 5 });
+      expect(
+        (findOpenTrainingRun(db)?.items ?? []).map((item) => (item as { id: string }).id).sort(),
+      ).toEqual(["far-0", "far-1", "far-2", "far-3", "far-4"]);
+    },
+  );
+
+  it("keeps fixed choices on their themed draw and plain listing", async () => {
+    const insertTheme = db.prepare(
+      "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)",
+    );
+    for (let i = 0; i < 5; i++) {
+      addPuzzle(`fork-near-${i}`, "fork", BACK_RANK, ["a1a8"], 1180);
+      insertTheme.run("fork", 1180, `fork-near-${i}`);
+      addPuzzle(`fork-far-${i}`, "fork", BACK_RANK, ["a1a8"], 2200);
+      insertTheme.run("fork", 2200, `fork-far-${i}`);
+    }
+    addPuzzle("trap-only", "opening_trap", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork", size: 5 });
+    const forkIds = (findOpenTrainingRun(db)?.items ?? [])
+      .map((item) => (item as { id: string }).id)
+      .sort();
+    expect(forkIds).toEqual([
+      "fork-near-0",
+      "fork-near-1",
+      "fork-near-2",
+      "fork-near-3",
+      "fork-near-4",
+    ]);
+    await activity.endTraining();
+    await activity.startTraining({ mode: "puzzles", motif: "opening_trap" });
+    const trapIds = (findOpenTrainingRun(db)?.items ?? []).map(
+      (item) => (item as { id: string }).id,
+    );
+    expect(trapIds).toEqual(["trap-only"]);
+  });
+
+  it("binds unknown motifs safely and writes no run on refusal", async () => {
+    addPuzzle("m1", "tactics", BACK_RANK, ["a1a8"], 1200);
+    db.prepare("INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)").run(
+      "mateIn2",
+      1200,
+      "m1",
+    );
+    const { activity } = setup();
+    for (const bad of ["nope", "nope'", "' OR '1'='1", "mateIn2' OR '1'='1"]) {
+      expect(await code(activity.startTraining({ mode: "puzzles", motif: bad }))).toBe(
+        "empty_queue",
+      );
+    }
+    expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 0 });
   });
 
   it("serves only the chosen colour in openings mode and refuses an empty inventory", async () => {
@@ -1259,7 +1338,7 @@ describe("the puzzles a queue draws from", () => {
     expect(queueIds()).toEqual(numbered("hanging", 5));
   });
 
-  it("refuses a theme outside the fixed list and the stored motifs", async () => {
+  it("accepts a theme outside the fixed list when puzzle_themes holds it, and refuses one that is nowhere", async () => {
     for (const id of numbered("mated", 3)) {
       addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
       db.prepare("INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)").run(
@@ -1269,12 +1348,14 @@ describe("the puzzles a queue draws from", () => {
       );
     }
     const { activity } = setup();
-    expect(await code(activity.startTraining({ mode: "puzzles", motif: "mateIn1" }))).toBe(
-      "empty_queue",
-    );
+    const state = training(await activity.startTraining({ mode: "puzzles", motif: "mateIn1" }));
+    expect(state.run_motif).toBe("mateIn1");
+    expect(queueIds()).toEqual(numbered("mated", 3));
+    await activity.endTraining();
     expect(await code(activity.startTraining({ mode: "puzzles", motif: "nope" }))).toBe(
       "empty_queue",
     );
+    expect(findOpenTrainingRun(db)).toBeNull();
   });
 
   it("samples a theme around the student's rating", async () => {

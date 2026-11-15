@@ -287,6 +287,13 @@ const THEME_OF_MOTIF: Readonly<Record<string, string>> = {
   checkmate: "mate",
 };
 
+function hasStoredMotifOrTheme(db: Database, motif: string): boolean {
+  return Boolean(
+    db.prepare("SELECT 1 FROM puzzles WHERE motif = ? LIMIT 1").get(motif) ??
+      db.prepare("SELECT 1 FROM puzzle_themes WHERE theme = ? LIMIT 1").get(motif),
+  );
+}
+
 export class TrainingRun implements PracticeRunPort {
   private position = 0;
   private solved = 0;
@@ -413,10 +420,9 @@ export class TrainingRun implements PracticeRunPort {
       puzzles = listed({ motif: `opening-${input.color}`, openingNames, limit });
     } else {
       if (input.motif !== undefined && !isFixedPracticeMotif(input.motif)) {
-        const stored = deps.db
-          .prepare("SELECT 1 FROM puzzles WHERE motif = ? LIMIT 1")
-          .get(input.motif);
-        if (!stored) throw new ActivityError("empty_queue", "no puzzle matches");
+        if (!hasStoredMotifOrTheme(deps.db, input.motif)) {
+          throw new ActivityError("empty_queue", "no puzzle matches");
+        }
       }
       const ratingAround = currentPuzzleRating(deps.db);
       const theme = input.motif && (THEME_OF_MOTIF[input.motif] ?? input.motif);

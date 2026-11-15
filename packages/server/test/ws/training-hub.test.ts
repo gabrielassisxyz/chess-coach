@@ -221,6 +221,50 @@ describe("training over the socket", () => {
     socket.close();
   });
 
+  it("starts a puzzle queue with any Lichess theme stored in puzzle_themes", async () => {
+    const db = seededDatabase();
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, difficulty_rating)
+       VALUES ('lichess-db:m2', 'lichess-db', 'tactics', 'intermediate', ?, '["a1a8"]', '["Ra8#"]', 'why', 1200)`,
+    ).run(BACK_RANK);
+    db.prepare("INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)").run(
+      "mateIn2",
+      1200,
+      "lichess-db:m2",
+    );
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c1",
+        mode: "puzzles",
+        motif: "mateIn2",
+      }),
+    );
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      type: "training",
+      mode: "puzzles",
+      status: "prompt",
+      item: { kind: "puzzle", puzzle_id: "lichess-db:m2", motif: "tactics", queue_length: 1 },
+    });
+    expect(ServerEventSchema.parse(await next("activity"))).toMatchObject({
+      type: "activity",
+      state: {
+        kind: "training",
+        mode: "puzzles",
+        run_motif: "mateIn2",
+        item: { kind: "puzzle", puzzle_id: "lichess-db:m2" },
+      },
+    });
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c2", mode: "puzzles", motif: "nope" }),
+    );
+    expect(await next("error")).toMatchObject({ code: "empty_queue", command_id: "c2" });
+    socket.close();
+  });
+
   it("routes the opening family to the drill and refuses an unknown one with unknown_opening", async () => {
     const db = seededDatabase();
     for (const [id, name] of [
