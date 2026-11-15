@@ -59,4 +59,16 @@ describe("GET /api/progress", () => {
     await app.close();
     expect(updated.puzzle_rating).toBe(1337);
   });
+
+  it("is rejected by the schema without an integer puzzle rating", async () => {
+    const app = buildApp({ db });
+    const answer = (await app.inject({ method: "GET", url: "/api/progress" })).json();
+    await app.close();
+    const { puzzle_rating: _dropped, ...withoutRating } = answer;
+    expect(ProgressResponseSchema.safeParse(answer).success).toBe(true);
+    expect(ProgressResponseSchema.safeParse(withoutRating).success).toBe(false);
+    expect(ProgressResponseSchema.safeParse({ ...answer, puzzle_rating: 1200.5 }).success).toBe(
+      false,
+    );
+  });
 });
