@@ -1,6 +1,4 @@
 import type {
-  ActivityState,
-  DemoActivity,
   OpeningDrillColor,
   RepertoireLevel,
   RepertoireScope,
@@ -30,8 +28,10 @@ import { type FetchOpeningDrills, fetchOpeningDrillsFromServer } from "../state/
 import {
   DEFAULT_DRILL_SIZE,
   type DrillSize,
+  demoOverTraining,
   type FetchMotifs,
   fetchMotifsFromServer,
+  isPracticeHub,
   OFFLINE_START_TEXT,
   startFailureText,
   type TrainingView,
@@ -273,11 +273,6 @@ function useAutoNext(
   }, [key, enabled, hold]);
 }
 
-function demoOverTraining(activity: ActivityState | null): DemoActivity | null {
-  if (activity?.kind === "demo" && activity.returns_to === "training") return activity;
-  return null;
-}
-
 // The puzzle column beside the board, the board with its bar, and the settings under it.
 function Item({
   server,
@@ -458,7 +453,7 @@ export function Practice({
     );
   }
 
-  if (!sessionTraining) {
+  if (isPracticeHub(server.activity)) {
     return (
       <section className="screen screen--wide practice" aria-label="Practice">
         <Hub

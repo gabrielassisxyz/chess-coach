@@ -41,6 +41,17 @@ const italianNames = parseOpeningTable(
   `eco\tname\tpgn\tuci\tepd\nC50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${positionKey(AFTER_ITALIAN)}\n`,
 );
 
+// A name above the Italian on the same line, as the real table has: the first name a line meets
+// and the deepest one differ here, which a table with one entry cannot tell apart.
+const kingsPawnThenItalianNames = parseOpeningTable(
+  [
+    "eco\tname\tpgn\tuci\tepd",
+    `C20\tKing's Pawn Game\t1. e4 e5\te2e4\t${positionKey(AFTER_E4_E5)}`,
+    `C50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${positionKey(AFTER_ITALIAN)}`,
+    "",
+  ].join("\n"),
+);
+
 class ItalianPathExplorer implements ExplorerFetcher {
   private readonly replies = new Map([
     [positionKey(fenAfter("e4")), "e5"],
@@ -57,6 +68,16 @@ class ItalianPathExplorer implements ExplorerFetcher {
       black: 500,
       moves: [{ san, white: 500, draws: 0, black: 500 }],
     });
+  }
+}
+
+/** Notes the rating group each request asks for, which the shared fake leaves out of its calls. */
+class RatingRecordingExplorer extends FakeExplorer {
+  readonly ratings: Array<string | undefined> = [];
+
+  override async fetch(fen: string, ratings?: string): Promise<string> {
+    this.ratings.push(ratings);
+    return super.fetch(fen);
   }
 }
 
@@ -159,6 +180,34 @@ describe("generateExplorerPuzzles", () => {
       },
     ]);
   });
+
+  it("names a drill after the deepest named position on its line, not the first", async () => {
+    addGame(WHITE_TWO, "white", "italian");
+    await generateExplorerPuzzles(
+      db,
+      engine,
+      new ItalianPathExplorer(),
+      cacheDir,
+      clock,
+      { color: "white", repertoireTurns: 3, maxPly: 7 },
+      kingsPawnThenItalianNames,
+    );
+    expect(rows().map((row) => [row.fen, row.opening_name])).toEqual([
+      [fenAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"), "Italian Game"],
+    ]);
+  });
+
+  it("asks the explorer for the 0-1199 group, ratings 0,1000, on every request", async () => {
+    seedWhite();
+    const recording = new RatingRecordingExplorer(clock);
+    await generateExplorerPuzzles(db, engine, recording, cacheDir, clock, {
+      color: "white",
+      repertoireTurns: 1,
+      maxPly: 4,
+    });
+    expect(recording.ratings).toEqual(["0,1000", "0,1000", "0,1000"]);
+  });
+
   it("expands the student's first move into the replies played at the band", async () => {
     seedWhite();
     const result = await run({ color: "white" });
