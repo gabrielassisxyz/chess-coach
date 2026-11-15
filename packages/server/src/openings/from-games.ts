@@ -168,7 +168,9 @@ function collectVisits(db: Database, names?: OpeningNames): Map<string, Position
 }
 
 // The opponent's move left a stored unit when the walk ended on a Black move before the variation
-// started, or on a Black reply the unit lacks. A Black game has no unit to leave.
+// started, or on a Black reply the unit lacks. A Black game has no unit to leave. A walk that ended
+// on the student's own move needs no check of the ply here: it leaves Black to move, a position no
+// White game visits.
 function readDepartureIds(db: Database): Set<string> {
   const rows = db
     .prepare(
@@ -176,9 +178,7 @@ function readDepartureIds(db: Database): Set<string> {
        JOIN games g ON g.id = r.game_id
        JOIN moves m ON m.game_id = r.game_id AND m.ply = r.left_ply
        WHERE g.player_color = 'white' AND g.grading = 'done' AND g.finished_at IS NOT NULL
-         AND r.left_ply <= ?
-         AND ((r.outcome = 'not_reached' AND r.left_ply % 2 = 0)
-           OR r.outcome IN ('reply_added', 'reply_not_stored'))`,
+         AND r.left_ply <= ? AND r.outcome IN ('not_reached', 'reply_added', 'reply_not_stored')`,
     )
     .all(DEPARTURE_LAST_PLY) as Array<{ fen_after: string }>;
   return new Set(rows.map((row) => idOfFen(row.fen_after)));
