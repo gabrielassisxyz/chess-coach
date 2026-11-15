@@ -29,6 +29,17 @@ import { registerOpeningDrillRoutes, registerPlayedOpeningsRoute } from "./openi
 
 const db = () => openDatabase(mkdtempSync(join(tmpdir(), "opening-route-")));
 
+// One run of the own-games generator, every count different, so a field the route drops shows.
+const OWN_RUN = {
+  candidates: 12,
+  listed: 9,
+  fromMistake: 7,
+  fromRepeat: 3,
+  fromDeparture: 2,
+  searched: 5,
+  created: 4,
+};
+
 describe("the openings log", () => {
   it("logs a run with its counts, and a failure with its stack", async () => {
     const log = new RecordingLog();
@@ -38,7 +49,7 @@ describe("the openings log", () => {
       log,
       generateOpenings: async () => {
         if (fail) throw new Error("engine fault");
-        return { positions: 12, created: 9, updated: 3 };
+        return OWN_RUN;
       },
     });
     await app.inject({ method: "POST", url: "/api/openings/generate" });
@@ -47,7 +58,7 @@ describe("the openings log", () => {
     await app.close();
     expect(log.named("openings.generate")[0]?.fields).toMatchObject({
       sources: ["own"],
-      result: { positions: 12, created: 9, updated: 3 },
+      result: OWN_RUN,
     });
     expect(log.named("openings.generate_failed")[0]).toMatchObject({
       level: "error",
@@ -63,13 +74,13 @@ describe("POST /api/openings/generate", () => {
       db: db(),
       generateOpenings: async () => {
         calls += 1;
-        return { positions: 12, created: 9, updated: 3 };
+        return OWN_RUN;
       },
     });
     const response = await app.inject({ method: "POST", url: "/api/openings/generate" });
     await app.close();
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ positions: 12, created: 9, updated: 3 });
+    expect(response.json()).toEqual(OWN_RUN);
     expect(calls).toBe(1);
   });
 
@@ -94,7 +105,7 @@ describe("POST /api/openings/generate", () => {
   });
 
   describe("sources", () => {
-    const own = { positions: 1, created: 1, updated: 0 };
+    const own = OWN_RUN;
     const explorer = {
       positions: 4,
       created: 2,
@@ -1072,6 +1083,8 @@ describe("GET /api/openings/drills", () => {
       if (gameId === null) throw new Error("fixture game was not imported");
       setGrading(store, gameId, "done");
     }
+    // Every student move an inaccuracy, so the position before each one from move 2 on is a drill.
+    store.prepare("UPDATE moves SET classification = 'inaccuracy' WHERE is_player = 1").run();
     await generateOpeningPuzzles(store, new FirstTwoMovesSearcher(), names);
     const italian = store
       .prepare("SELECT id FROM puzzles WHERE opening_name LIKE 'Italian Game%' ORDER BY id")
@@ -1099,10 +1112,10 @@ describe("GET /api/openings/drills", () => {
           first_try_30d: 0,
           repertoire_id: null,
         },
-        // The start and the two moves shared by both games are named by neither opening.
+        // The two positions both games reached are named by neither opening.
         {
           opening: UNNAMED_OPENING,
-          positions: 3,
+          positions: 2,
           attempts_30d: 0,
           first_try_30d: 0,
           repertoire_id: null,

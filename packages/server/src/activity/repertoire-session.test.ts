@@ -2338,3 +2338,127 @@ describe("a drill over the units found in games", () => {
     }
   });
 });
+
+describe("pinning the line drill rules that stayed green under mutation", () => {
+  it("keeps a new move's answer and first pass flag after a wrong try on its first pass", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(SETUP_ROWS, () => false);
+    const service = boot();
+    let state = await start(service, id, "recommended");
+    expect(drillOf(state)).toMatchObject({ first_pass: true, answer: { san: "c3" } });
+
+    state = await play(service, state, "d3");
+    expect(state.input_enabled).toBe(true);
+    expect(state.last_try).toMatchObject({ san: "d3", correct: false });
+    expect(drillOf(state)).toMatchObject({ first_pass: true, answer: { san: "c3" } });
+
+    state = await play(service, state, "c3");
+    expect(state.input_enabled).toBe(false);
+    expect(state.status).toBe("failed");
+    expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null });
+
+    state = await next(service, state);
+    expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null });
+  });
+
+  it("reports the scope the drill was started with for recommended, due and all", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS);
+    const service = boot();
+    for (const scope of ["recommended", "due", "all"] as const) {
+      expect(drillOf(await start(service, id, scope)).scope).toBe(scope);
+    }
+  });
+
+  it("names the opening of the move asked now across two moves with different names", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(
+      ITALIAN_ROWS,
+      (lineText, san) => san === "e4" || (lineText === "e4 e5 Nf3 Nc6 Bc4 Bc5" && san === "c3"),
+    );
+    const service = boot();
+    let state = await start(service, id, "due");
+    expect(drillOf(state).opening_name).toBe("King's Pawn Game");
+
+    state = await play(service, state, "e4");
+    expect(lineSan(state)).toEqual(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]);
+    expect(drillOf(state).opening_name).toBe("Italian Game");
+  });
+
+  it("serves no new move in any scope once six cards were introduced with two sibling groups new", async () => {
+    const id = addVariation("Paced", PACED_ROWS);
+    const hourAgo = new Date(T0.getTime() - HOUR_MS).toISOString();
+    const stableRecent = { intervalHours: STABLE_HOURS, introducedAt: hourAgo };
+    for (const [lineText, san] of [
+      ["", "e4"],
+      ["e4 e5", "Nf3"],
+      ["e4 e5 Nf3 Nc6", "Bc4"],
+      ["e4 e5 Nf3 Nc6 Bc4 Bc5", "c3"],
+      ["e4 e5 Nf3 Nc6 Bc4 Bc5 c3 d6", "d4"],
+    ] as [string, string][]) {
+      addCard(lineText, san, FUTURE, 2, stableRecent);
+    }
+    addCard("d4 d5", "c4", FUTURE, 2, stableRecent);
+    expect(introducedToday()).toBe(6);
+
+    expect(servedBy(id, "all")).not.toContain("Nf6 d3");
+    expect(servedBy(id, "all")).not.toContain("Nf6 d4");
+    expect(servedBy(id, "due")).toEqual([]);
+    expect(servedBy(id, "recommended")).toEqual([]);
+    expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday())).toEqual(
+      { recommended: 0, due: 0, all: 5 },
+    );
+
+    const service = boot();
+    for (const scope of ["recommended", "due"] as const) {
+      await expect(start(service, id, scope)).rejects.toMatchObject({ code: "empty_queue" });
+    }
+    expect(drillOf(await start(service, id, "all")).moves_left).toBe(5);
+  });
+
+  it("asks the move the pass's line plays where two variations part in one position", async () => {
+    const d4Rows: FixtureRow[] = [
+      ...SETUP_ROWS,
+      [BC4_LINE, "Bc5", 0.6],
+      [`${BC4_LINE} Bc5`, "c3", 0.6],
+      [`${BC4_LINE} Bc5 c3`, "Nf6", 0.3],
+      [`${BC4_LINE} Bc5 c3 Nf6`, "d4", 0.5],
+    ];
+    const d3Rows: FixtureRow[] = [
+      ...SETUP_ROWS,
+      [BC4_LINE, "Bc5", 0.6],
+      [`${BC4_LINE} Bc5`, "d3", 0.4],
+    ];
+    const classical = addVariation("ClassicalD4", d4Rows);
+    addVariation("PianissimoD3", d3Rows);
+    addCards(SETUP_ROWS, () => false);
+    addCard(`${BC4_LINE} Bc5`, "c3", FUTURE, 2, { intervalHours: STABLE_HOURS });
+    addCard(`${BC4_LINE} Bc5 c3 Nf6`, "d4", PAST);
+    addCard(`${BC4_LINE} Bc5`, "d3", PAST);
+
+    const service = boot();
+    let state = await startAt(service, classical, "due", "group");
+    expect(lineSan(state)).toEqual(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"]);
+    expect(drillOf(state).moves_left).toBe(2);
+
+    state = await play(service, state, "d3");
+    expect(state.last_try).toMatchObject({ san: "d3", correct: false });
+    expect(state.input_enabled).toBe(true);
+    state = await play(service, state, "d4");
+    expect(state.last_try).toMatchObject({ san: "d4", correct: true });
+  });
+
+  it("refuses ask_coach_about_item during a drill with not_in_training and no puzzle result", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    const state = await start(service, id, "due");
+    expect(await code(service.trainingAskCoach(state.activity_id))).toBe("not_in_training");
+    const notes = (
+      db.prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification'").all() as {
+        content_json: string;
+      }[]
+    ).map((row) => JSON.parse(row.content_json));
+    expect(notes.filter((note) => note.type === "puzzle_result")).toHaveLength(0);
+  });
+});

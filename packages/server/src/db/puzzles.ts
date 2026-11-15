@@ -537,17 +537,3 @@ export function insertGeneratedPuzzle(db: Database, puzzle: GeneratedPuzzle): bo
     );
   return info.changes === 1;
 }
-
-// The row keeps its id, so the attempts that point at it survive a refresh.
-export function refreshGeneratedPuzzle(
-  db: Database,
-  id: string,
-  explanation: string,
-  openingName: string | null,
-): void {
-  db.prepare("UPDATE puzzles SET explanation = ?, opening_name = ? WHERE id = ?").run(
-    explanation,
-    openingName,
-    id,
-  );
-}
