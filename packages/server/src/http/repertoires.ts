@@ -34,12 +34,22 @@ import {
   repertoireVariationLine,
 } from "./repertoire-summary.js";
 
+/**
+ * The unit a rebuild is walking a copy of, set by the openings route while the run lasts. It lives in
+ * memory only: no rebuild outlives its process, and the copy one leaves is removed at the next boot.
+ */
+export interface RepertoireRebuildState {
+  unitId: number | null;
+}
+
 export interface RepertoireRouteOptions {
   clock?: Clock;
   /** Names the variation each choice at a branch point would build. */
   names?: OpeningNames;
   /** The book's branch points in the Italian. */
   book?: RepertoireBranchBook;
+  /** Shared with the openings route, which names the unit a rebuild walks; none runs without it. */
+  rebuilding?: RepertoireRebuildState;
 }
 
 // A group or a side drills its variations merged, so it counts them merged: a move two variations
@@ -128,7 +138,8 @@ function foundSummary(
 // reached outside the stored line, each with the unit built from it, if any, `found` counts the
 // drill of those units together, and `branches` lists the positions where the book offers White
 // another move to build a variation from. The coverage of a variation is read from its stored moves
-// alone, so it never waits on the explorer or the engine.
+// alone, so it never waits on the explorer or the engine. `rebuilding_id` names the unit a rebuild is
+// walking again, whose old rows serve until the walk ends, and its copy is in none of the lists.
 export function registerRepertoireRoutes(
   app: FastifyInstance,
   db: Database,
@@ -188,6 +199,7 @@ export function registerRepertoireRoutes(
           })),
         }),
       ),
+      rebuilding_id: options.rebuilding?.unitId ?? null,
     };
   });
 

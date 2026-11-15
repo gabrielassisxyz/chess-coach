@@ -140,8 +140,9 @@ export const RepertoireBranchSchema = z.object({
 });
 export type RepertoireBranch = z.infer<typeof RepertoireBranchSchema>;
 
-// The body of GET /api/repertoires. The server always sends the group, side and found counts and the
-// branch points; a fixture need not carry them.
+// The body of GET /api/repertoires. `rebuilding_id` is the unit a rebuild is walking again, whose old
+// rows serve until the walk ends, and null while none runs. The server always sends the group, side
+// and found counts, the branch points and `rebuilding_id`; a fixture need not carry them.
 export const RepertoiresResponseSchema = z.object({
   repertoires: z.array(RepertoireSummarySchema),
   groups: z.array(RepertoireGroupSummarySchema).optional(),
@@ -149,6 +150,7 @@ export const RepertoiresResponseSchema = z.object({
   found: RepertoireFoundSummarySchema.optional(),
   met: z.array(MetOpeningSchema),
   branches: z.array(RepertoireBranchSchema).optional(),
+  rebuilding_id: z.number().int().positive().nullable().optional(),
 });
 export type RepertoiresResponse = z.infer<typeof RepertoiresResponseSchema>;
 

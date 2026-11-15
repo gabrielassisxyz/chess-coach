@@ -16,7 +16,7 @@ import {
 } from "./http/openings.js";
 import { registerProgressRoutes } from "./http/progress.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
-import { registerRepertoireRoutes } from "./http/repertoires.js";
+import { type RepertoireRebuildState, registerRepertoireRoutes } from "./http/repertoires.js";
 import { registerRoutineRoutes } from "./http/routine.js";
 import { type Log, silentLog } from "./log.js";
 import type { ExplorerResult } from "./openings/from-explorer.js";
@@ -58,6 +58,7 @@ export interface AppOptions {
    * Builds the first stored variation of the Italian, or of the unit rooted at a line, or another
    * variation of the Italian forced at a branch point, and with `rebuild` replaces the stored one
    * under the current rule; `points` weigh White's candidate moves, the default where left out.
+   * `onRebuildStart` is told the stored unit's id when a rebuild of it starts.
    * Only asked for by name, never after an import.
    */
   generateRepertoireOpenings?: (
@@ -65,6 +66,7 @@ export interface AppOptions {
     branch?: readonly string[],
     rebuild?: boolean,
     points?: RepertoirePoints,
+    onRebuildStart?: (unitId: number) => void,
   ) => Promise<RepertoireResult>;
   /**
    * Lists the openings Black can leave the 1.e4 path with; without it the route answers from
@@ -105,6 +107,8 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   });
 
   if (options.db) {
+    // The openings route names the unit a rebuild walks and the repertoires route reads it.
+    const rebuilding: RepertoireRebuildState = { unitId: null };
     registerAddableOpeningsRoute(app, options.db, {
       names: options.openingNames ?? NO_OPENING_NAMES,
       ...(options.listAddableOpenings ? { list: options.listAddableOpenings } : {}),
@@ -121,6 +125,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     registerRepertoireRoutes(app, options.db, {
       names: options.openingNames ?? NO_OPENING_NAMES,
       book: options.repertoireBranches ?? NO_REPERTOIRE_BRANCH_BOOK,
+      rebuilding,
     });
     registerRoutineRoutes(app, options.db);
     if (options.importer) {
@@ -138,6 +143,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
         options.generateRepertoireOpenings,
         options.generateRepertoireIdeas,
         log,
+        rebuilding,
       );
     }
   }

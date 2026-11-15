@@ -10,6 +10,7 @@ import {
   createRepertoireVariation,
   insertRepertoireOwnMove,
   type NewRepertoireOwnMove,
+  REPERTOIRE_REBUILD_GROUP_SUFFIX,
   setRepertoireIdea,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
@@ -236,6 +237,24 @@ describe("generateRepertoireIdeas", () => {
       "3.Bc4",
       "4.c3",
     ]);
+  });
+
+  it("writes no idea on a move of a rebuild's copy, nor asks for one", async () => {
+    seedRepertoires();
+    const copy = createRepertoireVariation(db, {
+      side: "white",
+      groupName: `Italian Game${REPERTOIRE_REBUILD_GROUP_SUFFIX}`,
+      variationName: "Giuoco Pianissimo (4.d3)",
+    }).id;
+    insertRepertoireOwnMove(
+      db,
+      ownMove(copy, ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"], "d3", "d2d3", 20),
+    );
+    const session = always(GOOD_IDEA);
+    const result = await generateRepertoireIdeas(db, session);
+    expect(result).toEqual({ considered: 4, generated: 4, rejected: 0, empty: 0 });
+    expect(ideaOf("d3")).toBeNull();
+    expect(session.prompts.some((prompt) => prompt.includes("Move to explain: 4.d3"))).toBe(false);
   });
 
   it("generates nothing on a rerun, and leaves a stored text as it is", async () => {

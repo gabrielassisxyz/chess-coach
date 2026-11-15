@@ -5,7 +5,11 @@ import {
 } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import type { Database } from "../db/open.js";
-import { listMetOpenings, repertoireSetupLine } from "../db/repertoires.js";
+import {
+  listMetOpenings,
+  repertoireRebuildCopySql,
+  repertoireSetupLine,
+} from "../db/repertoires.js";
 import { EXPLORER_RATINGS, type ExplorerPosition, gamesOf } from "./explorer-client.js";
 import type { OpeningNames } from "./names.js";
 
@@ -98,7 +102,10 @@ export function addableCandidates(names: OpeningNames): AddableCandidate[] {
 // A unit stores its root the way the board writes it, so the match is on the SAN list.
 function addableUnitsByRoot(db: Database): Map<string, number> {
   const ids = db
-    .prepare("SELECT id FROM repertoires WHERE side = 'white' ORDER BY id")
+    .prepare(
+      `SELECT id FROM repertoires
+       WHERE side = 'white' AND NOT ${repertoireRebuildCopySql("group_name")} ORDER BY id`,
+    )
     .all() as Array<{ id: number }>;
   const units = new Map<string, number>();
   for (const { id } of ids) {

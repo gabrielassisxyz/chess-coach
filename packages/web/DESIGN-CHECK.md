@@ -233,6 +233,15 @@ not drawn (Rule 15). Under 900 px a row keeps its name, games and score, the lin
 and the counts are dropped, the Drill button stays as a 44 px target and nothing scrolls sideways.
 M1 and M2 print nothing for it.
 
+The Practice column was re-checked on rows 3, 5, 6, 8, 9, 17 and 19, and the Phone column on row
+19, for the Being rebuilt tag of the Openings page, against its markup, `practice-openings.css` and
+`test/practice-openings.test.tsx`; the tag was not measured in a browser. While a rebuild runs, the
+row of that variation holds the tag beside its name on the same line: 12 px text in the secondary
+colour inside a hairline box with the 4 px radius, the Games table's tag, with no status colour,
+since nothing failed and nothing waits on the student. It is plain text and not a control, so it
+takes no focus, and the row's Train stays as it was. Under 900 px the tag wraps under the name when
+the line is too short, and nothing scrolls sideways. M1 and M2 still find no matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph

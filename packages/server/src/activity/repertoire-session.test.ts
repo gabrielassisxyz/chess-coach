@@ -26,6 +26,7 @@ import {
 import {
   createRepertoireVariation,
   insertRepertoireOwnMove,
+  REPERTOIRE_REBUILD_GROUP_SUFFIX,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { endRunsLeftOpenAtStart } from "../db/training.js";
@@ -2068,6 +2069,78 @@ describe("a drill over a group or a side", () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe("a rebuild's copy of a unit", () => {
+  const AFTER_BC5_TEXT = "e4 e5 Nf3 Nc6 Bc4 Bc5";
+
+  // The unit answers 3...Bc5 with 4.c3, every card due and the sibling of 4.d3 stable, so nothing
+  // holds a new 4.d3 back; the copy a rebuild is walking already answers 4.d3, which has no card.
+  function addUnitAndCopy(): { classical: number; copy: number } {
+    const classical = addVariation(CLASSICAL, CLASSICAL_ROWS);
+    addCards(CLASSICAL_ROWS);
+    setCardInterval(AFTER_BC5_TEXT, "c3", STABLE_HOURS);
+    const copy = addVariation(
+      PIANISSIMO,
+      PIANISSIMO_ROWS,
+      `Italian Game${REPERTOIRE_REBUILD_GROUP_SUFFIX}`,
+    );
+    return { classical, copy };
+  }
+
+  const servedRows = (): number[] => {
+    const run = db
+      .prepare("SELECT items_json FROM training_runs ORDER BY id DESC LIMIT 1")
+      .get() as {
+      items_json: string;
+    };
+    return (JSON.parse(run.items_json) as Array<{ id: number }>).map((item) => item.id);
+  };
+  const unitOfRow = (rowId: number): number =>
+    (
+      db.prepare("SELECT repertoire_id FROM repertoire_positions WHERE id = ?").get(rowId) as {
+        repertoire_id: number;
+      }
+    ).repertoire_id;
+
+  it("refuses a drill of the copy at every level as a repertoire that does not exist", async () => {
+    const { copy } = addUnitAndCopy();
+    const service = boot();
+    for (const level of ["variation", "group", "side"] as const) {
+      await expect(startAt(service, copy, "all", level)).rejects.toMatchObject({
+        code: "empty_queue",
+        message: `repertoire ${copy} does not exist`,
+      });
+    }
+    await expect(startAt(service, copy + 1, "all", "variation")).rejects.toMatchObject({
+      code: "empty_queue",
+      message: `repertoire ${copy + 1} does not exist`,
+    });
+    expect(service.current()).toBeNull();
+    expect(runEnds()).toEqual([]);
+  });
+
+  it("serves no move of the copy in a drill of the unit's group or of its side", async () => {
+    const { classical } = addUnitAndCopy();
+    const service = boot();
+    for (const level of ["group", "side"] as const) {
+      const state = await startAt(service, classical, "all", level);
+      // 1.e4, 2.Nf3, 3.Bc4 and 4.c3: the unit's four moves and not the copy's 4.d3.
+      expect(drillOf(state).moves_left).toBe(4);
+      expect(servedRows().map(unitOfRow)).toEqual([classical, classical, classical, classical]);
+    }
+  });
+
+  it("makes no card from a move only the copy stores, so the day's new moves never count one", async () => {
+    const { classical, copy } = addUnitAndCopy();
+    // Nothing of the unit is due: the copy's new 4.d3 would be the one move a side drill serves.
+    db.prepare("UPDATE repertoire_cards SET next_review_at = ?").run(FUTURE);
+    const service = boot();
+    expect(await code(startAt(service, classical, "due", "side"))).toBe("empty_queue");
+    expect(await code(startAt(service, copy, "all", "variation"))).toBe("empty_queue");
+    expect(cardOf(AFTER_BC5_TEXT, "d3")).toBeUndefined();
+    expect(introducedToday()).toBe(0);
   });
 });
 

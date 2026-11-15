@@ -7,6 +7,7 @@ import { type Database, openDatabase } from "../db/open.js";
 import {
   createRepertoireVariation,
   insertRepertoireOwnMove,
+  REPERTOIRE_REBUILD_GROUP_SUFFIX,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { importFinishedGame } from "../import/pgn.js";
@@ -257,6 +258,15 @@ describe("listAddableOpenings", () => {
     expect(byName.get("Scandinavian Defense")).toMatchObject({
       games: 0,
       repertoire_id: scandinavian,
+    });
+  });
+
+  it("names no rebuild's copy as the unit built from a root", async () => {
+    // No unit holds 1.e4 d5 as its setup, as when its first run stopped short: only a rebuild's copy does.
+    addRootedUnit(["e4", "d5"], `Scandinavian Defense${REPERTOIRE_REBUILD_GROUP_SUFFIX}`);
+    const { entries } = await listAddableOpenings(db, NAMES, null);
+    expect(entries.find((entry) => entry.opening_name === "Scandinavian Defense")).toMatchObject({
+      repertoire_id: null,
     });
   });
 

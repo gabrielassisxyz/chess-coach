@@ -91,13 +91,17 @@ function OpeningFigures({ values }: { values: FigureValues }) {
   );
 }
 
-// The coverage is read when the student opens it, not with the page: it walks every stored move.
+// The coverage is read when the student opens it, not with the page: it walks every stored move. A
+// variation being rebuilt says so and trains as before, since its old moves serve until the rebuild
+// ends.
 function VariationRow({
   variation,
+  rebuilding,
   train,
   fetchCoverage,
 }: {
   variation: RepertoireSummary;
+  rebuilding: boolean;
   train: TrainControls;
   fetchCoverage: FetchCoverage | undefined;
 }) {
@@ -107,16 +111,19 @@ function VariationRow({
   return (
     <div className="opening-row">
       <div className="opening-row__title">
-        <button
-          type="button"
-          className="opening-row__name"
-          aria-expanded={showingCoverage}
-          aria-controls={showingCoverage ? coverageId : undefined}
-          aria-label={`Coverage of ${name}`}
-          onClick={() => setShowingCoverage(!showingCoverage)}
-        >
-          {name}
-        </button>
+        <div className="opening-row__heading">
+          <button
+            type="button"
+            className="opening-row__name"
+            aria-expanded={showingCoverage}
+            aria-controls={showingCoverage ? coverageId : undefined}
+            aria-label={`Coverage of ${name}`}
+            onClick={() => setShowingCoverage(!showingCoverage)}
+          >
+            {name}
+          </button>
+          {rebuilding ? <span className="opening-row__rebuilding">Being rebuilt</span> : null}
+        </div>
         {variation.line ? <span className="opening-row__line">{variation.line}</span> : null}
       </div>
       <div className="opening-row__cells">
@@ -174,6 +181,7 @@ export function OpeningCard({ opening, train, adder, fetchCoverage }: OpeningCar
   const anchor = levelAnchorOf(variations);
   const branches = branchesOf(adds.listing?.branches, name);
   const addable = offersVariation(branches, adds.unfinished);
+  const rebuildingId = adds.listing?.rebuilding_id ?? null;
 
   return (
     <article className="opening-card" aria-label={name}>
@@ -233,6 +241,7 @@ export function OpeningCard({ opening, train, adder, fetchCoverage }: OpeningCar
             <VariationRow
               key={variation.id}
               variation={variation}
+              rebuilding={variation.id === rebuildingId}
               train={train}
               fetchCoverage={fetchCoverage}
             />

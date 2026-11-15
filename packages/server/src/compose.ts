@@ -3,6 +3,7 @@ import type { AppOptions } from "./app.js";
 import { buildApp } from "./app.js";
 import { type Clock, systemClock } from "./clock.js";
 import type { Database } from "./db/open.js";
+import { removeRepertoireRebuildCopies } from "./db/repertoires.js";
 import { endRunsLeftOpenAtStart } from "./db/training.js";
 import type { Searcher } from "./engine/uci.js";
 import type { NotificationSink } from "./game/notifications.js";
@@ -87,6 +88,10 @@ export function composeServer(options: ComposeOptions): ComposedServer {
     (options.clock ?? systemClock).now().toISOString(),
   );
   log.info("training.runs_left", { count: runsLeft });
+  // Also before it listens: no rebuild survives a restart, so a copy found now is one nothing walks.
+  for (const copy of removeRepertoireRebuildCopies(options.db)) {
+    log.info("openings.rebuild_copy_removed", { group: copy.groupName, rows: copy.rows });
+  }
 
   const generateOpenings = () => generateOpeningPuzzles(options.db, options.engine, openingNames);
   const generateExplorerOpenings = () =>
@@ -114,6 +119,7 @@ export function composeServer(options: ComposeOptions): ComposedServer {
     branch?: readonly string[],
     rebuild?: boolean,
     points?: RepertoirePoints,
+    onRebuildStart?: (unitId: number) => void,
   ): Promise<RepertoireResult> =>
     generateRepertoire(
       options.db,
@@ -122,7 +128,7 @@ export function composeServer(options: ComposeOptions): ComposedServer {
       options.cacheDir,
       options.explorerClock,
       openingNames,
-      { root, branch, rebuild, points },
+      { root, branch, rebuild, points, onRebuildStart },
     );
   // The review logs a failing game itself and goes on, so it runs first: whatever the
   // openings step does, every game that was graded has been compared by then.

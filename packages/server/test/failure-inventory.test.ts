@@ -150,6 +150,17 @@ const INVENTORY: FailureCase[] = [
     ],
   },
   {
+    name: "server restart during a rebuild",
+    proofs: [
+      {
+        file: "server/test/composition.test.ts",
+        titles: [
+          "removes a rebuild's copy left in the database when the server is composed, before it listens",
+        ],
+      },
+    ],
+  },
+  {
     name: "browser refresh in every activity kind",
     proofs: [
       {

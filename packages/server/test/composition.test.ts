@@ -8,6 +8,7 @@ import { type Database, openDatabase } from "../src/db/open.js";
 import {
   createRepertoireVariation,
   insertRepertoireOwnMove,
+  REPERTOIRE_REBUILD_GROUP_SUFFIX,
   upsertRepertoireReply,
 } from "../src/db/repertoires.js";
 import { classifyCpLoss } from "../src/engine/evaluate.js";
@@ -31,6 +32,32 @@ const ITALIAN_LINE = ["e4", "e5", "Nf3", "Nc6", "Bc4"];
 class CompositionSearcher implements Searcher {
   async search(request: SearchRequest): Promise<SearchResult> {
     return { fen: request.fen, bestmove: null, lines: [] };
+  }
+}
+
+// Holds every search until the test fails it, so a rebuild stays in flight while the test reads.
+class HeldSearcher implements Searcher {
+  readonly reached: Promise<void>;
+  private arrive: () => void = () => undefined;
+  private failWith: (error: Error) => void = () => undefined;
+  private readonly failure: Promise<never>;
+
+  constructor() {
+    this.reached = new Promise((resolve) => {
+      this.arrive = resolve;
+    });
+    this.failure = new Promise((_resolve, reject) => {
+      this.failWith = reject;
+    });
+  }
+
+  async search(): Promise<SearchResult> {
+    this.arrive();
+    return this.failure;
+  }
+
+  fail(error: Error): void {
+    this.failWith(error);
   }
 }
 
@@ -58,14 +85,14 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-function composed() {
+function composed(engine: Searcher = new CompositionSearcher()) {
   const explorerClock = new FakeClock();
   return composeServer({
     db,
     openingNames: loadOpeningNames(contentDir()),
     repertoireBranches: loadRepertoireBranchBook(contentDir()),
     cacheDir: join(tmp, "explorer-cache"),
-    engine: new CompositionSearcher(),
+    engine,
     fetcherFor: () => new FakeExplorer(explorerClock),
     explorerClock,
     evaluate,
@@ -104,11 +131,15 @@ function insertNamedGame(sans: string[]): number {
 
 // The stored rows of the book line a reviewed game is compared with: the setup first,
 // then the reply and White's answer, at the reach the generator would have stored.
-function seedItalianUnit(line: string[]): number {
+function seedItalianUnit(
+  line: string[],
+  groupName = REPERTOIRE_GROUP_ITALIAN,
+  variationName = "Classical Variation (4.c3)",
+): number {
   const { id } = createRepertoireVariation(db, {
     side: "white",
-    groupName: REPERTOIRE_GROUP_ITALIAN,
-    variationName: "Classical Variation (4.c3)",
+    groupName,
+    variationName,
   });
   const chess = new Chess();
   const played: string[] = [];
@@ -152,6 +183,11 @@ function seedItalianUnit(line: string[]): number {
   });
   return id;
 }
+
+const rowsOfUnit = (repertoireId: number): unknown[] =>
+  db
+    .prepare("SELECT * FROM repertoire_positions WHERE repertoire_id = ? ORDER BY id")
+    .all(repertoireId);
 
 function pgnOf(line: string[]): string {
   const text = line
@@ -213,5 +249,55 @@ describe("the composed server", () => {
     );
     expect(runs.all()).toEqual([{ ended_reason: "left", ended: 1 }]);
     expect(logs.named("training.runs_left")[0]?.fields).toMatchObject({ count: 1 });
+  });
+
+  it("removes a rebuild's copy left in the database when the server is composed, before it listens", async () => {
+    const unit = seedItalianUnit([...ITALIAN_LINE, "Bc5", "c3"]);
+    const copyGroup = `${REPERTOIRE_GROUP_ITALIAN}${REPERTOIRE_REBUILD_GROUP_SUFFIX}`;
+    seedItalianUnit([...ITALIAN_LINE, "Bc5", "d3"], copyGroup, "Giuoco Pianissimo (4.d3)");
+    const unitRows = rowsOfUnit(unit);
+    // The process that ran the rebuild is gone: the next one opens the file as it was left.
+    db.close();
+    db = openDatabase(tmp);
+
+    const { app } = composed();
+    await app.close();
+
+    expect(db.prepare("SELECT id, group_name FROM repertoires").all()).toEqual([
+      { id: unit, group_name: REPERTOIRE_GROUP_ITALIAN },
+    ]);
+    expect(rowsOfUnit(unit)).toEqual(unitRows);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM repertoire_positions").get()).toEqual({
+      n: unitRows.length,
+    });
+    expect(logs.named("openings.rebuild_copy_removed").map((entry) => entry.fields)).toEqual([
+      { group: copyGroup, rows: 7 },
+    ]);
+
+    // A server started over a database with no copy logs nothing.
+    const { app: next } = composed();
+    await next.close();
+    expect(logs.named("openings.rebuild_copy_removed")).toHaveLength(1);
+  });
+
+  it("names the unit a rebuild posted to the composed server walks, until the run ends", async () => {
+    const unit = seedItalianUnit([...ITALIAN_LINE, "Bc5", "c3"]);
+    const engine = new HeldSearcher();
+    const { app } = composed(engine);
+    const rebuildingId = async () =>
+      (await app.inject({ method: "GET", url: "/api/repertoires" })).json().rebuilding_id;
+
+    const running = app.inject({
+      method: "POST",
+      url: "/api/openings/generate",
+      payload: { sources: ["repertoire"], rebuild: true },
+    });
+    await engine.reached;
+    expect(await rebuildingId()).toBe(unit);
+
+    engine.fail(new Error("the engine stopped answering"));
+    expect((await running).statusCode).toBe(502);
+    expect(await rebuildingId()).toBeNull();
+    await app.close();
   });
 });
