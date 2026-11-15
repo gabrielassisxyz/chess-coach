@@ -226,6 +226,31 @@ ring, drawn 2 px inside it, and waits while a start is in flight, an opening is 
 engine is missing. Under 900 px the grid is one column and every tile and the Try again button are
 44 px. M1 and M2 print nothing for it.
 
+The Practice column was re-checked on rows 4, 6, 8, 9, 10, 14, 15, 16, 17 and 19, and the Phone
+column on row 19, for the Openings played page and the Dashboard's Openings played card, against
+their markup, `practice-hub.css` and `test/practice-openings-played.test.tsx`; the cells were not
+measured in a browser. The page is one 28/600 title with its 14 px note, a Side control and the
+period control, both bordered rows of 32 px toggles built like the controls of From my games and
+Improvement areas, a 12 px line holding the total and a legend of three 10 px by 6 px swatches, and
+two sections, each an 18 px and 500 heading over a 12 px note and an 8 px panel with a hairline
+border. A panel's head row is 32 px high and its opening rows are buttons 52 px high in the grid
+`16px minmax(0, 1fr) 72px 160px 56px 72px`: a 16 px chevron that turns a quarter when the row opens
+(transform only, 180 ms, ease-out, dropped under reduced motion), the name at 15 px and 500 over the
+opening's line in 12 px mono, the games in 14 px mono, a bar 6 px high in `--status-ready`,
+`--text-3` and `--status-error` over `--surface-2`, the score in the grade tones from 70 and 55, and
+the three counts in 12 px mono. Under an open row the variations are 44 px rows behind a 1 px
+hairline, each with a 28 px Drill button where the student has positions to practise. The score
+always stands beside its figure and the bar carries its counts as a label, so no colour stands alone
+(Rule 4). A row's focus ring is drawn 2 px inside it, because the rows are stacked with a hairline
+between them. The card on the Dashboard sits under the two theme cards, its rows 40 px high in the
+grid `minmax(0, 1fr) 80px 72px 160px 48px`. Loading is one quiet sentence in the panel and a failed
+read one sentence in the error tone with Try again; a section with no opening says so in place of
+its table, a side with no game says so once in place of both sections, and a row with no game is
+not drawn (Rule 15). Under 900 px a row keeps its name, games and score, the line of moves, the bar
+and the counts are dropped, the Drill button stays as a 44 px target and nothing scrolls sideways.
+M1 and M2 print nothing for it.
+
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph
@@ -235,8 +260,8 @@ engine is missing. Under 900 px the grid is one column and every tile and the Tr
   `aria-label` only, so Play is the one screen without a visible title.
 - **8, Practice.** The section title inside a hub page ("Puzzle themes" on the Overview, "White"
   and "Black" on Openings) is 20 px, the redesign's step between the 18 px heading and the 28 px
-  title, which has no token yet; a variation's name on Openings is 15 px, between the 14 px body and
-  the 18 px heading; the healthy mix's title is 16 px (`--text-md`) and the tabs of the panel that adds an opening are 13 px and its pill 11 px, also between them.
+  title, which has no token yet; a variation's name on Openings, and an opening's on Openings played, is 15 px, between the
+  14 px body and the 18 px heading; the healthy mix's title is 16 px (`--text-md`) and the tabs of the panel that adds an opening are 13 px and its pill 11 px, also between them.
 - **10, Play.** The move list and the table rows use `2px`, `6px`, `24px`, `28px` and
   `32px` values (row height, dot size, gaps) that are not on the 4-based space scale; they
   size a data cell, not layout spacing.
@@ -253,6 +278,9 @@ engine is missing. Under 900 px the grid is one column and every tile and the Tr
   between their columns and a `36px` search field, also the approved screens' values. The Puzzles
   from these openings block keeps `2px` between its title and its sentence and `6px` from them to
   its tiles, the approved screen's values.
+  Openings played keeps `20px` between its blocks, `48px` where a name starts after its chevron,
+  `12px` between a row's lines and its figures, rows of `52px` and `44px` and columns of `72px`,
+  `160px` and `56px`, the approved screen's values; they size a data cell, not layout spacing.
 - **17, Games.** The game list rows are plain text buttons: pointer, hover and the focus ring
   mark them, but nothing says "button" before the pointer arrives.
 - **17, Practice.** A theme tile is a borderless button on the page's surface: the pointer, the
@@ -309,8 +337,9 @@ engine is missing. Under 900 px the grid is one column and every tile and the Tr
   of the 54 themes; Puzzle themes in the navigation shows the Overview scrolled to that section. The Openings page is built as described in the check above,
   Dashboard summarizes puzzle activity, rating history, Improvement areas and Strengths,
   Improvement areas and Strengths show the ranked puzzle theme tables, From my games lists the
-  positions from the student's games (its own entry below), and the one other page is a title and
-  a sentence saying the page is not built yet. The older cards are mounted on their pages unchanged.
+  positions from the student's games (its own entry below), and Openings played counts the student's
+  games by opening for each colour (its own entry below). The older cards are mounted on their pages
+  unchanged.
 - **The Openings page** keeps the machinery that adds an opening or a variation, and its cells hold
   as they did in the menu it replaced. The panel that Add an opening opens has two tabs: every
   opening Black can leave the path with, behind a search field and under a heading for each path,
@@ -358,7 +387,8 @@ engine is missing. Under 900 px the grid is one column and every tile and the Tr
   accent `Review` action when `due_now > 0`) in a `minmax(180px, 1fr)` / `12px` grid above the
   `140px` Puzzle rating SVG (`--surface-2` midline, `--accent` polyline) and the two side-by-side
   `Improvement areas` and `Strengths` cards (`minmax(360px, 1fr)`, `48px` theme rows with `See all`
-  links). Loading (`role="status"`), read failures (`role="alert"` + `Try again` per block), and
+  links) and, below them, the `Openings played` card of up to four `40px` rows in `minmax(0, 1fr)
+  80px 72px 160px 48px` with its own `See all`. Loading (`role="status"`), read failures (`role="alert"` + `Try again` per block), and
   empty/unranked periods keep card structure and follow Rule 15. Under 900 px all KPI tiles and
   theme cards stack to one column, link buttons meet `44px`, and no desktop card scrolls inside
   itself. M1 and M2 print nothing.
@@ -385,5 +415,18 @@ engine is missing. Under 900 px the grid is one column and every tile and the Tr
   Practice column was re-checked on rows 4, 5, 6, 9, 10, 14, 15 and 17, and the Phone column on row
   19, for this page and its panel, and the cells hold. M1 and M2 print nothing for it. The cells
   were read off the markup and `practice-hub.css`, and were not measured in a browser.
+- **Openings played** sits in the Stats group of the Practice hub. The page is a `screen__title`, a
+  `screen__note` and two controls (Side, opening on `As White`, and the four-window period, opening
+  on `30 days`), a `12px` line with the total and the legend, and two sections, `Your openings` and
+  `Played against`, each an `8px` panel of rows that open their variations (`aria-expanded`), the
+  first of `Your openings` open until the student chooses. Both colours arrive in one read, so the
+  Side control changes what is drawn without reading again and the period reads again. A
+  variation's Drill is drawn only where a stored position of that colour carries its full name,
+  from the list the hub already reads for From my games. Loading (`role="status"`), the failed read
+  (`role="alert"` and `Try again`) and the two empty sentences follow Rule 15 inside the panel. Under
+  900 px a row keeps its name, games and score and a variation keeps its Drill as a `44px` button.
+  `20px`, `48px`, `52px` and `160px` size a row and its columns rather than layout spacing. M1 and
+  M2 print nothing for it. The cells were read off the markup and `practice-hub.css`, and were not
+  measured in a browser.
 - **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
   and a model setting exist.

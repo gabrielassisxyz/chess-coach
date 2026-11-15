@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
+  PlayedOpeningsResponse,
+  PlayedWindow,
   PuzzleRatingHistoryResponse,
   PuzzleRatingPoint,
   PuzzleRatingWindow,
@@ -13,7 +15,14 @@ import { Practice } from "../src/screens/Practice.js";
 import { NEEDS_ENGINE_TEXT, NONE } from "../src/state/practice.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import { ratingChartPoints } from "../src/state/puzzle-rating-api.js";
-import { openPracticePage, progressOf } from "./practice-fixtures.js";
+import {
+  noPlayedColour,
+  openPracticePage,
+  playedColour,
+  playedOpening,
+  playedVariation,
+  progressOf,
+} from "./practice-fixtures.js";
 import { serverApi } from "./server-api.js";
 
 function themeEntry(overrides: Partial<ThemeStatsEntry> & { theme: string }): ThemeStatsEntry {
@@ -142,16 +151,64 @@ function makeThemeStats(overrides: Partial<ThemeStatsResponse> = {}): ThemeStats
   };
 }
 
+// The games counted by opening: White chose Italian Game (20) and King's Pawn Game (2) and met
+// Scandinavian Defense (4), Busch-Gass Gambit (1) and Petrov's Defense (2); Black chose Queen's Gambit
+// Declined (8) and Slav Defense (4) and met London System (5). The Slav ties the Scandinavian at four.
+const PLAYED = {
+  white: playedColour(
+    [
+      playedOpening("Italian Game", "1.e4 e5 2.Nf3 Nc6 3.Bc4", [
+        playedVariation("Italian Game: Giuoco Pianissimo", [6, 1, 2]),
+        playedVariation("Italian Game: Two Knights Defense", [5, 1, 5]),
+      ]),
+      playedOpening("King's Pawn Game", "1.e4 e5", [
+        playedVariation("King's Pawn Game", [2, 0, 0]),
+      ]),
+    ],
+    [
+      playedOpening("Scandinavian Defense", "1.e4 d5", [
+        playedVariation("Scandinavian Defense", [3, 0, 1]),
+      ]),
+      playedOpening("Busch-Gass Gambit", "1.e4 e5 2.Nf3 Bc5", [
+        playedVariation("Busch-Gass Gambit", [0, 0, 1]),
+      ]),
+      playedOpening("Petrov's Defense", "1.e4 e5 2.Nf3 Nf6", [
+        playedVariation("Petrov's Defense", [1, 0, 1]),
+      ]),
+    ],
+  ),
+  black: playedColour(
+    [
+      playedOpening("Queen's Gambit Declined", "1.d4 d5 2.c4 e6", [
+        playedVariation("Queen's Gambit Declined: Exchange Variation", [2, 1, 5]),
+      ]),
+      playedOpening("Slav Defense", "1.d4 d5 2.c4 c6", [
+        playedVariation("Slav Defense", [2, 1, 1]),
+      ]),
+    ],
+    [
+      playedOpening("London System", "1.d4 d5 2.Bf4", [
+        playedVariation("London System", [2, 1, 2]),
+      ]),
+    ],
+  ),
+} satisfies PlayedOpeningsResponse;
+
+const NO_PLAYED: PlayedOpeningsResponse = { white: noPlayedColour, black: noPlayedColour };
+
 function renderPractice(
   options: {
     send?: () => boolean;
     fetchThemeStats?: (days: PuzzleRatingWindow) => Promise<ThemeStatsResponse>;
     fetchRatingHistory?: (days: PuzzleRatingWindow) => Promise<PuzzleRatingHistoryResponse>;
+    fetchOpeningsPlayed?: (days: PlayedWindow) => Promise<PlayedOpeningsResponse>;
     dueNow?: number;
     engineMissing?: boolean;
   } = {},
 ) {
   const send = (options.send ?? (() => true)) as unknown as ReturnType<typeof serverApi>["send"];
+  const fetchOpeningsPlayed =
+    options.fetchOpeningsPlayed ?? vi.fn(async (_days: PlayedWindow) => PLAYED);
   const fetchThemeStats =
     options.fetchThemeStats ?? vi.fn(async (days: PuzzleRatingWindow) => makeThemeStats({ days }));
   const fetchRatingHistory =
@@ -175,9 +232,10 @@ function renderPractice(
       })}
       fetchThemeStats={fetchThemeStats}
       fetchRatingHistory={fetchRatingHistory}
+      fetchOpeningsPlayed={fetchOpeningsPlayed}
     />,
   );
-  return { view, send, fetchThemeStats, fetchRatingHistory };
+  return { view, send, fetchThemeStats, fetchRatingHistory, fetchOpeningsPlayed };
 }
 
 afterEach(() => {
@@ -194,22 +252,25 @@ function dashboardRoot(): HTMLElement {
 
 describe("PracticeDashboard", () => {
   it("loads lazily on first visit, renders header and defaults to 30 days", async () => {
-    const { fetchThemeStats, fetchRatingHistory } = renderPractice();
+    const { fetchThemeStats, fetchRatingHistory, fetchOpeningsPlayed } = renderPractice();
 
     // Overview calls each once (theme stats for 30d, rating history for 7d). Dashboard waits until opened.
     await waitFor(() => {
       expect(fetchThemeStats).toHaveBeenCalledTimes(1);
       expect(fetchRatingHistory).toHaveBeenCalledTimes(1);
     });
+    expect(fetchOpeningsPlayed).not.toHaveBeenCalled();
 
     openPracticePage("Dashboard");
 
     await waitFor(() => {
       expect(fetchThemeStats).toHaveBeenCalledTimes(2);
       expect(fetchRatingHistory).toHaveBeenCalledTimes(2);
+      expect(fetchOpeningsPlayed).toHaveBeenCalledTimes(1);
     });
     expect(fetchThemeStats).toHaveBeenLastCalledWith("30");
     expect(fetchRatingHistory).toHaveBeenLastCalledWith("30");
+    expect(fetchOpeningsPlayed).toHaveBeenLastCalledWith("30");
 
     const title = screen.getByRole("heading", { level: 2, name: "Dashboard" });
     expect(title.nextElementSibling?.textContent).toBe(
@@ -225,7 +286,9 @@ describe("PracticeDashboard", () => {
     expect(
       within(period).getByRole("button", { name: "7 days" }).getAttribute("aria-pressed"),
     ).toBe("false");
-    expect(screen.queryByRole("heading", { name: "Openings played" })).toBeNull();
+    // The Openings played page keeps its title and its own period control to itself until opened.
+    expect(screen.queryByRole("heading", { level: 2, name: "Openings played" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 3, name: "Openings played" })).toBeTruthy();
   });
 
   it("renders KPI tiles with upward, downward, absent deltas, split bar, and Due cards Review link", async () => {
@@ -587,6 +650,131 @@ describe("PracticeDashboard", () => {
     expect(rule).toBeGreaterThan(-1);
     const query = css.slice(css.lastIndexOf("@media", rule)).split("{")[0];
     expect((query ?? "").trim()).toBe("@media (max-width: 899px)");
+  });
+});
+
+describe("the Openings played card of the Dashboard", () => {
+  const cardOf = (): HTMLElement =>
+    within(dashboardRoot()).getByRole("region", { name: "Openings played" });
+  const text = (row: Element, selector: string): string | undefined =>
+    row.querySelector(selector)?.textContent ?? undefined;
+
+  it("lists the four openings with the most games across both colours and both lists, each with its side", async () => {
+    renderPractice();
+    openPracticePage("Dashboard");
+
+    const card = cardOf();
+    expect(within(card).getByText("Most frequent in your games · win / draw / loss")).toBeTruthy();
+    const list = await within(card).findByRole("list", { name: "Most played openings" });
+    const rows = within(list).getAllByRole("listitem");
+
+    // The Slav ties the Scandinavian at four games, and the stable order keeps White's list first.
+    expect(rows.map((row) => text(row, ".played-top__name"))).toEqual([
+      "Italian Game",
+      "Queen's Gambit Declined",
+      "London System",
+      "Scandinavian Defense",
+    ]);
+    expect(rows.map((row) => text(row, ".played-top__side"))).toEqual([
+      "as White",
+      "as Black",
+      "as Black",
+      "as White",
+    ]);
+    expect(rows.map((row) => text(row, ".played-top__games"))).toEqual([
+      "20 games",
+      "8 games",
+      "5 games",
+      "4 games",
+    ]);
+    expect(rows.map((row) => text(row, ".played-score"))).toEqual([
+      "Score 60%",
+      "Score 31%",
+      "Score 50%",
+      "Score 75%",
+    ]);
+    expect(
+      rows.map((row) => row.querySelector(".played-score")?.getAttribute("data-tone")),
+    ).toEqual(["mid", "low", "low", "good"]);
+    const bar = within(rows[0] as HTMLElement).getByRole("img", {
+      name: "11 won, 2 drawn, 7 lost",
+    });
+    expect(
+      [...bar.querySelectorAll<HTMLElement>(".played-bar__part")].map(
+        (part) => part.dataset.outcome,
+      ),
+    ).toEqual(["won", "drawn", "lost"]);
+  });
+
+  it("reads the Dashboard's period and again whenever it changes", async () => {
+    const fetchOpeningsPlayed = vi.fn(
+      async (days: PlayedWindow): Promise<PlayedOpeningsResponse> =>
+        days === "7" ? { white: PLAYED.white, black: noPlayedColour } : PLAYED,
+    );
+    renderPractice({ fetchOpeningsPlayed });
+    openPracticePage("Dashboard");
+    const card = cardOf();
+    await within(card).findByRole("list", { name: "Most played openings" });
+    expect(fetchOpeningsPlayed).toHaveBeenLastCalledWith("30");
+
+    fireEvent.click(within(dashboardRoot()).getByRole("button", { name: "7 days" }));
+    await waitFor(() => expect(fetchOpeningsPlayed).toHaveBeenLastCalledWith("7"));
+    await waitFor(() =>
+      expect(
+        within(card)
+          .getAllByRole("listitem")
+          .map((row) => text(row, ".played-top__name")),
+      ).toEqual(["Italian Game", "Scandinavian Defense", "King's Pawn Game", "Petrov's Defense"]),
+    );
+
+    fireEvent.click(within(dashboardRoot()).getByRole("button", { name: "All" }));
+    await waitFor(() => expect(fetchOpeningsPlayed).toHaveBeenLastCalledWith("all"));
+  });
+
+  it("opens the Openings played page with See all", async () => {
+    renderPractice();
+    openPracticePage("Dashboard");
+    const card = cardOf();
+    await within(card).findByRole("list", { name: "Most played openings" });
+
+    fireEvent.click(within(card).getByRole("button", { name: "See all" }));
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Openings played" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "Dashboard" })).toBeNull();
+  });
+
+  it("says No game in this period yet. when no game was played, keeping the card and its link", async () => {
+    renderPractice({ fetchOpeningsPlayed: async () => NO_PLAYED });
+    openPracticePage("Dashboard");
+
+    const card = cardOf();
+    expect(await within(card).findByText("No game in this period yet.")).toBeTruthy();
+    expect(within(card).queryByRole("list")).toBeNull();
+    expect(within(card).getByRole("button", { name: "See all" })).toBeTruthy();
+  });
+
+  it("says the openings could not be loaded, reads again on Try again and leaves the other cards alone", async () => {
+    let failing = true;
+    const fetchOpeningsPlayed = vi.fn(
+      async (_days: PlayedWindow): Promise<PlayedOpeningsResponse> => {
+        if (failing) throw new Error("down");
+        return PLAYED;
+      },
+    );
+    renderPractice({ fetchOpeningsPlayed });
+    openPracticePage("Dashboard");
+
+    const card = cardOf();
+    expect((await within(card).findByRole("alert")).textContent).toBe(
+      "Your openings could not be loaded.",
+    );
+    const areas = within(dashboardRoot()).getByRole("region", { name: "Improvement areas" });
+    expect(await within(areas).findByText("Fork")).toBeTruthy();
+
+    failing = false;
+    fireEvent.click(within(card).getByRole("button", { name: "Try again" }));
+    expect(await within(card).findByRole("list", { name: "Most played openings" })).toBeTruthy();
+    expect(within(card).queryByRole("alert")).toBeNull();
   });
 });
 

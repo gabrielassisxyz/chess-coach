@@ -30,6 +30,10 @@ import {
 import { serviceNotice } from "../state/health.js";
 import type { FetchOpeningPuzzles } from "../state/opening-puzzles-api.js";
 import {
+  type FetchOpeningsPlayed,
+  fetchOpeningsPlayedFromServer,
+} from "../state/openings-played-api.js";
+import {
   demoOverTraining,
   isPracticeHub,
   OFFLINE_START_TEXT,
@@ -75,6 +79,9 @@ export interface PracticeProps {
   onOpenGameReview?: ((gameId: number, ply: number) => void) | undefined;
   // Ranked puzzle theme stats for Overview, Improvement areas and Strengths; the server's by default.
   fetchThemeStats?: FetchThemeStats | undefined;
+  // The student's games counted by opening, for the Dashboard's card and the Openings played page;
+  // the server's by default.
+  fetchOpeningsPlayed?: FetchOpeningsPlayed | undefined;
   fetchHealth?: FetchHealth | undefined;
 }
 
@@ -87,6 +94,8 @@ interface Starting {
   repertoireId?: number;
   level?: RepertoireLevel;
   position?: string;
+  // The opening a drill from the Openings played page names.
+  opening?: string;
   errorsBefore: number;
 }
 
@@ -152,7 +161,8 @@ function useStartOutcome(server: ServerApi) {
     }
   };
   // A drill of the positions from the student's games names its scope where a puzzle start names its
-  // motif. A card's drill names its position; the header's carry the filters of the page.
+  // motif. A card's drill names its position; the header's carry the filters of the page, and a
+  // variation's drill on Openings played names its opening.
   const beginFound = (request: FoundStartRequest): void => {
     setFailure(null);
     const sent = server.send({ type: "start_training", mode: "found", ...request });
@@ -161,6 +171,7 @@ function useStartOutcome(server: ServerApi) {
         mode: "found",
         motif: request.scope,
         ...(request.position === undefined ? {} : { position: request.position }),
+        ...(request.opening === undefined ? {} : { opening: request.opening }),
         errorsBefore: server.errorCount,
       });
     } else {
@@ -201,6 +212,7 @@ function Hub({
   fetchFoundPositions,
   onOpenGameReview,
   fetchThemeStats,
+  fetchOpeningsPlayed,
   fetchHealth,
 }: Required<Pick<PracticeProps, "server" | "fetchProgress">> &
   Pick<
@@ -214,6 +226,7 @@ function Hub({
     fetchRatingHistory: FetchPuzzleRatingHistory;
     fetchFoundPositions: FetchFoundPositions;
     fetchThemeStats: FetchThemeStats;
+    fetchOpeningsPlayed: FetchOpeningsPlayed;
   }) {
   const progress = useLoaded(fetchProgress);
   const loadRatingHistory = useCallback(() => fetchRatingHistory("7"), [fetchRatingHistory]);
@@ -263,6 +276,7 @@ function Hub({
       fetchRepertoireList={fetchRepertoireList}
       fetchRatingHistory={fetchRatingHistory}
       fetchThemeStats={fetchThemeStats}
+      fetchOpeningsPlayed={fetchOpeningsPlayed}
     />
   );
 }
@@ -461,6 +475,7 @@ export function Practice({
   fetchFoundPositions = fetchFoundPositionsFromServer,
   onOpenGameReview,
   fetchThemeStats = fetchThemeStatsFromServer,
+  fetchOpeningsPlayed = fetchOpeningsPlayedFromServer,
   fetchHealth,
 }: PracticeProps) {
   const sessionTraining = trainingOf(server.activity);
@@ -524,6 +539,7 @@ export function Practice({
           fetchFoundPositions={fetchFoundPositions}
           {...(onOpenGameReview === undefined ? {} : { onOpenGameReview })}
           fetchThemeStats={fetchThemeStats}
+          fetchOpeningsPlayed={fetchOpeningsPlayed}
           fetchHealth={fetchHealth}
         />
       </section>

@@ -2973,8 +2973,6 @@ describe("the hub's frame", () => {
   const pageTitle = (): string => screen.getByRole("heading", { level: 2 }).textContent ?? "";
   const openingsEntry = (): HTMLElement =>
     within(practiceNav()).getByRole("button", { name: /^Openings(,|$)/ });
-  const UNBUILT = ["Openings played"];
-
   // An answer that counts the moves due on each side apart from the variations under it.
   const withSides = (
     white: number,
@@ -3126,15 +3124,26 @@ describe("the hub's frame", () => {
     expect(within(themes).queryByRole("button", { name: /^(5|10|20)$/ })).toBeNull();
   });
 
-  it.each(UNBUILT)("says %s is not built yet, and nothing else", (name) => {
-    render(<Practice server={api(null)} {...hubProps} />);
-    openPracticePage(name);
-    const title = screen.getByRole("heading", { level: 2 });
-    expect(title.textContent).toBe(name);
-    const page = title.closest(".practice-page") as HTMLElement;
-    expect(page.textContent).toBe(`${name}This page is not built yet.`);
-    expect(within(page).queryAllByRole("button")).toEqual([]);
-    expect(currentEntries()).toEqual([name]);
+  it("shows the Openings played page with its title, and no older card", async () => {
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchOpeningsPlayed={async () => ({
+          white: { games: 0, mine: [], against: [] },
+          black: { games: 0, mine: [], against: [] },
+        })}
+      />,
+    );
+    openPracticePage("Openings played");
+    expect(pageTitle()).toBe("Openings played");
+    expect(currentEntries()).toEqual(["Openings played"]);
+    expect(
+      await screen.findByText(
+        "No game as White in this period. Import games in Games to see your openings here.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("This page is not built yet.")).toBeNull();
     expect(screen.queryByRole("region", { name: "Due cards" })).toBeNull();
   });
 
