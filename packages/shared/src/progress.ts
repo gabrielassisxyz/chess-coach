@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PuzzleRatingWindowSchema } from "./puzzle-rating.js";
 
 // One object for the Progress page and the coach's get_progress, so both read the same numbers.
 
@@ -74,3 +75,40 @@ export type RatingPoint = z.infer<typeof RatingPointSchema>;
 
 /** What the coach reads: the same object without the game list, plus how many games there are. */
 export type CoachProgress = Omit<ProgressResponse, "games"> & { games_played: number };
+
+// `GET /api/puzzles/themes/stats`: the rated puzzle attempts of one window, overall and per theme.
+
+export const ThemeStatsOverallSchema = z.object({
+  played: z.number().int().nonnegative(),
+  first_try: z.number().int().nonnegative(),
+  // Both null when nothing was played in the window.
+  rating_avg: z.number().int().nullable(),
+  performance: z.number().int().nullable(),
+});
+
+export const ThemeStatsEntrySchema = z.object({
+  theme: z.string().min(1),
+  played: z.number().int().positive(),
+  first_try: z.number().int().nonnegative(),
+  rating_avg: z.number().int(),
+  performance: z.number().int(),
+  // Only a ranked theme can enter `improvement_areas` or `strengths`.
+  ranked: z.boolean(),
+});
+
+export const ThemeStatsResponseSchema = z.object({
+  days: PuzzleRatingWindowSchema,
+  overall: ThemeStatsOverallSchema,
+  // The window of the same length that ends where this one starts; null for all time.
+  overall_previous: ThemeStatsOverallSchema.nullable(),
+  // Most played first, a tie by key.
+  themes: z.array(ThemeStatsEntrySchema),
+  // Theme keys: the weakest first, and the strongest first.
+  improvement_areas: z.array(z.string()).max(8),
+  strengths: z.array(z.string()).max(8),
+  // Themes played with fewer than 8 attempts.
+  unranked: z.number().int().nonnegative(),
+});
+export type ThemeStatsOverall = z.infer<typeof ThemeStatsOverallSchema>;
+export type ThemeStatsEntry = z.infer<typeof ThemeStatsEntrySchema>;
+export type ThemeStatsResponse = z.infer<typeof ThemeStatsResponseSchema>;

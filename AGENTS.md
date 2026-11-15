@@ -147,6 +147,25 @@
   settled on the same level with the same noise, Glicko-2 only arriving 10 to 30 puzzles sooner. A
   puzzle's own rating never moves, since one student's attempts say nothing about a number built
   from many players.
+- **Puzzle themes:** `GET /api/puzzles/themes/stats?days=7|30|90|all` (30 when absent, anything else
+  400 `bad_query`) answers the rated puzzle attempts of the window (`ThemeStatsResponseSchema`,
+  `progress/theme-stats.ts`), computed at request time with nothing stored: `overall` (`played`,
+  `first_try`, `rating_avg`, `performance`, the last two null when nothing was played),
+  `overall_previous` (the same over the window of the same length that ends where the asked one
+  starts, null for `all`), one `themes` entry per theme played, most played first, with those
+  figures and `ranked`, `improvement_areas`, `strengths`, and `unranked`, the number of themes
+  played with fewer than 8 attempts. An attempt counts once overall and once under each theme of its puzzle: the keys of
+  `puzzles.themes`, or for a puzzle without them its motif through `THEME_OF_MOTIF`; the origin themes
+  `master`, `masterVsMaster` and `superGM` are left out everywhere, and an unrated puzzle counts
+  nowhere. Performance is the Lichess puzzle dashboard's: the average `difficulty_rating`, minus 500,
+  plus 1000 times the share solved first try, rounded. A theme is ranked with 8 or more attempts in
+  the window, unless it is a length or goal theme (`oneMove`, `short`, `long`, `veryLong`,
+  `equality`, `advantage`, `crushing`), which keeps its figures for the theme grid. The improvement
+  areas are the ranked themes below the overall performance with at least one attempt not solved
+  first try, weakest first; the strengths are those above it with at least one first-try solve,
+  strongest first; both lists break a tie by more attempts and hold at most 8 theme keys. A theme is
+  compared with the overall performance of the same window, never with the Elo puzzle rating, which
+  is on another scale.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
   each step. Opening a game, starting one or a restart pauses it. The hub offers no resume and
   shows no paused run: the web sends neither `resume_training` nor `discard_training` (the server
