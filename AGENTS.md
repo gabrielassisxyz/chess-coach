@@ -129,7 +129,8 @@
   library's `difficulty_rating`; a first-try solve wins, anything else loses, an unrated puzzle
   (opening drills) moves nothing. It lives in `settings.puzzle_rating`, is replayed once from
   the stored attempts at boot when absent (`puzzles.rating` log event), and the activity carries it
-  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`. A
+  as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`.
+  `GET /api/progress` carries the number as `puzzle_rating`. A
   puzzles queue (`start_training {mode: "puzzles", motif}`) accepts any fixed choice
   (`isFixedPracticeMotif`), any stored `puzzles.motif`, or any `puzzle_themes.theme` with stored
   rows, and refuses any other with `empty_queue`; rated library puzzles of `fork`, `pin`, `skewer`,
