@@ -10,6 +10,7 @@ import { Chess, type Move } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
+import { insertRepertoireFirstAttempt } from "../db/repertoire-cards.js";
 import {
   createRepertoireVariation,
   insertRepertoireOwnMove,
@@ -149,7 +150,8 @@ describe("GET /api/repertoires", () => {
     const response = await getRepertoires();
     expect(response.statusCode).toBe(200);
     const body = RepertoiresResponseSchema.parse(response.json());
-    expect(body.repertoires).toEqual([
+    // The counts and the build fields as before; the figures and the line have tests of their own.
+    expect(body.repertoires).toMatchObject([
       {
         id: classical,
         side: "white",
@@ -249,7 +251,7 @@ describe("GET /api/repertoires at the group and side levels", () => {
       { recommended: 1, due: 1, all: 2 },
     ]);
     // 4.c3 and 4.d3 answer one position, so a drill over both takes one of them and the other waits.
-    expect(body.groups).toEqual([
+    expect(body.groups).toMatchObject([
       {
         side: "white",
         group_name: "Italian Game",
@@ -814,5 +816,192 @@ describe("GET /api/repertoires/:id/coverage", () => {
     const response = await getCoverage(buildApp({ db }), id);
     expect(response.statusCode).toBe(200);
     expect([network, explorer, engine].map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0]);
+  });
+});
+
+describe("GET /api/repertoires: the numbers of the Openings page", () => {
+  const DAY_MS = 24 * 3_600_000;
+  const daysAgo = (days: number): string => new Date(Date.now() - days * DAY_MS).toISOString();
+  const AFTER_PIANISSIMO = [...SETUP, "Bc5", "d3"];
+  const AFTER_TWO_KNIGHTS = [...SETUP, "Nf6", "Ng5"];
+  let pianissimo: number;
+  let twoKnights: number;
+  let bare: number;
+  let scandinavian: number;
+
+  beforeEach(() => {
+    gameCount = 0;
+    // The first variation answers 3...Bc5 and leaves 3...Nf6 open, the second the other way round, so
+    // each has a gap that the opening as a whole does not.
+    pianissimo = addVariation("Giuoco Pianissimo (4.d3)", [["Bc5", "d3"]]);
+    addReplyWithoutAnswer(pianissimo, SETUP, "Nf6", 0.4);
+    twoKnights = addVariation("Two Knights Defense (4.Ng5)", [["Nf6", "Ng5"]]);
+    addReplyWithoutAnswer(twoKnights, SETUP, "Bc5", 0.6);
+    db.prepare("UPDATE repertoires SET branch_san = ? WHERE id = ?").run(
+      JSON.stringify(AFTER_TWO_KNIGHTS),
+      twoKnights,
+    );
+    // Neither the first of its group nor built at a branch point, and with no move stored.
+    bare = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Evans Gambit (4.b4)",
+    }).id;
+    scandinavian = addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+  });
+
+  const firstAttempt = (repertoireId: number, correct: boolean, at: string): void =>
+    insertRepertoireFirstAttempt(db, { ...placeOf([], "e4"), repertoireId, correct }, at);
+
+  // Inside the 30 days and outside them, so the window is read from the clock of the request.
+  function addFirstAttempts(): void {
+    firstAttempt(pianissimo, true, daysAgo(2));
+    firstAttempt(pianissimo, false, daysAgo(10));
+    firstAttempt(pianissimo, true, daysAgo(29));
+    firstAttempt(pianissimo, true, daysAgo(31));
+    firstAttempt(twoKnights, false, daysAgo(1));
+    firstAttempt(twoKnights, true, daysAgo(20));
+    firstAttempt(twoKnights, false, daysAgo(45));
+  }
+
+  // Every outcome the review writes; the last two never reached the line and carry the Italian's id.
+  function addReviewedGames(): void {
+    const outcomes = ["in_book", "in_book", "reply_added", "reply_not_stored", "departed"];
+    for (const outcome of outcomes) addReviewedGame(AFTER_PIANISSIMO, { outcome }, pianissimo);
+    addReviewedGame(AFTER_PIANISSIMO, { outcome: "not_reached" }, pianissimo);
+    addReviewedGame(AFTER_PIANISSIMO, { outcome: "other_side", color: "black" }, pianissimo);
+    addReviewedGame(AFTER_TWO_KNIGHTS, { outcome: "in_book" }, twoKnights);
+    addReviewedGame(AFTER_TWO_KNIGHTS, { outcome: "departed" }, twoKnights);
+    addReviewedGame(AFTER_TWO_KNIGHTS, { outcome: "departed" }, twoKnights);
+  }
+
+  const bodyOf = async () => RepertoiresResponseSchema.parse((await getRepertoires()).json());
+
+  const figuresOf = (entry: {
+    moves_total?: number | undefined;
+    remembered_30d?: object | undefined;
+    in_line?: object | undefined;
+    covered_percent?: number | null | undefined;
+    line?: string | null | undefined;
+  }) => ({
+    moves_total: entry.moves_total,
+    remembered_30d: entry.remembered_30d,
+    in_line: entry.in_line,
+    covered_percent: entry.covered_percent,
+    line: entry.line,
+  });
+
+  it("sends the five numbers and the line of each variation", async () => {
+    addFirstAttempts();
+    addReviewedGames();
+
+    const { repertoires } = await bodyOf();
+
+    expect(repertoires.map((entry) => entry.id)).toEqual([
+      pianissimo,
+      twoKnights,
+      bare,
+      scandinavian,
+    ]);
+    expect(repertoires.map(figuresOf)).toEqual([
+      {
+        moves_total: 4,
+        remembered_30d: { right: 2, of: 3 },
+        in_line: { stayed: 4, of: 5 },
+        // The line ends at 4.d3 with 1 against a gap of 0.4: 1 / 1.4.
+        covered_percent: 71.4,
+        line: "3...Bc5 4.d3",
+      },
+      {
+        moves_total: 4,
+        remembered_30d: { right: 1, of: 2 },
+        in_line: { stayed: 1, of: 3 },
+        // The line ends at 4.Ng5 with 1 against a gap of 0.6: 1 / 1.6.
+        covered_percent: 62.5,
+        line: "3...Nf6 4.Ng5",
+      },
+      {
+        moves_total: 0,
+        remembered_30d: { right: 0, of: 0 },
+        in_line: { stayed: 0, of: 0 },
+        covered_percent: null,
+        line: null,
+      },
+      {
+        moves_total: 2,
+        remembered_30d: { right: 0, of: 0 },
+        in_line: { stayed: 0, of: 0 },
+        covered_percent: 100,
+        line: "2.exd5",
+      },
+    ]);
+  });
+
+  it("sends the same numbers for each opening, taken over all its variations at once", async () => {
+    addFirstAttempts();
+    addReviewedGames();
+
+    const { groups } = await bodyOf();
+
+    expect(groups?.map((group) => group.group_name)).toEqual([
+      "Italian Game",
+      "Scandinavian Defense",
+    ]);
+    expect(groups?.map(figuresOf)).toEqual([
+      {
+        // 1.e4, 2.Nf3 and 3.Bc4 are in both variations: 4 + 4 moves are 5.
+        moves_total: 5,
+        remembered_30d: { right: 3, of: 5 },
+        in_line: { stayed: 5, of: 8 },
+        // Each variation answers the reply the other leaves open, so no gap is left: 2 / 2.
+        covered_percent: 100,
+        line: "1.e4 e5 2.Nf3 Nc6 3.Bc4",
+      },
+      {
+        moves_total: 2,
+        remembered_30d: { right: 0, of: 0 },
+        in_line: { stayed: 0, of: 0 },
+        covered_percent: 100,
+        line: "1.e4 d5",
+      },
+    ]);
+  });
+
+  it("gives an opening of one variation the numbers of that variation", async () => {
+    const { repertoires, groups } = await bodyOf();
+
+    const alone = repertoires.find((entry) => entry.id === scandinavian);
+    const group = groups?.find((entry) => entry.group_name === "Scandinavian Defense");
+    expect(group && figuresOf(group)).toMatchObject({
+      moves_total: alone?.moves_total,
+      remembered_30d: alone?.remembered_30d,
+      in_line: alone?.in_line,
+      covered_percent: alone?.covered_percent,
+    });
+  });
+
+  it("gives each variation the covered share its coverage route gives", async () => {
+    const { repertoires } = await bodyOf();
+
+    for (const entry of repertoires) {
+      const route = await getCoverage(buildApp({ db }), entry.id);
+      const coverage = RepertoireCoverageSchema.parse(route.json());
+      expect(entry.covered_percent).toBe(coverage.covered_percent);
+    }
+  });
+
+  it("moves no count of what a drill would serve when attempts and games are recorded", async () => {
+    const counts = (body: Awaited<ReturnType<typeof bodyOf>>) => ({
+      variations: body.repertoires.map((entry) => entry.moves),
+      groups: body.groups?.map((group) => group.moves),
+      sides: body.sides,
+      found: body.found,
+    });
+    const before = counts(await bodyOf());
+
+    addFirstAttempts();
+    addReviewedGames();
+
+    expect(counts(await bodyOf())).toEqual(before);
   });
 });

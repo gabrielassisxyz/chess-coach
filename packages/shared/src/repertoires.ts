@@ -31,18 +31,54 @@ export const RepertoireUnitPointsSchema = z.object({
 });
 export type RepertoireUnitPoints = z.infer<typeof RepertoireUnitPointsSchema>;
 
+// How much of a line the student remembered when the drill first asked about it: `of` first attempts
+// in the last 30 days, `right` of them right. Nothing asked is 0 of 0.
+export const RepertoireRememberedSchema = z.object({
+  right: z.number().int().nonnegative(),
+  of: z.number().int().nonnegative(),
+});
+export type RepertoireRemembered = z.infer<typeof RepertoireRememberedSchema>;
+
+// How many of the student's reviewed games stayed in a line: `of` the games that reached it, `stayed`
+// the ones that played every move it expected. A game that never reached the line, or was played as
+// the other colour, is in neither count.
+export const RepertoireInLineSchema = z.object({
+  stayed: z.number().int().nonnegative(),
+  of: z.number().int().nonnegative(),
+});
+export type RepertoireInLine = z.infer<typeof RepertoireInLineSchema>;
+
+// The four numbers the Openings page shows besides the due counts, for a variation and for an
+// opening, which is the group of its variations. For an opening they are taken over all its
+// variations at once, a move two of them share counted once. `covered_percent` is null while nothing
+// is stored.
+export const RepertoireFiguresSchema = z.object({
+  moves_total: z.number().int().nonnegative(),
+  remembered_30d: RepertoireRememberedSchema,
+  in_line: RepertoireInLineSchema,
+  covered_percent: z.number().min(0).max(100).nullable(),
+});
+export type RepertoireFigures = z.infer<typeof RepertoireFiguresSchema>;
+
 // `points`, `root` and `branch` say what the unit was built with and from, and a rebuild posts them
 // again: `points` is null for a unit built before they were stored, `root` is the SAN list a unit of
 // another opening starts from and null for a variation of the Italian, `branch` is the line a
 // variation of the Italian was built at and null for any other unit. Posting a unit's `root` or
 // `branch` with `rebuild` rebuilds that unit; posting neither rebuilds the first Italian variation.
-// The server always sends all three; a fixture need not carry them.
+// `line` is the moves that tell the variation from the others of its group, after the moves they all
+// start with: "3...Bc5 4.d3" for the first Italian variation, the rest of the branch for one built at
+// a branch point, "2.exd5" for a unit of another opening. It is null for a variation that is neither
+// the first of its group nor built at a branch point, and for a first variation whose White move
+// after the naming line is not stored yet. The server always sends the figures, `line`, `points`,
+// `root` and `branch`; a fixture need not carry them.
 export const RepertoireSummarySchema = z.object({
   id: z.number().int().positive(),
   side: z.enum(["white", "black"]),
   group_name: z.string(),
   variation_name: z.string(),
   moves: RepertoireScopeCountsSchema,
+  ...RepertoireFiguresSchema.partial().shape,
+  line: z.string().nullable().optional(),
   points: RepertoireUnitPointsSchema.nullable().optional(),
   root: z.array(z.string().min(1)).min(1).nullable().optional(),
   branch: z.array(z.string().min(1)).min(1).nullable().optional(),
@@ -61,10 +97,15 @@ export const MetOpeningSchema = z.object({
 export type MetOpening = z.infer<typeof MetOpeningSchema>;
 
 // What a drill of a group, or of a whole side, would serve: a move shared by two variations counts once.
+// `line` is the moves every variation of the group starts with, numbered from move 1: "1.e4 e5 2.Nf3
+// Nc6 3.Bc4" for the Italian Game, "1.e4 d5" for a unit of another opening; null while no setup move
+// is stored. The figures are those of `RepertoireFiguresSchema` over all the group's variations.
 export const RepertoireGroupSummarySchema = z.object({
   side: z.enum(["white", "black"]),
   group_name: z.string(),
   moves: RepertoireScopeCountsSchema,
+  ...RepertoireFiguresSchema.partial().shape,
+  line: z.string().nullable().optional(),
 });
 export type RepertoireGroupSummary = z.infer<typeof RepertoireGroupSummarySchema>;
 
@@ -183,8 +224,21 @@ export const RepertoireCoverageSchema = z.object({
 });
 export type RepertoireCoverage = z.infer<typeof RepertoireCoverageSchema>;
 
+// "3...Bc5 4.d3": moves written the way the book writes them, counted from the ply the first one is
+// played at (0 for White's first move). White's moves carry their number; a Black move carries its
+// number and three dots only where it opens the text, since White's number before it says the rest.
+export function repertoireMovesText(moves: readonly string[], firstPly: number): string {
+  return moves
+    .map((san, index) => {
+      const ply = firstPly + index;
+      if (ply % 2 === 0) return `${ply / 2 + 1}.${san}`;
+      return index === 0 ? `${(ply + 1) / 2}...${san}` : san;
+    })
+    .join(" ");
+}
+
 // "1.e4 e5 2.Nf3 Bc5": a line written the way the book writes it, which is also the name of a unit
 // whose root the opening table does not name.
 export function repertoireRootText(root: readonly string[]): string {
-  return root.map((san, index) => (index % 2 === 0 ? `${index / 2 + 1}.${san}` : san)).join(" ");
+  return repertoireMovesText(root, 0);
 }
