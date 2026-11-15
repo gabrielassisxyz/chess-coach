@@ -636,6 +636,18 @@ export function repertoireRootOf(db: Database, variation: RepertoireRow): string
   return checkRepertoireRoot(setup).ok ? setup : null;
 }
 
+/**
+ * The line after whose last move White's answer names the first variation of a stored group: 3...Bc5
+ * for the Italian, the root for a unit of another opening, as the walk named them. Null for a unit
+ * that has no root to read.
+ */
+export function repertoireNamingLineOf(db: Database, variation: RepertoireRow): string[] | null {
+  if (variation.group_name === REPERTOIRE_GROUP_ITALIAN) {
+    return [...ITALIAN_SETUP_SAN, ITALIAN_NAMING_REPLY_SAN];
+  }
+  return repertoireRootOf(db, variation);
+}
+
 function repertoireVariationName(
   unit: RepertoireUnit,
   openingName: string | null,
