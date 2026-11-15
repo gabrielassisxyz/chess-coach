@@ -113,7 +113,10 @@ function printUnitToDelete(
   out(`setup line: ${setup.join(" ")}`);
 }
 
-function printUnitDeletionCounts(out: (line: string) => void, deletion: RepertoireUnitDeletion) {
+function printUnitDeletionCounts(
+  out: (line: string) => void,
+  deletion: RepertoireUnitDeletion,
+): void {
   const games = deletion.gamesToReview;
   out(`positions: ${deletion.positions}`);
   out(`cards deleted: ${deletion.cardsDeleted}`);

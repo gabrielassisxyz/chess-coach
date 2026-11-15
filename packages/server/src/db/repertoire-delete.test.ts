@@ -447,7 +447,8 @@ describe("the delete:repertoire-unit command", () => {
     return { status, out, err };
   }
 
-  // The unit as the hub's Add left it: two games reviewed against it, a card of its own move.
+  // The unit as the hub's Add left it, with two games reviewed against it: the reviews gave the
+  // student's moves their cards.
   async function seedReviewedMcConnell() {
     const italian = seedItalian();
     const mcconnell = seedMcConnell();
@@ -510,6 +511,46 @@ describe("the delete:repertoire-unit command", () => {
       { root: MCCONNELL_ROOT, openingName: MCCONNELL_GROUP, games: 2, repertoireId: null },
     ]);
     expect(engine.requests).toEqual([]);
+  });
+
+  it("keeps the delete and reports a game whose review fails, which the next review run takes", async () => {
+    const { italian, mcconnell, games } = await seedReviewedMcConnell();
+    db.exec(`CREATE TRIGGER forced_review_failure BEFORE INSERT ON repertoire_game_reviews
+             WHEN NEW.game_id = ${games.inBook}
+             BEGIN SELECT RAISE(ABORT, 'forced review failure'); END`);
+
+    const run = await runCommand("--group", MCCONNELL_GROUP);
+
+    expect(run.status).toBe(1);
+    expect(run.err).toEqual([
+      `game ${games.inBook}: review failed, left for the next review run: forced review failure`,
+    ]);
+    expect(run.out.at(-1)).toBe(
+      `game ${games.departed}: not_reached against repertoire ${italian} (Italian Game: Giuoco Piano (4.c3))`,
+    );
+    expect(count("SELECT COUNT(*) AS n FROM repertoires WHERE id = ?", mcconnell)).toBe(0);
+    expect(
+      count("SELECT COUNT(*) AS n FROM repertoire_game_reviews WHERE game_id = ?", games.inBook),
+    ).toBe(0);
+    db.exec("DROP TRIGGER forced_review_failure");
+    expect((await reviewRepertoireGames(reviewDeps())).outcomes.not_reached).toBe(1);
+    expect(
+      db.prepare("SELECT * FROM repertoire_game_reviews WHERE game_id = ?").get(games.inBook),
+    ).toMatchObject({ repertoire_id: italian, outcome: "not_reached", left_ply: 4 });
+  });
+
+  it("leaves the games unreviewed when no Italian Game is stored to compare them with", async () => {
+    const mcconnell = seedMcConnell();
+    const game = addGame(MCCONNELL_LINE);
+    insertReview(game, mcconnell, "in_book");
+
+    const run = await runCommand("--group", MCCONNELL_GROUP);
+
+    expect(run.status).toBe(0);
+    expect(run.out.at(-1)).toBe(
+      `game ${game}: not reviewed, no Italian Game is stored or it was reviewed meanwhile`,
+    );
+    expect(count("SELECT COUNT(*) AS n FROM repertoire_game_reviews")).toBe(0);
   });
 
   it("prints the same with --dry-run and writes nothing", async () => {
