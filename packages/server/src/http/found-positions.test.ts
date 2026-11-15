@@ -365,7 +365,8 @@ describe("GET /api/found-positions", () => {
   });
 
   it("lists with phase=endgame the positions the all drill serves, each section in the drill's order", async () => {
-    addFound("e-rep-new", { phase: "endgame", fromRepeat: true, color: "black" });
+    // Inside each section the ids sort against the drill's order, so an order by id shows.
+    addFound("e-rep-a-new", { phase: "endgame", fromRepeat: true, color: "black" });
     addFound("e-due", { phase: "endgame", card: hoursFromT0(-3) });
     addFound("e-rep-due", {
       phase: "endgame",
@@ -373,23 +374,23 @@ describe("GET /api/found-positions", () => {
       color: "black",
       card: hoursFromT0(-1),
     });
-    addFound("e-later", { phase: "endgame", card: hoursFromT0(24) });
+    addFound("e-a-later", { phase: "endgame", card: hoursFromT0(24) });
     addFound("m-due", { phase: "middlegame", card: hoursFromT0(-9) });
     addFound("o-new", { phase: "opening" });
 
     const listed = ids(await list("?phase=endgame"));
     const queue = drillQueue("all", { phase: "endgame" });
-    const reached = new Set(["e-rep-new", "e-rep-due"]);
-    expect(queue).toEqual(["e-due", "e-rep-due", "e-rep-new", "e-later"]);
+    const reached = new Set(["e-rep-a-new", "e-rep-due"]);
+    expect(queue).toEqual(["e-due", "e-rep-due", "e-rep-a-new", "e-a-later"]);
     expect([...listed].sort()).toEqual([...queue].sort());
     expect(listed).toEqual([
       ...queue.filter((id) => reached.has(id)),
       ...queue.filter((id) => !reached.has(id)),
     ]);
     // With one section left, the list and the drill read in one order.
-    expect(ids(await list("?phase=endgame&color=white"))).toEqual(
-      drillQueue("all", { phase: "endgame", color: "white" }),
-    );
+    const white = ids(await list("?phase=endgame&color=white"));
+    expect(white).toEqual(["e-due", "e-a-later"]);
+    expect(white).toEqual(drillQueue("all", { phase: "endgame", color: "white" }));
   });
 
   it("never sends the accepted moves or the solution", async () => {
