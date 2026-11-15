@@ -276,14 +276,16 @@
 - **Practice hub:** with no item on the board, Practice is a frame: a navigation of eight entries in
   two groups (Train: Overview, Puzzle themes, From my games, Openings; Stats: Dashboard, Improvement
   areas, Strengths, Openings played) beside a column that shows one page at a time
-  (`components/PracticeHub.tsx`, `state/practice-page.ts`). Four pages are built: the Overview (the
+  (`components/PracticeHub.tsx`, `state/practice-page.ts`). Five pages are built: the Overview (the
   day streak, puzzle rating and cards remembered from `GET /api/progress` as three tiles, the Due
   cards card with the Puzzles by weakness card beside it, and a Puzzle themes section, see Overview
-  themes), which Puzzle themes
-  shows scrolled to that section, Openings (below), and Improvement areas and Strengths. From my
-  games, Dashboard and Openings played only say they are not built yet. The Openings entry shows
-  the repertoire moves due now, the sum of `sides[].moves.due` in the `GET /api/repertoires` answer
-  the Openings page last read. Every page stays mounted while another is shown, and a refused start
+  themes), which Puzzle themes shows scrolled to that section, Openings (below), Improvement areas
+  and Strengths, and From my games (its own bullet below). Dashboard and Openings played only say
+  they are not built yet. The Overview also holds a panel of the positions from the student's games
+  in the row of cards. The Openings entry shows the repertoire moves due now, the sum of
+  `sides[].moves.due` in the `GET /api/repertoires` answer the Openings page last read, and the From
+  my games entry the positions due in the whole list (`counts.due`), each with no number at 0. Every
+  page stays mounted while another is shown, and a refused start
   shows on the page it was pressed on. The entry chosen is stored in the browser under
   `chess-coach.practice-page`, so the hub comes back to it after a session and after a reload.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
@@ -364,6 +366,26 @@
   build now) and `left_out` (the rows with `listed = 0`) under every filter, and `by_phase` and
   `by_section` under the colour and the opening. A colour, phase or opening outside the listed values answers 400
   `invalid_filter` and reads nothing.
+- **From my games page:** the Train group's third page (`components/PracticeFound.tsx`, the read and
+  the wording in `state/found-api.ts`) draws what that list answers. The hub reads the whole list
+  once, for the navigation's number, the Overview's panel and the page; a colour or phase chosen on
+  the page is read again from the server (`?color=`, `?phase=`) and the counts follow it, except the
+  phase labels, which count from `by_phase`, which the phase chosen does not narrow. Its cards, each with a
+  read-only board (`components/MiniBoard.tsx`: chessground with `viewOnly`), are drawn from the first
+  time the page is shown. A position is a card in the section its `section` names, so one that
+  belongs to both is shown once, in the first, with the Mistake chip. A mistake in the opening is
+  titled by the opening and a mistake past it by `Move N · vs <opponent>`, the foot holding the date
+  and the other of the two; a position reached more than once shows Reached N×, Found best X of Y
+  (green from 70%, amber from 55%, red under, by the exact share) and Last date. The state reads due,
+  new or, for a scheduled position, when `next_review_at` comes. Train N sends `start_training`
+  with `mode: "found"` and `scope: "recommended"` plus the colour and phase chosen, its menu sends
+  `due` and `all`, N at 0 reads Train all positions and sends `all`, and a card's Drill sends
+  `scope: "all"` with its `position` and no filter. The Overview's panel reads D due, R recurring of
+  N, the first three positions due, and Drill D positions sends `due` (Train all positions sends
+  `all` when nothing is due). With no position at all the page and the panel say so, and a read that
+  failed says so with Try again. A start in flight anywhere in the hub, a found one or not, disables
+  every one of these buttons. A found start the server refuses is explained under the header of the
+  page it was pressed on.
 - **Coach conversations:** one per tab (`play`, `games`, `practice`), each its own `coach_sessions`
   row (`tab` column) resumed by its own Claude session id. The live game and the student's chat on
   Play write to `play`, training to `practice`, a question about a stored game to `games`. A tab's
