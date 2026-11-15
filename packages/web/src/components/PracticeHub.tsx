@@ -6,7 +6,7 @@ import type {
 } from "@chess-coach/shared";
 import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
-import type { DrillSize, MotifCount } from "../state/practice.js";
+import type { MotifCount } from "../state/practice.js";
 import {
   openingsDueOf,
   PRACTICE_ENTRY_LABEL,
@@ -23,9 +23,11 @@ import {
   type FetchRepertoireList,
   fetchRepertoireListFromServer,
 } from "../state/repertoires-api.js";
+import type { FetchThemeStats } from "../state/theme-stats-api.js";
 import { PracticeNav } from "./PracticeNav.js";
 import { PracticeOpenings } from "./PracticeOpenings.js";
 import { type HubStartButton, PracticeOverview, PracticePageHead } from "./PracticeOverview.js";
+import { PracticeThemeStats } from "./PracticeThemeStats.js";
 
 export interface PracticeHubProps {
   progress: Loaded<ProgressResponse>;
@@ -40,8 +42,6 @@ export interface PracticeHubProps {
     level?: RepertoireLevel | undefined;
   } | null;
   failure: string | null;
-  size: DrillSize;
-  onSize(size: DrillSize): void;
   onStart(mode: TrainingMode, motif: string): void;
   onStartRepertoire(repertoireId: number, scope: RepertoireScope, level?: RepertoireLevel): void;
   now?: Date;
@@ -53,6 +53,8 @@ export interface PracticeHubProps {
   addVariation?: AddVariation | undefined;
   // Where a variation's coverage comes from when it is opened; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
+  // Where ranked puzzle theme stats come from when a Stats theme page opens; the server's by default.
+  fetchThemeStats?: FetchThemeStats | undefined;
   // The engine and coach problem cards, which the Overview draws under its title.
   problems?: ReactNode;
 }
@@ -209,8 +211,6 @@ export function PracticeHub(props: PracticeHubProps) {
             progress={props.progress}
             motifs={props.motifs}
             engineMissing={props.engineMissing}
-            size={props.size}
-            onSize={props.onSize}
             startButton={startButton}
             problems={props.problems}
             failure={failureOn("overview")}
@@ -225,6 +225,19 @@ export function PracticeHub(props: PracticeHubProps) {
             failure={failureOn("openings")}
           />
         </PageSlot>
+        {(["improvement-areas", "strengths"] as const).map((kind) => (
+          <PageSlot key={kind} shown={page === kind}>
+            <PracticeThemeStats
+              kind={kind}
+              shown={page === kind}
+              fetchThemeStats={marked.fetchThemeStats}
+              starting={marked.starting}
+              engineMissing={marked.engineMissing}
+              onStart={marked.onStart}
+              failure={failureOn(kind)}
+            />
+          </PageSlot>
+        ))}
         <UnbuiltPages page={page} />
       </div>
     </div>

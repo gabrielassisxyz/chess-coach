@@ -181,6 +181,26 @@ export function insertTrainingRun(
   return row.id;
 }
 
+// A queue without an end draws its next batch once the student reaches the last item. The batch
+// joins the stored items and `size` keeps counting them, so the row says what the run has served
+// or will serve. Only an open run is written, like every other step.
+export function appendTrainingRunItems(
+  db: Database,
+  runId: number,
+  added: readonly StoredRunItem[],
+): void {
+  const row = db
+    .prepare("SELECT items_json FROM training_runs WHERE id = ? AND ended_at IS NULL")
+    .get(runId) as { items_json: string } | undefined;
+  if (!row) return;
+  const items = [...(JSON.parse(row.items_json) as StoredRunItem[]), ...added];
+  db.prepare("UPDATE training_runs SET items_json = ?, size = ? WHERE id = ?").run(
+    JSON.stringify(items),
+    items.length,
+    runId,
+  );
+}
+
 // Only an open run is written. A step that completes after its run ended, such as a try that waited
 // on the engine while the board moved on, finds the row closed and leaves it as the record of where
 // the run stopped. The step that finishes a run closes it before its own save, so that last save is

@@ -228,7 +228,7 @@ describe("Practice states", () => {
     const view = render(<Practice server={server} {...hub} />);
     await screen.findByRole("radio", { name: /fork/i });
     fireEvent.click(await screen.findByRole("button", { name: "Review 4 cards" }));
-    expect(server.send).toHaveBeenCalledWith({ type: "start_training", mode: "srs", size: 10 });
+    expect(server.send).toHaveBeenCalledWith({ type: "start_training", mode: "srs" });
     const starting = screen.getByRole("button", { name: "Starting" }) as HTMLButtonElement;
     expect(starting.disabled).toBe(true);
     expect(
@@ -260,7 +260,6 @@ describe("Practice states", () => {
       type: "start_training",
       mode: "puzzles",
       motif: "fork",
-      size: 10,
     });
     view.rerender(
       <Practice

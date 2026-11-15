@@ -80,9 +80,32 @@
   Lichess import form. The token travels only in a REST body, never over the
   socket, whose `ws.command` logs the whole command, and no route returns it. Writes obey the socket's
   Origin and Host rule, so `CHESS_COACH_ALLOWED_ORIGINS` also governs them.
-- **Openings:** `POST /api/openings/generate` turns the first fifteen moves of every graded game into
-  "find the best move" puzzles (`own:` ids, source `own-games`, motifs `opening-white` and
-  `opening-black`); the import grader runs it after each game. Practice's openings mode drills them. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
+- **Openings:** `POST /api/openings/generate` (alone or with `sources: ["own"]`) records in
+  `found_positions` (`openings/from-games.ts`) the positions worth practising from every graded,
+  finished game, and the import grader runs it after each game. Three rules find them, the starting
+  position never counting: the position before a student move from ply 2 on classified
+  `inaccuracy`, `mistake` or `blunder` (`from_mistake`); a position with the student to move that two
+  or more games reached from ply 2 on, a game that ended on the opponent's move counting its last
+  position (`from_repeat`); and, in a White game, the position after the opponent's move that left a
+  stored unit at ply 29 or earlier, which is the review row's `left_ply` on `not_reached` at an even
+  ply, `reply_added` or `reply_not_stored` (`from_departure`). A position found several ways is one
+  row, keyed by its `own:` id. A new one is searched once, at depth 16 with five lines and a 10 s cap,
+  the result used at the depth reached, and `accepted_uci` stores the first moves of the lines less
+  than 30 cp below the best, best first; a stored one is never searched again. Its flags,
+  `reached_games`, `best_games` (games whose move there was `best`), `last_reached_at` (`played_at`,
+  else `finished_at`) and the game shown, `game_id` and `ply` (the latest game with a mistake there,
+  else the latest that reached it), are refreshed on every run, and a stored position no rule finds
+  any more, as after a game deleted by hand, keeps its row with its flags cleared. A position is
+  `listed` with one to four accepted moves that hold every best move graded there and none of the
+  moves the student played there as a mistake, and a repeat with one to five whatever the grading
+  says. A listed one is also a one-move puzzle (`own:` id, source `own-games`, answered by the first
+  accepted move, motif `<phase>-<colour>`), the phase coming from `openings/game-phase.ts`: `endgame`
+  at 6 pieces or fewer besides kings and pawns, else `opening` up to ply 30, else `middlegame`, from
+  the lowest ply the position was reached at. A puzzle row already stored under the id is left as it
+  is, and the `own:` puzzles of the earlier rule, which took every student move of the first fifteen
+  moves, keep their rows and attempts. `openings.generate` logs `candidates`, `listed`,
+  `fromMistake`, `fromRepeat`, `fromDeparture`, `searched` and `created`. Practice's openings mode
+  drills the `opening-white` and `opening-black` puzzles. `POST /api/openings/generate {sources: ["explorer"]}` also expands the
   student's first moves with the replies most played at 0-1199 on the Lichess explorer (`explorer:` ids, source
   `lichess-explorer`, cache under `<data dir>/explorer-cache`, at most 2000 requests a run, one per 1.1 s); it
   is opt-in at the call and never runs after an import. `POST /api/openings/generate {sources: ["italian"]}` builds the White Italian drill from the 1800-2499 band against 0-1199 replies (`italian:` ids, source `italian-explorer`, motif `opening-italian`). The explorer now answers 401 without a Lichess API
@@ -227,6 +250,21 @@
   bootstrap nor the activity event carries a run that is not on the board; `discarded` is only in
   rows written before they were removed and in the runs a unit's delete ends (Deleting a unit). A
   single item the coach serves is not persisted.
+  A puzzle queue drawn around the student's rating, of no motif or of a theme the sampler finds, has
+  no size and no end of its own. `start_training` takes no `size`: its schema is strict, so a frame
+  that still carries one is refused with `invalid_command`. The run starts with a batch of 10
+  (`PUZZLE_BATCH_SIZE`), and `next` on the last item draws 10 more the same way, around the rating
+  the student has by then, appends them to `training_runs.items_json` (and counts them in `size`)
+  and serves the first. None of them is a puzzle the run holds: `drawRatedBatch` asks the sampler
+  for the batch plus as many puzzles as the run holds, up to its 50 per call, and drops those the
+  run has, so past 40 items a refill can come back short. A refill that finds no puzzle finishes the
+  run with its summary, as the last item of any queue does; the student otherwise stops it with End.
+  The items of such a run carry `position_in_queue` and no `queue_length`, `queue_outcomes` holds the
+  items served so far, and the web heads an item `Puzzle N` with no total, draws one progress
+  segment per item served, and never offers Finish training. Every other queue keeps a length and
+  ends on its last item: the due cards (20), the opening drills, the Italian drill and a motif that
+  no theme row names (`opening_trap`), which hold 10 positions at most, and a single item the coach
+  serves.
 - **Repertoire drill:** `start_training {mode: "repertoire", repertoire_id, scope}` runs a stored
   variation as passes from move 1 (`activity/repertoire-session.ts`): the server plays Black and every
   White move not asked, and stops on the moves still to find. `recommended` takes at most 10 due moves,
