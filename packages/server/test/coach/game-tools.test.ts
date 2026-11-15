@@ -154,6 +154,64 @@ describe("show_position and make_move", () => {
   });
 });
 
+describe("an offered line card keeps its shape and its wording", () => {
+  async function setupOfferedLine() {
+    const db = openDatabase(mkdtempSync(join(tmpdir(), "game-tools-offered-")));
+    const cardId = Number(
+      db
+        .prepare(
+          `INSERT INTO srs_cards (source_kind, prompt_fen, student_color, expected_uci, created_at, next_review_at)
+           VALUES ('teaching', ?, 'white', 'd2d4', 'x', '2099-01-01T00:00:00.000Z')`,
+        )
+        .run(START_FEN).lastInsertRowid,
+    );
+    const session = createCoachSession(db, { promptVersion: "v" });
+    const notifications = { sessionId: () => session.id };
+    const fake = makeWorld(db, [], { desk: new ReviewDesk({ db, notifications }), notifications });
+    const tools = buildCoachTools({ db, contentDir: contentDir(), world: fake.world });
+    const call = async (name: string, input: Record<string, unknown> = {}) => {
+      const def = tools.find((entry) => entry.name === name);
+      if (!def) throw new Error(`tool ${name} is not registered`);
+      const parsed = z.object(def.inputSchema).parse(input);
+      const result = await def.handler(parsed as never, {});
+      const text = (result.content[0] as { text: string }).text;
+      return {
+        isError: result.isError === true,
+        body: JSON.parse(text) as Record<string, unknown>,
+      };
+    };
+    const served = await call("serve_card", { card_id: cardId });
+    expect(served.isError).toBe(false);
+    await fake.activity.trainingTry("d2d4");
+    return { db, fake, call };
+  }
+
+  it("carries start_fen and moves on an offered show_position, and a make_move extends moves", async () => {
+    const { fake, call } = await setupOfferedLine();
+    const before = fake.activity.current();
+    const shown = await call("show_position", { fen: AFTER_E4 });
+    expect(shown.isError).toBe(false);
+    expect(shown.body).toMatchObject({ offered: true, start_fen: AFTER_E4, moves: [] });
+    expect(shown.body).not.toHaveProperty("fen");
+    expect(fake.activity.current()).toEqual(before);
+    const moved = await call("make_move", { san: "e5" });
+    expect(moved.isError).toBe(false);
+    expect(moved.body).toMatchObject({ offered: true, start_fen: AFTER_E4, moves: ["e5"] });
+    expect(moved.body).not.toHaveProperty("fen");
+    expect(fake.activity.current()).toEqual(before);
+  });
+
+  it("tells the coach the line is offered as a card, not shown on the board", async () => {
+    const { call } = await setupOfferedLine();
+    const shown = await call("show_position", { fen: AFTER_E4 });
+    expect(shown.isError).toBe(false);
+    const message = (shown.body as { message?: unknown }).message;
+    expect(typeof message).toBe("string");
+    expect(message as string).toContain("card");
+    expect(message).not.toBe("Shown on the board.");
+  });
+});
+
 describe("get_game", () => {
   it("errors when there is neither a live nor a reviewed game", async () => {
     const { call } = setup();
