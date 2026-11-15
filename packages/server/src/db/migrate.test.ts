@@ -279,6 +279,85 @@ describe("016_training_run_outcomes", () => {
   });
 });
 
+describe("030_puzzle_openings", () => {
+  function databaseAt029(): BetterSqlite3.Database {
+    const all = listMigrations(defaultMigrationsDir);
+    const upTo029 = migrationsDir(
+      Object.fromEntries(
+        all
+          .filter((name) => name < "030")
+          .map((name) => [name, readFileSync(join(defaultMigrationsDir, name), "utf8")]),
+      ),
+    );
+    const db = new BetterSqlite3(join(tmp, "at-029.db"));
+    db.pragma("foreign_keys = ON");
+    runMigrations(db, upTo029);
+    return db;
+  }
+
+  function insertStored(
+    db: BetterSqlite3.Database,
+    id: string,
+    rating: number | null,
+    openingTags: string | null,
+  ): void {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san,
+         explanation, difficulty_rating, opening_tags)
+       VALUES (?, 'lichess-db', 'tactics', 'intermediate', 'x', '[]', '[]', 'why', ?, ?)`,
+    ).run(id, rating, openingTags);
+  }
+
+  const rows = (db: BetterSqlite3.Database): unknown[] =>
+    db
+      .prepare("SELECT opening, rating, puzzle_id FROM puzzle_openings ORDER BY puzzle_id, opening")
+      .all();
+
+  it("files every rated puzzle under each of its tags, and a puzzle with none under nothing", () => {
+    const db = databaseAt029();
+    insertStored(db, "two", 1498, "Italian_Game Italian_Game_Classical_Variation");
+    insertStored(db, "one", 1032, "French_Defense");
+    insertStored(db, "none", 1433, "");
+    insertStored(db, "null", 1819, null);
+    insertStored(db, "unrated", null, "Caro-Kann_Defense Caro-Kann_Defense_Advance_Variation");
+    insertStored(db, "spaced", 1200, " Scandinavian_Defense  Scandinavian_Defense_Main_Line ");
+    const puzzlesBefore = db.prepare("SELECT * FROM puzzles ORDER BY id").all();
+
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("030_puzzle_openings.sql");
+
+    expect(rows(db)).toEqual([
+      { opening: "French_Defense", rating: 1032, puzzle_id: "one" },
+      { opening: "Scandinavian_Defense", rating: 1200, puzzle_id: "spaced" },
+      { opening: "Scandinavian_Defense_Main_Line", rating: 1200, puzzle_id: "spaced" },
+      { opening: "Italian_Game", rating: 1498, puzzle_id: "two" },
+      { opening: "Italian_Game_Classical_Variation", rating: 1498, puzzle_id: "two" },
+    ]);
+    expect(db.prepare("SELECT * FROM puzzles ORDER BY id").all()).toEqual(puzzlesBefore);
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+    db.close();
+  });
+
+  it("writes one row for a tag a puzzle carries twice", () => {
+    const db = databaseAt029();
+    insertStored(db, "twice", 1500, "Italian_Game Italian_Game");
+    runMigrations(db, defaultMigrationsDir);
+    expect(rows(db)).toEqual([{ opening: "Italian_Game", rating: 1500, puzzle_id: "twice" }]);
+    db.close();
+  });
+
+  it("creates the table empty on a new database, keyed by tag, rating and id", () => {
+    const db = new BetterSqlite3(join(tmp, "new.db"));
+    runMigrations(db, defaultMigrationsDir);
+    expect(count(db, "puzzle_openings")).toBe(0);
+    const insert = db.prepare(
+      "INSERT INTO puzzle_openings (opening, rating, puzzle_id) VALUES ('Italian_Game', 1500, 'p')",
+    );
+    insert.run();
+    expect(() => insert.run()).toThrow(/UNIQUE/);
+    db.close();
+  });
+});
+
 describe("026_training_run_left", () => {
   const REASONS = ["finished", "ended", "discarded", "replaced", "left"];
 

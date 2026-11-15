@@ -9,7 +9,7 @@ import {
   TrainingSummarySchema,
 } from "./activity.js";
 import { FoundPositionPhaseSchema, MAX_FOUND_POSITION_ID_LENGTH } from "./found-positions.js";
-import { MAX_OPENING_FAMILY_LENGTH } from "./openings.js";
+import { MAX_OPENING_FAMILY_LENGTH, OpeningTagSchema } from "./openings.js";
 import { RepertoireLevelSchema, RepertoireScopeSchema } from "./repertoires.js";
 
 // The wire contract between server and browser. Every frame is validated on arrival by the side
@@ -314,10 +314,12 @@ export const UndoCommandSchema = z.object({
 // opening drill may name one opening family of its colour, or UNNAMED_OPENING for the positions with
 // no name; without one it drills every position of the colour. A drill of the positions from the
 // student's games (`found`) may name one opening, a full name matching it exactly and a family
-// matching every variation of it. The other modes ignore `opening`.
+// matching every variation of it. A puzzle queue may name one Lichess opening tag instead of a
+// motif. The other modes ignore `opening`.
 // A drill of the positions from the student's games (`found`) cannot start without a scope, and
 // `color`, `phase`, `position` (the id the From my games list gives) and `opening` narrow it;
-// the other modes ignore `phase`, `position` and, except for the opening drill, `opening`.
+// the other modes ignore `phase` and `position`, and all but the opening drill and a puzzle queue
+// ignore `opening`.
 // A queue has no size to choose: the object is strict so that a
 // client still sending the retired `size` is refused instead of being served a queue it did not ask
 // for.
@@ -334,6 +336,29 @@ const StartTrainingFieldsSchema = z.strictObject({
   phase: FoundPositionPhaseSchema.optional(),
   position: z.string().min(1).max(MAX_FOUND_POSITION_ID_LENGTH).optional(),
 });
+
+// In mode puzzles `opening` is a Lichess opening tag, and the queue is drawn from that tag's puzzles
+// alone, so a motif cannot narrow it as well.
+function checkPuzzleQueueOpening(
+  { mode, motif, opening }: z.infer<typeof StartTrainingFieldsSchema>,
+  context: z.RefinementCtx,
+): void {
+  if (mode !== "puzzles" || opening === undefined) return;
+  if (!OpeningTagSchema.safeParse(opening).success) {
+    context.addIssue({
+      code: "custom",
+      path: ["opening"],
+      message: "an opening tag holds only letters, digits, underscores and hyphens",
+    });
+  }
+  if (motif !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["motif"],
+      message: "a puzzle queue of one opening takes no motif",
+    });
+  }
+}
 
 export const StartTrainingCommandSchema = StartTrainingFieldsSchema.superRefine(
   (command, context) => {
@@ -355,6 +380,7 @@ export const StartTrainingCommandSchema = StartTrainingFieldsSchema.superRefine(
         message: `opening must be at most ${MAX_OPENING_FAMILY_LENGTH} characters for an opening drill`,
       });
     }
+    checkPuzzleQueueOpening(command, context);
   },
 );
 

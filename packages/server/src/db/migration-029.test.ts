@@ -119,7 +119,7 @@ describe("029_found_cards", () => {
     const runsBefore = runs();
     const itemsBefore = items();
 
-    expect(runMigrations(db, defaultMigrationsDir)).toEqual(["029_found_cards.sql"]);
+    expect(runMigrations(db, defaultMigrationsDir)).toContain("029_found_cards.sql");
 
     expect(runs()).toEqual(runsBefore);
     expect(items()).toEqual(itemsBefore);

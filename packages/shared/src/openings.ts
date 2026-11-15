@@ -21,6 +21,45 @@ export const UNNAMED_OPENING = "unnamed:";
 // The longest family a start may name; the book's longest is far below it.
 export const MAX_OPENING_FAMILY_LENGTH = 100;
 
+// Lichess files a puzzle under the key of its opening's name: accents folded to plain letters,
+// spaces turned into underscores and every other character that is not a letter, a digit or a
+// hyphen dropped. "Queen's Gambit Declined" is `Queens_Gambit_Declined`, and "St. George Defense"
+// is `St_George_Defense`, as the stored tags spell it. NFD splits an accented letter into its
+// plain letter and a combining mark, which the last step drops with the rest.
+export function openingTagOf(openingName: string): string {
+  return openingName
+    .normalize("NFD")
+    .replace(/\s+/g, "_")
+    .replace(/[^A-Za-z0-9_-]/g, "");
+}
+
+// The longest tag a puzzle queue may name; the stored ones run to 59 characters.
+export const MAX_OPENING_TAG_LENGTH = 120;
+export const OpeningTagSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]+$/)
+  .max(MAX_OPENING_TAG_LENGTH);
+
+// The most names one GET /api/puzzles/openings answers.
+export const MAX_OPENING_PUZZLE_NAMES = 40;
+
+// One name GET /api/puzzles/openings was asked about, in the order asked: the tag `openingTagOf`
+// gives it, how many puzzles carry that tag (0 when none does), and the student's attempts on them
+// in the last 30 days with the first-try solves among them.
+export const OpeningPuzzlesSchema = z.object({
+  name: z.string().min(1),
+  tag: z.string(),
+  puzzles: z.number().int().nonnegative(),
+  played_30d: z.number().int().nonnegative(),
+  first_try_30d: z.number().int().nonnegative(),
+});
+export type OpeningPuzzles = z.infer<typeof OpeningPuzzlesSchema>;
+
+export const OpeningPuzzlesResponseSchema = z.object({
+  entries: z.array(OpeningPuzzlesSchema),
+});
+export type OpeningPuzzlesResponse = z.infer<typeof OpeningPuzzlesResponseSchema>;
+
 // One opening family of a colour's drill, or the positions with no name. `opening` is what a start
 // sends back, and is the family itself unless it is UNNAMED_OPENING. The attempts and the first-try
 // solves are those of the last 30 days; `repertoire_id` is the first variation of the stored opening

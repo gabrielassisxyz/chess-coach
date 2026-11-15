@@ -5,7 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { contentDir } from "../paths.js";
 import { seedPuzzles } from "../puzzles/seed.js";
 import { type Database, openDatabase } from "./open.js";
-import { getPuzzle, listMotifs, listPuzzles, recordPuzzleAttempt } from "./puzzles.js";
+import {
+  getPuzzle,
+  listMotifs,
+  listPuzzles,
+  recordPuzzleAttempt,
+  tallyOpeningTag,
+} from "./puzzles.js";
 
 let tmp: string;
 let db: Database;
@@ -519,6 +525,150 @@ describe("listPuzzles around a rating", () => {
         const rows = counted({ ...filter, ratingAround: 1219, limit: 50 });
         expect(Math.max(...rows)).toBe(200);
       }
+    });
+  });
+});
+
+describe("puzzles by Lichess opening tag", () => {
+  beforeEach(() => {
+    db.prepare("DELETE FROM puzzle_themes").run();
+    db.prepare("DELETE FROM puzzles").run();
+  });
+
+  // One imported puzzle and its rows in `puzzle_openings`, one per tag of `openingTags`, as the
+  // import files them.
+  function addTagged(
+    id: string,
+    rating: number,
+    openingTags: string,
+    popularity: number | null = null,
+  ): void {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation,
+                            difficulty_rating, popularity, opening_tags)
+       VALUES (?, 'lichess-db', 'tactics', 'intermediate', 'fen', '[]', '[]', '', ?, ?, ?)`,
+    ).run(id, rating, popularity, openingTags);
+    for (const tag of openingTags.split(" ")) {
+      db.prepare("INSERT INTO puzzle_openings (opening, rating, puzzle_id) VALUES (?, ?, ?)").run(
+        tag,
+        rating,
+        id,
+      );
+    }
+  }
+
+  const ITALIAN = "Italian_Game Italian_Game_Classical_Variation";
+  const PIANISSIMO = "Italian_Game Italian_Game_Giuoco_Pianissimo";
+
+  const openingIds = (opening: string, ratingAround: number, limit = 10, seed = 1): string[] =>
+    listPuzzles(db, { opening, ratingAround, limit }, seededRandom(seed)).puzzles.map((p) => p.id);
+
+  const seenAcrossSeeds = (opening: string, ratingAround: number, limit = 10): Set<string> =>
+    new Set(SEEDS.flatMap((seed) => openingIds(opening, ratingAround, limit, seed)));
+
+  it("serves a puzzle under its family's tag and under its variation's", () => {
+    addTagged("classical", 1200, ITALIAN);
+    addTagged("pianissimo", 1200, PIANISSIMO);
+    addTagged("french", 1200, "French_Defense French_Defense_Advance_Variation");
+    expect(openingIds("Italian_Game", 1219).sort()).toEqual(["classical", "pianissimo"]);
+    expect(openingIds("Italian_Game_Giuoco_Pianissimo", 1219)).toEqual(["pianissimo"]);
+    expect(openingIds("French_Defense", 1219)).toEqual(["french"]);
+  });
+
+  it("samples a tag around the rating, widening only when the window holds too few", () => {
+    for (let i = 0; i < 12; i++) addTagged(`near${i}`, 1100, ITALIAN);
+    addTagged("far", 1800, ITALIAN);
+    const seen = seenAcrossSeeds("Italian_Game", 1219);
+    expect(seen).toContain("near0");
+    expect(seen).not.toContain("far");
+    expect(openingIds("Italian_Game", 1219, 13).sort()).toContain("far");
+  });
+
+  it("does not sample popularity 49, and does sample 50 and a null", () => {
+    addTagged("pop-49", 1200, ITALIAN, 49);
+    addTagged("pop-50", 1200, ITALIAN, 50);
+    addTagged("pop-null", 1200, ITALIAN, null);
+    expect([...seenAcrossSeeds("Italian_Game", 1219)].sort()).toEqual(["pop-50", "pop-null"]);
+  });
+
+  it("returns an attempted puzzle of the tag only once the unattempted ones are used up", () => {
+    addTagged("seen", 1200, ITALIAN);
+    addTagged("fresh", 1210, ITALIAN);
+    attempt("seen", true);
+    expect(seenAcrossSeeds("Italian_Game", 1219, 1)).toEqual(new Set(["fresh"]));
+    expect(openingIds("Italian_Game", 1219, 5)).toEqual(["fresh", "seen"]);
+  });
+
+  it("serves nothing for a tag no puzzle carries, nor for a theme's name", () => {
+    addTagged("classical", 1200, ITALIAN);
+    db.prepare("INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)").run(
+      "fork",
+      1200,
+      "classical",
+    );
+    expect(openingIds("Scandinavian_Defense", 1219)).toEqual([]);
+    expect(openingIds("fork", 1219)).toEqual([]);
+    expect(openingIds("Italian_Game' OR '1'='1", 1219)).toEqual([]);
+  });
+
+  describe("tallyOpeningTag", () => {
+    const WINDOW = { from: "2025-12-02T00:00:00.000Z", to: "2026-01-01T00:00:00.000Z" };
+
+    const attemptAt = (puzzleId: string, attemptedAt: string, firstTry: boolean): void =>
+      recordPuzzleAttempt(db, {
+        puzzleId,
+        attemptedAt,
+        solved: firstTry,
+        answered: [],
+        failedPly: firstTry ? null : 0,
+        firstTry,
+        tries: firstTry ? 0 : 1,
+        gaveUp: !firstTry,
+      });
+
+    it("counts the rows filed under the tag, whatever their rating and popularity", () => {
+      addTagged("classical", 1200, ITALIAN);
+      addTagged("pianissimo", 2100, PIANISSIMO, 10);
+      addTagged("french", 1200, "French_Defense");
+      expect(tallyOpeningTag(db, "Italian_Game", WINDOW).puzzles).toBe(2);
+      expect(tallyOpeningTag(db, "Italian_Game_Giuoco_Pianissimo", WINDOW).puzzles).toBe(1);
+      expect(tallyOpeningTag(db, "French_Defense", WINDOW).puzzles).toBe(1);
+    });
+
+    it("counts the attempts inside the window on the tag's puzzles, and the first-try solves", () => {
+      addTagged("classical", 1200, ITALIAN);
+      addTagged("pianissimo", 1300, PIANISSIMO);
+      addTagged("french", 1200, "French_Defense");
+      attemptAt("classical", "2025-12-02T00:00:00.000Z", true);
+      attemptAt("classical", "2025-12-20T00:00:00.000Z", false);
+      attemptAt("pianissimo", "2026-01-01T00:00:00.000Z", true);
+      attemptAt("pianissimo", "2025-12-01T23:59:59.999Z", true);
+      attemptAt("french", "2025-12-20T00:00:00.000Z", true);
+      expect(tallyOpeningTag(db, "Italian_Game", WINDOW)).toEqual({
+        puzzles: 2,
+        played: 3,
+        firstTry: 2,
+      });
+      expect(tallyOpeningTag(db, "Italian_Game_Classical_Variation", WINDOW)).toEqual({
+        puzzles: 1,
+        played: 2,
+        firstTry: 1,
+      });
+    });
+
+    it("answers zeros for a tag no puzzle carries", () => {
+      addTagged("classical", 1200, ITALIAN);
+      attemptAt("classical", "2025-12-20T00:00:00.000Z", true);
+      expect(tallyOpeningTag(db, "Scandinavian_Defense", WINDOW)).toEqual({
+        puzzles: 0,
+        played: 0,
+        firstTry: 0,
+      });
+      expect(tallyOpeningTag(db, "Italian_Game' OR '1'='1", WINDOW)).toEqual({
+        puzzles: 0,
+        played: 0,
+        firstTry: 0,
+      });
     });
   });
 });
