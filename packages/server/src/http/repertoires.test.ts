@@ -967,6 +967,25 @@ describe("GET /api/repertoires: the numbers of the Openings page", () => {
     ]);
   });
 
+  it("counts the moves an opening would serve once across its two variations, apart from either's own", async () => {
+    // 1.e4 and 3.Bc4 are held in both variations but not due; 2.Nf3 is shared and due, 4.Ng5 is due
+    // for the second variation only, and 4.d3 is not due.
+    const later = new Date(Date.now() + 30 * DAY_MS).toISOString();
+    addCard([], "e4", later);
+    addCard(["e4", "e5"], "Nf3", LONG_AGO);
+    addCard(SETUP.slice(0, 4), "Bc4", later);
+    addCard([...SETUP, "Bc5"], "d3", later);
+    addCard([...SETUP, "Nf6"], "Ng5", LONG_AGO);
+
+    const { repertoires, groups } = await bodyOf();
+
+    const own = (id: number) => repertoires.find((entry) => entry.id === id)?.moves;
+    expect(own(pianissimo)).toEqual({ recommended: 1, due: 1, all: 4 });
+    expect(own(twoKnights)).toEqual({ recommended: 2, due: 2, all: 4 });
+    const italian = groups?.find((entry) => entry.group_name === "Italian Game");
+    expect(italian?.moves).toEqual({ recommended: 2, due: 2, all: 5 });
+  });
+
   it("gives an opening of one variation the numbers of that variation", async () => {
     const { repertoires, groups } = await bodyOf();
 
