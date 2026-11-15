@@ -2057,10 +2057,7 @@ describe("drawings and hint in the reasoning", () => {
     const { activity, notes } = setup();
     const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
     await activity.trainingTry("a1a8");
-    await activity.trainingDrawings(
-      [{ orig: "e4", color: "green" }],
-      start.activity_id,
-    );
+    await activity.trainingDrawings([{ orig: "e4", color: "green" }], start.activity_id);
     expect(notes()).toHaveLength(0);
     await activity.trainingAskCoach(start.activity_id);
     const note = notes().at(-1) as { reasoning?: { drawings?: unknown[] } };

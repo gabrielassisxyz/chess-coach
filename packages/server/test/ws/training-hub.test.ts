@@ -456,7 +456,11 @@ describe("training over the socket", () => {
     const { socket, next } = await connect(server);
     await next("bootstrap");
     socket.send(
-      JSON.stringify({ type: "drawings", command_id: "c0", shapes: [{ orig: "e4", color: "red" }] }),
+      JSON.stringify({
+        type: "drawings",
+        command_id: "c0",
+        shapes: [{ orig: "e4", color: "red" }],
+      }),
     );
     expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c0" });
     socket.send(
@@ -500,7 +504,9 @@ describe("training over the socket", () => {
       JSON.stringify({ type: "drawings", command_id: "c6", activity_id: id, shapes: [] }),
     );
     await next("activity");
-    socket.send(JSON.stringify({ type: "try_move", command_id: "c7", activity_id: id, uci: "a1a8" }));
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c7", activity_id: id, uci: "a1a8" }),
+    );
     await next("activity");
     const rows = db
       .prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification'")

@@ -513,7 +513,9 @@ describe("hint and drawings in a training result", () => {
         ],
       },
     });
-    expect(text).toContain("Hint used: no\nDrawn:\n+4s  red arrow e4-e5\n+10s  green circle d5, green arrow e2-e4");
+    expect(text).toContain(
+      "Hint used: no\nDrawn:\n+4s  red arrow e4-e5\n+10s  green circle d5, green arrow e2-e4",
+    );
     expect(text.indexOf("Drawn:")).toBeGreaterThan(text.indexOf("Hint used: no"));
   });
 

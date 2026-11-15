@@ -1215,10 +1215,13 @@ describe("hand drawings", () => {
       expect(changes.length).toBeGreaterThan(0);
       const sendDraw = changes[changes.length - 1] as (shapes: DrawShape[]) => void;
       act(() => sendDraw([{ orig: "e4", dest: "e5", brush: "red" }]));
-      act(() => sendDraw([{ orig: "e4", dest: "e5", brush: "red" } as DrawShape, { orig: "d5", brush: "green" } as DrawShape]));
-      expect(server.send).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: "drawings" }),
+      act(() =>
+        sendDraw([
+          { orig: "e4", dest: "e5", brush: "red" } as DrawShape,
+          { orig: "d5", brush: "green" } as DrawShape,
+        ]),
       );
+      expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "drawings" }));
       act(() => {
         vi.advanceTimersByTime(500);
       });
