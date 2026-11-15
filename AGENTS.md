@@ -151,9 +151,9 @@
   `progress/theme-stats.ts`), computed at request time with nothing stored: `overall` (`played`,
   `first_try`, `rating_avg`, `performance`, the last two null when nothing was played),
   `overall_previous` (the same over the window of the same length that ends where the asked one
-  starts, null for `all`), one `themes` entry per theme played with those figures and `ranked`,
-  `improvement_areas`, `strengths`, and `unranked`, the number of themes played with fewer than 8
-  attempts. An attempt counts once overall and once under each theme of its puzzle: the keys of
+  starts, null for `all`), one `themes` entry per theme played, most played first, with those
+  figures and `ranked`, `improvement_areas`, `strengths`, and `unranked`, the number of themes
+  played with fewer than 8 attempts. An attempt counts once overall and once under each theme of its puzzle: the keys of
   `puzzles.themes`, or for a puzzle without them its motif through `THEME_OF_MOTIF`; the origin themes
   `master`, `masterVsMaster` and `superGM` are left out everywhere, and an unrated puzzle counts
   nowhere. Performance is the Lichess puzzle dashboard's: the average `difficulty_rating`, minus 500,

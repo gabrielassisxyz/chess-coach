@@ -189,6 +189,12 @@ describe("computeThemeStats themes", () => {
     ).toEqual(["backRankMate", "fork", "mate"]);
   });
 
+  it("lists the themes most played first, a tie by key", () => {
+    addAttempt({ themes: "pin skewer" });
+    addAttempt({ themes: "skewer fork" });
+    expect(stats("30").themes.map((entry) => entry.theme)).toEqual(["skewer", "fork", "pin"]);
+  });
+
   it("never reports the origin themes master, masterVsMaster and superGM", () => {
     // Weak and strong enough that each origin theme would enter a list if it were counted.
     addThemeAttempts("masterVsMaster superGM pin", 8, 0, 1000);

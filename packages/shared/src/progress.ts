@@ -95,6 +95,7 @@ export const ThemeStatsResponseSchema = z.object({
   overall: ThemeStatsOverallSchema,
   // The window of the same length that ends where this one starts; null for all time.
   overall_previous: ThemeStatsOverallSchema.nullable(),
+  // Most played first, a tie by key.
   themes: z.array(ThemeStatsEntrySchema),
   // Theme keys: the weakest first, and the strongest first.
   improvement_areas: z.array(z.string()).max(8),
