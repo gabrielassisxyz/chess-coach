@@ -104,9 +104,9 @@ States
 | 12 | Running text near 65ch | ok | ok | ok | ok | ok | ok |
 | 13 | Motion under 300 ms, ease-out, transform and opacity only, reduced motion respected | ok | ok | ok | ok | ok | ok |
 | 14 | Focus visible on every interactive element, one ring | ok | ok | ok | ok | ok | ok |
-| 15 | Loading quiet sentence; error one error-tone sentence + Try again in same card; empty card/section stays, empty row/segment hidden | ok | ok | ok | partial | ok | ok |
+| 15 | Loading quiet sentence; error one error-tone sentence + Try again in same card; empty card/section stays, empty row/segment hidden | ok | ok | ok | ok | ok | ok |
 | 16 | Summary before detail; one focus per glance | ok | ok | ok | ok | ok | ok |
-| 17 | What is interactive looks interactive | ok | ok | partial | ok | ok | ok |
+| 17 | What is interactive looks interactive | ok | ok | partial | partial | ok | ok |
 | 18 | Both themes exist and follow `prefers-color-scheme` until the button overrides them | ok | ok | ok | ok | ok | ok |
 | 19 | Phone: under 900 px, board first, 44 px targets | n/a | ok | ok | ok | ok | ok |
 
@@ -148,6 +148,67 @@ visible and accessible names, and their icons render at 20 px. The base icon but
 32 px square on desktop; the quiet and board-gear variants keep their smaller desktop sizes,
 and phone icon controls are at least 44 px wide. M1 and M2 still find no matches.
 
+The Practice column was re-checked on rows 6, 7, 8, 9, 10, 14, 15, 16, 17 and 19, and the Phone
+column on row 19, for the Openings page, against its markup and `practice-openings.css`, and in
+Chromium at 1600 px and 800 px over a copy of the data. A card is an 8 px panel with a hairline
+border and 16 px and 20 px of padding; its head is one button holding a 16 px chevron that turns a
+quarter when the card opens (transform only, 180 ms, ease-out, dropped under reduced motion), the
+name at 18 px and 600 and the opening's line in the mono face. The five cells are a 12 px label over
+a 14 px mono value in equal columns 16 px apart; the count due is in the accent above 0, the
+share of games stayed in is a bar 4 px high in `--status-ready` over `--surface-2`, and a cell
+nothing was measured for holds the no-value dash and no bar. A variation's row sits behind a hairline
+at the left, with its name at 15 px and 500 (underlined on hover, since it opens the coverage), its
+line in mono and its button in the grid's sixth column, one gap after the coverage column. A train
+button is two buttons in one shape, 32 px (30 px in a row), whose menu is a panel on `--surface-raised`
+with `--border-strong` and no shadow; with nothing recommended it is one outlined button. The two
+dashed shapes, the Add an opening button and a colour with no line, are 32 px and 8 px radius
+boxes with a dashed hairline, never a card inside a card, and the panel that Add an opening
+opens is a card of its own beside the others. Loading is one quiet sentence, a failed read one
+sentence in the error tone with Try again, and an empty colour a sentence in its box. Under 900 px
+the five cells wrap to two columns, the head's buttons go under the title, every control is 44 px
+and nothing scrolls sideways. M1 and M2 still find no matches.
+
+The Practice column was re-checked on rows 6, 8, 9, 10, 14, 15, 16, 17 and 19, and the Phone column
+on row 19, for the Overview's Puzzles by weakness card and Puzzle themes section, against the markup,
+`practice-hub.css` and the measures `test/practice-themes.test.tsx` reads off the stylesheet; the
+cells were not measured in a browser. The card is the page's other 8 px panel, with the same title and
+note as Due cards over a head row of three 12 px labels and up to five rows. A row is a 4 px control
+36 px high with a hairline border, in the grid `minmax(0, 1fr) 56px 64px 36px` with a 10 px gap: the
+name at 14 px, the rating and the share in the mono face at 12 px in the secondary text, and a 4 px bar
+in `--status-ready`, `--status-busy` or `--status-error` by the same 70 and 55 bands as the theme
+pages. The chosen row takes the accent for its border and the app surface for its fill, and it is the
+first row until another is pressed; the rows are radios, so a screen reader hears one of them chosen.
+Train and Mix practice are 36 px buttons, the first the accent and the second outlined. The section
+under its 20 px title and a 12 px note on one baseline holds the healthy mix, one 8 px button outlined
+in the accent with a 16 px title, a 12 px sentence, the share in mono and a 32 px Start pill, then six
+groups each with a 14 px heading over a hairline and a grid `repeat(auto-fill, minmax(240px, 1fr))`
+with gaps of 2 px and 12 px. A tile is a 4 px borderless button, the name at 14 px with the share at
+its right in mono at 12 px (`--quality-best` from 70, `--quality-inaccuracy` from 55,
+`--quality-blunder` under it, and `new` in `--text-3` for a theme the answer does not list) and the
+description at 12 px under them. Loading is one quiet sentence in the card and the tiles draw no
+figure; a failed read is one sentence in the error tone with Try again in the card, the tiles still
+start their theme; with no improvement area the card keeps its place with a sentence and a Start a
+healthy mix button. Every button takes the one focus ring, drawn 2 px inside a row or a tile because
+its neighbours sit 4 px and 2 px away. Under 900 px the grid is one column and every row, tile, pill
+and button is 44 px. M1 and M2 print nothing for it.
+
+The Practice column was re-checked on rows 6, 8, 9, 10, 14, 15, 17 and 19, and the Phone column on
+row 19, for the panel that Add an opening opens, against its markup, `practice-openings.css` and
+`test/practice-add-opening.test.tsx`; the cells were not measured in a browser. The panel is the
+8 px surface of the page's column with 16 px and 20 px of padding and its parts 10 px apart, and
+nothing inside it is a card. Its title is 16 px and 500; its two tabs are one inset track 30 px high
+with 13 px text, the chosen one raised on the border tone, a tablist that the arrow, Home and End
+keys move through, and Close is an outlined 30 px button. Both lists stay mounted and the one not
+chosen is hidden, so a change of tab loses neither the search nor the list read. The search field is
+36 px high with a magnifier and takes the one focus ring. A row is a grid of the name, a column for
+the pill or the count of games, and Add, 12 px apart, with 7 px of padding and a hairline under it;
+the name is 14 px with its moves beside it in 12 px mono, the pill is 11 px in the secondary text on
+`--surface-2` and takes the pill radius, and the heading over each path is 12 px in the secondary
+text. Loading is one quiet sentence, a failed read one sentence in the error tone with Try again in
+the first tab while the second still works, and an empty list a sentence in the place of its rows.
+Under 900 px the tabs and Close go under the title, every control is 44 px, and a row keeps its
+name, pill and Add on one line with the moves under the name. M1 and M2 still find no matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph
@@ -155,23 +216,30 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   dot to a sighted reader; the word reaches only a screen reader.
 - **7, Play.** The left column no longer shows a "Play" title; the section is named by its
   `aria-label` only, so Play is the one screen without a visible title.
-- **8, Practice.** The section title inside a hub page ("Puzzle themes" on the Overview) is
-  20 px, the redesign's step between the 18 px heading and the 28 px title, which has no token
-  yet.
+- **8, Practice.** The section title inside a hub page ("Puzzle themes" on the Overview, "White"
+  and "Black" on Openings) is 20 px, the redesign's step between the 18 px heading and the 28 px
+  title, which has no token yet; a variation's name on Openings is 15 px, between the 14 px body and
+  the 18 px heading; the healthy mix's title is 16 px (`--text-md`) and the tabs of the panel that adds an opening are 13 px and its pill 11 px, also between them.
 - **10, Play.** The move list and the table rows use `2px`, `6px`, `24px`, `28px` and
   `32px` values (row height, dot size, gaps) that are not on the 4-based space scale; they
   size a data cell, not layout spacing.
 - **10, Practice.** The hub's navigation and tiles keep the redesign's `2px` between entries,
   `6px` under a group label, `10px` inside an entry and between a tile's lines, and `14px` above
   and below a tile's content, none of them on the 4-based scale; they size a row of the
-  navigation or a tile, not the page's spacing, which stays on the scale.
+  navigation or a tile, not the page's spacing, which stays on the scale. The Openings page keeps
+  `20px` of padding at the sides of a card and of its panel, `28px` between its colours, `24px`
+  between the rows of an open card and `10px` between the parts of its panel, the approved screens'
+  values. The weakness card keeps `10px` between the cells of a row and at its sides, and the Puzzle
+  themes section `2px` between tiles, `12px` between columns, `6px` from a group's heading to its
+  tiles and `20px` at the sides of the healthy mix, the approved screen's values; none is layout
+  spacing between blocks. The panel that adds an opening keeps `7px` of padding in its rows, `12px`
+  between their columns and a `36px` search field, also the approved screens' values.
 - **17, Games.** The game list rows are plain text buttons: pointer, hover and the focus ring
   mark them, but nothing says "button" before the pointer arrives.
-- **15, Practice.** Loading and error states match the rule (quiet sentence, or one sentence in
-  the error tone with Try again in the same card), and Due cards keeps the card at 0 due while
-  omitting empty breakdown rows; however, empty library motif rows still draw disabled with
-  `none`, and empty Found in your games and Black openings sections are omitted rather than
-  keeping an empty section with a sentence and count.
+- **17, Practice.** A theme tile is a borderless button on the page's surface: the pointer, the
+  hover fill and the focus ring mark it, and the description under the name reads as the label of a
+  button, but nothing says "button" before the pointer arrives. The healthy mix and a row of the
+  weakness card show their edge.
 
 ## Documented exceptions
 
@@ -200,10 +268,11 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   by position (`nth-child` in `games.css`) and sizes the ones it keeps the same way, so adding,
   removing or moving a column means renumbering those selectors, or the wrong columns show on a
   phone.
-- **Tokens nothing references from `src`.** `--duration-fast`, `--leading-heading` and
-  `--overlay-premove` have no user in the stylesheets or code. `--status-ready` and
-  `--status-busy` are now used beside `--status-error` for the solved-first-try bar on
-  Improvement areas and Strengths. The four `--overlay-arrow-*` tokens
+- **Tokens nothing references from `src`.** `--overlay-premove` has no user in the stylesheets or
+  code. It is the prototype's value, kept for a state that is not drawn yet (premove); delete it
+  if that never lands. `--status-ready` and `--status-busy` are used beside `--status-error` for
+  the solved-first-try bar on Improvement areas and Strengths, and `--status-ready` also fills the
+  Openings page's in-line bar. The four `--overlay-arrow-*` tokens
   are read by `Board.tsx` through `getComputedStyle`, so they have no `var()` caller.
   `--space-12` is gone, and no `review__` or `train__` name survives.
 - **Placeholder tab.** "Routine" is a disabled tab tagged "soon"; the screen behind it does
@@ -214,53 +283,31 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
 - **The Practice hub** is a frame: a navigation of eight entries in two groups, Train and
   Stats, sticky beside a page column of at most 1440 px that shows one page at a time, the page
   scrolling as a whole and only the navigation scrolling by itself when it is taller than the
-  window. The Overview opens first, with three tiles over the older Due cards card and a Puzzle
-  themes section holding the older Puzzles by motif card; Puzzle themes in the navigation shows the
-  Overview scrolled to that section. The Openings page holds the openings menu and the older
-  Italian drill row, Improvement areas and Strengths show the ranked puzzle theme tables, and the
-  three other pages are a title and a sentence saying the page is not built yet. The older cards are mounted on their pages unchanged. The openings menu for the
-  repertoire line drill is built on the same card rules as before;
-  its Practice cells were re-read against the markup and `repertoire.css` and hold. So were the
-  cells for the list of openings met in the student's games, under White openings: a block with a
-  hairline top border like each opening above it, rows of a name, a mono line and a count, and an
-  Add button that is 44 px under 900 px. M1 and M2 print nothing for it, and its states
-  (loading, reading failed, building, built, refused) follow Rule 15: refusals and read failures
-  use the error tone, and read failures pair one sentence with a Try again button in the same card.
-  The cells were read again for the levels and the branch
-  points: a side with more than one opening and an opening with more than one variation carry a
-  row of starts under a plain label, above what they cover, with the same buttons as a
-  variation's; the book's other White moves open from an Add a variation button under the
-  opening, each position as a heading line with its mono line, then rows built like the met
-  openings, a held move saying where it is in place of the button. Every button is 44 px under
-  900 px, M1 and M2 print nothing, and the building, built, refused and list-unreadable states
-  read as the met openings' do. The variation row under the drill's head is text on the type scale
-  in the two text tokens, with a hairline below it like the head's. The Practice cells were read
-  once more for the drills from the student's games, grouped by opening family: a line inside an
-  opening's menu, a line under an opening met in games, and for the families with neither a block
-  of rows with a hairline above it like each opening has, inside the White openings card or, for
-  Black, a Black openings card of such rows alone. Each is a name, a count and a first-try rate
-  in the secondary text token (the cell stays empty for a family with no attempt in 30 days) and a
-  Drill button that is 44 px under 900 px. M1 and M2 print nothing for it, the rows wait for the
-  openings met in games so none moves onto a met row after it has shown, a start refused because
-  the family is gone says to reload, in the error tone like every refusal, and a list that could
-  not be read is one sentence in the error tone paired with a Try again button in the Openings
-  card. The Practice cells were read a last time for the Found in your games section, which holds
-  the openings met in games that the openings menu used to list apart from the chosen ones: a
-  block under the chosen openings with a hairline above it like each opening has, a heading in the
-  type of an opening's name, the menu of each added opening as any opening has it, the rows still
-  to add built like the met openings' with the same 44 px Add button, and last one row of starts
-  under a plain label with a hairline above it, the same buttons as a variation's. With no added
-  opening it holds the rows to add and no starts, and with nothing met and nothing built it is not
-  drawn. The section is a labelled region, not a card, so no card sits inside another. M1 and M2
-  print nothing for it, and its states (loading, building, built, refused, list unreadable) read as
-  the met openings' do. The row under the drill's head now names the opening beside the variation,
-  each a label and a name in the two text tokens that wrap together as a pair, so a long name never
-  pushes the row past the column on a phone.
-- **The coverage view** opens under a variation of the openings menu, from its Coverage button,
-  and has a column of its own in the checklist. Its cells were read against the markup,
-  `repertoire.css` and the 899 px block: a hairline above it as each opening in the menu has,
-  no card of its own; four facts in a grid that wraps, notes capped at the measure, rows that
-  wrap with their lines breaking anywhere, buttons that are 44 px under 900 px, and the accent
+  window. The Overview opens first, with four tiles (Day streak, Puzzle rating, Solved first try,
+  Cards remembered) over the Due cards card (with its Coming up 7-day forecast) and the
+  Puzzles by weakness card, and a Puzzle themes section holding the Healthy mix and a tile for each
+  of the 54 themes; Puzzle themes in the navigation shows the Overview scrolled to that section. The Openings page is built as described in the check above,
+  Dashboard summarizes puzzle activity, rating history, Improvement areas and Strengths,
+  Improvement areas and Strengths show the ranked puzzle theme tables, From my games lists the
+  positions from the student's games (its own entry below), and the one other page is a title and
+  a sentence saying the page is not built yet. The older cards are mounted on their pages unchanged.
+- **The Openings page** keeps the machinery that adds an opening or a variation, and its cells hold
+  as they did in the menu it replaced. The panel that Add an opening opens has two tabs: every
+  opening Black can leave the path with, behind a search field and under a heading for each path,
+  and the openings the student's games met; each row is a name, a mono line, a pill or a count and
+  an Add button that is 44 px under 900 px, or the words In your openings in its place. The book's other White moves open from + Add a variation under
+  a card's head, each position as a heading line with its mono line and then rows built like the met
+  openings', a held move saying where it is in place of the button. The style points control sits in
+  both panels, a quiet toggle with a summary and, opened, a row per measure with a stepper. The
+  building, built, refused, stopped and list-unreadable states read as they always did: refusals and
+  read failures in the error tone, a read failure paired with Try again in the same block. The row
+  under a line drill's head names the opening beside the variation, each a label and a name in the
+  two text tokens that wrap together as a pair.
+- **The coverage view** opens under a variation's row on the Openings page when its name is
+  pressed, and has a column of its own in the checklist. Its cells were read against the markup,
+  `repertoire.css` and the 899 px block: a hairline above it, no card of its own; four facts in a
+  grid that wraps, notes capped at the measure, rows that wrap with their lines breaking anywhere,
+  buttons that are 44 px under 900 px, and the accent
   with the word "Gap" for a reply that has no answer yet, never the error tone. M1 and M2 print
   nothing for it. Its states (loading, not read, nothing stored, no gap) follow Rule 15: not read
   is one sentence in the error tone paired with a Try again button inside the panel, and only the
@@ -275,5 +322,48 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   description, bar and Played count hide, and buttons take `min-height: 44px`. `56px`, `104px`,
   `140px`, `36px`, `2px`, `10px`, `20px` and `80px` size data cells and panel states rather than
   layout spacing. M1 and M2 print nothing for them.
+- **Practice Overview tiles and Due cards forecast** were re-checked for the Practice and Phone
+  columns against the markup and `practice-hub.css`. All four tiles use `--surface-1`, `--border`,
+  `--font-mono`, `--text-1`/`--text-2`, `--quality-best`/`--quality-blunder` deltas, `--status-ready`
+  / `--status-error` / `--surface-2` / `--accent` indicators, wrap their value rows cleanly, and
+  stack two by two (`repeat(2, minmax(0, 1fr))`) under 900 px; Due cards separates the 7-day
+  forecast with a `1px solid var(--surface-2)` top border, uses `--accent` on today and
+  `--surface-2` on upcoming days, and leaves partial data without alerts when rating history or
+  theme stats fail. M1 and M2 still print nothing.
+- **Dashboard** (`Practice` and `Phone` columns) sits inside the Stats group of the Practice hub
+  with `screen__title`, `screen__note`, and the four-window control (`7 days`, `30 days`,
+  `90 days`, `All`, defaulting to `30 days`). Four KPI tiles (`Played`, `Performance rating`,
+  `Solved first try`, `Due cards`) share `.practice-tile` styling (`--surface-1`, `--border`,
+  `--quality-best`/`--quality-blunder` arrows, `--status-ready`/`--status-error` split bar, and
+  accent `Review` action when `due_now > 0`) in a `minmax(180px, 1fr)` / `12px` grid above the
+  `140px` Puzzle rating SVG (`--surface-2` midline, `--accent` polyline) and the two side-by-side
+  `Improvement areas` and `Strengths` cards (`minmax(360px, 1fr)`, `48px` theme rows with `See all`
+  links). Loading (`role="status"`), read failures (`role="alert"` + `Try again` per block), and
+  empty/unranked periods keep card structure and follow Rule 15. Under 900 px all KPI tiles and
+  theme cards stack to one column, link buttons meet `44px`, and no desktop card scrolls inside
+  itself. M1 and M2 print nothing.
+- **From my games** sits in the Train group of the Practice hub, and the Overview draws a panel of
+  the same positions beside the Due cards card. The page is a `screen__title`, a `screen__note` and
+  a row of controls (a phase control and a colour control, each a bordered row of `32px` toggles
+  built like the period control of Improvement areas, and one accent pill, `Train N`, with a chevron
+  that opens two more starts), a `12px` line of counts, and two sections, each a `16px`/600 heading
+  with its count beside it over a grid of columns of at least `420px`. A card is a `surface-1` panel
+  with a hairline border and an `8px` radius: a `112px` read-only board, a `14px` title with its
+  state at the right (`due` in the accent, `new` in the primary text, a scheduled position in the
+  secondary text), the moves in `12px` mono, `4px` chips, and a `12px` foot with a `28px` Drill
+  button. How often the best move was found takes the grade tones, which keep their contrast in both
+  themes, and always stands beside its words and figures, so the colour never stands alone (Rule 4).
+  Loading (`role="status"`), the failed read (`role="alert"` and `Try again`) and the empty
+  sentence follow Rule 15 inside the page and inside the panel: a section with no position keeps its
+  heading and says so, and a page with no position at all keeps its title and the sentence and draws
+  no control. Under 900 px the controls wrap under the title, the cards are one column, a card's
+  title wraps and every button is 44 px; in a column narrower than the design's, as the page is with
+  the coach panel open, the heading and the filters wrap instead of being clipped. The boards are
+  hidden from assistive technology, since the title, the moves and the chips say what a board shows.
+  `2px`, `5px`, `6px`, `10px`, `14px`, `18px` and `28px` size a chip, a card's text
+  column, the panel's rows, the pill and the gap between sections rather than layout spacing. The
+  Practice column was re-checked on rows 4, 5, 6, 9, 10, 14, 15 and 17, and the Phone column on row
+  19, for this page and its panel, and the cells hold. M1 and M2 print nothing for it. The cells
+  were read off the markup and `practice-hub.css`, and were not measured in a browser.
 - **Dictate, voice and the model picker** in the composer are drawn inert until spoken input
   and a model setting exist.

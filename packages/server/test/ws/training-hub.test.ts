@@ -1,7 +1,12 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ANALYSIS_BUDGET_MS, ClientCommandSchema, ServerEventSchema } from "@chess-coach/shared";
+import {
+  ANALYSIS_BUDGET_MS,
+  ClientCommandSchema,
+  MIX_PRACTICE_MOTIF,
+  ServerEventSchema,
+} from "@chess-coach/shared";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActivityService } from "../../src/activity/service.js";
@@ -15,6 +20,7 @@ import { AnalyzeSuperseded, EnginePool } from "../../src/engine/pool.js";
 import type { SearchRequest, SearchResult } from "../../src/engine/uci.js";
 import { GameService } from "../../src/game/service.js";
 import type { Log } from "../../src/log.js";
+import { RecordingLog } from "../../src/log.js";
 import { ReviewDesk } from "../../src/srs/review.js";
 import { FakeCoach } from "../fakes/fake-coach.js";
 import { ScriptedEngine } from "../fakes/scripted-engine.js";
@@ -107,6 +113,15 @@ describe("training over the socket", () => {
       { type: "show_solution" },
       { type: "show_solution", activity_id: 3 },
       { type: "ask_coach_about_item", activity_id: 3 },
+      { type: "drawings", shapes: [], activity_id: 3 },
+      {
+        type: "drawings",
+        shapes: [
+          { orig: "e4", dest: "e5", color: "red" },
+          { orig: "d5", color: "green" },
+        ],
+        activity_id: 3,
+      },
       { type: "analyse", fen: BACK_RANK, lines: 3, depth: 12 },
       { type: "analyse", fen: BACK_RANK, activity_id: 3 },
     ];
@@ -131,6 +146,13 @@ describe("training over the socket", () => {
       { type: "answer", uci: "a1a8" },
       { type: "try_move" },
       { type: "try_move", uci: "z9z9" },
+      { type: "drawings", shapes: [{ orig: "e9", color: "green" }] },
+      { type: "drawings", shapes: [{ orig: "e4", dest: "e9", color: "green" }] },
+      { type: "drawings", shapes: [{ orig: "e4", color: "purple" }] },
+      {
+        type: "drawings",
+        shapes: Array.from({ length: 33 }, () => ({ orig: "e4", color: "green" })),
+      },
       { type: "resume_training" },
       { type: "discard_training" },
       { type: "analyse", fen: "short" },
@@ -425,6 +447,83 @@ describe("training over the socket", () => {
     await next("bootstrap");
     socket.send(JSON.stringify({ type: "explore", command_id: "c1", kind: "undo" }));
     expect(await next("error")).toMatchObject({ code: "not_exploring", command_id: "c1" });
+    socket.close();
+  });
+
+  it("stores drawings for the current item, and refuses them off training or on a stale id", async () => {
+    const db = seededDatabase();
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "drawings",
+        command_id: "c0",
+        shapes: [{ orig: "e4", color: "red" }],
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c0" });
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = ServerEventSchema.parse(await next("activity")) as {
+      state: { activity_id: number };
+    };
+    await next("training");
+    const id = served.state.activity_id;
+    socket.send(
+      JSON.stringify({
+        type: "drawings",
+        command_id: "c2",
+        activity_id: id + 1,
+        shapes: [{ orig: "e4", dest: "e5", color: "red" }],
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "c2" });
+    socket.send(
+      JSON.stringify({
+        type: "drawings",
+        command_id: "c3",
+        activity_id: id,
+        shapes: [{ orig: "e4", dest: "e5", color: "red" }],
+      }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({
+        type: "drawings",
+        command_id: "c4",
+        activity_id: id,
+        shapes: [{ orig: "e4", dest: "e5", color: "red" }],
+      }),
+    );
+    await next("activity");
+    socket.send(JSON.stringify({ type: "hint", command_id: "c5", activity_id: id }));
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "drawings", command_id: "c6", activity_id: id, shapes: [] }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c7", activity_id: id, uci: "a1a8" }),
+    );
+    await next("activity");
+    const rows = db
+      .prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification'")
+      .all() as { content_json: string }[];
+    expect(rows).toHaveLength(1);
+    const note = JSON.parse(rows[0]?.content_json as string) as {
+      reasoning: { hint_at_ms: number; drawings: { at_ms: number; shapes: unknown[] }[] };
+    };
+    expect(note.reasoning.hint_at_ms).toBeGreaterThanOrEqual(0);
+    expect(note.reasoning.drawings).toHaveLength(2);
+    expect(note.reasoning.drawings[0]).toMatchObject({
+      shapes: [{ orig: "e4", dest: "e5", color: "red" }],
+    });
+    expect(note.reasoning.drawings[1]?.shapes).toEqual([]);
+    for (const snapshot of note.reasoning.drawings) {
+      expect(snapshot.at_ms).toBeGreaterThanOrEqual(0);
+    }
     socket.close();
   });
 
@@ -916,5 +1015,295 @@ describe("analysis over the socket", () => {
     });
     // The page parses every frame with this schema, which drops a field it does not name.
     expect(ServerEventSchema.parse(analysis)).toEqual(analysis);
+  });
+});
+
+describe("mix practice over the socket", () => {
+  function mixSeededDatabase(): Database {
+    const db = seededDatabase();
+    const insertPuzzle = db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, difficulty_rating)
+       VALUES (?, 'test', 'tactics', 'easy', ?, '["a1a8"]', '["Ra8#"]', 'why', 1200)`,
+    );
+    const insertTheme = db.prepare(
+      "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, 1200, ?)",
+    );
+    for (const theme of ["advancedPawn", "attackingF2F7", "capturingDefender"]) {
+      for (let i = 0; i < 12; i++) {
+        const id = `${theme}-${String(i).padStart(2, "0")}`;
+        insertPuzzle.run(id, BACK_RANK);
+        insertTheme.run(theme, id);
+      }
+    }
+    return db;
+  }
+
+  it("starts a mix queue with no length and the reserved motif as its run motif", async () => {
+    const db = mixSeededDatabase();
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c1",
+        mode: "puzzles",
+        motif: MIX_PRACTICE_MOTIF,
+      }),
+    );
+    const started = ServerEventSchema.parse(await next("training"));
+    expect(started).toMatchObject({
+      type: "training",
+      mode: "puzzles",
+      status: "prompt",
+      item: { kind: "puzzle", position_in_queue: 1 },
+    });
+    expect(started).not.toHaveProperty("item.queue_length");
+    expect(ServerEventSchema.parse(await next("activity"))).toMatchObject({
+      type: "activity",
+      state: { kind: "training", run_motif: "mix-practice" },
+    });
+    expect(db.prepare("SELECT motif FROM training_runs").all()).toEqual([
+      { motif: "mix-practice" },
+    ]);
+    socket.close();
+  });
+
+  it("refuses a mix start with empty_queue when no theme has a puzzle", async () => {
+    const server = await start();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c1",
+        mode: "puzzles",
+        motif: MIX_PRACTICE_MOTIF,
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "empty_queue", command_id: "c1" });
+    socket.close();
+  });
+});
+
+describe("a found drill narrowed to one opening over the socket", () => {
+  function seedFoundOpenings(): Database {
+    const db = seededDatabase();
+    const openings = [
+      ["own:two-knights", "Italian Game: Two Knights Defense"],
+      ["own:giuoco", "Italian Game: Giuoco Pianissimo"],
+      ["own:scandi", "Scandinavian Defense"],
+    ] as const;
+    for (const [id, openingName] of openings) {
+      insertFoundPosition(db, {
+        id,
+        fen: BACK_RANK,
+        color: "white",
+        phase: "opening",
+        fromMistake: true,
+        fromRepeat: false,
+        fromDeparture: false,
+        listed: true,
+        acceptedUci: ["a1a8"],
+        reachedGames: 1,
+        bestGames: 0,
+        lastReachedAt: "2026-11-01T00:00:00.000Z",
+        gameId: 1,
+        ply: 40,
+        firstFoundAt: "2026-11-01T00:00:00.000Z",
+      });
+      db.prepare(
+        `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, opening_name)
+         VALUES (?, 'own-games', 'opening-white', 'beginner', ?, '["a1a8"]', '["Ra8#"]', 'why', ?)`,
+      ).run(id, BACK_RANK, openingName);
+    }
+    return db;
+  }
+
+  it("serves the opening's positions and refuses an unknown one and one too long", async () => {
+    expect(
+      ClientCommandSchema.safeParse({
+        type: "start_training",
+        command_id: "v1",
+        mode: "found",
+        scope: "all",
+        opening: "Italian Game",
+      }).success,
+    ).toBe(true);
+    expect(
+      ClientCommandSchema.safeParse({
+        type: "start_training",
+        command_id: "v2",
+        mode: "found",
+        scope: "all",
+        opening: "x".repeat(121),
+      }).success,
+    ).toBe(false);
+    const server = await start(seedFoundOpenings());
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c1",
+        mode: "found",
+        scope: "all",
+        opening: "Italian Game",
+      }),
+    );
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      mode: "found",
+      status: "prompt",
+      item: { queue_length: 2 },
+    });
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c2",
+        mode: "found",
+        scope: "all",
+        opening: "Italian Game: Two Knights Defense",
+      }),
+    );
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      mode: "found",
+      item: { puzzle_id: "own:two-knights", queue_length: 1 },
+    });
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c3",
+        mode: "found",
+        scope: "all",
+        opening: "French Defense",
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "empty_queue", command_id: "c3" });
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c4",
+        mode: "found",
+        scope: "all",
+        opening: "x".repeat(121),
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: "c4" });
+    socket.close();
+  });
+});
+
+const START_POSITION = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+describe("a clicked line card opens the demo with its own moves", () => {
+  it("opens a show_line with three moves as a demo holding those three moves", async () => {
+    const server = await start();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "show_line",
+        command_id: "c1",
+        fen: START_POSITION,
+        moves: ["e4", "e5", "Nf3"],
+      }),
+    );
+    const activity = ServerEventSchema.parse(await next("activity"));
+    expect(activity).toMatchObject({
+      type: "activity",
+      state: { kind: "demo", moves_played: ["e4", "e5", "Nf3"] },
+    });
+    socket.close();
+  });
+});
+
+describe("every refused ask over the socket is logged with its code", () => {
+  it("logs ws.command_failed for a prompt ask, a stale ask and a second ask", async () => {
+    const log = new RecordingLog();
+    const server = await start(seededDatabase(), log);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    const id = served.state.activity_id;
+    const failedOf = (commandId: string) =>
+      log.named("ws.command_failed").find((entry) => entry.fields.command_id === commandId);
+
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c2", activity_id: id }),
+    );
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c2" });
+    expect(failedOf("c2")).toMatchObject({ fields: { code: "not_in_training" } });
+
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c3", uci: "a1a8", activity_id: id }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c4", activity_id: id + 1 }),
+    );
+    expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "c4" });
+    expect(failedOf("c4")).toMatchObject({ fields: { code: "stale_activity" } });
+
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c5", activity_id: id }),
+    );
+    expect(await next("activity")).toMatchObject({ state: { coach_comment: "requested" } });
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c6", activity_id: id }),
+    );
+    expect(await next("error")).toMatchObject({ code: "already_requested", command_id: "c6" });
+    expect(failedOf("c6")).toMatchObject({ fields: { code: "already_requested" } });
+    socket.close();
+  });
+
+  it("logs ws.command_failed for an ask after a wrong try and after a give-up", async () => {
+    const log = new RecordingLog();
+    const server = await start(seededDatabase(), log);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    const failedOf = (commandId: string) =>
+      log.named("ws.command_failed").find((entry) => entry.fields.command_id === commandId);
+
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    const id = served.state.activity_id;
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c2", uci: "a1a2", activity_id: id }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c3", uci: "a1a8", activity_id: id }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c4", activity_id: id }),
+    );
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c4" });
+    expect(failedOf("c4")).toMatchObject({ fields: { code: "not_in_training" } });
+
+    socket.send(JSON.stringify({ type: "end_training", command_id: "c5", activity_id: id }));
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c6", mode: "puzzles", motif: "fork" }),
+    );
+    const second = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    const secondId = second.state.activity_id;
+    socket.send(JSON.stringify({ type: "show_solution", command_id: "c7", activity_id: secondId }));
+    await next("activity");
+    await next("training");
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c8", activity_id: secondId }),
+    );
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c8" });
+    expect(failedOf("c8")).toMatchObject({ fields: { code: "not_in_training" } });
+    socket.close();
   });
 });

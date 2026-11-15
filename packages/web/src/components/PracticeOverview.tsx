@@ -1,16 +1,22 @@
-import type { ProgressResponse, TrainingMode } from "@chess-coach/shared";
-import { type ReactNode, type Ref, useId, useState } from "react";
+import type {
+  ProgressResponse,
+  PuzzleRatingHistoryResponse,
+  ThemeStatsResponse,
+  TrainingMode,
+} from "@chess-coach/shared";
+import type { ReactNode, Ref } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
 import {
   dueBreakdown,
-  type MotifCount,
-  motifLabel,
-  motifRows,
   NEEDS_ENGINE_TEXT,
   NONE,
   nextBatchParts,
   percent,
 } from "../state/practice.js";
+import { ratingSparklinePoints } from "../state/puzzle-rating-api.js";
+import type { ThemeStatsStarting } from "./PracticeThemeStats.js";
+import { PracticeThemes } from "./PracticeThemes.js";
+import { PracticeWeakness } from "./PracticeWeakness.js";
 
 export interface HubStartProps {
   mode: TrainingMode;
@@ -24,9 +30,14 @@ export type HubStartButton = (props: HubStartProps) => ReactNode;
 
 export interface PracticeOverviewProps {
   progress: Loaded<ProgressResponse>;
-  motifs: Loaded<MotifCount[]>;
+  ratingHistory?: Loaded<PuzzleRatingHistoryResponse> | undefined;
+  themeStats?: Loaded<ThemeStatsResponse> | undefined;
   engineMissing: boolean;
   startButton: HubStartButton;
+  // The start in flight and the call that begins a puzzle queue, which the themes and the weakness
+  // card draw their own controls with.
+  starting: ThemeStatsStarting | null;
+  onStart(mode: TrainingMode, motif: string): void;
   // The engine and coach problem cards, drawn under the title when they apply.
   problems?: ReactNode;
   // The alert of a refused start, when the start was pressed on this page.
@@ -34,6 +45,8 @@ export interface PracticeOverviewProps {
   // The themes section, which the Puzzle themes entry scrolls into view.
   themesRef: Ref<HTMLElement>;
   now: Date;
+  // The panel of positions from the student's games, drawn beside the Due cards card.
+  foundPanel?: ReactNode;
 }
 
 const ANY_MOTIF = "";
@@ -52,32 +65,195 @@ const dayWordOf = (days: number): string => (days === 1 ? "day" : "days");
 const rotationText = (total: number): string =>
   `${total} ${total === 1 ? "card" : "cards"} in rotation`;
 
-// The numbers the progress answer already holds, one tile each.
-function OverviewTiles({ progress }: { progress: ProgressResponse }) {
-  const { streak_days: streak, puzzle_rating: rating, cards } = progress;
+function ratePointsDelta(currentRate: number | null, previousRate: number | null): number | null {
+  if (currentRate === null || previousRate === null) return null;
+  return Math.round(currentRate * 100) - Math.round(previousRate * 100);
+}
+
+export function TileDelta({
+  delta,
+  period,
+}: {
+  delta: number | null;
+  period?: string | undefined;
+}) {
+  const arrow =
+    delta !== null && delta !== 0 ? (
+      <span className="practice-tile__delta" data-direction={delta > 0 ? "up" : "down"}>
+        {delta > 0 ? `\u25b2 ${delta}` : `\u25bc ${Math.abs(delta)}`}
+      </span>
+    ) : null;
+  if (period === undefined) return arrow;
+  return (
+    <>
+      {arrow ? <> {arrow}</> : null} <span className="practice-tile__unit">{period}</span>
+    </>
+  );
+}
+
+function DayStreakTile({ progress }: { progress: ProgressResponse }) {
+  const { streak_days: streak, streak_best: best, activity_7d: activity } = progress;
+  return (
+    <div className="practice-tile">
+      <dt>Day streak</dt>
+      <dd className="practice-tile__value">
+        <span className="practice-tile__figure">{streak}</span>{" "}
+        <span className="practice-tile__unit">{`${dayWordOf(streak)} · best ${best}`}</span>
+      </dd>
+      <dd className="practice-tile__streak">
+        <div className="practice-tile__streak-bars" role="img" aria-label="Last 7 days">
+          {activity.map((active, index) => {
+            const daysAgo = activity.length - 1 - index;
+            return (
+              <span
+                key={`ago-${daysAgo}`}
+                className="practice-tile__streak-day"
+                data-active={active ? "true" : "false"}
+                data-today={daysAgo === 0 ? "true" : "false"}
+              />
+            );
+          })}
+        </div>
+      </dd>
+    </div>
+  );
+}
+
+function PuzzleRatingTile({
+  rating,
+  ratingHistory,
+}: {
+  rating: number;
+  ratingHistory: Loaded<PuzzleRatingHistoryResponse> | undefined;
+}) {
+  const history = ratingHistory?.status === "ready" ? ratingHistory.value : null;
+  const sparkPoints = history ? ratingSparklinePoints(history.points) : null;
+  return (
+    <div className="practice-tile">
+      <dt>Puzzle rating</dt>
+      <dd className="practice-tile__value">
+        <span className="practice-tile__figure">{rating}</span>
+        {history ? <TileDelta delta={history.change} period="7 days" /> : null}
+      </dd>
+      {sparkPoints ? (
+        <dd className="practice-tile__visual">
+          <svg
+            className="practice-tile__spark"
+            viewBox="0 0 200 28"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <polyline
+              points={sparkPoints}
+              fill="none"
+              stroke="var(--status-ready)"
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </dd>
+      ) : null}
+    </div>
+  );
+}
+
+function SolvedFirstTryTile({
+  themeStats,
+}: {
+  themeStats: Loaded<ThemeStatsResponse> | undefined;
+}) {
+  const stats = themeStats?.status === "ready" ? themeStats.value : null;
+  const current = stats && stats.overall.played > 0 ? stats.overall : null;
+  const currentRate = current ? current.first_try / current.played : null;
+  const previous =
+    current && stats?.overall_previous && stats.overall_previous.played > 0
+      ? stats.overall_previous
+      : null;
+  const previousRate = previous ? previous.first_try / previous.played : null;
+  const solvedPct = currentRate !== null ? Math.round(currentRate * 100) : null;
+  const delta = ratePointsDelta(currentRate, previousRate);
+
+  return (
+    <div className="practice-tile">
+      <dt>Solved first try</dt>
+      <dd className="practice-tile__value">
+        <span className="practice-tile__figure">{solvedPct !== null ? `${solvedPct}%` : NONE}</span>
+        {solvedPct !== null ? <TileDelta delta={delta} period="30 days" /> : null}
+      </dd>
+      {solvedPct !== null ? (
+        <dd className="practice-tile__split" aria-hidden="true">
+          <span className="practice-tile__split-solved" style={{ width: `${solvedPct}%` }} />
+          <span className="practice-tile__split-rest" />
+        </dd>
+      ) : null}
+    </div>
+  );
+}
+
+function CardsRememberedTile({ cards }: { cards: ProgressResponse["cards"] }) {
+  const delta = ratePointsDelta(cards.correct_rate_30d, cards.correct_rate_prev_30d);
+  return (
+    <div className="practice-tile">
+      <dt>Cards remembered</dt>
+      <dd className="practice-tile__value">
+        <span className="practice-tile__figure">{percent(cards.correct_rate_30d)}</span>
+        {cards.correct_rate_30d !== null ? <TileDelta delta={delta} period="30 days" /> : null}
+      </dd>
+      <dd className="practice-tile__note">{rotationText(cards.total)}</dd>
+    </div>
+  );
+}
+
+function OverviewTiles({
+  progress,
+  ratingHistory,
+  themeStats,
+}: {
+  progress: ProgressResponse;
+  ratingHistory: Loaded<PuzzleRatingHistoryResponse> | undefined;
+  themeStats: Loaded<ThemeStatsResponse> | undefined;
+}) {
   return (
     <dl className="practice-tiles">
-      <div className="practice-tile">
-        <dt>Day streak</dt>
-        <dd className="practice-tile__value">
-          <span className="practice-tile__figure">{streak}</span>{" "}
-          <span className="practice-tile__unit">{dayWordOf(streak)}</span>
-        </dd>
-      </div>
-      <div className="practice-tile">
-        <dt>Puzzle rating</dt>
-        <dd className="practice-tile__value">
-          <span className="practice-tile__figure">{rating}</span>
-        </dd>
-      </div>
-      <div className="practice-tile">
-        <dt>Cards remembered</dt>
-        <dd className="practice-tile__value">
-          <span className="practice-tile__figure">{percent(cards.correct_rate_30d)}</span>
-        </dd>
-        <dd className="practice-tile__note">{rotationText(cards.total)}</dd>
-      </div>
+      <DayStreakTile progress={progress} />
+      <PuzzleRatingTile rating={progress.puzzle_rating} ratingHistory={ratingHistory} />
+      <SolvedFirstTryTile themeStats={themeStats} />
+      <CardsRememberedTile cards={progress.cards} />
     </dl>
+  );
+}
+
+function forecastDayLabel(now: Date, offset: number): string {
+  if (offset === 0) return "Today";
+  // Anchor at local noon so DST shifts never roll a calendar date backwards or forwards.
+  const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 12);
+  return day.toLocaleDateString("en-US", { weekday: "short" });
+}
+
+function DueForecast({ dueNext7d, now }: { dueNext7d: readonly number[]; now: Date }) {
+  const max = Math.max(...dueNext7d, 1);
+  return (
+    <div className="practice-forecast">
+      <p className="practice-forecast__title">Coming up · next 7 days</p>
+      <div className="practice-forecast__bars">
+        {dueNext7d.map((count, offset) => {
+          const height = Math.max(2, Math.round((count / max) * 40));
+          const label = forecastDayLabel(now, offset);
+          return (
+            <div
+              key={label}
+              className="practice-forecast__day"
+              data-today={offset === 0 ? "true" : "false"}
+            >
+              <span className="practice-forecast__count">{count}</span>
+              <span className="practice-forecast__bar" style={{ height: `${height}px` }} />
+              <span className="practice-forecast__label">{label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -133,6 +309,7 @@ function DueCards({ progress, now }: { progress: Loaded<ProgressResponse>; now: 
           </div>
         ) : null}
       </dl>
+      <DueForecast dueNext7d={cards.due_next_7d} now={now} />
     </>
   );
 }
@@ -147,158 +324,9 @@ function dueButton(progress: Loaded<ProgressResponse>, startButton: HubStartButt
   return startButton({ mode: "srs", motif: ANY_MOTIF, idle });
 }
 
-function MotifStatus({ motifs }: { motifs: Loaded<MotifCount[]> }) {
-  if (motifs.status === "loading") {
-    return (
-      <p className="practice__card-note" role="status">
-        Loading motifs.
-      </p>
-    );
-  }
-  if (motifs.status === "failed") {
-    return (
-      <>
-        <p className="practice__failure" role="alert">
-          The motif list could not be loaded. You can still drill with Any motif.
-        </p>
-        <button type="button" className="button" onClick={motifs.retry}>
-          Try again
-        </button>
-      </>
-    );
-  }
-  if (motifs.value.length === 0) {
-    return (
-      <p className="practice__card-note" role="status">
-        No puzzles are loaded. Restart the server to load the puzzle library.
-      </p>
-    );
-  }
-  return null;
-}
-
-interface MotifChoiceProps {
-  name: string;
-  value: string;
-  count: number;
-  rate?: number | null | undefined;
-  attempts?: number | undefined;
-  solved?: number | undefined;
-  description: string | null;
-  kind: "lichess" | "library";
-  selected: boolean;
-  onPick(value: string): void;
-}
-
-function motifRateText(rate: number | null, attempts: number, solved: number): string {
-  if (rate === null) return "not tried yet";
-  return `${percent(rate)} · ${solved} of ${attempts}`;
-}
-
-function MotifChoice({
-  name,
-  value,
-  count,
-  rate,
-  attempts = 0,
-  solved = 0,
-  description,
-  kind,
-  selected,
-  onPick,
-}: MotifChoiceProps) {
-  // A Lichess theme always has puzzles at the student's level once imported, so it stays
-  // selectable even though the motif counts cover the library only.
-  const empty = kind === "library" && count === 0;
-  const accessibleName =
-    kind === "lichess"
-      ? `${name}, ${description ?? ""}`
-      : rate === undefined || empty
-        ? `${name}, ${count} puzzles`
-        : `${name}, ${count} puzzles, ${motifRateText(rate, attempts, solved)}`;
-  return (
-    <label className="practice__motif" data-selected={selected} data-empty={empty}>
-      <input
-        type="radio"
-        name="motif"
-        aria-label={accessibleName}
-        checked={selected}
-        disabled={empty}
-        onChange={() => onPick(value)}
-      />
-      <span className="practice__motif-name" aria-hidden="true">
-        <span className="practice__motif-label">{name}</span>
-        {description ? <span className="practice__motif-desc">{description}</span> : null}
-      </span>
-      {kind === "lichess" ? null : (
-        <span className="practice__motif-count" aria-hidden="true">
-          {empty ? NONE : count}
-        </span>
-      )}
-      {kind === "lichess" || rate === undefined || empty ? null : (
-        <span className="practice__motif-rate" aria-hidden="true">
-          <span className="practice__bar" aria-hidden="true">
-            <span style={{ width: `${Math.round((rate ?? 0) * 100)}%` }} />
-          </span>
-          {motifRateText(rate, attempts, solved)}
-        </span>
-      )}
-    </label>
-  );
-}
-
-function MotifCard({
-  motifs,
-  progress,
-  startButton,
-}: Pick<PracticeOverviewProps, "motifs" | "progress" | "startButton">) {
-  const [motif, setMotif] = useState(ANY_MOTIF);
-  const counts = motifs.status === "ready" ? motifs.value : [];
-  const rows = motifRows(counts, progress.status === "ready" ? progress.value : null);
-  return (
-    <section className="practice__card" aria-label="Puzzles by motif">
-      <h3 className="practice__card-title">Puzzles by motif</h3>
-      <p className="practice__card-note">Solved first try, last 30 days.</p>
-      <div className="practice__motifs" role="radiogroup" aria-label="Motif">
-        <MotifChoice
-          name="Any motif"
-          value={ANY_MOTIF}
-          count={0}
-          description="A mix of everything at your level."
-          kind="lichess"
-          selected={motif === ANY_MOTIF}
-          onPick={setMotif}
-        />
-        {rows.map((row) => (
-          <MotifChoice
-            key={row.motif}
-            name={row.label}
-            value={row.motif}
-            count={row.count}
-            rate={row.rate30d}
-            attempts={row.attempts30d}
-            solved={row.solved30d}
-            description={row.description}
-            kind={row.kind}
-            selected={motif === row.motif}
-            onPick={setMotif}
-          />
-        ))}
-      </div>
-      <MotifStatus motifs={motifs} />
-      {startButton({
-        mode: "puzzles",
-        motif,
-        idle: `Start ${motif === ANY_MOTIF ? "any motif" : motifLabel(motif)}`,
-      })}
-    </section>
-  );
-}
-
 // The page the hub opens on: the numbers at a glance, the due cards, then the puzzle themes.
 export function PracticeOverview(props: PracticeOverviewProps) {
   const { progress, engineMissing, startButton } = props;
-  const themesTitle = useId();
   return (
     <>
       <PracticePageHead
@@ -306,7 +334,13 @@ export function PracticeOverview(props: PracticeOverviewProps) {
         note="Pick a session. The board appears once an item starts."
       />
       {props.problems}
-      {progress.status === "ready" ? <OverviewTiles progress={progress.value} /> : null}
+      {progress.status === "ready" ? (
+        <OverviewTiles
+          progress={progress.value}
+          ratingHistory={props.ratingHistory}
+          themeStats={props.themeStats}
+        />
+      ) : null}
       <div className="practice-page__cards">
         <section className="practice__card" aria-label="Due cards">
           <h3 className="practice__card-title">Due cards</h3>
@@ -315,19 +349,21 @@ export function PracticeOverview(props: PracticeOverviewProps) {
           {engineMissing ? <p className="practice__card-note">{NEEDS_ENGINE_TEXT}</p> : null}
           {dueButton(progress, startButton)}
         </section>
+        <PracticeWeakness
+          themeStats={props.themeStats}
+          starting={props.starting}
+          engineMissing={engineMissing}
+          onStart={props.onStart}
+        />
+        {props.foundPanel}
       </div>
-      <section
-        className="practice-page__section"
-        aria-labelledby={themesTitle}
-        ref={props.themesRef}
-      >
-        <h3 className="practice-page__section-title" id={themesTitle}>
-          Puzzle themes
-        </h3>
-        <div className="practice-page__cards">
-          <MotifCard motifs={props.motifs} progress={progress} startButton={startButton} />
-        </div>
-      </section>
+      <PracticeThemes
+        themeStats={props.themeStats}
+        starting={props.starting}
+        engineMissing={engineMissing}
+        onStart={props.onStart}
+        themesRef={props.themesRef}
+      />
       {props.failure}
     </>
   );

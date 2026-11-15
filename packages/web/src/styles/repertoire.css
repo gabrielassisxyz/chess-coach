@@ -1,69 +1,11 @@
-/* The openings menu on the Practice hub: a side, the openings under it, each opening's variations,
- * and one start per scope of the line drill with the number of moves it would serve. */
-.repertoire-menu__opening {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-self: stretch;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-}
-
-.repertoire-menu__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.repertoire-menu__name {
-  margin: 0;
-  font-size: var(--text-base);
-  font-weight: 500;
-}
-
-.repertoire-menu__due {
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
-
-.repertoire-menu__variation {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.repertoire-menu__variation-name {
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-
 .repertoire-menu__starts {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
 }
 
-.repertoire-menu__count {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-/* The starts of a side or an opening with more than one thing under it, above what they cover. */
-.repertoire-menu__level {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.repertoire-menu__level-name {
-  margin: 0;
-  color: var(--text-2);
-}
-
-/* The book's other White moves where the first variation goes, opened under the opening's
- * variations: each position as the reply before it, then its moves with an Add action. */
+/* The book's other White moves where the first variation goes, opened under the card's head: each
+ * position as the reply before it, then its moves with an Add action. */
 .repertoire-menu__branches {
   display: flex;
   flex-direction: column;
@@ -85,24 +27,7 @@
   font-weight: 500;
 }
 
-/* The openings the student's games met: the units already built, each with the menu of any opening,
- * then the openings still to add, then one set of starts that mixes every built one. Each block
- * inside keeps the hairline above it that the same block has outside. */
-.repertoire-menu__found {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-self: stretch;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-}
-
-.repertoire-menu__found-starts {
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-}
-
-/* The style points the next opening or variation added from the menu is built with: a quiet toggle
+/* The style points the next opening or variation added from the page is built with: a quiet toggle
  * with a summary when the split is not the default, and opened, a row per measure with its name, what
  * it favours and a stepper to move a point on or off it. */
 .repertoire-menu__points {
@@ -156,17 +81,8 @@
   text-align: center;
 }
 
-/* The openings the student's games met that have no drill yet, under the drills they have: a name,
- * the line, how many games met it and an Add action. */
-.repertoire-menu__met {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-self: stretch;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-}
-
+/* The rows that add a variation under a card's head: a name, what the choice says of itself and an
+ * Add action. */
 .repertoire-menu__met-list {
   display: flex;
   flex-direction: column;
@@ -202,58 +118,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The drills from the student's games, one opening at a time: a line inside an opening's menu or under
- * an opening met in games, and a block of rows for the openings that have neither. A name, how many
- * positions, the first-try rate of the last 30 days (empty with no attempt) and a Drill button. */
-.repertoire-menu__drills {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-self: stretch;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-}
-
-.repertoire-menu__drill-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.repertoire-menu__drill-row,
-.repertoire-menu__drill-line {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-/* A line inside the menu has no count of its own, since its name carries it. */
-.repertoire-menu__drill-line {
-  grid-template-columns: minmax(0, 1fr) auto auto;
-}
-
-/* Under a met opening the line takes the row's whole width, below the name and the Add action. */
-.repertoire-menu__met-row > .repertoire-menu__drill-line {
-  grid-column: 1 / -1;
-}
-
-.repertoire-menu__drill-name {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.repertoire-menu__drill-count,
-.repertoire-menu__drill-rate {
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
-
-/* The coverage of one variation, opened under it: four facts, the replies with no answer, and Black's
- * replies in one position. A hairline above it, like each opening in the menu, not a card of its own. */
+/* The coverage of one variation, opened under its row: four facts, the replies with no answer, and
+ * Black's replies in one position. A hairline above it, not a card of its own. */
 .repertoire-coverage {
   display: flex;
   flex-direction: column;
@@ -452,8 +318,6 @@
   .repertoire-menu__starts .button,
   .repertoire-menu__points-stepper .button,
   .repertoire-menu__met-row .button,
-  .repertoire-menu__drill-row .button,
-  .repertoire-menu__drill-line .button,
   .repertoire-coverage .button {
     min-height: 44px;
   }
@@ -469,19 +333,5 @@
   .repertoire-menu__met-row .button {
     grid-column: 1 / -1;
     justify-self: start;
-  }
-
-  /* The name takes a line, the count and the rate share the next, and the button follows them. */
-  .repertoire-menu__drill-row,
-  .repertoire-menu__drill-line {
-    grid-template-columns: auto minmax(0, 1fr);
-    justify-items: start;
-  }
-
-  .repertoire-menu__drill-row .repertoire-menu__drill-name,
-  .repertoire-menu__drill-line .repertoire-menu__drill-name,
-  .repertoire-menu__drill-row .button,
-  .repertoire-menu__drill-line .button {
-    grid-column: 1 / -1;
   }
 }

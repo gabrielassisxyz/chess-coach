@@ -1,0 +1,656 @@
+/*
+ * The Openings page of the Practice hub: a header with the side control, a section for each colour,
+ * a card for each opening and, once a card is open, a row for each of its variations. Measures are
+ * the approved screens'; the 15 px of a variation's name and the 20 px of the card's padding sit
+ * between steps of the type and space scales, like the hub's own 20 px heading.
+ */
+.openings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.openings-head__titles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.openings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.openings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The hidden attribute is the page's own way to show one colour: the other stays mounted. */
+.openings-section[hidden] {
+  display: none;
+}
+
+.openings-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.openings-section__title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: var(--leading-title);
+}
+
+.openings-section__summary {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+/* A colour with no line keeps its place, in a box that is not a card. */
+.openings-empty {
+  margin: 0;
+  padding: var(--space-4) 20px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.opening-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4) 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.opening-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.opening-card__toggle {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.opening-card__chevron {
+  grid-row: 1 / span 2;
+  color: var(--text-2);
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.opening-card__toggle[aria-expanded="true"] .opening-card__chevron {
+  transform: rotate(90deg);
+}
+
+.opening-card__name {
+  grid-column: 2;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: var(--leading-heading);
+  overflow-wrap: anywhere;
+}
+
+.opening-card__meta {
+  grid-column: 2;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.opening-card__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.opening-card__add,
+.openings-add__open {
+  height: 32px;
+  padding-block: 0;
+}
+
+/* The positions a variation can be added at, and the sentences of an add, under the card's head. */
+.opening-card__adder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.opening-card__adder:empty {
+  display: none;
+}
+
+.opening-card__figures,
+.opening-row__cells {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.opening-card__figures {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+/* The button sits right after the last cell, a gap away from the coverage it follows. */
+.opening-row__cells {
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  align-items: center;
+}
+
+.opening-figure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.opening-figure__label {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-label);
+}
+
+.opening-figure__value {
+  display: flex;
+  align-items: center;
+  min-height: 1.5em;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.opening-figure__accent {
+  color: var(--accent);
+}
+
+.opening-figure__bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.opening-figure__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--status-ready);
+}
+
+/* The line at the left runs under the chevron's middle, so the rows read as the card's own. */
+.opening-card__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-left: var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--border);
+}
+
+.opening-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.opening-row__title {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.opening-row__name {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.opening-row__name:hover {
+  text-decoration: underline;
+}
+
+.opening-row__line {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* A train button: the label and the chevron are two buttons in one shape, with no line between. */
+.train {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  white-space: nowrap;
+}
+
+.train--compact {
+  height: 30px;
+}
+
+/* The colour's button sits at the right of its heading. */
+.openings-section__head > .train {
+  margin-left: auto;
+}
+
+.train.button {
+  padding-block: 0;
+}
+
+.train__main,
+.train__more {
+  height: 100%;
+  padding-block: 0;
+}
+
+.train__main {
+  padding-inline: var(--space-3) var(--space-2);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.train__more {
+  display: inline-flex;
+  align-items: center;
+  padding-inline: var(--space-1) var(--space-2);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.train__chevron {
+  transform: rotate(90deg);
+}
+
+/* One hover for both halves, or the seam between them would show. */
+.train--split:hover .button--primary:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.train__menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 100%;
+  padding: var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.train__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.train__item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.train__item:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.train__count {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.openings-add {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.openings-add__open {
+  padding-inline: var(--space-4);
+  border-style: dashed;
+  color: var(--text-2);
+}
+
+.openings-add__open:hover {
+  color: var(--text-1);
+}
+
+/*
+ * The panel that Add an opening opens, in the button's place: a header with two tabs, the style
+ * points, and the list of the tab chosen. Its measures are the approved screens': 16 px and 20 px
+ * of padding, parts 10 px apart, tabs and Close 30 px high, a 36 px search field, rows of 7 px of
+ * padding with a 12 px gap. The 13 px of the tabs, the 11 px of the pill and the 7 px of a row sit
+ * between steps of the type and space scales.
+ */
+.openings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-self: stretch;
+  padding: var(--space-4) 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.openings-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.openings-panel__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+
+.openings-panel__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Two tabs on one inset track, the chosen one raised on the border tone, as the side control is. */
+.openings-panel__tabs {
+  display: flex;
+  box-sizing: border-box;
+  height: 30px;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+}
+
+.openings-panel__tab {
+  padding: 0 10px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.openings-panel__tab[aria-selected="true"] {
+  background: var(--border);
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+.openings-panel__close,
+.openings-panel__add {
+  height: 30px;
+  padding-block: 0;
+}
+
+/* Both lists stay mounted; the one not chosen is hidden, and its own display must not undo that. */
+.openings-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.openings-panel__body[hidden] {
+  display: none;
+}
+
+.openings-panel__search {
+  position: relative;
+}
+
+.openings-panel__search-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  color: var(--text-2);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.openings-panel__search-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  padding-block: 0;
+  padding-inline: 36px var(--space-3);
+  appearance: none;
+  font-size: var(--text-sm);
+}
+
+.openings-panel__search-input::placeholder {
+  color: var(--text-3);
+}
+
+.openings-panel__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.openings-panel__group-title {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+.openings-panel__rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.openings-panel__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.openings-panel__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.openings-panel__opening {
+  font-size: var(--text-sm);
+}
+
+.openings-panel__moves {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* The second column holds what the student has to go on, the third what the row does with it. */
+.openings-panel__pill,
+.openings-panel__games {
+  grid-column: 2;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.openings-panel__pill {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  font-size: 11px;
+}
+
+.openings-panel__games {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.openings-panel__add,
+.openings-panel__built {
+  grid-column: 3;
+}
+
+.openings-panel__built {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.openings-panel__foot,
+.openings-panel__note,
+.openings-panel__empty {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.openings-panel__empty {
+  font-size: var(--text-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opening-card__chevron {
+    transition: none;
+  }
+}
+
+/* Phone: the five cells wrap to two columns, the head's buttons go under the title, and every
+ * control is a 44 px target. */
+@media (max-width: 899px) {
+  .openings-head {
+    align-items: stretch;
+  }
+
+  .opening-card__head {
+    flex-wrap: wrap;
+  }
+
+  .opening-card__toggle {
+    flex: 1 1 100%;
+    min-height: 44px;
+  }
+
+  .opening-card__figures,
+  .opening-row__cells {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .opening-row__name {
+    min-height: 44px;
+    padding-block: var(--space-2);
+  }
+
+  .train,
+  .train--compact,
+  .opening-card__add,
+  .openings-add__open,
+  .openings-panel .button,
+  .openings-panel__tab,
+  .openings-side .segmented__option,
+  .opening-card__adder .button,
+  .opening-row__coverage .button {
+    min-height: 44px;
+  }
+
+  .train__item {
+    height: 44px;
+  }
+
+  .opening-row__cells > .train {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .train__more {
+    min-width: 44px;
+    justify-content: center;
+  }
+
+  /* The tabs and Close go under the title; a row keeps its name, pill and Add on one line, with the
+   * moves under the name. */
+  .openings-panel__controls {
+    flex: 1 1 100%;
+  }
+
+  .openings-panel__tabs {
+    flex: 1;
+    height: auto;
+  }
+
+  .openings-panel__tab {
+    flex: 1;
+  }
+
+  .openings-panel__name {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+}

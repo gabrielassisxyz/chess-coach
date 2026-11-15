@@ -9,7 +9,7 @@ import {
   TrainingSummarySchema,
 } from "./activity.js";
 import { FoundPositionPhaseSchema, MAX_FOUND_POSITION_ID_LENGTH } from "./found-positions.js";
-import { MAX_OPENING_FAMILY_LENGTH, MAX_OPENING_TAG_LENGTH, OpeningTagSchema } from "./openings.js";
+import { MAX_OPENING_FAMILY_LENGTH, OpeningTagSchema } from "./openings.js";
 import { RepertoireLevelSchema, RepertoireScopeSchema } from "./repertoires.js";
 
 // The wire contract between server and browser. Every frame is validated on arrival by the side
@@ -312,10 +312,15 @@ export const UndoCommandSchema = z.object({
 // A repertoire drill names its repertoire and scope, and a level that widens it to that repertoire's
 // group or side; without one it drills that variation alone. The other modes ignore all three. An
 // opening drill may name one opening family of its colour, or UNNAMED_OPENING for the positions with
-// no name; without one it drills every position of the colour. A puzzle queue may name one Lichess
-// opening tag instead of a motif. The other modes ignore `opening`. A drill of the positions from the student's games (`found`) cannot start without a scope, and
-// `color`, `phase` and `position`, the id the From my games list gives, narrow it; the other modes
-// ignore `phase` and `position`. A queue has no size to choose: the object is strict so that a
+// no name; without one it drills every position of the colour. A drill of the positions from the
+// student's games (`found`) may name one opening, a full name matching it exactly and a family
+// matching every variation of it. A puzzle queue may name one Lichess opening tag instead of a
+// motif. The other modes ignore `opening`.
+// A drill of the positions from the student's games (`found`) cannot start without a scope, and
+// `color`, `phase`, `position` (the id the From my games list gives) and `opening` narrow it;
+// the other modes ignore `phase` and `position`, and all but the opening drill and a puzzle queue
+// ignore `opening`.
+// A queue has no size to choose: the object is strict so that a
 // client still sending the retired `size` is refused instead of being served a queue it did not ask
 // for.
 const StartTrainingFieldsSchema = z.strictObject({
@@ -324,7 +329,7 @@ const StartTrainingFieldsSchema = z.strictObject({
   mode: TrainingModeSchema,
   motif: z.string().min(1).max(64).optional(),
   color: z.enum(["white", "black"]).optional(),
-  opening: z.string().min(1).max(MAX_OPENING_TAG_LENGTH).optional(),
+  opening: z.string().min(1).max(120).optional(),
   repertoire_id: z.number().int().positive().optional(),
   scope: RepertoireScopeSchema.optional(),
   level: RepertoireLevelSchema.optional(),
@@ -332,23 +337,13 @@ const StartTrainingFieldsSchema = z.strictObject({
   position: z.string().min(1).max(MAX_FOUND_POSITION_ID_LENGTH).optional(),
 });
 
-// `opening` is a tag in mode puzzles, whose queue is drawn from that tag's puzzles alone, so a motif
-// cannot narrow it as well; in every other mode it keeps the bound of an opening family.
-function checkStartTrainingOpening(
+// In mode puzzles `opening` is a Lichess opening tag, and the queue is drawn from that tag's puzzles
+// alone, so a motif cannot narrow it as well.
+function checkPuzzleQueueOpening(
   { mode, motif, opening }: z.infer<typeof StartTrainingFieldsSchema>,
   context: z.RefinementCtx,
 ): void {
-  if (opening === undefined) return;
-  if (mode !== "puzzles") {
-    if (opening.length > MAX_OPENING_FAMILY_LENGTH) {
-      context.addIssue({
-        code: "custom",
-        path: ["opening"],
-        message: `an opening family is at most ${MAX_OPENING_FAMILY_LENGTH} characters`,
-      });
-    }
-    return;
-  }
+  if (mode !== "puzzles" || opening === undefined) return;
   if (!OpeningTagSchema.safeParse(opening).success) {
     context.addIssue({
       code: "custom",
@@ -374,7 +369,18 @@ export const StartTrainingCommandSchema = StartTrainingFieldsSchema.superRefine(
         message: "a drill of the positions from your games needs a scope",
       });
     }
-    checkStartTrainingOpening(command, context);
+    if (
+      command.mode === "openings" &&
+      command.opening !== undefined &&
+      command.opening.length > MAX_OPENING_FAMILY_LENGTH
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["opening"],
+        message: `opening must be at most ${MAX_OPENING_FAMILY_LENGTH} characters for an opening drill`,
+      });
+    }
+    checkPuzzleQueueOpening(command, context);
   },
 );
 
@@ -411,6 +417,29 @@ export const HintCommandSchema = z.object({
   command_id: commandId,
   activity_id: activityId,
 });
+
+// The student's hand drawings on the Practice board, sent when they change. Each shape is an
+// arrow (with dest) or a circle (without), in one of the four drawing colours. At most 32 shapes
+// travel in one snapshot; anything else is refused by validation.
+export const DrawingColorSchema = z.enum(["green", "red", "blue", "yellow"]);
+export type DrawingColor = z.infer<typeof DrawingColorSchema>;
+
+export const DrawnShapeSchema = z.object({
+  orig: square,
+  dest: square.optional(),
+  color: DrawingColorSchema,
+});
+export type DrawnShape = z.infer<typeof DrawnShapeSchema>;
+
+export const MAX_DRAWING_SHAPES = 32;
+
+export const DrawingsCommandSchema = z.object({
+  type: z.literal("drawings"),
+  command_id: commandId,
+  activity_id: activityId,
+  shapes: z.array(DrawnShapeSchema).max(MAX_DRAWING_SHAPES),
+});
+export type DrawingsCommand = z.infer<typeof DrawingsCommandSchema>;
 
 // Asks the coach to comment on the ended item that was solved first try, which stays quiet until
 // asked. Sent as its own command because a say would not tell the coach which position was solved.
@@ -490,6 +519,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   TryMoveCommandSchema,
   ShowSolutionCommandSchema,
   HintCommandSchema,
+  DrawingsCommandSchema,
   AskCoachAboutItemCommandSchema,
   RateCardCommandSchema,
   NextTrainingItemCommandSchema,

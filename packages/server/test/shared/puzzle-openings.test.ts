@@ -71,7 +71,15 @@ describe("start_training with an opening tag", () => {
     const long = start({ mode: "openings", color: "white", opening: "x".repeat(101) });
     expect(long.success).toBe(false);
     expect(long.error?.issues).toMatchObject([{ path: ["opening"] }]);
-    expect(start({ mode: "srs", opening: "x".repeat(101) }).success).toBe(false);
+  });
+
+  it("leaves a found drill's opening name to its own rule, punctuation and 120 characters", () => {
+    const named = "Sicilian Defense: Najdorf Variation, English Attack";
+    expect(start({ mode: "found", scope: "all", opening: named }).success).toBe(true);
+    expect(start({ mode: "found", scope: "all", opening: "x".repeat(120) }).success).toBe(true);
+    expect(
+      start({ mode: "found", scope: "all", opening: "Italian Game", motif: "fork" }).success,
+    ).toBe(true);
   });
 
   it("leaves a motif queue and a queue of no filter as they were", () => {

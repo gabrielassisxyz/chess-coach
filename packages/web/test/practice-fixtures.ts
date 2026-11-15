@@ -1,8 +1,14 @@
 import type {
+  FoundPositionCounts,
+  FoundPositionsResponse,
+  FoundPositionView,
   PlayedMove,
   ProgressResponse,
   RepertoireDrill,
+  RepertoireGroupSummary,
+  RepertoireScopeCounts,
   RepertoireSummary,
+  RepertoiresResponse,
   TrainingActivity,
 } from "@chess-coach/shared";
 import { fireEvent, screen, within } from "@testing-library/react";
@@ -64,14 +70,6 @@ export function progressOf(cards: Partial<Cards> = {}, puzzleRating = 1200): Pro
   };
 }
 
-export const motifCounts = [
-  { motif: "fork", count: 28 },
-  { motif: "pin", count: 9 },
-  { motif: "smothered-mate", count: 0 },
-  { motif: "opening-white", count: 12 },
-  { motif: "opening-black", count: 0 },
-];
-
 export const CLASSICAL_VARIATION = "Classical Variation (4.c3)";
 
 export const italianRepertoire: RepertoireSummary = {
@@ -83,6 +81,38 @@ export const italianRepertoire: RepertoireSummary = {
 };
 
 export const repertoireList: RepertoireSummary[] = [italianRepertoire];
+
+const sumOf = (counts: readonly RepertoireScopeCounts[]): RepertoireScopeCounts => ({
+  recommended: counts.reduce((sum, entry) => sum + entry.recommended, 0),
+  due: counts.reduce((sum, entry) => sum + entry.due, 0),
+  all: counts.reduce((sum, entry) => sum + entry.all, 0),
+});
+
+// An answer of GET /api/repertoires for these variations, with an entry for each opening and each
+// colour that holds one. Their counts are the sums of the variations under them, where the server
+// counts a move two variations share once; a test that cares about the difference sets them itself.
+export function repertoireAnswer(
+  repertoires: RepertoireSummary[] = repertoireList,
+  overrides: Partial<RepertoiresResponse> = {},
+): RepertoiresResponse {
+  const groups = new Map<string, RepertoireGroupSummary>();
+  for (const entry of repertoires) {
+    const key = `${entry.side} ${entry.group_name}`;
+    const under = repertoires.filter(
+      (other) => other.side === entry.side && other.group_name === entry.group_name,
+    );
+    groups.set(key, {
+      side: entry.side,
+      group_name: entry.group_name,
+      moves: sumOf(under.map((other) => other.moves)),
+    });
+  }
+  const sides = (["white", "black"] as const).flatMap((side) => {
+    const own = repertoires.filter((entry) => entry.side === side);
+    return own.length === 0 ? [] : [{ side, moves: sumOf(own.map((entry) => entry.moves)) }];
+  });
+  return { repertoires, groups: [...groups.values()], sides, met: [], branches: [], ...overrides };
+}
 
 // The moves the server plays on the student's behalf before the first move it asks for.
 export const ITALIAN_APPROACH = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"];
@@ -156,3 +186,58 @@ export function repertoireActivity(options: RepertoireActivityOptions = {}): Tra
     ...options.training,
   };
 }
+
+// A position from the student's games as the From my games list holds it: a repeated opening
+// position, new, with the moves that led to it and the game it was shown from.
+export function foundPosition(overrides: Partial<FoundPositionView> = {}): FoundPositionView {
+  return {
+    id: "own:aaaaaaaaaaaaaaaa",
+    fen: "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2",
+    color: "white",
+    phase: "opening",
+    section: "reached",
+    from_mistake: false,
+    from_departure: false,
+    opening_name: "King's Pawn Game",
+    line: { first_ply: 1, san: ["e4", "e5"] },
+    reached_games: 6,
+    best_games: 3,
+    last_reached_at: "2026-02-20T12:00:00.000Z",
+    game: { id: 4, ply: 3, opponent: "Whambalee", played_at: "2026-02-20T12:00:00.000Z" },
+    state: "new",
+    next_review_at: null,
+    ...overrides,
+  };
+}
+
+// An answer whose counts follow from its positions, as the server's do, unless a test sets one.
+export function foundResponse(
+  positions: FoundPositionView[],
+  counts: Partial<FoundPositionCounts> = {},
+): FoundPositionsResponse {
+  const inState = (state: FoundPositionView["state"]): number =>
+    positions.filter((position) => position.state === state).length;
+  const inPhase = (phase: FoundPositionView["phase"]): number =>
+    positions.filter((position) => position.phase === phase).length;
+  const reached = positions.filter((position) => position.section === "reached").length;
+  return {
+    positions,
+    counts: {
+      total: positions.length,
+      due: inState("due"),
+      new: inState("new"),
+      recommended: Math.min(inState("due") + inState("new"), 10),
+      all: positions.length,
+      by_phase: {
+        opening: inPhase("opening"),
+        middlegame: inPhase("middlegame"),
+        endgame: inPhase("endgame"),
+      },
+      by_section: { reached, mistakes: positions.length - reached },
+      left_out: 0,
+      ...counts,
+    },
+  };
+}
+
+export const noFoundPositions: FoundPositionsResponse = foundResponse([]);
