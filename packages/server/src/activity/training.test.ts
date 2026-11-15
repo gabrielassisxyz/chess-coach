@@ -2794,6 +2794,38 @@ describe("a mix practice queue drawn equally from the improvement areas", () => 
     },
   );
 
+  it.each([1, 2, 3, 4])(
+    "never serves a puzzle of the first batch again when each pool holds only its share (seed %i)",
+    async (seed) => {
+      mixAddPool("deflection", 4, ["deflection"]);
+      mixAddPool("pin", 3, ["pin"]);
+      mixAddPool("skewer", 3, ["skewer"]);
+      mixListAsWeak("deflection", "pin", "skewer");
+      const { activity } = withMixSeed(seed);
+      const start = training(
+        await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+      );
+      expect(mixStoredIds()).toHaveLength(10);
+      const last = await mixPassTheTenth(activity, start);
+      expect(last.summary).toEqual({ solved: 10, failed: 0 });
+      expect(last.input_enabled).toBe(false);
+    },
+  );
+
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])(
+    "leaves a batch in no theme-by-theme order (seed %i)",
+    async (seed) => {
+      for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+      mixListAsWeak("deflection", "pin", "skewer");
+      const { activity } = withMixSeed(seed);
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+      const themes = mixStoredIds().map((id) => id.split("-")[0]);
+      expect(themes).toHaveLength(10);
+      const runs = themes.filter((theme, index) => index === 0 || theme !== themes[index - 1]);
+      expect(runs.length).toBeGreaterThan(3);
+    },
+  );
+
   it("keeps the batch at 10 when a theme has no puzzle, passing its share on", async () => {
     mixAddPool("deflection", 12, ["deflection"]);
     mixAddPool("pin", 12, ["pin"]);
