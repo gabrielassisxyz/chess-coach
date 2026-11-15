@@ -625,5 +625,42 @@ describe("coach Markdown", () => {
         { kind: "message", text: "Second answer" },
       ]);
     });
+
+    it("renders two line cards in order when one coach turn offers two lines", () => {
+      const { container } = mountPractice();
+      receiveBootstrap([
+        row(1, "system", "text", { turn_start: "2026-01-01T00:00:01.000Z" }),
+        ...offerEntries(2, "u1", FEN_1, ["Nf3", "Nc6"]),
+        ...offerEntries(6, "u2", FEN_2, ["d4", "d5"]),
+        row(10, "assistant", "text", { text: "Compare these two lines" }),
+      ]);
+
+      expect(screen.getAllByTestId("line-card")).toHaveLength(2);
+      expect(orderedBlocks(container)).toEqual([
+        { kind: "message", text: "Compare these two lines" },
+        { kind: "line-card", text: "Show line on boardNf3 Nc6" },
+        { kind: "line-card", text: "Show line on boardd4 d5" },
+      ]);
+      const buttons = screen.getAllByRole("button", { name: "Show line on board" });
+      fireEvent.click(buttons[0] as HTMLElement);
+      fireEvent.click(buttons[1] as HTMLElement);
+      expect(FakeSocket.latest.sent).toEqual([
+        expect.objectContaining({ type: "show_line", fen: FEN_1, moves: ["Nf3", "Nc6"] }),
+        expect.objectContaining({ type: "show_line", fen: FEN_2, moves: ["d4", "d5"] }),
+      ]);
+    });
+
+    it("renders the SAN of each move of its line inside the card", () => {
+      mountPractice();
+      receiveBootstrap([
+        row(1, "system", "text", { turn_start: "2026-01-01T00:00:01.000Z" }),
+        ...offerEntries(2, "u1", FEN_1, ["e5", "Nf3", "Nc6"]),
+        row(6, "assistant", "text", { text: "Main line" }),
+      ]);
+
+      const card = screen.getByTestId("line-card");
+      expect(card.textContent).toContain("e5 Nf3 Nc6");
+      expect(card.querySelector(".line-card__moves")?.textContent).toBe("e5 Nf3 Nc6");
+    });
   });
 });

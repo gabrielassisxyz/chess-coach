@@ -163,4 +163,20 @@ describe("lineCardsByAnchor", () => {
     ]);
     expect([...anchored.keys()]).toEqual(["a1"]);
   });
+
+  it("keeps two offered lines from one turn in order", () => {
+    const anchored = lineCardsByAnchor([
+      { type: "turn_start", key: "ts1" },
+      offer("s1", "f1"),
+      step("m1", "f1", ["e4", "e5"]),
+      offer("s2", "f2"),
+      step("m2", "f2", ["d4", "d5"]),
+      { type: "text", key: "a1", role: "assistant" },
+    ]);
+    expect([...anchored.keys()]).toEqual(["a1"]);
+    expect(anchored.get("a1")).toEqual([
+      { key: "s1", fen: "f1", moves: ["e4", "e5"] },
+      { key: "s2", fen: "f2", moves: ["d4", "d5"] },
+    ]);
+  });
 });
