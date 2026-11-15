@@ -30,7 +30,7 @@ import {
   type ExplorerFetcher,
   ITALIAN_WHITE_RATINGS,
 } from "./explorer-client.js";
-import { positionKey } from "./from-games.js";
+import { noPositionsFound, positionKey } from "./from-games.js";
 import {
   checkRepertoireBranch,
   checkRepertoirePoints,
@@ -1591,7 +1591,7 @@ describe("POST /api/openings/generate with the repertoire source", () => {
     const app = buildApp({
       db,
       log,
-      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateOpenings: async () => noPositionsFound(),
       generateRepertoireOpenings: () =>
         generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES),
     });
@@ -1621,7 +1621,7 @@ describe("POST /api/openings/generate with the repertoire source", () => {
     const app = buildApp({
       db,
       log,
-      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateOpenings: async () => noPositionsFound(),
       generateRepertoireOpenings: () =>
         generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES),
     });
@@ -1645,7 +1645,7 @@ describe("POST /api/openings/generate with the repertoire source", () => {
     const app = buildApp({
       db,
       log,
-      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateOpenings: async () => noPositionsFound(),
       generateRepertoireOpenings: () =>
         generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES),
     });
@@ -1682,7 +1682,7 @@ describe("POST /api/openings/generate with the repertoire source", () => {
     const app = buildApp({
       db,
       log,
-      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateOpenings: async () => noPositionsFound(),
       generateRepertoireOpenings: () =>
         generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES),
     });
@@ -1723,7 +1723,7 @@ describe("POST /api/openings/generate with the repertoire source", () => {
     );
     const app = buildApp({
       db,
-      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateOpenings: async () => noPositionsFound(),
       generateRepertoireOpenings: () =>
         generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES),
     });
@@ -2060,7 +2060,7 @@ describe("POST /api/openings/generate with a root", () => {
     buildApp({
       db,
       log,
-      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateOpenings: async () => noPositionsFound(),
       generateRepertoireOpenings: (root) =>
         generateRepertoire(db, engine, explorer, cacheDir, clock, ROOT_FIXTURE_NAMES, { root }),
     });
@@ -2420,7 +2420,7 @@ describe("a variation built at a branch point", () => {
     const app = buildApp({
       db,
       log,
-      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateOpenings: async () => noPositionsFound(),
       generateRepertoireOpenings: (root, branch) =>
         generateRepertoire(db, engine, explorer, cacheDir, clock, BRANCH_FIXTURE_NAMES, {
           root,
@@ -2502,7 +2502,7 @@ const postRepertoireRun = async (payload: object, log: RecordingLog, names: Open
   const app = buildApp({
     db,
     log,
-    generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+    generateOpenings: async () => noPositionsFound(),
     generateRepertoireOpenings: (root, branch, rebuild, points) =>
       generateRepertoire(db, engine, explorer, cacheDir, clock, names, {
         root,
@@ -2615,7 +2615,7 @@ describe("the plan rule", () => {
       const app = buildApp({
         db,
         log,
-        generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+        generateOpenings: async () => noPositionsFound(),
         generateRepertoireOpenings: () =>
           generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES, {
             maxPly: 7,
@@ -3282,7 +3282,7 @@ describe("the style points", () => {
       const app = buildApp({
         db,
         log,
-        generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+        generateOpenings: async () => noPositionsFound(),
         generateRepertoireOpenings: (root, branch, rebuild, points) =>
           generateRepertoire(db, engine, explorer, cacheDir, clock, ITALIAN_FIXTURE_NAMES, {
             root,

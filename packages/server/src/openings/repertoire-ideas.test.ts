@@ -14,6 +14,7 @@ import {
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { boundFields, RecordingLog } from "../log.js";
+import { noPositionsFound } from "./from-games.js";
 import {
   generateRepertoireIdeas,
   type IdeaQueryFn,
@@ -353,7 +354,7 @@ describe("through the route", () => {
     const app = buildApp({
       db,
       log,
-      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateOpenings: async () => noPositionsFound(),
       generateRepertoireIdeas: () => generateRepertoireIdeas(db, session, log),
     });
     const first = await post(app);
