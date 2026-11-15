@@ -22,7 +22,6 @@ afterEach(() => {
 });
 
 const baseHubProps = {
-  fetchMotifs: async () => [],
   fetchProgress: async () => progressOf(),
   fetchRepertoires: async () => [],
 };
@@ -272,7 +271,7 @@ describe("Improvement areas and Strengths pages", () => {
       <Practice server={serverApi(null)} {...baseHubProps} fetchThemeStats={fetchThemeStats} />,
     );
     openPracticePage("Improvement areas");
-    await screen.findByText("Quiet move");
+    await within(activePagePanel()).findByText("Quiet move");
 
     const periodGroup = within(activePagePanel()).getByRole("group", { name: "Time window" });
     fireEvent.click(within(periodGroup).getByRole("button", { name: "90 days" }));
@@ -323,7 +322,7 @@ describe("Improvement areas and Strengths pages", () => {
     const name = motifLabel(key);
     expect(name).not.toBe("");
     expect(name).not.toBe(key);
-    const row = (await screen.findByText(name)).closest("li") as HTMLElement;
+    const row = (await within(activePagePanel()).findByText(name)).closest("li") as HTMLElement;
     expect(row.getAttribute("data-theme")).toBe(key);
 
     fireEvent.click(within(row).getByRole("button", { name: "Train" }));
@@ -342,7 +341,7 @@ describe("Improvement areas and Strengths pages", () => {
       <Practice server={server} {...baseHubProps} fetchThemeStats={fetchThemeStats} />,
     );
     openPracticePage("Improvement areas");
-    await screen.findByText("X-ray");
+    await within(activePagePanel()).findByText("X-ray");
 
     const xrayRow = visibleRows()[2] as HTMLElement;
     const trainBtn = within(xrayRow).getByRole("button", { name: "Train" });

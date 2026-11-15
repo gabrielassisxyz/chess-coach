@@ -22,7 +22,6 @@ import {
   type FoundStartRequest,
   fetchFoundPositionsFromServer,
 } from "../state/found-api.js";
-import type { MotifCount } from "../state/practice.js";
 import {
   openingsDueOf,
   PRACTICE_ENTRY_LABEL,
@@ -63,7 +62,6 @@ export interface FoundPositionsProps {
 
 export interface PracticeHubProps {
   progress: Loaded<ProgressResponse>;
-  motifs: Loaded<MotifCount[]>;
   engineMissing: boolean;
   // A repertoire start carries its scope in `motif`, names its repertoire and, above one
   // variation, its level.
@@ -274,11 +272,12 @@ export function PracticeHub(props: PracticeHubProps) {
         <PageSlot shown={page === "overview"}>
           <PracticeOverview
             progress={props.progress}
-            motifs={props.motifs}
             ratingHistory={props.ratingHistory}
             themeStats={props.overviewThemeStats}
             engineMissing={props.engineMissing}
             startButton={startButton}
+            starting={marked.starting}
+            onStart={marked.onStart}
             problems={props.problems}
             failure={failureOn("overview")}
             themesRef={themes}

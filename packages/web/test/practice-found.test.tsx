@@ -4,6 +4,7 @@ import type {
   FoundPositionsQuery,
   FoundPositionsResponse,
   FoundPositionView,
+  ThemeStatsResponse,
 } from "@chess-coach/shared";
 import type { Config } from "@lichess-org/chessground/config";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -28,7 +29,6 @@ import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
   foundPosition,
   foundResponse,
-  motifCounts,
   noFoundPositions,
   openPracticePage,
   progressOf,
@@ -158,7 +158,6 @@ function hubElement(options: HubOptions) {
   return (
     <PracticeHub
       progress={ready(progressOf())}
-      motifs={ready(motifCounts)}
       engineMissing={false}
       starting={options.starting ?? null}
       failure={options.failure ?? null}
@@ -1017,10 +1016,17 @@ describe("the panel on the Overview", () => {
 describe("the screen's starts of a drill from your games", () => {
   const hubReads = {
     fetchProgress: async () => progressOf(),
-    fetchMotifs: async () => motifCounts,
     fetchRepertoires: async () => [],
     fetchRepertoireList: async () => ({ repertoires: [], met: [] }),
-    fetchOpeningDrills: async () => ({ white: [], black: [] }),
+    fetchThemeStats: async (): Promise<ThemeStatsResponse> => ({
+      days: "30",
+      overall: { played: 0, first_try: 0, rating_avg: null, performance: null },
+      overall_previous: null,
+      themes: [],
+      improvement_areas: [],
+      strengths: [],
+      unranked: 0,
+    }),
   };
 
   async function openPage(fetchFoundPositions: FetchFoundPositions, server = serverApi()) {
