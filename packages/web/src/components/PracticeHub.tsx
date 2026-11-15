@@ -1,7 +1,6 @@
 import type {
   OpeningDrillColor,
   OpeningDrillsResponse,
-  PausedTraining,
   ProgressResponse,
   RepertoireLevel,
   RepertoireScope,
@@ -16,15 +15,12 @@ import {
   type DrillSize,
   dueBreakdown,
   italianOpeningCount,
-  type LastSession,
-  lastSessionText,
   type MotifCount,
   motifLabel,
   motifRows,
   NONE,
   nextBatchParts,
   percent,
-  resumeLabelOf,
 } from "../state/practice.js";
 import type {
   AddOpening,
@@ -61,7 +57,6 @@ export interface PracticeHubProps {
   openingDrills?: Loaded<OpeningDrillsResponse> | undefined;
   onStartOpening?: ((color: OpeningDrillColor, opening: string) => void) | undefined;
   now?: Date;
-  lastSession?: LastSession | null;
   // The openings met in games and the call that builds a drill for one; the server's by default.
   fetchRepertoireList?: FetchRepertoireList | undefined;
   addOpening?: AddOpening | undefined;
@@ -134,7 +129,6 @@ function drillControlsOf(props: PracticeHubProps): OpeningDrillControls | undefi
 export function PracticeHub(props: PracticeHubProps) {
   const { progress, motifs, repertoires, engineMissing, starting, failure, size, onSize } = props;
   const { onStart, onStartRepertoire } = props;
-  const lastSession = props.lastSession ?? null;
   const [motif, setMotif] = useState(ANY_MOTIF);
   const busy = starting !== null;
   const counts = motifs.status === "ready" ? motifs.value : [];
@@ -157,11 +151,6 @@ export function PracticeHub(props: PracticeHubProps) {
 
   return (
     <div className="practice__hub" aria-busy={busy}>
-      {lastSession ? (
-        <p className="practice__last-session" data-testid="last-session">
-          {lastSessionText(lastSession)}
-        </p>
-      ) : null}
       <section className="practice__card" aria-label="Due cards">
         <h3 className="practice__card-title">Due cards</h3>
         <p className="practice__card-note">Spaced repetition on positions from your own games</p>
@@ -258,37 +247,6 @@ export function PracticeHub(props: PracticeHubProps) {
         </p>
       ) : null}
     </div>
-  );
-}
-
-export interface ResumeCardProps {
-  paused: PausedTraining;
-  engineMissing: boolean;
-  onResume(): void;
-  onDiscard(): void;
-}
-
-// The session the student left when they opened a game or the server restarted.
-export function ResumeCard({ paused, engineMissing, onResume, onDiscard }: ResumeCardProps) {
-  const tally = `${paused.solved} right, ${paused.failed} missed so far`;
-  return (
-    <section className="practice__card" aria-label="Paused session">
-      <h3 className="practice__card-title">{resumeLabelOf(paused)}</h3>
-      <p className="practice__card-note">{tally}</p>
-      <div className="practice__resume-actions">
-        <button
-          type="button"
-          className="button button--primary"
-          disabled={engineMissing}
-          onClick={onResume}
-        >
-          Resume
-        </button>
-        <button type="button" className="button" onClick={onDiscard}>
-          Discard
-        </button>
-      </div>
-    </section>
   );
 }
 

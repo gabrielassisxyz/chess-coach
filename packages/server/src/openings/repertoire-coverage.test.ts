@@ -663,3 +663,43 @@ describe("what the scores read", () => {
     });
   });
 });
+
+describe("pinned coverage scores", () => {
+  // 3.Bc4 answered by 4.c3 with 250 games and 4.d3 with 150. 4.c3 ends its line, 4.d3 is too
+  // thin to end one, so 3.Bc4 ends a line too: 2 ends. 3.Bc4 scores 0.65, 4.c3 scores 0.56,
+  // weighted 1 and 0.5 to 0.62. Concessions 5 and 20 weigh to 10, which is 94 on the scale.
+  // 4.c3 alone scores 0.56 and concedes 20, which is 89. The gap 3...d6 holds 0.2 against 0.8
+  // prepared, so the covered share is 80.0.
+  function pinnedScoresVariation(): StoredVariation {
+    return new StoredVariation()
+      .own([], "e4", { reach: 1, cp: 0, games: MANY })
+      .reply(["e4"], "e5", { reach: 1, source: "setup" })
+      .own(["e4", "e5"], "Nf3", { reach: 1, cp: 0, games: MANY })
+      .reply(["e4", "e5", "Nf3"], "Nc6", { reach: 1, source: "setup" })
+      .own(["e4", "e5", "Nf3", "Nc6"], "Bc4", { reach: 1, cp: 15, games: MANY })
+      .reply(SETUP, "Bc5", { reach: 0.5 })
+      .reply(SETUP, "Nf6", { reach: 0.3 })
+      .reply(SETUP, "d6", { reach: 0.2 })
+      .own(GIUOCO, "c3", { reach: 0.5, cp: 25, games: [120, 40, 90] })
+      .own(TWO_KNIGHTS, "d3", { reach: 0.3, cp: 0, games: [90, 20, 40] });
+  }
+
+  function pinnedScoresWithRareReply(): StoredVariation {
+    const stored = pinnedScoresVariation();
+    stored.reply(AFTER_C3, "d5", { reach: 0.015 });
+    stored.own([...AFTER_C3, "d5"], "exd5", { reach: 0.015, cp: 0, games: [40, 10, 30] });
+    return stored;
+  }
+
+  it("ends a line at 3.Bc4 when one answered reply leads only to thinner moves", () => {
+    expect(pinnedScoresVariation().coverage().scores).toEqual({
+      line_ends: 2,
+      expected_score: 62,
+      soundness: 94,
+    });
+  });
+
+  it("leaves a prepared line rarer than 1 in 50 out of the covered share", () => {
+    expect(pinnedScoresWithRareReply().coverage().covered_percent).toBe(80);
+  });
+});

@@ -8,6 +8,7 @@ import {
   currentPuzzleRating,
   ensurePuzzleRating,
   INITIAL_PUZZLE_RATING,
+  puzzleRatingHistory,
   ratingAfter,
   readPuzzleRating,
   setPuzzleRating,
@@ -15,6 +16,11 @@ import {
 
 const T0 = new Date("2026-03-01T00:00:00.000Z");
 const clock: Clock = { now: () => T0 };
+
+// Local noon of a June 2026 day so calendar-day tests stay independent of the runner's timezone.
+const at = (day: number, hour = 12, minute = 0): string =>
+  new Date(2026, 5, day, hour, minute).toISOString();
+const clockOn = (day: number): Clock => ({ now: () => new Date(2026, 5, day, 12) });
 
 let tmp: string;
 let db: Database;
@@ -35,11 +41,11 @@ function addPuzzle(id: string, rating: number | null): void {
   ).run(id, rating);
 }
 
-function addAttempt(puzzleId: string, firstTry: boolean, at: string): void {
+function addAttempt(puzzleId: string, firstTry: boolean, at: string, solved = firstTry): void {
   db.prepare(
     `INSERT INTO puzzle_attempts (puzzle_id, attempted_at, solved, answered_uci, failed_ply, first_try)
      VALUES (?, ?, ?, '[]', NULL, ?)`,
-  ).run(puzzleId, at, firstTry ? 1 : 0, firstTry ? 1 : 0);
+  ).run(puzzleId, at, solved ? 1 : 0, firstTry ? 1 : 0);
 }
 
 describe("ratingAfter", () => {
@@ -81,5 +87,151 @@ describe("ensurePuzzleRating", () => {
     addAttempt("hard", true, "2026-01-01T00:00:00.000Z");
     expect(ensurePuzzleRating(db, clock)).toEqual({ rating: 1337, replayed: 0 });
     expect(currentPuzzleRating(db)).toBe(1337);
+  });
+});
+
+describe("puzzleRatingHistory", () => {
+  it("answers today at 1200 for all time and a flat 1200 window when no rated attempt exists", () => {
+    expect(puzzleRatingHistory(db, "all", clockOn(10))).toEqual({
+      current: 1200,
+      points: [{ day: "2026-06-10", rating: 1200 }],
+      low: 1200,
+      high: 1200,
+      change: 0,
+    });
+
+    const week = puzzleRatingHistory(db, "7", clockOn(10));
+    expect(week).toEqual({
+      current: 1200,
+      points: [
+        { day: "2026-06-04", rating: 1200 },
+        { day: "2026-06-05", rating: 1200 },
+        { day: "2026-06-06", rating: 1200 },
+        { day: "2026-06-07", rating: 1200 },
+        { day: "2026-06-08", rating: 1200 },
+        { day: "2026-06-09", rating: 1200 },
+        { day: "2026-06-10", rating: 1200 },
+      ],
+      low: 1200,
+      high: 1200,
+      change: 0,
+    });
+    expect(puzzleRatingHistory(db, "30", clockOn(10)).points).toHaveLength(30);
+    expect(puzzleRatingHistory(db, "90", clockOn(10)).points).toHaveLength(90);
+  });
+
+  it("folds attempts in order by local day, carrying values across quiet days and across window starts", () => {
+    addPuzzle("p1", 1400);
+    addPuzzle("p2", 1200);
+    addPuzzle("p3", 1000);
+
+    // Day 2 (before the 7-day window starting on Day 4): 1200 -> 1224.
+    addAttempt("p1", true, at(2));
+    // Day 6: win p1 (1224 -> 1247), then solved p3 after a wrong try (1247 -> 1221).
+    // Intraday high was 1247, but the day closes at 1221.
+    addAttempt("p1", true, at(6, 10));
+    addAttempt("p3", false, at(6, 15), true);
+    // Day 8: miss p2 (1221 -> 1204).
+    addAttempt("p2", false, at(8));
+
+    const week = puzzleRatingHistory(db, "7", clockOn(10));
+    expect(week.points).toEqual([
+      { day: "2026-06-04", rating: 1224 },
+      { day: "2026-06-05", rating: 1224 },
+      { day: "2026-06-06", rating: 1221 },
+      { day: "2026-06-07", rating: 1221 },
+      { day: "2026-06-08", rating: 1204 },
+      { day: "2026-06-09", rating: 1204 },
+      { day: "2026-06-10", rating: 1204 },
+    ]);
+    expect(week.low).toBe(1204);
+    expect(week.high).toBe(1224);
+    expect(week.change).toBe(-20);
+
+    // All time starts on Day 2 (first rated attempt), not before.
+    const all = puzzleRatingHistory(db, "all", clockOn(10));
+    expect(all.points[0]).toEqual({ day: "2026-06-02", rating: 1224 });
+    expect(all.points.at(-1)).toEqual({ day: "2026-06-10", rating: 1204 });
+    expect(all.points).toHaveLength(9);
+    expect(all.low).toBe(1204);
+    expect(all.high).toBe(1224);
+    expect(all.change).toBe(-20);
+
+    // A 30-day window starts with 1200 before the first attempt.
+    const month = puzzleRatingHistory(db, "30", clockOn(10));
+    expect(month.points).toHaveLength(30);
+    expect(month.points[0]).toEqual({ day: "2026-05-12", rating: 1200 });
+    expect(month.low).toBe(1200);
+    expect(month.high).toBe(1224);
+    expect(month.change).toBe(4);
+  });
+
+  it("assigns attempts to their local calendar day around midnight", () => {
+    addPuzzle("p1", 1200);
+    addAttempt("p1", true, at(5, 23, 50));
+    addAttempt("p1", true, at(6, 0, 10));
+
+    const history = puzzleRatingHistory(db, "7", clockOn(7));
+    expect(history.points.slice(3)).toEqual([
+      { day: "2026-06-04", rating: 1200 },
+      { day: "2026-06-05", rating: 1216 },
+      { day: "2026-06-06", rating: 1231 },
+      { day: "2026-06-07", rating: 1231 },
+    ]);
+  });
+
+  it("ignores attempts on unrated puzzles in both ratings and the all-time start day", () => {
+    addPuzzle("opening", null);
+    addPuzzle("rated", 1400);
+
+    addAttempt("opening", true, at(1));
+    expect(puzzleRatingHistory(db, "all", clockOn(10))).toEqual({
+      current: 1200,
+      points: [{ day: "2026-06-10", rating: 1200 }],
+      low: 1200,
+      high: 1200,
+      change: 0,
+    });
+
+    addAttempt("rated", true, at(8));
+    addAttempt("opening", false, at(9));
+    const all = puzzleRatingHistory(db, "all", clockOn(10));
+    expect(all.points).toEqual([
+      { day: "2026-06-08", rating: 1224 },
+      { day: "2026-06-09", rating: 1224 },
+      { day: "2026-06-10", rating: 1224 },
+    ]);
+    expect(all.low).toBe(1224);
+    expect(all.high).toBe(1224);
+    expect(all.change).toBe(0);
+  });
+
+  it("agrees with ensurePuzzleRating on the five-attempt one-day replay", () => {
+    const day = at(10);
+    for (const [id, rating, firstTry] of [
+      ["r1", 1251, true],
+      ["r2", 1135, true],
+      ["r3", 1368, true],
+      ["r4", 1087, true],
+      ["r5", 1058, false],
+    ] as const) {
+      addPuzzle(id, rating);
+      addAttempt(id, firstTry, day);
+    }
+
+    const replayed = ensurePuzzleRating(db, clockOn(10));
+    const history = puzzleRatingHistory(db, "30", clockOn(10));
+    expect(history.points.at(-1)?.rating).toBe(replayed.rating);
+    expect(history.current).toBe(replayed.rating);
+  });
+
+  it("returns currentPuzzleRating(db) for current even when settings differ from the fold", () => {
+    addPuzzle("p1", 1400);
+    addAttempt("p1", true, at(10));
+    setPuzzleRating(db, 1500, at(10));
+
+    const history = puzzleRatingHistory(db, "7", clockOn(10));
+    expect(history.current).toBe(1500);
+    expect(history.points.at(-1)?.rating).toBe(1224);
   });
 });
