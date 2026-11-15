@@ -64,6 +64,8 @@ const REPERTOIRE_NEW_MOVE_WINDOW_MS = 24 * 3_600_000;
 export const REPERTOIRE_FLAG_CP = 50;
 /** How long a try waits for the engine before it stays a plain miss. */
 export const REPERTOIRE_FLAG_BUDGET_MS = 4000;
+/** How long each of the judge's two searches may take, so the pair ends inside the budget. */
+export const REPERTOIRE_FLAG_SEARCH_CAP_MS = REPERTOIRE_FLAG_BUDGET_MS / 2;
 /** What the first hint says when the position stores no idea. */
 export const REPERTOIRE_NO_IDEA = "No idea is stored for this position yet.";
 // The qualities a review card's first try pre-selects in training.ts: right is 4, a miss is 2.
@@ -315,7 +317,8 @@ export function repertoireTryJudge(names: OpeningNames, engine: Searcher): Reper
     openingOf: (fen) => names.ofPosition(fen)?.name ?? null,
     cpLoss: async (fen, uci) => {
       const mover = fen.split(" ")[1] === "b" ? "b" : "w";
-      return (await evaluatePlayerMove(engine, fen, uci, mover)).cpLoss;
+      return (await evaluatePlayerMove(engine, fen, uci, mover, REPERTOIRE_FLAG_SEARCH_CAP_MS))
+        .cpLoss;
     },
   };
 }

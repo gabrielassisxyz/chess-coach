@@ -40,11 +40,23 @@ export async function evaluatePlayerMove(
   fenBefore: string,
   moveUci: string,
   studentColor: StudentColor,
+  capMs?: number,
 ): Promise<PlayerMoveEvaluation> {
   const position = new Chess(fenBefore);
   applyUci(position, moveUci);
-  const before = await engine.search({ fen: fenBefore, depth: EVALUATION_DEPTH, multipv: 1 });
-  const after = await engine.search({ fen: position.fen(), depth: EVALUATION_DEPTH, multipv: 1 });
+  const cap = capMs === undefined ? {} : { capMs };
+  const before = await engine.search({
+    fen: fenBefore,
+    depth: EVALUATION_DEPTH,
+    multipv: 1,
+    ...cap,
+  });
+  const after = await engine.search({
+    fen: position.fen(),
+    depth: EVALUATION_DEPTH,
+    multipv: 1,
+    ...cap,
+  });
   const evalBeforeCp = studentView(before, studentColor);
   const evalAfterCp = studentView(after, studentColor);
   // Search noise can rate the position after the move above the one before it.
