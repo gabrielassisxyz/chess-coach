@@ -47,3 +47,19 @@ export function firstTryBarToneOf(percent: number): FirstTryBarTone {
   if (percent >= 55) return "mid";
   return "low";
 }
+
+export type ThemeStatsKind = "improvement-areas" | "strengths";
+
+/** Join ordered theme keys (`improvement_areas` or `strengths`) against `themes`, optionally capped. */
+export function themeRowsOf(
+  kind: ThemeStatsKind,
+  data: ThemeStatsResponse,
+  limit?: number,
+): ThemeStatsEntry[] {
+  const byTheme = new Map(data.themes.map((entry) => [entry.theme, entry]));
+  const keys = kind === "improvement-areas" ? data.improvement_areas : data.strengths;
+  const selected = limit === undefined ? keys : keys.slice(0, limit);
+  return selected
+    .map((key) => byTheme.get(key))
+    .filter((entry): entry is ThemeStatsEntry => entry !== undefined);
+}

@@ -51,7 +51,8 @@ function subtitleOf(kind: ThemeStatsPageKind, overallRating: number | null): str
   return `Themes where your rating is furthest above your overall ${yardstick}. Up to 8 themes, each with 8 or more played.`;
 }
 
-function emptyMessageOf(kind: ThemeStatsPageKind, data: ThemeStatsResponse): string {
+/** Empty-state guidance shared by Dashboard cards and the Improvement areas / Strengths pages. */
+export function emptyThemeMessageOf(kind: ThemeStatsPageKind, data: ThemeStatsResponse): string {
   if (data.overall.played === 0 || data.themes.length === 0) {
     return "No puzzle played in this period yet.";
   }
@@ -68,68 +69,103 @@ function emptyMessageOf(kind: ThemeStatsPageKind, data: ThemeStatsResponse): str
   return `No theme is ranked yet. A theme is ranked once you have played 8 puzzles of it; your most played theme, ${name}, has ${closest.played}.`;
 }
 
-// Loads theme stats lazily once the page is opened so unvisited hub tabs do not trigger fetches,
-// then keeps loaded rows visible while switching windows except when recovering from an error.
-function useWindowedThemeStats(
-  shown: boolean,
-  fetchThemeStats: FetchThemeStats,
-): {
+/** Tracks lazy page activation and the selected time window (`7`, `30`, `90`, `all`). */
+export function useActivatedWindow(shown: boolean): {
+  activated: boolean;
   days: PuzzleRatingWindow;
-  loaded: Loaded<ThemeStatsResponse>;
   selectWindow(next: PuzzleRatingWindow): void;
 } {
   const [activated, setActivated] = useState(shown);
   const [days, setDays] = useState<PuzzleRatingWindow>(DEFAULT_THEME_WINDOW);
-  const [loaded, setLoaded] = useState<Loaded<ThemeStatsResponse>>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (shown) setActivated(true);
   }, [shown]);
+
+  const selectWindow = useCallback((next: PuzzleRatingWindow): void => {
+    setDays((current) => (current === next ? current : next));
+  }, []);
+
+  return { activated, days, selectWindow };
+}
+
+/** Lazy-loads a windowed resource once activated, refetching when `days` changes or `retry` runs. */
+export function useWindowedResource<T>(
+  activated: boolean,
+  days: PuzzleRatingWindow,
+  fetcher: (days: PuzzleRatingWindow) => Promise<T>,
+): Loaded<T> {
+  const [loaded, setLoaded] = useState<Loaded<T>>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
 
   const retry = useCallback((): void => {
     setLoaded({ status: "loading" });
     setAttempt((count) => count + 1);
   }, []);
 
-  const selectWindow = useCallback(
-    (next: PuzzleRatingWindow): void => {
-      if (next === days) return;
-      if (loaded.status === "failed") setLoaded({ status: "loading" });
-      setDays(next);
-    },
-    [days, loaded.status],
-  );
-
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the retry trigger
   useEffect(() => {
     if (!activated) return;
     let live = true;
-    fetchThemeStats(days).then(
+    setLoaded((current) => (current.status === "failed" ? { status: "loading" } : current));
+    fetcher(days).then(
       (value) => live && setLoaded({ status: "ready", value }),
       () => live && setLoaded({ status: "failed", retry }),
     );
     return () => {
       live = false;
     };
-  }, [activated, days, attempt, fetchThemeStats, retry]);
+  }, [activated, days, attempt, fetcher, retry]);
 
-  return { days, loaded, selectWindow };
+  return loaded;
 }
 
-function ThemeTableHeader() {
+/** Windowed period selector (`7 days`, `30 days`, `90 days`, `All`). */
+export function ThemeTimeWindow({
+  days,
+  onSelect,
+}: {
+  days: PuzzleRatingWindow;
+  onSelect(next: PuzzleRatingWindow): void;
+}) {
+  return (
+    <fieldset className="practice-themes__period" aria-label="Time window">
+      {THEME_WINDOW_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className="practice-themes__period-button"
+          aria-pressed={option.value === days}
+          onClick={() => onSelect(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </fieldset>
+  );
+}
+
+/** Column header row shared by Dashboard theme cards and theme detail pages. */
+export function ThemeTableHeader({
+  showTrain = true,
+  solvedLabel = "Solved first try",
+}: {
+  showTrain?: boolean;
+  solvedLabel?: string;
+}) {
   return (
     <div className="practice-themes__table-head" aria-hidden="true">
       <span>Theme</span>
       <span className="practice-themes__played-col">Played</span>
       <span className="practice-themes__rating-head">Rating</span>
-      <span>Solved first try</span>
-      <span />
+      <span>{solvedLabel}</span>
+      {showTrain ? <span /> : null}
     </div>
   );
 }
 
-function ThemeRow({
+/** Theme statistics row showing name/description, volume, rating delta, solved-first-try bar, and optional Train button. */
+export function ThemeRow({
   entry,
   overallRating,
   starting,
@@ -140,7 +176,7 @@ function ThemeRow({
   overallRating: number | null;
   starting: ThemeStatsStarting | null;
   engineMissing: boolean;
-  onTrain(theme: string): void;
+  onTrain?: (theme: string) => void;
 }) {
   const { name, description } = themeDisplayOf(entry.theme);
   const delta = overallRating === null ? null : entry.performance - overallRating;
@@ -173,14 +209,16 @@ function ThemeRow({
         </span>
         <span className="practice-themes__pct">{`${pct}%`}</span>
       </div>
-      <button
-        type="button"
-        className="button practice-themes__train"
-        disabled={starting !== null || engineMissing}
-        onClick={() => onTrain(entry.theme)}
-      >
-        {isStartingMine ? "Starting" : "Train"}
-      </button>
+      {onTrain ? (
+        <button
+          type="button"
+          className="button practice-themes__train"
+          disabled={starting !== null || engineMissing}
+          onClick={() => onTrain(entry.theme)}
+        >
+          {isStartingMine ? "Starting" : "Train"}
+        </button>
+      ) : null}
     </li>
   );
 }
@@ -195,7 +233,8 @@ export function PracticeThemeStats({
   onStart,
   failure,
 }: PracticeThemeStatsProps) {
-  const { days, loaded, selectWindow } = useWindowedThemeStats(shown, fetchThemeStats);
+  const { activated, days, selectWindow } = useActivatedWindow(shown);
+  const loaded = useWindowedResource(activated, days, fetchThemeStats);
   const title = PAGE_TITLE[kind];
   const overallRating = loaded.status === "ready" ? loaded.value.overall.performance : null;
   const subtitle = subtitleOf(kind, overallRating);
@@ -219,19 +258,7 @@ export function PracticeThemeStats({
           <h2 className="screen__title">{title}</h2>
           <p className="screen__note">{subtitle}</p>
         </div>
-        <fieldset className="practice-themes__period" aria-label="Time window">
-          {THEME_WINDOW_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className="practice-themes__period-button"
-              aria-pressed={option.value === days}
-              onClick={() => selectWindow(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </fieldset>
+        <ThemeTimeWindow days={days} onSelect={selectWindow} />
       </div>
       {failure}
       <div className="practice-themes__panel">
@@ -268,7 +295,9 @@ export function PracticeThemeStats({
               </ul>
             ) : (
               <div className="practice-themes__empty">
-                <p className="practice-themes__message">{emptyMessageOf(kind, loaded.value)}</p>
+                <p className="practice-themes__message">
+                  {emptyThemeMessageOf(kind, loaded.value)}
+                </p>
                 <button
                   type="button"
                   className="button"

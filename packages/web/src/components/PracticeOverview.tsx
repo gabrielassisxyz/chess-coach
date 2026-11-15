@@ -65,18 +65,23 @@ function ratePointsDelta(currentRate: number | null, previousRate: number | null
   return Math.round(currentRate * 100) - Math.round(previousRate * 100);
 }
 
-function TileDelta({ delta, period }: { delta: number | null; period: string }) {
+export function TileDelta({
+  delta,
+  period,
+}: {
+  delta: number | null;
+  period?: string | undefined;
+}) {
+  const arrow =
+    delta !== null && delta !== 0 ? (
+      <span className="practice-tile__delta" data-direction={delta > 0 ? "up" : "down"}>
+        {delta > 0 ? `\u25b2 ${delta}` : `\u25bc ${Math.abs(delta)}`}
+      </span>
+    ) : null;
+  if (period === undefined) return arrow;
   return (
     <>
-      {delta !== null && delta !== 0 ? (
-        <>
-          {" "}
-          <span className="practice-tile__delta" data-direction={delta > 0 ? "up" : "down"}>
-            {delta > 0 ? `\u25b2 ${delta}` : `\u25bc ${Math.abs(delta)}`}
-          </span>
-        </>
-      ) : null}{" "}
-      <span className="practice-tile__unit">{period}</span>
+      {arrow ? <> {arrow}</> : null} <span className="practice-tile__unit">{period}</span>
     </>
   );
 }
