@@ -443,3 +443,122 @@ describe("GET /api/found-positions", () => {
     expect(ids(FoundPositionsResponseSchema.parse(response.json()))).toEqual(["own:long"]);
   });
 });
+
+describe("GET /api/found-positions narrowed to one opening", () => {
+  function fillThree(): void {
+    addFound("own:two-knights", {
+      openingName: "Italian Game: Two Knights Defense",
+      color: "white",
+      phase: "opening",
+    });
+    addFound("own:giuoco", {
+      openingName: "Italian Game: Giuoco Pianissimo",
+      color: "white",
+      phase: "middlegame",
+    });
+    addFound("own:scandi", {
+      openingName: "Scandinavian Defense",
+      color: "black",
+      phase: "opening",
+    });
+  }
+
+  it("serves a family under its name and one variation under its full name", async () => {
+    fillThree();
+    expect(ids(await list("?opening=Italian%20Game"))).toEqual(["own:giuoco", "own:two-knights"]);
+    const full = await list("?opening=Italian%20Game%3A%20Two%20Knights%20Defense");
+    expect(ids(full)).toEqual(["own:two-knights"]);
+    expect((await list("?opening=Scandinavian%20Defense")).positions).toHaveLength(1);
+  });
+
+  it("narrows every count the same way the list narrows", async () => {
+    fillThree();
+    const family = await list("?opening=Italian%20Game");
+    expect(family.counts).toMatchObject({ total: 2, all: 2, left_out: 0 });
+    expect(family.counts.by_phase).toEqual({ opening: 1, middlegame: 1, endgame: 0 });
+    expect({
+      recommended: family.counts.recommended,
+      due: family.counts.due,
+      all: family.counts.all,
+    }).toEqual({
+      recommended: drillQueue("recommended", { opening: "Italian Game" }).length,
+      due: drillQueue("due", { opening: "Italian Game" }).length,
+      all: drillQueue("all", { opening: "Italian Game" }).length,
+    });
+  });
+
+  it("combines the opening with the colour and the phase", async () => {
+    fillThree();
+    expect(ids(await list("?opening=Italian%20Game&color=white"))).toEqual([
+      "own:giuoco",
+      "own:two-knights",
+    ]);
+    expect(ids(await list("?opening=Italian%20Game&color=black"))).toEqual([]);
+    expect(ids(await list("?opening=Italian%20Game&phase=opening"))).toEqual(["own:two-knights"]);
+  });
+
+  it("answers no position and zero counts for an opening nothing carries", async () => {
+    fillThree();
+    const answer = await list("?opening=French%20Defense");
+    expect(answer.positions).toEqual([]);
+    expect(answer.counts).toMatchObject({
+      total: 0,
+      due: 0,
+      new: 0,
+      recommended: 0,
+      all: 0,
+      left_out: 0,
+    });
+    expect(answer.counts.by_phase).toEqual({ opening: 0, middlegame: 0, endgame: 0 });
+    expect(answer.counts.by_section).toEqual({ reached: 0, mistakes: 0 });
+    expect(drillQueue("all", { opening: "French Defense" })).toEqual([]);
+  });
+
+  it("lists nothing for a prefix of a family that is not the family", async () => {
+    fillThree();
+    const answer = await list("?opening=Italian");
+    expect(answer.positions).toEqual([]);
+    expect(answer.counts).toMatchObject({ total: 0, all: 0 });
+  });
+
+  it("counts a left-out position in left_out only when its name matches the filter", async () => {
+    fillThree();
+    addFound("own:out-italian", {
+      openingName: "Italian Game: Evans Gambit",
+      listed: false,
+      keptPuzzle: true,
+    });
+    addFound("own:out-scandi", {
+      openingName: "Scandinavian Defense",
+      listed: false,
+      keptPuzzle: true,
+    });
+    expect((await list("?opening=Italian%20Game")).counts.left_out).toBe(1);
+    expect((await list("?opening=Italian%20Game%3A%20Evans%20Gambit")).counts.left_out).toBe(1);
+    expect(
+      (await list("?opening=Italian%20Game%3A%20Two%20Knights%20Defense")).counts.left_out,
+    ).toBe(0);
+    expect((await list("?opening=French%20Defense")).counts.left_out).toBe(0);
+    expect((await list()).counts.left_out).toBe(2);
+  });
+
+  it("treats an opening with a quote as a literal value, not as SQL", async () => {
+    fillThree();
+    const answer = await list("?opening=%27%20OR%20%271%27%3D%271");
+    expect(answer.positions).toEqual([]);
+    expect(answer.counts.total).toBe(0);
+  });
+
+  it.each(["?opening=", `?opening=${"x".repeat(121)}`])(
+    "answers 400 to %s and reads nothing",
+    async (query) => {
+      addFound("own:long");
+      const prepare = vi.spyOn(db, "prepare");
+      const response = await app.inject({ method: "GET", url: `/api/found-positions${query}` });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: "invalid_filter" });
+      expect(prepare).not.toHaveBeenCalled();
+      prepare.mockRestore();
+    },
+  );
+});

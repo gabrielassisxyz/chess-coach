@@ -312,10 +312,13 @@ export const UndoCommandSchema = z.object({
 // A repertoire drill names its repertoire and scope, and a level that widens it to that repertoire's
 // group or side; without one it drills that variation alone. The other modes ignore all three. An
 // opening drill may name one opening family of its colour, or UNNAMED_OPENING for the positions with
-// no name; without one it drills every position of the colour. The other modes ignore `opening`.
+// no name; without one it drills every position of the colour. A drill of the positions from the
+// student's games (`found`) may name one opening, a full name matching it exactly and a family
+// matching every variation of it. The other modes ignore `opening`.
 // A drill of the positions from the student's games (`found`) cannot start without a scope, and
-// `color`, `phase` and `position`, the id the From my games list gives, narrow it; the other modes
-// ignore `phase` and `position`. A queue has no size to choose: the object is strict so that a
+// `color`, `phase`, `position` (the id the From my games list gives) and `opening` narrow it;
+// the other modes ignore `phase`, `position` and, except for the opening drill, `opening`.
+// A queue has no size to choose: the object is strict so that a
 // client still sending the retired `size` is refused instead of being served a queue it did not ask
 // for.
 const StartTrainingFieldsSchema = z.strictObject({
@@ -324,7 +327,7 @@ const StartTrainingFieldsSchema = z.strictObject({
   mode: TrainingModeSchema,
   motif: z.string().min(1).max(64).optional(),
   color: z.enum(["white", "black"]).optional(),
-  opening: z.string().min(1).max(MAX_OPENING_FAMILY_LENGTH).optional(),
+  opening: z.string().min(1).max(120).optional(),
   repertoire_id: z.number().int().positive().optional(),
   scope: RepertoireScopeSchema.optional(),
   level: RepertoireLevelSchema.optional(),
@@ -339,6 +342,17 @@ export const StartTrainingCommandSchema = StartTrainingFieldsSchema.superRefine(
         code: "custom",
         path: ["scope"],
         message: "a drill of the positions from your games needs a scope",
+      });
+    }
+    if (
+      command.mode === "openings" &&
+      command.opening !== undefined &&
+      command.opening.length > MAX_OPENING_FAMILY_LENGTH
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["opening"],
+        message: `opening must be at most ${MAX_OPENING_FAMILY_LENGTH} characters for an opening drill`,
       });
     }
   },
