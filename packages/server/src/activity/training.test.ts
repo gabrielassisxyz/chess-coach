@@ -3016,3 +3016,153 @@ describe("a drill of the positions from the student's games", () => {
     expect(foundCard("b")).toBeUndefined();
   });
 });
+
+describe("a drill of the positions from games narrowed to one opening", () => {
+  const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+
+  function addFoundWithOpening(
+    id: string,
+    openingName: string,
+    fixture: { color?: "white" | "black"; phase?: "opening" | "middlegame" | "endgame" } = {},
+  ): void {
+    const color = fixture.color ?? "black";
+    const phase = fixture.phase ?? "opening";
+    const fen = color === "black" ? AFTER_E4 : START_FEN;
+    const accepted = [color === "black" ? "e7e5" : "e2e4"];
+    insertFoundPosition(db, {
+      id,
+      fen,
+      color,
+      phase,
+      fromMistake: true,
+      fromRepeat: false,
+      fromDeparture: false,
+      listed: true,
+      acceptedUci: accepted,
+      reachedGames: 1,
+      bestGames: 0,
+      lastReachedAt: T0.toISOString(),
+      gameId: 1,
+      ply: 2,
+      firstFoundAt: T0.toISOString(),
+    });
+    addPuzzle(id, `${phase}-${color}`, fen, accepted);
+    db.prepare("UPDATE puzzles SET opening_name = ? WHERE id = ?").run(openingName, id);
+  }
+
+  function fillThree(): void {
+    addFoundWithOpening("a-two-knights", "Italian Game: Two Knights Defense", {
+      color: "black",
+      phase: "opening",
+    });
+    addFoundWithOpening("b-giuoco", "Italian Game: Giuoco Pianissimo", {
+      color: "black",
+      phase: "middlegame",
+    });
+    addFoundWithOpening("c-scandi", "Scandinavian Defense", { color: "black", phase: "opening" });
+  }
+
+  const servedIds = (): string[] => (openRun()?.items ?? []).map((item) => String(item.id));
+
+  const runCount = (): number =>
+    (db.prepare("SELECT COUNT(*) AS n FROM training_runs").get() as { n: number }).n;
+
+  it("serves a family under its name and one variation under its full name", async () => {
+    fillThree();
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "all", opening: "Italian Game" });
+    expect(servedIds().sort()).toEqual(["a-two-knights", "b-giuoco"]);
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Italian Game: Two Knights Defense",
+    });
+    expect(servedIds()).toEqual(["a-two-knights"]);
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Scandinavian Defense",
+    });
+    expect(servedIds()).toEqual(["c-scandi"]);
+  });
+
+  it("serves every scope through the same opening filter", async () => {
+    fillThree();
+    for (const id of ["a-two-knights", "b-giuoco"]) {
+      db.prepare(
+        `INSERT INTO found_cards (position_id, interval_hours, ease_factor, repetitions,
+           next_review_at, introduced_at, reviews, last_reviewed_at)
+         VALUES (?, 24, 2.5, 2, ?, ?, 2, ?)`,
+      ).run(
+        id,
+        new Date(T0.getTime() - 3_600_000).toISOString(),
+        T0.toISOString(),
+        T0.toISOString(),
+      );
+    }
+    const { activity } = setup();
+    for (const scope of ["recommended", "due", "all"] as const) {
+      await activity.startTraining({ mode: "found", scope, opening: "Italian Game" });
+      expect(servedIds().sort()).toEqual(["a-two-knights", "b-giuoco"]);
+    }
+  });
+
+  it("combines the opening with the colour and the phase, each narrowing further", async () => {
+    fillThree();
+    const { activity } = setup();
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Italian Game",
+      color: "black",
+    });
+    expect(servedIds().sort()).toEqual(["a-two-knights", "b-giuoco"]);
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Italian Game",
+      phase: "opening",
+    });
+    expect(servedIds()).toEqual(["a-two-knights"]);
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Italian Game",
+      color: "black",
+      phase: "middlegame",
+    });
+    expect(servedIds()).toEqual(["b-giuoco"]);
+  });
+
+  it("refuses an opening nothing carries with empty_queue and writes no run", async () => {
+    fillThree();
+    const { activity } = setup();
+    expect(
+      await code(
+        activity.startTraining({ mode: "found", scope: "all", opening: "French Defense" }),
+      ),
+    ).toBe("empty_queue");
+    expect(activity.current()).toBeNull();
+    expect(runCount()).toBe(0);
+    expect(
+      await code(
+        activity.startTraining({
+          mode: "found",
+          scope: "all",
+          opening: "Italian Game",
+          color: "white",
+        }),
+      ),
+    ).toBe("empty_queue");
+    expect(runCount()).toBe(0);
+  });
+
+  it("treats an opening with a quote as a literal value, not as SQL", async () => {
+    fillThree();
+    const { activity } = setup();
+    expect(
+      await code(activity.startTraining({ mode: "found", scope: "all", opening: "' OR '1'='1" })),
+    ).toBe("empty_queue");
+    expect(runCount()).toBe(0);
+  });
+});

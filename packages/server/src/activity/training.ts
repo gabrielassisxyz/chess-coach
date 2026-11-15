@@ -124,12 +124,14 @@ export interface TrainingInput {
   color?: PlayerColor | undefined;
   /**
    * One opening family of the colour's drill, or UNNAMED_OPENING for its positions with no name;
-   * without it the drill serves every position of the colour. Other modes ignore it.
+   * without it the drill serves every position of the colour. A found drill takes one opening
+   * instead: a full name matching it exactly, a family matching every variation of it. The other
+   * modes ignore it.
    */
   opening?: string | undefined;
   /** Which positions from the student's games a found drill serves; the other modes ignore it. */
   scope?: RepertoireScope | undefined;
-  /** A found drill narrowed to one phase, or to one listed position by its id. */
+  /** A found drill narrowed to one phase, to one listed position by its id, or to one opening. */
   phase?: PositionPhase | undefined;
   position?: string | undefined;
 }
@@ -270,8 +272,8 @@ function foundDrillQueueOf(deps: TrainingDeps, input: TrainingInput): QueueEntry
   if (input.scope === undefined) {
     throw new ActivityError("empty_queue", "choose which positions from your games to drill");
   }
-  const { color, phase, position } = input;
-  const listed = listListedFoundPositions(deps.db, { color, phase, position });
+  const { color, phase, position, opening } = input;
+  const listed = listListedFoundPositions(deps.db, { color, phase, position, opening });
   const now = (deps.clock ?? systemClock).now();
   const queue = selectFoundDrillPositions(listed, input.scope, now);
   if (queue.length === 0) {
