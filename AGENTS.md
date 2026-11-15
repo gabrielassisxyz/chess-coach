@@ -210,7 +210,12 @@
   theme that yields no puzzle gives its place to the unthemed sample so that the batch keeps its
   length, and the batch is shuffled before it joins the run. With no improvement area the batch is
   the unthemed sample alone. The run keeps `training_runs.motif` NULL and `run_motif` null, and a
-  queue with a motif has no boost. The plain
+  queue with a motif has no boost. The reserved motif `mix-practice` (`MIX_PRACTICE_MOTIF`)
+  starts a queue drawn equally from the improvement areas of the last 30 days, completed to
+  three themes from the fourteen motif themes with the fewest attempts, list order on ties.
+  Each batch of 10 is split as evenly as it goes, the extra to the weakest first, each share a
+  themed draw around the rating, shuffled, with shortfalls passed to the other themes in order;
+  the run stores `mix-practice` as its motif and `run_motif`. The plain
   listing, used by the coach's puzzle tool and `GET /api/puzzles`, and the motif counts cover only the
   library, never `lichess-db` rows, since they read every matching row. Elo stays over Glicko-2 on
   purpose: against puzzles whose rating does not move and whose deviation is low, simulated runs
@@ -293,16 +298,17 @@
   `repertoire_id` and `variation_name`, and the drill's `repertoire_id`, name the variation of the
   move in play, and the drill carries the `level`. `GET /api/repertoires` counts the
   levels from the same merge in `groups` and `sides`; the Openings page draws a button for each.
-- **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?}` serves
+- **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?, opening?}` serves
   the listed rows of `found_positions` (see Openings) as one-move exercises through their `own:`
   puzzles (`activity/found-drill.ts`, `TrainingRun`). The scope is required, and a command without
   one is refused as `invalid_command`: `recommended` takes the due cards, the oldest `next_review_at`
   first, then the new positions, the latest `first_found_at` first, at most 10 in all; `due` every
   due card and no new position; `all` every listed position, due, then new, then the rest by
-  `next_review_at`. There is no daily cap on new positions. `color`, `phase` and `position` (an id the
-  list gives) narrow the queue as they narrow `GET /api/found-positions`, through the one read both
+  `next_review_at`. There is no daily cap on new positions. `color`, `phase`, `position` (an id the
+  list gives) and `opening` (1 to 120 characters, a full name matching it exactly and a family
+  matching every variation of it) narrow the queue as they narrow `GET /api/found-positions`, through the one read both
   use (`listListedFoundPositions`), and are stored nowhere; an empty queue, an id no listed position
-  has included, is refused with `empty_queue` before any run is written. A try is right when it is
+  has included or an opening nothing carries, is refused with `empty_queue` before any run is written. A try is right when it is
   any move of the row's `accepted_uci`, and the attempt's copy of the solution becomes the move
   played, so it stays on the board; every other mode still compares with the one solution move. Each
   position keeps its schedule in `found_cards` (`db/found-cards.ts`, the columns of
@@ -312,8 +318,8 @@
   keeps its schedule. A miss writes no `srs_cards` card, `puzzle_attempts` is written as for any
   puzzle, and the puzzle rating does not move, since these puzzles have no rating. The run's divider
   reads "From my games". `DELETE FROM found_cards` makes every position new again.
-- **From my games list:** `GET /api/found-positions` (optional `color` and `phase`) answers
-  `{positions, counts}` (`http/found-positions.ts`, schemas in shared `found-positions.ts`). A listed
+- **From my games list:** `GET /api/found-positions` (optional `color`, `phase` and `opening`) answers
+  `{positions, counts}` (`http/found-positions.ts`, schemas in shared `found-positions.ts`). `opening` takes a full name or a family, as the drill does. A listed
   position carries `id`, `fen`, `color`, `phase`, `section` (`reached` when `from_repeat`, else
   `mistakes`), `from_mistake`, `from_departure`, `opening_name`, `line` (`{first_ply, san}`: the shown
   game's moves from move 1 up to the position, or its last four plies past ply 8), `reached_games`,
@@ -322,8 +328,8 @@
   and `next_review_at`, and never the accepted moves or the solution. Section `reached` comes first,
   and inside a section the positions come in the order the `all` drill serves them. `counts` holds
   `total`, `due`, `new`, `recommended`, `all` (those three the lengths of the queues the scopes would
-  build now) and `left_out` (the rows with `listed = 0`) under both filters, and `by_phase` and
-  `by_section` under the colour alone. A colour or phase outside the listed values answers 400
+  build now) and `left_out` (the rows with `listed = 0`) under every filter, and `by_phase` and
+  `by_section` under the colour and the opening. A colour, phase or opening outside the listed values answers 400
   `invalid_filter` and reads nothing.
 - **Coach conversations:** one per tab (`play`, `games`, `practice`), each its own `coach_sessions`
   row (`tab` column) resumed by its own Claude session id. The live game and the student's chat on

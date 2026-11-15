@@ -83,6 +83,12 @@ export interface FoundPositionFilter {
   phase?: PositionPhase | undefined;
   /** One position by its id; one that is not listed matches nothing. */
   position?: string | undefined;
+  /**
+   * One opening: a full name matches it exactly, a value with no colon matches the family
+   * (the text before the first colon of the stored name) instead. An opening nothing stored
+   * carries matches nothing.
+   */
+  opening?: string | undefined;
 }
 
 /** A listed position with its puzzle's header and the schedule the drill keeps for it. */
@@ -105,7 +111,17 @@ const filterParams = (filter: FoundPositionFilter) => ({
   color: filter.color ?? null,
   phase: filter.phase ?? null,
   position: filter.position ?? null,
+  opening: filter.opening ?? null,
 });
+
+// The family of a stored opening name, as `openingFamilyOf` reads it: the text before its first
+// colon, trimmed, or the whole name when it holds none. Null stays null so it never matches.
+const STORED_OPENING_FAMILY =
+  "TRIM(SUBSTR(p.opening_name, 1, CASE WHEN INSTR(p.opening_name, ':') > 0 THEN INSTR(p.opening_name, ':') - 1 ELSE LENGTH(p.opening_name) END))";
+
+// A full opening name matches it exactly; a value with no colon matches the family instead.
+// The value reaches SQL only as the bound `@opening`.
+const OPENING_MATCH = `(p.opening_name = @opening OR (INSTR(@opening, ':') = 0 AND p.opening_name IS NOT NULL AND ${STORED_OPENING_FAMILY} = @opening))`;
 
 /**
  * The positions the list shows and the drill serves, read once for both so they never disagree.
@@ -123,6 +139,7 @@ export function listListedFoundPositions(
        LEFT JOIN found_cards c ON c.position_id = f.id
        WHERE f.listed = 1 AND (@color IS NULL OR f.color = @color)
          AND (@phase IS NULL OR f.phase = @phase) AND (@position IS NULL OR f.id = @position)
+         AND (@opening IS NULL OR ${OPENING_MATCH})
        ORDER BY f.id`,
     )
     .all(filterParams(filter)) as ListedFoundPositionRow[];
@@ -142,10 +159,15 @@ export function countUnlistedFoundPositions(
 ): number {
   const row = db
     .prepare(
-      `SELECT COUNT(*) AS unlisted FROM found_positions
-       WHERE listed = 0 AND (@color IS NULL OR color = @color) AND (@phase IS NULL OR phase = @phase)`,
+      `SELECT COUNT(*) AS unlisted FROM found_positions f LEFT JOIN puzzles p ON p.id = f.id
+       WHERE f.listed = 0 AND (@color IS NULL OR f.color = @color) AND (@phase IS NULL OR f.phase = @phase)
+         AND (@opening IS NULL OR ${OPENING_MATCH})`,
     )
-    .get({ color: filter.color ?? null, phase: filter.phase ?? null }) as { unlisted: number };
+    .get({
+      color: filter.color ?? null,
+      phase: filter.phase ?? null,
+      opening: filter.opening ?? null,
+    }) as { unlisted: number };
   return row.unlisted;
 }
 

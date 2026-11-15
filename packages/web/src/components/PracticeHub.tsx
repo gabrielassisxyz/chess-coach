@@ -1,7 +1,9 @@
 import type {
   ProgressResponse,
+  PuzzleRatingHistoryResponse,
   RepertoireLevel,
   RepertoireScope,
+  ThemeStatsResponse,
   TrainingMode,
 } from "@chess-coach/shared";
 import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
@@ -55,6 +57,9 @@ export interface PracticeHubProps {
   fetchCoverage?: FetchCoverage | undefined;
   // Where ranked puzzle theme stats come from when a Stats theme page opens; the server's by default.
   fetchThemeStats?: FetchThemeStats | undefined;
+  // Optional 7-day rating history and 30-day theme statistics displayed on the Overview tiles.
+  ratingHistory?: Loaded<PuzzleRatingHistoryResponse> | undefined;
+  overviewThemeStats?: Loaded<ThemeStatsResponse> | undefined;
   // The engine and coach problem cards, which the Overview draws under its title.
   problems?: ReactNode;
 }
@@ -210,6 +215,8 @@ export function PracticeHub(props: PracticeHubProps) {
           <PracticeOverview
             progress={props.progress}
             motifs={props.motifs}
+            ratingHistory={props.ratingHistory}
+            themeStats={props.overviewThemeStats}
             engineMissing={props.engineMissing}
             startButton={startButton}
             problems={props.problems}
