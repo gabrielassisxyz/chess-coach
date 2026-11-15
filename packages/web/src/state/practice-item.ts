@@ -201,6 +201,15 @@ export interface StateCard {
   tone: CardTone;
   title: string;
   body: string;
+  /** Why the best move of a position from the student's games is played, once its item has ended. */
+  note?: { title: string; body: string };
+}
+
+// The note stays out of the card while the item is open, where the server sends none, and when the
+// position has none, so a position nobody wrote a note for shows no empty line.
+function noteOf(training: TrainingActivity): Pick<StateCard, "note"> {
+  const { note } = training;
+  return note ? { note: { title: `Why ${note.san}`, body: note.text } } : {};
 }
 
 function countWord(count: number, singular: string, plural: string): string {
@@ -270,12 +279,18 @@ export function stateCardOf(
   const stats = endedStats(training, elapsedMs);
   if (training.status === "failed") {
     const expected = view.expected ? [`Expected ${view.expected}`] : [];
-    return { tone: "wrong", title: "Solution shown", body: [...expected, ...stats].join(" · ") };
+    return {
+      tone: "wrong",
+      title: "Solution shown",
+      body: [...expected, ...stats].join(" · "),
+      ...noteOf(training),
+    };
   }
   return {
     tone: "right",
     title: training.status === "rated" ? "Rated" : "Solved",
     body: stats.join(" · "),
+    ...noteOf(training),
   };
 }
 

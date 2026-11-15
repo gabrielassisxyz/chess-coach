@@ -428,6 +428,12 @@ export function PracticeColumn(props: PracticeColumnProps) {
             </p>
           </div>
         </div>
+        {card.note ? (
+          <div className="state-card__note">
+            <p className="state-card__note-title">{card.note.title}</p>
+            <p className="state-card__note-body">{card.note.body}</p>
+          </div>
+        ) : null}
         {!view.open && !view.summary && trail.length > 0 && scratchLine === null ? (
           <ExplorationTrail
             trail={trail}

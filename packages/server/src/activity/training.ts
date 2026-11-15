@@ -1,5 +1,6 @@
 import type {
   ExpectedMove,
+  FoundNote,
   PlayedMove,
   QueueOutcome,
   RepertoireScope,
@@ -31,7 +32,7 @@ import type {
 } from "../coach/notify.js";
 import { appendChatMessage } from "../db/chat.js";
 import { rateFoundCard } from "../db/found-cards.js";
-import { listListedFoundPositions } from "../db/found-positions.js";
+import { getFoundNote, getFoundPosition, listListedFoundPositions } from "../db/found-positions.js";
 import type { PlayerColor } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import {
@@ -198,6 +199,9 @@ interface Served {
   // A puzzle solved first try without a hint writes no coach notification; `coachAsk` says whether
   // the item is one of those and whether the student has since asked for the comment.
   coachAsk: "none" | "offered" | "requested";
+  // What a position from the student's games says about its best move, set when the item ends and
+  // never while it is open, so the note cannot hint at the answer; null for every other item.
+  note: FoundNote | null;
 }
 
 // UCI's null move: a card given up before any try has no move of the student's to record.
@@ -722,6 +726,7 @@ export class TrainingRun implements PracticeRunPort {
       student_rating: currentPuzzleRating(this.deps.db),
       rating_change: s.ratingChange,
       coach_comment: s.coachAsk === "none" ? null : s.coachAsk,
+      ...(this.mode === "found" ? { note: s.note } : {}),
     };
   }
 
@@ -1194,6 +1199,7 @@ export class TrainingRun implements PracticeRunPort {
       hinted: s.hinted,
     });
     s.ratingChange = this.movePuzzleRating(item.rating ?? null, firstTry);
+    s.note = this.foundNoteOf(item);
     this.tally(solved);
     // A position from the student's games keeps its own schedule, so a miss stays off the review desk.
     if (!firstTry && this.mode !== "found") {
@@ -1206,6 +1212,18 @@ export class TrainingRun implements PracticeRunPort {
       return;
     }
     this.notify(this.puzzleResultOf(s, item, state, firstTry, false));
+  }
+
+  // The note a position from the student's games holds, titled by its best accepted move, which is
+  // not always the move the student played: any accepted move is right, and an item solved with one
+  // has no `expected` move to name it by. Another mode's puzzle may share the id and gets no note.
+  private foundNoteOf(item: TrainingItem & { kind: "puzzle" }): FoundNote | null {
+    if (this.mode !== "found") return null;
+    const text = getFoundNote(this.deps.db, item.puzzle_id);
+    if (text === null) return null;
+    const best = getFoundPosition(this.deps.db, item.puzzle_id)?.acceptedUci[0] ?? null;
+    const san = sanFor(item.fen, best);
+    return san === null ? null : { san, text };
   }
 
   private puzzleResultOf(
@@ -1306,6 +1324,7 @@ export class TrainingRun implements PracticeRunPort {
       tries: [] as Served["tries"],
       gaveUp: false,
       coachAsk: "none" as const,
+      note: null,
       solutionLine: null,
       suggestedQuality: null,
       hintSquare: null,

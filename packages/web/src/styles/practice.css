@@ -614,6 +614,26 @@
   color: var(--text-1);
 }
 
+/* Why the best move of a position from the student's games is played, under the verdict. */
+.state-card__note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.state-card__note-title,
+.state-card__note-body {
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  line-height: var(--leading-label);
+  overflow-wrap: anywhere;
+}
+
+.state-card__note-title {
+  font-weight: 500;
+}
+
 .state-card__actions {
   display: flex;
   flex-wrap: wrap;
