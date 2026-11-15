@@ -120,6 +120,11 @@ distinct arrow tokens and share the overlay with app arrows, with knight-move ar
 an L through `customSvg` in the same tokens, opacity and stroke widths; they add no control,
 layout, motion or focus treatment. M1 and M2 still find no matches.
 
+The Practice column was re-checked for the try mark. The check or cross on a destination
+square is a 28 px disc centred on the square's top right corner as seen on screen, shifted
+inward by half its size on the top row or the right column so it stays fully inside the
+board. M1 and M2 still find no matches.
+
 The Play, Games and Practice columns were re-checked for icon controls in light and dark at
 390 px. In Chromium, Play's empty state, Games' load failure state and Practice's open puzzle
 had no horizontal overflow. Practice keeps the move controls together and wraps Explore,
