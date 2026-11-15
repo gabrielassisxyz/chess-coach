@@ -1,7 +1,14 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ActivityState, type TrainingActivity, UNNAMED_OPENING } from "@chess-coach/shared";
+import {
+  type ActivityState,
+  isFixedPracticeMotif,
+  LICHESS_PRACTICE_MOTIFS,
+  MIX_PRACTICE_MOTIF,
+  type TrainingActivity,
+  UNNAMED_OPENING,
+} from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
@@ -2591,5 +2598,263 @@ describe("a puzzle solved first try", () => {
     await activity.startTraining({ mode: "srs" });
     await activity.trainingTry("d2d4");
     expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
+  });
+});
+
+describe("a mix practice queue drawn equally from the improvement areas", () => {
+  const daysBeforeT0 = (days: number): string =>
+    new Date(T0.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+  let mixHistoryCount = 0;
+
+  function mixAddThemed(id: string, themes: readonly string[]): void {
+    addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+    db.prepare("UPDATE puzzles SET themes = ? WHERE id = ?").run(themes.join(" "), id);
+    const insertTheme = db.prepare(
+      "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)",
+    );
+    for (const theme of themes) insertTheme.run(theme, 1200, id);
+  }
+
+  function mixAddPool(pool: string, count: number, themes: readonly string[] = []): void {
+    for (let i = 0; i < count; i++) {
+      const id = `${pool}-${String(i).padStart(2, "0")}`;
+      if (themes.length > 0) mixAddThemed(id, themes);
+      else addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+    }
+  }
+
+  function mixAddHistory(theme: string, played: number, firstTry: number, daysAgo = 1): void {
+    for (let i = 0; i < played; i++) {
+      const id = `mix-history-${mixHistoryCount++}`;
+      const right = i < firstTry;
+      addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+      db.prepare("UPDATE puzzles SET themes = ?, popularity = 0 WHERE id = ?").run(theme, id);
+      recordPuzzleAttempt(db, {
+        puzzleId: id,
+        attemptedAt: daysBeforeT0(daysAgo),
+        solved: right,
+        answered: [],
+        failedPly: right ? null : 0,
+        firstTry: right,
+        tries: right ? 0 : 1,
+        gaveUp: !right,
+      });
+    }
+  }
+
+  function mixListAsWeakDaysAgo(daysAgo: number, ...themes: string[]): void {
+    for (const theme of themes) mixAddHistory(theme, 8, 0, daysAgo);
+    mixAddHistory("hangingPiece", 16, 16, daysAgo);
+  }
+
+  const mixListAsWeak = (...themes: string[]): void => mixListAsWeakDaysAgo(1, ...themes);
+
+  const mixImprovementAreas = (): string[] =>
+    [...computeThemeStats(db, "30", fixedClock).improvement_areas].sort();
+
+  const mixStoredIds = (): string[] =>
+    (openRun()?.items ?? []).map((item) => (item as { id: string }).id);
+
+  const mixInPool = (ids: readonly string[], pool: string): string[] =>
+    ids.filter((id) => id.startsWith(`${pool}-`));
+
+  const withMixSeed = (seed: number) => setup(fixedClock, silentLog, seededRandom(seed));
+
+  async function mixPassTheTenth(
+    activity: ActivityService,
+    start: TrainingActivity,
+  ): Promise<TrainingActivity> {
+    let state = start;
+    for (let served = 0; served < 10; served++) {
+      const solved = training(await activity.trainingTry("a1a8", state.activity_id));
+      state = training(await activity.nextTrainingItem(solved.activity_id));
+    }
+    return state;
+  }
+
+  it("exports the reserved mix motif outside the fixed choices", () => {
+    expect(MIX_PRACTICE_MOTIF).toBe("mix-practice");
+    expect(isFixedPracticeMotif(MIX_PRACTICE_MOTIF)).toBe(false);
+    expect(isFixedPracticeMotif("fork")).toBe(true);
+  });
+
+  it("builds a first batch of 10 with 4, 3 and 3, and the same shares without repeats in the second", async () => {
+    for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+    mixAddHistory("deflection", 12, 0);
+    mixAddHistory("pin", 8, 0);
+    mixAddHistory("skewer", 8, 0);
+    mixAddHistory("hangingPiece", 16, 16);
+    expect(mixImprovementAreas()).toEqual(["deflection", "pin", "skewer"]);
+    const { activity } = withMixSeed(1);
+    const start = training(
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+    );
+    expect(start.run_motif).toBe("mix-practice");
+    expect(start.item).not.toHaveProperty("queue_length");
+    const first = mixStoredIds();
+    expect(first).toHaveLength(10);
+    expect(mixInPool(first, "deflection")).toHaveLength(4);
+    expect(mixInPool(first, "pin")).toHaveLength(3);
+    expect(mixInPool(first, "skewer")).toHaveLength(3);
+    expect(db.prepare("SELECT motif FROM training_runs").all()).toEqual([
+      { motif: "mix-practice" },
+    ]);
+    const secondState = await mixPassTheTenth(activity, start);
+    expect(secondState.run_motif).toBe("mix-practice");
+    const stored = mixStoredIds();
+    expect(stored).toHaveLength(20);
+    const second = stored.slice(10);
+    expect(mixInPool(second, "deflection")).toHaveLength(4);
+    expect(mixInPool(second, "pin")).toHaveLength(3);
+    expect(mixInPool(second, "skewer")).toHaveLength(3);
+    expect(new Set(stored).size).toBe(20);
+    expect(second.every((id) => !first.includes(id))).toBe(true);
+  });
+
+  it("completes one listed theme with the two least played motif themes, list order on ties", async () => {
+    for (const theme of ["deflection", "advancedPawn", "attackingF2F7"])
+      mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection");
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(ids).toHaveLength(10);
+    expect(mixInPool(ids, "deflection")).toHaveLength(4);
+    expect(mixInPool(ids, "advancedPawn")).toHaveLength(3);
+    expect(mixInPool(ids, "attackingF2F7")).toHaveLength(3);
+  });
+
+  it("skips the most played motif theme when completing a short list", async () => {
+    for (const theme of ["deflection", "attackingF2F7", "capturingDefender", "advancedPawn"])
+      mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection");
+    mixAddHistory("advancedPawn", 10, 10);
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(mixInPool(ids, "advancedPawn")).toHaveLength(0);
+    expect(mixInPool(ids, "deflection")).toHaveLength(4);
+    expect(mixInPool(ids, "attackingF2F7")).toHaveLength(3);
+    expect(mixInPool(ids, "capturingDefender")).toHaveLength(3);
+  });
+
+  it("draws from the first three motif themes with no improvement area and no attempt", async () => {
+    const firstThree = LICHESS_PRACTICE_MOTIFS.slice(0, 3).map((entry) => entry.theme);
+    for (const theme of firstThree) mixAddPool(theme, 12, [theme]);
+    expect(mixImprovementAreas()).toEqual([]);
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(ids).toHaveLength(10);
+    expect(mixInPool(ids, firstThree[0] as string)).toHaveLength(4);
+    expect(mixInPool(ids, firstThree[1] as string)).toHaveLength(3);
+    expect(mixInPool(ids, firstThree[2] as string)).toHaveLength(3);
+  });
+
+  it("gives two puzzles to each of the two weakest with eight improvement areas", async () => {
+    const eight = [
+      "deflection",
+      "fork",
+      "kingsideAttack",
+      "pin",
+      "queensideAttack",
+      "sacrifice",
+      "skewer",
+      "trappedPiece",
+    ];
+    for (const theme of eight) mixAddPool(theme, 12, [theme]);
+    mixListAsWeak(...eight);
+    expect(mixImprovementAreas()).toEqual([...eight].sort());
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(ids).toHaveLength(10);
+    const ordered = [...eight].sort();
+    expect(mixInPool(ids, ordered[0] as string)).toHaveLength(2);
+    expect(mixInPool(ids, ordered[1] as string)).toHaveLength(2);
+    for (const theme of ordered.slice(2)) expect(mixInPool(ids, theme)).toHaveLength(1);
+  });
+
+  it.each([1, 2, 3, 4, 5, 6])(
+    "serves no puzzle twice when one puzzle carries two themes (seed %i)",
+    async (seed) => {
+      mixAddThemed("both-00", ["deflection", "pin"]);
+      for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+      mixListAsWeak("deflection", "pin", "skewer");
+      const { activity } = withMixSeed(seed);
+      const start = training(
+        await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+      );
+      await mixPassTheTenth(activity, start);
+      const ids = mixStoredIds();
+      expect(ids).toHaveLength(20);
+      expect(new Set(ids).size).toBe(20);
+    },
+  );
+
+  it("keeps the batch at 10 when a theme has no puzzle, passing its share on", async () => {
+    mixAddPool("deflection", 12, ["deflection"]);
+    mixAddPool("pin", 12, ["pin"]);
+    mixListAsWeak("deflection", "pin", "skewer");
+    expect(mixImprovementAreas()).toEqual(["deflection", "pin", "skewer"]);
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(ids).toHaveLength(10);
+    expect(mixInPool(ids, "skewer")).toHaveLength(0);
+    expect(mixInPool(ids, "deflection").length + mixInPool(ids, "pin").length).toBe(10);
+  });
+
+  it("refuses an empty mix queue with empty_queue and writes no run", async () => {
+    mixListAsWeak("deflection", "pin", "skewer");
+    const { activity } = setup();
+    expect(await code(activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }))).toBe(
+      "empty_queue",
+    );
+    expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 0 });
+  });
+
+  it("starts without a stored puzzle carrying the reserved motif", async () => {
+    for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection", "pin", "skewer");
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM puzzles WHERE motif = ?").get(MIX_PRACTICE_MOTIF),
+    ).toEqual({ n: 0 });
+    const { activity } = setup();
+    const state = training(
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+    );
+    expect(state.run_motif).toBe("mix-practice");
+    expect(mixStoredIds()).toHaveLength(10);
+  });
+
+  it("moves the puzzle rating on a first-try solve like any rated queue", async () => {
+    for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection", "pin", "skewer");
+    const { activity } = withMixSeed(1);
+    const start = training(
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+    );
+    expect(start).toMatchObject({ student_rating: 1200, rating_change: null });
+    const solved = training(await activity.trainingTry("a1a8", start.activity_id));
+    expect(solved).toMatchObject({ student_rating: 1216, rating_change: 16 });
+  });
+
+  it("orders the queue differently with differently seeded shuffles", async () => {
+    for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection", "pin", "skewer");
+    const orderOf = async (seed: number): Promise<string[]> => {
+      const { activity } = withMixSeed(seed);
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+      const ids = mixStoredIds();
+      await activity.endTraining();
+      return ids;
+    };
+    const first = await orderOf(1);
+    const second = await orderOf(2);
+    expect(first).toHaveLength(10);
+    expect(second).toHaveLength(10);
+    expect(first).not.toEqual(second);
+    expect(await orderOf(1)).toEqual(first);
   });
 });

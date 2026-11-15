@@ -123,6 +123,11 @@ export const LIBRARY_PRACTICE_MOTIFS: readonly PracticeMotifChoice[] = [
   },
 ] as const;
 
+// A reserved motif for the queue that mixes the student's improvement areas in equal shares.
+// It travels through the command, the run row and the item screen as any other motif, but it is
+// never one of the choices the hub offers and no puzzle is stored under it.
+export const MIX_PRACTICE_MOTIF = "mix-practice";
+
 const FIXED_PRACTICE_THEME_SET: ReadonlySet<string> = new Set(
   [...LICHESS_PRACTICE_MOTIFS, ...LICHESS_OTHER_PRACTICE_MOTIFS, ...LIBRARY_PRACTICE_MOTIFS].map(
     (entry) => entry.theme,
@@ -130,6 +135,8 @@ const FIXED_PRACTICE_THEME_SET: ReadonlySet<string> = new Set(
 );
 
 // A start is valid when its motif names a fixed choice; the server also allows any stored motif.
+// The reserved mix motif is never a fixed choice.
 export function isFixedPracticeMotif(motif: string): boolean {
+  if (motif === MIX_PRACTICE_MOTIF) return false;
   return FIXED_PRACTICE_THEME_SET.has(motif);
 }
