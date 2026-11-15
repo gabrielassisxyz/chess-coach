@@ -5,10 +5,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import { Practice } from "../src/screens/Practice.js";
+import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
   CLASSICAL_VARIATION,
   italianRepertoire,
   motifCounts,
+  openPracticePage,
   progressOf,
   repertoireActivity,
   repertoireList,
@@ -59,6 +61,9 @@ const fact = (key: string): string | undefined =>
 const arrows = (): unknown[] => seen.at(-1)?.drawable?.autoShapes ?? [];
 
 describe("the openings menu on the hub", () => {
+  // The menu is on the hub's Openings page, which each hub here opens on as the page stored last.
+  beforeEach(() => window.localStorage.setItem(PRACTICE_PAGE_STORAGE_KEY, "openings"));
+
   it("shows a White openings group with Italian Game, its variation and three starts with counts", async () => {
     render(<Practice server={serverApi(null)} {...hubProps} />);
     const group = await whiteOpenings();
@@ -100,6 +105,7 @@ describe("the openings menu on the hub", () => {
     expect(
       (within(group).getByRole("button", { name: "Recommended 10" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+    openPracticePage("Overview");
     const motifStart = screen.getByRole("button", { name: "Start any motif" });
     expect((motifStart as HTMLButtonElement).disabled).toBe(true);
   });
@@ -107,7 +113,9 @@ describe("the openings menu on the hub", () => {
   it("waits while another card starts a session", async () => {
     render(<Practice server={serverApi(null)} {...hubProps} />);
     const group = await whiteOpenings();
+    openPracticePage("Overview");
     fireEvent.click(await screen.findByRole("button", { name: "Start any motif" }));
+    openPracticePage("Openings");
     expect(
       (within(group).getByRole("button", { name: "Recommended 10" }) as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -136,7 +144,9 @@ describe("the openings menu on the hub", () => {
       reason: "stockfish_missing",
     });
     render(<Practice server={serverApi(null)} {...hubProps} fetchHealth={missing} />);
+    openPracticePage("Overview");
     await screen.findByRole("alert", { name: "Engine missing" });
+    openPracticePage("Openings");
     const group = await whiteOpenings();
     const start = within(group).getByRole("button", { name: "Recommended 10" });
     expect((start as HTMLButtonElement).disabled).toBe(false);
@@ -474,25 +484,48 @@ describe("the hints", () => {
 
 describe("a flagged try", () => {
   it("names the other opening the good move reached", () => {
-    renderDrill(repertoireActivity({ drill: { flagged_opening: "Scotch Game" } }));
+    renderDrill(
+      repertoireActivity({ drill: { flagged_opening: "Scotch Game", flagged_sound: true } }),
+    );
     expect(screen.getByText("Good move, but that is the Scotch Game")).toBeTruthy();
-    expect(stateCard().textContent).toContain("Try again");
+    expect(stateCard().textContent).toContain("It is not the move of this line. Try again.");
+  });
+
+  it("warns without naming an opening when any other sound move is played", () => {
+    renderDrill(repertoireActivity({ drill: { flagged_opening: null, flagged_sound: true } }));
+    expect(screen.getByText("Good move, but this line plays another move")).toBeTruthy();
+    expect(stateCard().textContent).toContain("It is not the move of this line. Try again.");
   });
 
   it("keeps an idea the student asked for beside the flag", () => {
     renderDrill(
       repertoireActivity({
-        drill: { flagged_opening: "Scotch Game", hint: { kind: "idea", text: IDEA } },
+        drill: {
+          flagged_opening: "Scotch Game",
+          flagged_sound: true,
+          hint: { kind: "idea", text: IDEA },
+        },
       }),
     );
     expect(screen.getByText("Good move, but that is the Scotch Game")).toBeTruthy();
     expect(stateCard().textContent).toContain(IDEA);
   });
 
-  it("drops the name once the server clears it on the next try", () => {
-    const { rerender } = renderDrill(
-      repertoireActivity({ drill: { flagged_opening: "Scotch Game" } }),
+  it("keeps an idea the student asked for beside a sound-move warning", () => {
+    renderDrill(
+      repertoireActivity({
+        drill: { flagged_opening: null, flagged_sound: true, hint: { kind: "idea", text: IDEA } },
+      }),
     );
+    expect(screen.getByText("Good move, but this line plays another move")).toBeTruthy();
+    expect(stateCard().textContent).toContain(IDEA);
+  });
+
+  it("drops the warning once the server clears it on the next try", () => {
+    const { rerender } = renderDrill(
+      repertoireActivity({ drill: { flagged_opening: null, flagged_sound: true } }),
+    );
+    expect(screen.getByText("Good move, but this line plays another move")).toBeTruthy();
     rerender(
       <Practice
         server={serverApi(repertoireActivity({ training: { tries: 2 } }), { tab: "practice" })}
@@ -500,7 +533,7 @@ describe("a flagged try", () => {
         fetchRepertoires={listed}
       />,
     );
-    expect(screen.queryByText(/Scotch Game|Good move/)).toBeNull();
+    expect(screen.queryByText(/Good move/)).toBeNull();
     expect(stateCard().textContent).toContain("Your move");
   });
 });

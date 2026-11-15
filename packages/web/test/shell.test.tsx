@@ -87,6 +87,17 @@ describe("top bar", () => {
       expect(screen.getByRole("complementary", { name: "Coach" })).toBeTruthy();
     }
   });
+
+  it("keeps the Practice hub's pages and their navigation inside the region Practice", () => {
+    render(<App />);
+    connect();
+    fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+    const practice = screen.getByRole("region", { name: "Practice" });
+    expect(within(practice).getByRole("navigation", { name: "Practice sections" })).toBeTruthy();
+    fireEvent.click(within(practice).getByRole("button", { name: "Dashboard" }));
+    expect(screen.getByRole("region", { name: "Practice" })).toBe(practice);
+    expect(within(practice).getByRole("heading", { level: 2 }).textContent).toBe("Dashboard");
+  });
 });
 
 describe("status chip", () => {
