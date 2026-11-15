@@ -148,6 +148,45 @@ describe("headingOf", () => {
     );
     expect(renderColumn(null)).not.toContain("practice-item__opening-name");
   });
+
+  it("shows an Italian Opening run's opening name in the Practice column", () => {
+    const training = puzzle({
+      mode: "puzzles",
+      run_motif: "opening-italian",
+      item: {
+        ...puzzle().item,
+        opening_name: "Italian Game: Giuoco Piano",
+      } as TrainingActivity["item"],
+    });
+    expect(headingOf(training, "opening-italian")).toEqual({
+      title: "Puzzle 3 of 10",
+      tag: "Italian Opening",
+      openingName: "Italian Game: Giuoco Piano",
+    });
+    const html = renderToStaticMarkup(
+      createElement(PracticeColumn, {
+        training,
+        view: trainingView(training),
+        actions: {
+          showSolution() {},
+          rate() {},
+          next() {},
+          end() {},
+          hint() {},
+          toggleScratch() {},
+          takeBack() {},
+          resetLine() {},
+        },
+        card: stateCardOf(training, trainingView(training), null, 0),
+        elapsedMs: 0,
+        scratchLine: null,
+        shownPly: 0,
+        engineStrip: null,
+      }),
+    );
+    expect(html).toContain("Italian Opening");
+    expect(html).toContain('class="practice-item__opening-name">Italian Game: Giuoco Piano</p>');
+  });
 });
 
 describe("moveRowsOf", () => {
