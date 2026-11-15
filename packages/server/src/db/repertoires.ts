@@ -614,6 +614,48 @@ export function repertoireSetupLine(db: Database, repertoireId: number): string[
   return rows.map((row) => row.move_san);
 }
 
+/**
+ * The White move a variation stores right after a line, which is the answer the variation is named
+ * after. Many White moves share a ply, so it is found by the line before it. Undefined where the
+ * variation stores none, as in a run cut short before that move.
+ */
+export function findRepertoireAnswerAfter(
+  db: Database,
+  repertoireId: number,
+  line: readonly string[],
+): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT move_san FROM repertoire_positions
+       WHERE repertoire_id = ? AND kind = 'own' AND ply = ? AND line_san = ?`,
+    )
+    .get(repertoireId, line.length + 1, JSON.stringify(line)) as { move_san: string } | undefined;
+  return row?.move_san;
+}
+
+/** The games reviewed against a variation that stayed in its line, out of those that reached it. */
+export interface RepertoireGamesInLine {
+  stayed: number;
+  of: number;
+}
+
+// A review row that never reached the variation (`not_reached`) or was played as the other colour
+// (`other_side`) carries the Italian's id as a fallback, not the variation the game met, so neither
+// is a game of this line, whichever way it is counted.
+export function countRepertoireGamesInLine(
+  db: Database,
+  repertoireId: number,
+): RepertoireGamesInLine {
+  const counted = db
+    .prepare(
+      `SELECT COALESCE(SUM(outcome IN ('in_book', 'reply_added', 'reply_not_stored')), 0) AS stayed,
+              COALESCE(SUM(outcome = 'departed'), 0) AS departed
+       FROM repertoire_game_reviews WHERE repertoire_id = ?`,
+    )
+    .get(repertoireId) as { stayed: number; departed: number };
+  return { stayed: counted.stayed, of: counted.stayed + counted.departed };
+}
+
 /** What a variation was built with, read back from its row; each is null for a unit built before they were stored. */
 export function findRepertoireBuild(db: Database, repertoireId: number): StoredRepertoireBuild {
   const row = db
