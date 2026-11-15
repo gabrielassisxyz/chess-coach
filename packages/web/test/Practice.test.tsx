@@ -3084,13 +3084,7 @@ describe("the hub's frame", () => {
   const pageTitle = (): string => screen.getByRole("heading", { level: 2 }).textContent ?? "";
   const openingsEntry = (): HTMLElement =>
     within(practiceNav()).getByRole("button", { name: /^Openings(,|$)/ });
-  const UNBUILT = [
-    "From my games",
-    "Dashboard",
-    "Improvement areas",
-    "Strengths",
-    "Openings played",
-  ];
+  const UNBUILT = ["From my games", "Dashboard", "Openings played"];
 
   // An answer that counts the moves due on each side apart from the variations under it.
   const withSides = (

@@ -44,6 +44,7 @@ import {
   type FetchRepertoires,
   fetchRepertoiresFromServer,
 } from "../state/repertoires-api.js";
+import { type FetchThemeStats, fetchThemeStatsFromServer } from "../state/theme-stats-api.js";
 
 export interface PracticeProps {
   server: ServerApi;
@@ -56,6 +57,8 @@ export interface PracticeProps {
   fetchRepertoireList?: FetchRepertoireList | undefined;
   // The drills from the student's games, grouped by opening family; the server's by default.
   fetchOpeningDrills?: FetchOpeningDrills;
+  // Ranked puzzle theme stats for Improvement areas and Strengths; the server's by default.
+  fetchThemeStats?: FetchThemeStats | undefined;
   fetchHealth?: FetchHealth | undefined;
 }
 
@@ -168,10 +171,11 @@ function Hub({
   fetchRepertoires,
   fetchRepertoireList,
   fetchOpeningDrills,
+  fetchThemeStats,
   fetchHealth,
 }: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress" | "fetchRepertoires">> &
   Required<Pick<PracticeProps, "fetchOpeningDrills">> &
-  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList">) {
+  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList" | "fetchThemeStats">) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
   const repertoires = useLoaded(fetchRepertoires);
@@ -203,6 +207,7 @@ function Hub({
       openingDrills={openingDrills}
       onStartOpening={beginOpening}
       fetchRepertoireList={fetchRepertoireList}
+      fetchThemeStats={fetchThemeStats}
     />
   );
 }
@@ -397,6 +402,7 @@ export function Practice({
   fetchRepertoires = fetchRepertoiresFromServer,
   fetchRepertoireList,
   fetchOpeningDrills = fetchOpeningDrillsFromServer,
+  fetchThemeStats = fetchThemeStatsFromServer,
   fetchHealth,
 }: PracticeProps) {
   const sessionTraining = trainingOf(server.activity);
@@ -457,6 +463,7 @@ export function Practice({
           fetchRepertoires={fetchRepertoires}
           fetchRepertoireList={fetchRepertoireList}
           fetchOpeningDrills={fetchOpeningDrills}
+          fetchThemeStats={fetchThemeStats}
           fetchHealth={fetchHealth}
         />
       </section>
