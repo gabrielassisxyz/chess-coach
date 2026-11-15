@@ -2461,12 +2461,10 @@ describe("an opening drill of one family", () => {
   });
 
   it("ignores the opening in a mode that has none", async () => {
-    addPuzzle("f1", "fork", FORK, ["b5c7"]);
+    addCard();
     const { activity } = setup();
-    const state = training(
-      await activity.startTraining({ mode: "puzzles", motif: "fork", opening: "Nowhere" }),
-    );
-    expect(state.item.queue_length).toBe(1);
+    const state = training(await activity.startTraining({ mode: "srs", opening: "Nowhere" }));
+    expect(state.item).toMatchObject({ kind: "card", queue_length: 1 });
   });
 
   it.each([
@@ -2516,6 +2514,161 @@ describe("an opening drill of one family", () => {
     });
     expect(openRun()).toEqual(runBefore);
     expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 1 });
+  });
+});
+
+describe("a puzzle queue of one Lichess opening tag", () => {
+  const ITALIAN = "Italian_Game Italian_Game_Classical_Variation";
+  const FRENCH = "French_Defense French_Defense_Advance_Variation";
+
+  // A rated puzzle filed under each tag of `openingTags`, as the import files a Lichess puzzle.
+  function addTagged(id: string, rating: number, openingTags: string): void {
+    addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], rating);
+    db.prepare("UPDATE puzzles SET opening_tags = ? WHERE id = ?").run(openingTags, id);
+    for (const tag of openingTags.split(" ")) {
+      db.prepare("INSERT INTO puzzle_openings (opening, rating, puzzle_id) VALUES (?, ?, ?)").run(
+        tag,
+        rating,
+        id,
+      );
+    }
+  }
+
+  const named = (prefix: string, count: number): string[] =>
+    Array.from({ length: count }, (_, i) => `${prefix}${String(i).padStart(3, "0")}`);
+
+  const storedIds = (): string[] =>
+    (openRun()?.items ?? []).map((item) => (item as { id: string }).id);
+
+  const runCount = (): unknown => db.prepare("SELECT COUNT(*) AS n FROM training_runs").get();
+
+  async function solveAndAdvance(activity: ActivityService): Promise<TrainingActivity> {
+    const solved = training(await activity.trainingTry("a1a8"));
+    return training(await activity.nextTrainingItem(solved.activity_id));
+  }
+
+  it("serves only the tag's puzzles, around the student's rating, in a queue with no length", async () => {
+    for (const id of named("near", 12)) addTagged(id, 1150, ITALIAN);
+    for (const id of named("far", 12)) addTagged(id, 1800, ITALIAN);
+    for (const id of named("french", 12)) addTagged(id, 1150, FRENCH);
+    const { activity } = setup();
+    const state = training(
+      await activity.startTraining({ mode: "puzzles", opening: "Italian_Game" }),
+    );
+    expect(state).toMatchObject({ mode: "puzzles", run_motif: null, item: { kind: "puzzle" } });
+    expect(state.item).not.toHaveProperty("queue_length");
+    expect(storedIds()).toHaveLength(10);
+    expect(storedIds().every((id) => id.startsWith("near"))).toBe(true);
+    await activity.endTraining();
+    setPuzzleRating(db, 1800, T0.toISOString());
+    await activity.startTraining({ mode: "puzzles", opening: "Italian_Game" });
+    expect(storedIds().every((id) => id.startsWith("far"))).toBe(true);
+  });
+
+  it("serves a variation's tag apart from its family's", async () => {
+    addTagged("classical", 1200, ITALIAN);
+    addTagged("pianissimo", 1200, "Italian_Game Italian_Game_Giuoco_Pianissimo");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", opening: "Italian_Game_Giuoco_Pianissimo" });
+    expect(storedIds()).toEqual(["pianissimo"]);
+  });
+
+  it("draws ten more of the tag when the tenth is answered, none of them already in the run", async () => {
+    for (const id of named("it", 25)) addTagged(id, 1200, ITALIAN);
+    for (const id of named("fr", 25)) addTagged(id, 1200, FRENCH);
+    const { activity } = setup();
+    let state = training(
+      await activity.startTraining({ mode: "puzzles", opening: "Italian_Game" }),
+    );
+    while (state.item.position_in_queue < 10) state = await solveAndAdvance(activity);
+    const firstBatch = storedIds();
+    const eleventh = await solveAndAdvance(activity);
+    expect(eleventh).toMatchObject({ status: "prompt", summary: null });
+    expect(eleventh.item).toMatchObject({ position_in_queue: 11 });
+    expect(eleventh.item).not.toHaveProperty("queue_length");
+    const stored = storedIds();
+    expect(stored).toHaveLength(20);
+    expect(stored.slice(0, 10)).toEqual(firstBatch);
+    expect(new Set(stored).size).toBe(20);
+    expect(stored.every((id) => id.startsWith("it"))).toBe(true);
+  });
+
+  it("finishes the run when the tag has no puzzle left that the run lacks", async () => {
+    for (const id of named("it", 3)) addTagged(id, 1200, ITALIAN);
+    for (const id of named("fr", 12)) addTagged(id, 1200, FRENCH);
+    const { activity } = setup();
+    let state = training(
+      await activity.startTraining({ mode: "puzzles", opening: "Italian_Game" }),
+    );
+    while (state.item.position_in_queue < 3) state = await solveAndAdvance(activity);
+    await activity.trainingTry("a1a8", state.activity_id);
+    const ended = training(await activity.nextTrainingItem(state.activity_id));
+    expect(ended.summary).toEqual({ solved: 3, failed: 0 });
+    expect(db.prepare("SELECT ended_reason, size FROM training_runs").all()).toEqual([
+      { ended_reason: "finished", size: 3 },
+    ]);
+  });
+
+  it("refuses a tag no puzzle carries with empty_queue and leaves the run on the board", async () => {
+    addTagged("classical", 1200, ITALIAN);
+    const { activity } = setup();
+    expect(
+      await code(activity.startTraining({ mode: "puzzles", opening: "Scandinavian_Defense" })),
+    ).toBe("empty_queue");
+    expect(activity.current()).toBeNull();
+    expect(runCount()).toEqual({ n: 0 });
+    const running = training(
+      await activity.startTraining({ mode: "puzzles", opening: "Italian_Game" }),
+    );
+    const runBefore = openRun();
+    for (const opening of ["Scandinavian_Defense", "Italian_Game' OR '1'='1", "italian_game"]) {
+      expect(await code(activity.startTraining({ mode: "puzzles", opening }))).toBe("empty_queue");
+    }
+    expect(activity.current()).toMatchObject({ activity_id: running.activity_id });
+    expect(openRun()).toEqual(runBefore);
+    expect(runCount()).toEqual({ n: 1 });
+  });
+
+  it("refuses an opening together with a motif, and starts nothing", async () => {
+    addTagged("classical", 1200, ITALIAN);
+    db.prepare("INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)").run(
+      "fork",
+      1200,
+      "classical",
+    );
+    const { activity } = setup();
+    expect(
+      await code(
+        activity.startTraining({ mode: "puzzles", motif: "fork", opening: "Italian_Game" }),
+      ),
+    ).toBe("invalid_command");
+    expect(activity.current()).toBeNull();
+    expect(runCount()).toEqual({ n: 0 });
+  });
+
+  it("rates and records its puzzles as any puzzle: the attempt, the rating, and a card after a miss", async () => {
+    addTagged("solved", 1400, ITALIAN);
+    addTagged("missed", 1400, ITALIAN);
+    const { activity } = setup();
+    const first = training(
+      await activity.startTraining({ mode: "puzzles", opening: "Italian_Game" }),
+    );
+    expect(first.item).toMatchObject({ kind: "puzzle", rating: 1400 });
+    const solvedId = (first.item as { puzzle_id: string }).puzzle_id;
+    const solved = training(await activity.trainingTry("a1a8", first.activity_id));
+    expect(solved).toMatchObject({ status: "solved", student_rating: 1224, rating_change: 24 });
+    const second = training(await activity.nextTrainingItem(first.activity_id));
+    const missedId = (second.item as { puzzle_id: string }).puzzle_id;
+    await activity.trainingTry("a1a2", second.activity_id);
+    const given = training(await activity.trainingShowSolution(second.activity_id));
+    expect(given).toMatchObject({ status: "failed", student_rating: 1215, rating_change: -9 });
+    expect(
+      db.prepare("SELECT puzzle_id, solved, first_try FROM puzzle_attempts ORDER BY id").all(),
+    ).toEqual([
+      { puzzle_id: solvedId, solved: 1, first_try: 1 },
+      { puzzle_id: missedId, solved: 0, first_try: 0 },
+    ]);
+    expect(db.prepare("SELECT puzzle_id FROM srs_cards").all()).toEqual([{ puzzle_id: missedId }]);
   });
 });
 
