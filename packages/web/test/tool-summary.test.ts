@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseToolOutput, toolBaseName, toolSummary } from "../src/state/tool-summary.js";
+import {
+  lineCardsByAnchor,
+  parseToolOutput,
+  toolBaseName,
+  toolSummary,
+} from "../src/state/tool-summary.js";
 
 // What the SDK hands the chat for a tool result: a list of text blocks carrying the tool's JSON.
 const out = (value: unknown) => [{ type: "text", text: JSON.stringify(value) }];
@@ -92,5 +97,70 @@ describe("toolSummary", () => {
 
   it("names an unknown tool without its prefix", () => {
     expect(toolSummary(`${P}teleport`, {}, out({}))).toBe("Used teleport");
+  });
+});
+
+describe("lineCardsByAnchor", () => {
+  const offer = (key: string, startFen: string) => ({
+    type: "tool",
+    key,
+    name: `${P}show_position`,
+    result: { output: JSON.stringify({ offered: true, start_fen: startFen, moves: [] }) },
+  });
+  const step = (key: string, startFen: string, moves: string[]) => ({
+    type: "tool",
+    key,
+    name: `${P}make_move`,
+    result: { output: JSON.stringify({ offered: true, start_fen: startFen, moves }) },
+  });
+
+  it("closes a notification-triggered turn on turn_start before the next turn's message", () => {
+    const anchored = lineCardsByAnchor([
+      { type: "turn_start", key: "ts1" },
+      offer("s1", "f1"),
+      step("m1", "f1", ["e4", "e5"]),
+      { type: "text", key: "a1", role: "assistant" },
+      { type: "turn_start", key: "ts2" },
+      { type: "text", key: "a2", role: "assistant" },
+    ]);
+    expect([...anchored.keys()]).toEqual(["a1"]);
+    expect(anchored.get("a1")).toEqual([{ key: "s1", fen: "f1", moves: ["e4", "e5"] }]);
+  });
+
+  it("keeps each turn's card under its own coach message across consecutive turns", () => {
+    const anchored = lineCardsByAnchor([
+      { type: "turn_start", key: "ts1" },
+      offer("s1", "f1"),
+      { type: "text", key: "a1", role: "assistant" },
+      { type: "turn_start", key: "ts2" },
+      offer("s2", "f2"),
+      step("m2", "f2", ["d4"]),
+      { type: "text", key: "a2", role: "assistant" },
+    ]);
+    expect([...anchored.keys()]).toEqual(["a1", "a2"]);
+    expect(anchored.get("a1")).toEqual([{ key: "s1", fen: "f1", moves: [] }]);
+    expect(anchored.get("a2")).toEqual([{ key: "s2", fen: "f2", moves: ["d4"] }]);
+  });
+
+  it("keeps a textless turn's line anchored to its tool card rather than leaking onto the next turn's message", () => {
+    const anchored = lineCardsByAnchor([
+      { type: "turn_start", key: "ts1" },
+      offer("s1", "f1"),
+      { type: "turn_start", key: "ts2" },
+      { type: "text", key: "a2", role: "assistant" },
+    ]);
+    expect([...anchored.keys()]).toEqual(["s1"]);
+    expect(anchored.has("a2")).toBe(false);
+  });
+
+  it("keeps legacy turns separated by user messages and dividers", () => {
+    const anchored = lineCardsByAnchor([
+      { type: "text", key: "u1", role: "user" },
+      offer("s1", "f1"),
+      { type: "text", key: "a1", role: "assistant" },
+      { type: "divider", key: "d1" },
+      { type: "text", key: "a2", role: "assistant" },
+    ]);
+    expect([...anchored.keys()]).toEqual(["a1"]);
   });
 });

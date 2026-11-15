@@ -68,6 +68,8 @@ function ItemView({ item }: { item: ChatItem }) {
     }
     case "notice":
       return <p className="notice">{item.text}</p>;
+    case "turn_start":
+      return null;
     case "divider": {
       const text = dividerText(item.label, item.at);
       return (
