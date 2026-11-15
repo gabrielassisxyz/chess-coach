@@ -199,4 +199,19 @@ describe("the composed server", () => {
     expect(reviews[0]).toMatchObject({ game_id: id, outcome: "in_book" });
     expect(logs.named("repertoire.review")[0]?.fields).toMatchObject({ reviewed: 1 });
   });
+
+  it("ends a run left open as left when the server is composed, before it listens", async () => {
+    db.prepare(
+      `INSERT INTO training_runs (mode, size, items_json, position, solved, failed, current_json,
+         started_at, updated_at)
+       VALUES ('srs', 1, '[]', 0, 0, 0, '{}', 't', 't')`,
+    ).run();
+    const { app } = composed();
+    await app.close();
+    const runs = db.prepare(
+      "SELECT ended_reason, ended_at IS NOT NULL AS ended FROM training_runs",
+    );
+    expect(runs.all()).toEqual([{ ended_reason: "left", ended: 1 }]);
+    expect(logs.named("training.runs_left")[0]?.fields).toMatchObject({ count: 1 });
+  });
 });

@@ -13,6 +13,7 @@ import { endRunsLeftOpenAtStart } from "../db/training.js";
 import { GameService } from "../game/service.js";
 import { ReviewDesk } from "../srs/review.js";
 import { ActivityService } from "./service.js";
+import { TrainingRun } from "./training.js";
 
 const T0 = new Date("2026-03-01T00:00:00.000Z");
 const BACK_RANK = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1";
@@ -59,6 +60,12 @@ function addCard(): number {
 
 // Everything a server boot builds that holds memory: a new call is a restart over the same file,
 // and a restart ends the runs the last process left open before it serves anything.
+function trainingDeps() {
+  const session = createCoachSession(db, { promptVersion: "v" });
+  const notifications = { sessionId: () => session.id };
+  return { db, desk: new ReviewDesk({ db, clock, notifications }), notifications, clock };
+}
+
 function boot(): ActivityService {
   endRunsLeftOpenAtStart(db, clock.now().toISOString());
   const session = createCoachSession(db, { promptVersion: "v" });
@@ -290,6 +297,56 @@ describe("a persisted practice session", () => {
     expect(await code(activity.trainingTry("a1a8", started.activity_id))).toBe("stale_activity");
     expect(await code(activity.trainingTry("a1a8"))).toBe("not_in_training");
     expect(db.prepare("SELECT * FROM training_runs").get()).toEqual(leftRow);
+  });
+
+  it("writes nothing to the row of a puzzle run that left when its step completes late", async () => {
+    addPuzzle("p1", BACK_RANK, ["a1a8"]);
+    const run = TrainingRun.begin(trainingDeps(), { mode: "puzzles", motif: "fork" });
+    run.leave();
+    now = new Date(T0.getTime() + HOUR_MS);
+    const leftRow = db.prepare("SELECT * FROM training_runs").get();
+    expect(leftRow).toMatchObject({ ended_reason: "left", solved: 0 });
+
+    run.tryMove("a1a8");
+    expect(db.prepare("SELECT * FROM training_runs").get()).toEqual(leftRow);
+  });
+
+  it("writes nothing to the row of a card run that left when its step completes late", async () => {
+    addCard();
+    const run = TrainingRun.begin(trainingDeps(), { mode: "srs" });
+    run.leave();
+    now = new Date(T0.getTime() + HOUR_MS);
+    const leftRow = db.prepare("SELECT * FROM training_runs").get();
+    expect(leftRow).toMatchObject({ ended_reason: "left", solved: 0 });
+
+    run.tryMove("d2d4");
+    expect(db.prepare("SELECT * FROM training_runs").get()).toEqual(leftRow);
+  });
+
+  it("stores the last answer's outcome and the final counts before the finish closes the row", async () => {
+    addPuzzle("p1", BACK_RANK, ["a1a8"]);
+    addPuzzle("p2", BACK_RANK, ["a1a8"]);
+    const activity = boot();
+    const started = await startRun(activity);
+    await activity.trainingTry("a1a8", started.activity_id);
+    await activity.nextTrainingItem(started.activity_id);
+    await activity.trainingTry("h2h3", started.activity_id);
+    await activity.trainingShowSolution(started.activity_id);
+    const stored = () =>
+      db
+        .prepare("SELECT position, solved, failed, outcomes_json, current_json FROM training_runs")
+        .get();
+    const beforeFinish = stored();
+    expect(beforeFinish).toMatchObject({
+      position: 1,
+      solved: 1,
+      failed: 1,
+      outcomes_json: '["solved","failed"]',
+    });
+
+    await activity.nextTrainingItem(started.activity_id);
+    expect(stored()).toEqual(beforeFinish);
+    expect(runRows()).toEqual([endedAs("finished")]);
   });
 
   it("ends every open run as left when the server starts", async () => {
