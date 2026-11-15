@@ -18,6 +18,7 @@ import {
   UNBUILT_PRACTICE_PAGES,
   usePracticeEntry,
 } from "../state/practice-page.js";
+import type { FetchPuzzleRatingHistory } from "../state/puzzle-rating-api.js";
 import {
   type AddOpening,
   type AddVariation,
@@ -26,6 +27,7 @@ import {
   fetchRepertoireListFromServer,
 } from "../state/repertoires-api.js";
 import type { FetchThemeStats } from "../state/theme-stats-api.js";
+import { PracticeDashboard } from "./PracticeDashboard.js";
 import { PracticeNav } from "./PracticeNav.js";
 import { PracticeOpenings } from "./PracticeOpenings.js";
 import { type HubStartButton, PracticeOverview, PracticePageHead } from "./PracticeOverview.js";
@@ -57,6 +59,8 @@ export interface PracticeHubProps {
   fetchCoverage?: FetchCoverage | undefined;
   // Where ranked puzzle theme stats come from when a Stats theme page opens; the server's by default.
   fetchThemeStats?: FetchThemeStats | undefined;
+  // Where windowed puzzle rating history comes from when Dashboard opens; the server's by default.
+  fetchRatingHistory?: FetchPuzzleRatingHistory | undefined;
   // Optional 7-day rating history and 30-day theme statistics displayed on the Overview tiles.
   ratingHistory?: Loaded<PuzzleRatingHistoryResponse> | undefined;
   overviewThemeStats?: Loaded<ThemeStatsResponse> | undefined;
@@ -230,6 +234,19 @@ export function PracticeHub(props: PracticeHubProps) {
             hub={marked}
             fetchList={openingsDue.fetchList}
             failure={failureOn("openings")}
+          />
+        </PageSlot>
+        <PageSlot shown={page === "dashboard"}>
+          <PracticeDashboard
+            shown={page === "dashboard"}
+            progress={marked.progress}
+            fetchThemeStats={marked.fetchThemeStats}
+            fetchRatingHistory={marked.fetchRatingHistory}
+            starting={marked.starting}
+            engineMissing={marked.engineMissing}
+            onStart={marked.onStart}
+            onOpenPage={onChoose}
+            failure={failureOn("dashboard")}
           />
         </PageSlot>
         {(["improvement-areas", "strengths"] as const).map((kind) => (

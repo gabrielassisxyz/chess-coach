@@ -1,14 +1,14 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  type ActivityState,
-  type DemoActivity,
-  type MetOpening,
-  type PuzzleRatingHistoryResponse,
-  type RepertoireSummary,
-  type RepertoiresResponse,
-  type ThemeStatsResponse,
-  type TrainingActivity,
+import type {
+  ActivityState,
+  DemoActivity,
+  MetOpening,
+  PuzzleRatingHistoryResponse,
+  RepertoireSummary,
+  RepertoiresResponse,
+  ThemeStatsResponse,
+  TrainingActivity,
 } from "@chess-coach/shared";
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -3004,7 +3004,7 @@ describe("the hub's frame", () => {
   const pageTitle = (): string => screen.getByRole("heading", { level: 2 }).textContent ?? "";
   const openingsEntry = (): HTMLElement =>
     within(practiceNav()).getByRole("button", { name: /^Openings(,|$)/ });
-  const UNBUILT = ["From my games", "Dashboard", "Openings played"];
+  const UNBUILT = ["From my games", "Openings played"];
 
   // An answer that counts the moves due on each side apart from the variations under it.
   const withSides = (
@@ -3421,8 +3421,11 @@ describe("the hub's frame styles", () => {
   });
 
   it("lets only the navigation scroll by itself, never a card", () => {
+    // A clipped theme description also names overflow, for its ellipsis, without scrolling.
     const scrolling = [...desktop.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-      .filter(([, , body = ""]) => /overflow|max-height/.test(body))
+      .filter(([, , body = ""]) =>
+        /overflow-(x|y)\s*:\s*(auto|scroll)|overflow\s*:\s*(auto|scroll)|max-height/.test(body),
+      )
       .map(([, selectors = ""]) => selectors.trim());
     expect(scrolling).toEqual([".practice-nav"]);
   });

@@ -1,0 +1,583 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type {
+  PuzzleRatingHistoryResponse,
+  PuzzleRatingPoint,
+  PuzzleRatingWindow,
+  ThemeStatsEntry,
+  ThemeStatsResponse,
+} from "@chess-coach/shared";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Practice } from "../src/screens/Practice.js";
+import { NEEDS_ENGINE_TEXT, NONE } from "../src/state/practice.js";
+import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
+import { ratingChartPoints } from "../src/state/puzzle-rating-api.js";
+import { openPracticePage, progressOf } from "./practice-fixtures.js";
+import { serverApi } from "./server-api.js";
+
+function themeEntry(overrides: Partial<ThemeStatsEntry> & { theme: string }): ThemeStatsEntry {
+  return {
+    played: 12,
+    first_try: 8,
+    rating_avg: 1450,
+    performance: 1450,
+    ranked: true,
+    ...overrides,
+  };
+}
+
+function makeDailyPoints(
+  count: number,
+  endDay = "2026-06-10",
+  startRating = 1480,
+): PuzzleRatingPoint[] {
+  const endMs = Date.parse(`${endDay}T00:00:00Z`);
+  return Array.from({ length: count }, (_, index) => {
+    const day = new Date(endMs - (count - 1 - index) * 86_400_000).toISOString().slice(0, 10);
+    return { day, rating: startRating + index * 2 };
+  });
+}
+
+function makeHistory(
+  overrides: Partial<PuzzleRatingHistoryResponse> = {},
+): PuzzleRatingHistoryResponse {
+  const points = overrides.points ?? makeDailyPoints(30);
+  const ratings = points.map((p) => p.rating);
+  return {
+    current: points.at(-1)?.rating ?? 1505,
+    points,
+    low: Math.min(...ratings),
+    high: Math.max(...ratings),
+    change: (points.at(-1)?.rating ?? 1505) - (points[0]?.rating ?? 1505),
+    ...overrides,
+  };
+}
+
+function makeThemeStats(overrides: Partial<ThemeStatsResponse> = {}): ThemeStatsResponse {
+  const themes: ThemeStatsEntry[] = overrides.themes ?? [
+    themeEntry({ theme: "fork", played: 18, first_try: 10, rating_avg: 1380, performance: 1380 }),
+    themeEntry({ theme: "pin", played: 14, first_try: 7, rating_avg: 1410, performance: 1410 }),
+    themeEntry({ theme: "skewer", played: 11, first_try: 7, rating_avg: 1430, performance: 1430 }),
+    themeEntry({
+      theme: "backRankMate",
+      played: 10,
+      first_try: 6,
+      rating_avg: 1450,
+      performance: 1450,
+    }),
+    themeEntry({
+      theme: "discoveredAttack",
+      played: 9,
+      first_try: 6,
+      rating_avg: 1470,
+      performance: 1470,
+    }),
+    themeEntry({
+      theme: "hangingPiece",
+      played: 9,
+      first_try: 5,
+      rating_avg: 1490,
+      performance: 1490,
+    }),
+    themeEntry({
+      theme: "deflection",
+      played: 15,
+      first_try: 13,
+      rating_avg: 1620,
+      performance: 1620,
+    }),
+    themeEntry({
+      theme: "mateIn2",
+      played: 16,
+      first_try: 13,
+      rating_avg: 1590,
+      performance: 1590,
+    }),
+    themeEntry({
+      theme: "doubleCheck",
+      played: 12,
+      first_try: 9,
+      rating_avg: 1560,
+      performance: 1560,
+    }),
+    themeEntry({
+      theme: "attraction",
+      played: 10,
+      first_try: 8,
+      rating_avg: 1545,
+      performance: 1545,
+    }),
+    themeEntry({
+      theme: "clearance",
+      played: 9,
+      first_try: 7,
+      rating_avg: 1530,
+      performance: 1530,
+    }),
+    themeEntry({
+      theme: "sacrifice",
+      played: 8,
+      first_try: 6,
+      rating_avg: 1520,
+      performance: 1520,
+    }),
+  ];
+  return {
+    days: "30",
+    overall: { played: 120, first_try: 82, rating_avg: 1500, performance: 1505 },
+    overall_previous: { played: 95, first_try: 60, rating_avg: 1465, performance: 1470 },
+    themes,
+    improvement_areas: [
+      "fork",
+      "pin",
+      "skewer",
+      "backRankMate",
+      "discoveredAttack",
+      "hangingPiece",
+    ],
+    strengths: ["deflection", "mateIn2", "doubleCheck", "attraction", "clearance", "sacrifice"],
+    unranked: 2,
+    ...overrides,
+  };
+}
+
+function renderPractice(
+  options: {
+    send?: () => boolean;
+    fetchThemeStats?: (days: PuzzleRatingWindow) => Promise<ThemeStatsResponse>;
+    fetchRatingHistory?: (days: PuzzleRatingWindow) => Promise<PuzzleRatingHistoryResponse>;
+    dueNow?: number;
+    engineMissing?: boolean;
+  } = {},
+) {
+  const send = (options.send ?? (() => true)) as unknown as ReturnType<typeof serverApi>["send"];
+  const fetchThemeStats =
+    options.fetchThemeStats ?? vi.fn(async (days: PuzzleRatingWindow) => makeThemeStats({ days }));
+  const fetchRatingHistory =
+    options.fetchRatingHistory ??
+    vi.fn(async (days: PuzzleRatingWindow) => {
+      const count = days === "7" ? 7 : days === "90" ? 90 : days === "all" ? 45 : 30;
+      return makeHistory({ points: makeDailyPoints(count, "2026-06-10", 1460) });
+    });
+
+  const view = render(
+    <Practice
+      server={serverApi(null, { send })}
+      fetchProgress={async () => progressOf({ due_now: options.dueNow ?? 4 })}
+      fetchMotifs={async () => []}
+      fetchRepertoires={async () => []}
+      fetchRepertoireList={async () => ({ repertoires: [], met: [] })}
+      fetchHealth={async () => ({
+        status: "ok",
+        version: "test",
+        ready: !(options.engineMissing ?? false),
+        ...(options.engineMissing ? { reason: "stockfish_missing" as const } : {}),
+      })}
+      fetchThemeStats={fetchThemeStats}
+      fetchRatingHistory={fetchRatingHistory}
+    />,
+  );
+  return { view, send, fetchThemeStats, fetchRatingHistory };
+}
+
+afterEach(() => {
+  cleanup();
+  localStorage.removeItem(PRACTICE_PAGE_STORAGE_KEY);
+});
+
+// The hub keeps every page mounted, so the Overview's tiles stay in the document while the
+// Dashboard is shown. Scope Dashboard reads to its own root.
+function dashboardRoot(): HTMLElement {
+  const title = screen.getByRole("heading", { level: 2, name: "Dashboard" });
+  return title.closest(".practice-dashboard") as HTMLElement;
+}
+
+describe("PracticeDashboard", () => {
+  it("loads lazily on first visit, renders header and defaults to 30 days", async () => {
+    const { fetchThemeStats, fetchRatingHistory } = renderPractice();
+
+    // Overview calls each once (theme stats for 30d, rating history for 7d). Dashboard waits until opened.
+    await waitFor(() => {
+      expect(fetchThemeStats).toHaveBeenCalledTimes(1);
+      expect(fetchRatingHistory).toHaveBeenCalledTimes(1);
+    });
+
+    openPracticePage("Dashboard");
+
+    await waitFor(() => {
+      expect(fetchThemeStats).toHaveBeenCalledTimes(2);
+      expect(fetchRatingHistory).toHaveBeenCalledTimes(2);
+    });
+    expect(fetchThemeStats).toHaveBeenLastCalledWith("30");
+    expect(fetchRatingHistory).toHaveBeenLastCalledWith("30");
+
+    const title = screen.getByRole("heading", { level: 2, name: "Dashboard" });
+    expect(title.nextElementSibling?.textContent).toBe(
+      "An overview of your puzzles and openings. Each block opens its own page.",
+    );
+
+    const period = screen.getByRole("group", { name: "Time window" });
+    const buttons = within(period).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["7 days", "30 days", "90 days", "All"]);
+    expect(
+      within(period).getByRole("button", { name: "30 days" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      within(period).getByRole("button", { name: "7 days" }).getAttribute("aria-pressed"),
+    ).toBe("false");
+    expect(screen.queryByRole("heading", { name: "Openings played" })).toBeNull();
+  });
+
+  it("renders KPI tiles with upward, downward, absent deltas, split bar, and Due cards Review link", async () => {
+    const send = vi.fn(() => true);
+    const fetchThemeStats = vi.fn(async (days: PuzzleRatingWindow) => {
+      if (days === "7") {
+        return makeThemeStats({
+          days: "7",
+          overall: { played: 24, first_try: 12, rating_avg: 1440, performance: 1450 },
+          overall_previous: { played: 30, first_try: 20, rating_avg: 1470, performance: 1480 },
+        });
+      }
+      if (days === "90") {
+        return makeThemeStats({
+          days: "90",
+          overall: { played: 200, first_try: 150, rating_avg: 1495, performance: 1500 },
+          overall_previous: { played: 180, first_try: 130, rating_avg: 1495, performance: 1500 },
+        });
+      }
+      return makeThemeStats({ days });
+    });
+
+    renderPractice({ send, fetchThemeStats, dueNow: 7 });
+    openPracticePage("Dashboard");
+
+    // 30d: upward arrow (+35) and 68% solved first try (82/120 = 68.33 -> 68)
+    const board = dashboardRoot();
+    const ratingValue = await within(board).findByText("1505");
+    const perfTile = ratingValue.closest(".practice-tile") as HTMLElement;
+    const upArrow = perfTile.querySelector(".practice-tile__delta");
+    expect(upArrow?.getAttribute("data-direction")).toBe("up");
+    expect(upArrow?.textContent).toBe("\u25b2 35");
+
+    const playedTile = within(board)
+      .getByText("Played", { selector: "dt" })
+      .closest(".practice-tile") as HTMLElement;
+    expect(within(playedTile).getByText("120")).toBeTruthy();
+
+    const solvedTile = within(board)
+      .getByText("Solved first try", { selector: "dt" })
+      .closest(".practice-tile") as HTMLElement;
+    expect(within(solvedTile).getByText("68%")).toBeTruthy();
+    const solvedBar = solvedTile.querySelector(".practice-tile__split-solved") as HTMLElement;
+    expect(solvedBar.style.width).toBe("68%");
+
+    const dueTile = within(board)
+      .getByText("Due cards", { selector: "dt" })
+      .closest(".practice-tile") as HTMLElement;
+    expect(within(dueTile).getByText("7")).toBeTruthy();
+    fireEvent.click(within(dueTile).getByRole("button", { name: "Review" }));
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "start_training", mode: "srs" }),
+    );
+
+    // Switch to 7 days: downward arrow (-30)
+    fireEvent.click(within(board).getByRole("button", { name: "7 days" }));
+    await within(perfTile).findByText("1450");
+    const downArrow = perfTile.querySelector(".practice-tile__delta");
+    expect(downArrow?.getAttribute("data-direction")).toBe("down");
+    expect(downArrow?.textContent).toBe("\u25bc 30");
+    // Due cards count persists across periods
+    expect(within(dueTile).getByText("7")).toBeTruthy();
+
+    // Switch to 90 days: zero delta -> no arrow
+    fireEvent.click(within(board).getByRole("button", { name: "90 days" }));
+    await within(perfTile).findByText("1500");
+    expect(perfTile.querySelector(".practice-tile__delta")).toBeNull();
+
+    // Switch to All -> no arrow even with overall_previous set
+    fireEvent.click(within(board).getByRole("button", { name: "All" }));
+    await waitFor(() => expect(fetchThemeStats).toHaveBeenLastCalledWith("all"));
+    await within(perfTile).findByText("1505");
+    expect(perfTile.querySelector(".practice-tile__delta")).toBeNull();
+  });
+
+  it("hides Review button when due_now is zero", async () => {
+    renderPractice({ dueNow: 0 });
+    openPracticePage("Dashboard");
+
+    const board = dashboardRoot();
+    const dueTile = (await within(board).findByText("Due cards", { selector: "dt" })).closest(
+      ".practice-tile",
+    ) as HTMLElement;
+    await within(dueTile).findByText("0");
+    expect(within(dueTile).queryByRole("button", { name: "Review" })).toBeNull();
+  });
+
+  it("renders the Puzzle rating SVG chart with endpoints, period axis labels, and all-time start date", async () => {
+    const fetchRatingHistory = vi.fn(async (days: PuzzleRatingWindow) => {
+      if (days === "7")
+        return makeHistory({
+          points: makeDailyPoints(7, "2026-06-10", 1490),
+          low: 1490,
+          high: 1502,
+          current: 1502,
+        });
+      if (days === "all") {
+        return makeHistory({
+          points: [
+            { day: "2026-01-15", rating: 1400 },
+            { day: "2026-06-10", rating: 1550 },
+          ],
+          low: 1400,
+          high: 1550,
+          current: 1550,
+        });
+      }
+      return makeHistory({
+        points: makeDailyPoints(30, "2026-06-10", 1450),
+        low: 1450,
+        high: 1508,
+        current: 1508,
+      });
+    });
+
+    renderPractice({ fetchRatingHistory });
+    openPracticePage("Dashboard");
+
+    const board = dashboardRoot();
+    const chartCard = within(board).getByRole("region", { name: "Puzzle rating" });
+    expect(await within(chartCard).findByText("1508")).toBeTruthy();
+    expect(within(chartCard).getByText("low 1450 \u00b7 high 1508")).toBeTruthy();
+    expect(within(chartCard).getByText("30 days ago")).toBeTruthy();
+    expect(within(chartCard).getByText("today")).toBeTruthy();
+
+    const svg = within(chartCard).getByRole("img", { name: "Puzzle rating over time" });
+    expect(svg.getAttribute("viewBox")).toBe("0 0 600 120");
+    expect(svg.getAttribute("preserveAspectRatio")).toBe("none");
+    const midline = svg.querySelector("line");
+    expect(midline?.getAttribute("y1")).toBe("60");
+    expect(midline?.getAttribute("y2")).toBe("60");
+    expect(midline?.getAttribute("stroke")).toBe("var(--surface-2)");
+    const polyline = svg.querySelector("polyline");
+    expect(polyline?.getAttribute("stroke")).toBe("var(--accent)");
+    expect(polyline?.getAttribute("stroke-width")).toBe("2");
+    expect(polyline?.getAttribute("points")).toBeTruthy();
+
+    // Switch to 7 days
+    fireEvent.click(within(board).getByRole("button", { name: "7 days" }));
+    expect(await within(chartCard).findByText("7 days ago")).toBeTruthy();
+
+    // Switch to All -> left axis shows formatted first day date
+    fireEvent.click(within(board).getByRole("button", { name: "All" }));
+    expect(await within(chartCard).findByText("15 Jan 2026")).toBeTruthy();
+  });
+
+  it("draws a flat midline polyline without NaN when rating history has one day", () => {
+    expect(ratingChartPoints([{ day: "2026-06-10", rating: 1500 }])).toBe("0.0,60.0 600.0,60.0");
+  });
+
+  it("caps Improvement areas and Strengths at five rows without Train buttons and navigates on See all", async () => {
+    renderPractice();
+    openPracticePage("Dashboard");
+
+    const areasCard = screen.getByRole("region", { name: "Improvement areas" });
+    const strengthsCard = screen.getByRole("region", { name: "Strengths" });
+
+    expect(await within(areasCard).findByText("Furthest below your 1505")).toBeTruthy();
+    expect(within(strengthsCard).getByText("Furthest above your 1505")).toBeTruthy();
+
+    const areasRows = within(areasCard).getAllByRole("listitem");
+    const strengthsRows = within(strengthsCard).getAllByRole("listitem");
+    expect(areasRows).toHaveLength(5);
+    expect(strengthsRows).toHaveLength(5);
+
+    // Sixth item from the response stays off Dashboard; no Train button in rows
+    expect(within(areasCard).queryByText("Hanging piece")).toBeNull();
+    expect(within(areasCard).queryByRole("button", { name: "Train" })).toBeNull();
+    expect(within(areasRows[0] as HTMLElement).getByText("−125")).toBeTruthy();
+    expect(within(strengthsRows[0] as HTMLElement).getByText("+115")).toBeTruthy();
+
+    // See all navigates to the respective theme detail page
+    fireEvent.click(within(areasCard).getByRole("button", { name: "See all" }));
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Improvement areas" }),
+    ).toBeTruthy();
+
+    openPracticePage("Dashboard");
+    fireEvent.click(within(strengthsCard).getByRole("button", { name: "See all" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Strengths" })).toBeTruthy();
+  });
+
+  it("shows empty-period copy, unranked copy, and Start a healthy mix when no theme rows apply", async () => {
+    const send = vi.fn(() => true);
+    const fetchThemeStats = async (days: PuzzleRatingWindow) => {
+      if (days === "30") {
+        return makeThemeStats({
+          days: "30",
+          overall: { played: 0, first_try: 0, rating_avg: null, performance: null },
+          overall_previous: null,
+          themes: [],
+          improvement_areas: [],
+          strengths: [],
+          unranked: 0,
+        });
+      }
+      if (days === "7") {
+        return makeThemeStats({
+          days: "7",
+          overall: { played: 5, first_try: 3, rating_avg: 1485, performance: 1490 },
+          overall_previous: null,
+          themes: [
+            themeEntry({
+              theme: "fork",
+              played: 5,
+              first_try: 3,
+              rating_avg: 1485,
+              performance: 1490,
+              ranked: false,
+            }),
+          ],
+          improvement_areas: [],
+          strengths: [],
+          unranked: 1,
+        });
+      }
+      return makeThemeStats({
+        days,
+        overall: { played: 12, first_try: 8, rating_avg: 1485, performance: 1490 },
+        themes: [
+          themeEntry({
+            theme: "fork",
+            played: 12,
+            first_try: 8,
+            rating_avg: 1485,
+            performance: 1490,
+            ranked: true,
+          }),
+        ],
+        improvement_areas: [],
+        strengths: [],
+        unranked: 0,
+      });
+    };
+
+    renderPractice({ send, fetchThemeStats });
+    openPracticePage("Dashboard");
+
+    const board = dashboardRoot();
+    const areasCard = within(board).getByRole("region", { name: "Improvement areas" });
+    const strengthsCard = within(board).getByRole("region", { name: "Strengths" });
+    expect(await within(areasCard).findByText("No puzzle played in this period yet.")).toBeTruthy();
+    expect(within(strengthsCard).getByText("No puzzle played in this period yet.")).toBeTruthy();
+
+    const playedTile = within(board)
+      .getByText("Played", { selector: "dt" })
+      .closest(".practice-tile") as HTMLElement;
+    const ratingTile = within(board)
+      .getByText("Performance rating", { selector: "dt" })
+      .closest(".practice-tile") as HTMLElement;
+    const solvedTile = within(board)
+      .getByText("Solved first try", { selector: "dt" })
+      .closest(".practice-tile") as HTMLElement;
+    expect(within(playedTile).getByText(NONE)).toBeTruthy();
+    expect(within(ratingTile).getByText(NONE)).toBeTruthy();
+    expect(within(solvedTile).getByText(NONE)).toBeTruthy();
+    expect(solvedTile.querySelector(".practice-tile__split")).toBeNull();
+
+    // 7 days: unranked message naming most played theme + count
+    fireEvent.click(within(board).getByRole("button", { name: "7 days" }));
+    expect(
+      await within(areasCard).findByText(
+        "No theme is ranked yet. A theme is ranked once you have played 8 puzzles of it; your most played theme, Fork, has 5.",
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(within(areasCard).getByRole("button", { name: "Start a healthy mix" }));
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "start_training", mode: "puzzles" }),
+    );
+
+    // 90 days: ranked themes exist, neither below nor above
+    fireEvent.click(within(board).getByRole("button", { name: "90 days" }));
+    expect(
+      await within(areasCard).findByText("No ranked theme sits below your overall rating yet."),
+    ).toBeTruthy();
+    expect(
+      within(strengthsCard).getByText("No ranked theme sits above your overall rating yet."),
+    ).toBeTruthy();
+  });
+
+  it("recovers independently when theme stats or rating history fails and offers Try again", async () => {
+    let failStats = true;
+    let failHistory = true;
+    const fetchThemeStats = vi.fn(async () => {
+      if (failStats) throw new Error("stats down");
+      return makeThemeStats();
+    });
+    const fetchRatingHistory = vi.fn(async () => {
+      if (failHistory) throw new Error("history down");
+      return makeHistory();
+    });
+
+    renderPractice({ fetchThemeStats, fetchRatingHistory });
+    openPracticePage("Dashboard");
+
+    const board = dashboardRoot();
+    const areasCard = within(board).getByRole("region", { name: "Improvement areas" });
+    const chartCard = within(board).getByRole("region", { name: "Puzzle rating" });
+
+    expect(
+      await within(areasCard).findByText("Your theme statistics could not be loaded."),
+    ).toBeTruthy();
+    expect(
+      await within(chartCard).findByText("Your rating history could not be loaded."),
+    ).toBeTruthy();
+
+    failStats = false;
+    fireEvent.click(within(areasCard).getByRole("button", { name: "Try again" }));
+    expect(await within(areasCard).findByText("Fork")).toBeTruthy();
+    // Rating history stays failed until retried independently
+    expect(within(chartCard).getByText("Your rating history could not be loaded.")).toBeTruthy();
+
+    failHistory = false;
+    fireEvent.click(within(chartCard).getByRole("button", { name: "Try again" }));
+    expect(
+      await within(chartCard).findByRole("img", { name: "Puzzle rating over time" }),
+    ).toBeTruthy();
+  });
+
+  it("disables training start buttons and explains why when Stockfish is missing", async () => {
+    renderPractice({ engineMissing: true, dueNow: 3 });
+    openPracticePage("Dashboard");
+
+    const board = dashboardRoot();
+    expect(await within(board).findByText(NEEDS_ENGINE_TEXT)).toBeTruthy();
+    const review = within(board).getByRole("button", { name: "Review" }) as HTMLButtonElement;
+    expect(review.disabled).toBe(true);
+  });
+
+  it("defines desktop side-by-side grids and single-column <= 899 px responsive layout cleanly", () => {
+    const cssPath = join(__dirname, "..", "src", "styles", "practice-hub.css");
+    const css = readFileSync(cssPath, "utf8");
+    const [desktop = "", mobile = ""] = css.split("@media (max-width: 899px)");
+
+    expect(desktop).toContain(
+      ".practice-dashboard__tiles {\n  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));",
+    );
+    expect(desktop).toContain(
+      ".practice-dashboard__themes {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));",
+    );
+    expect(desktop).toContain(
+      ".practice-dashboard__chart {\n  display: block;\n  width: 100%;\n  height: 140px;",
+    );
+    expect(desktop).toContain("grid-template-columns: minmax(0, 1fr) 40px 96px 104px;");
+    expect(desktop).toContain("min-height: 48px;");
+
+    expect(mobile).toContain(
+      ".practice-dashboard__tiles,\n  .practice-dashboard__themes {\n    grid-template-columns: minmax(0, 1fr);",
+    );
+    expect(mobile).toContain(".practice-dashboard__link {");
+    expect(mobile).toContain("min-height: 44px;");
+  });
+});

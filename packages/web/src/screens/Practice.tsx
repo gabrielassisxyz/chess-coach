@@ -201,6 +201,7 @@ function Hub({
       onStart={begin}
       onStartRepertoire={beginRepertoire}
       fetchRepertoireList={fetchRepertoireList}
+      fetchRatingHistory={fetchRatingHistory}
       fetchThemeStats={fetchThemeStats}
     />
   );
