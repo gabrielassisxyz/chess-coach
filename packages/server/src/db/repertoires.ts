@@ -1,4 +1,6 @@
 import type { Database } from "./open.js";
+import { deleteRepertoireCardsNoVariationPlays } from "./repertoire-cards.js";
+import { endTrainingRun } from "./training.js";
 
 export type RepertoireSide = "white" | "black";
 /**
@@ -142,6 +144,17 @@ export function createRepertoireVariation(db: Database, repertoire: NewRepertoir
   };
 }
 
+/** Every variation of a group, oldest first. */
+export function listRepertoireGroupVariations(
+  db: Database,
+  side: RepertoireSide,
+  groupName: string,
+): RepertoireRow[] {
+  return db
+    .prepare("SELECT * FROM repertoires WHERE side = ? AND group_name = ? ORDER BY id")
+    .all(side, groupName) as RepertoireRow[];
+}
+
 /** Every variation of a group goes, with its positions: a rebuild's rows are kept under one apart. */
 export function deleteRepertoireGroupVariations(
   db: Database,
@@ -190,6 +203,81 @@ export function listRepertoireOwnMoveKeys(
        WHERE repertoire_id = ? AND kind = 'own' ORDER BY id`,
     )
     .all(repertoireId) as Array<{ positionKey: string; uci: string }>;
+}
+
+/** What deleting a unit removed, and the games whose review went with it. */
+export interface RepertoireUnitDeletion {
+  /** The unit's rows: its setup, White's answers and Black's replies. */
+  positions: number;
+  /** Cards of the unit's White moves that no unit stores any more. */
+  cardsDeleted: number;
+  /** Cards of the unit's White moves that another unit still stores, schedule and reviews untouched. */
+  cardsKept: number;
+  /** Open practice runs that pointed at the unit, ended as discarded. */
+  runsEnded: number;
+  /** The games whose review named the unit, by id: the cascade removed those rows. */
+  gamesToReview: number[];
+}
+
+const gamesReviewedAgainstUnit = (db: Database, repertoireId: number): number[] =>
+  (
+    db
+      .prepare(
+        "SELECT game_id FROM repertoire_game_reviews WHERE repertoire_id = ? ORDER BY game_id",
+      )
+      .all(repertoireId) as Array<{ game_id: number }>
+  ).map((row) => row.game_id);
+
+// A paused drill names the unit it started from in its current item, and a drill over a group, a
+// side or the units found in games lists the unit's rows in its queue among other units' rows: a
+// resume would serve rows that are gone, from a merge that no longer exists. Only a drill's queue
+// holds repertoire rows; a card or a puzzle id in another run can carry the same number.
+function openRunsOfRepertoireUnit(db: Database, repertoireId: number): number[] {
+  const rows = db
+    .prepare(
+      `SELECT r.id FROM training_runs r
+       WHERE r.ended_at IS NULL
+         AND (json_extract(r.current_json, '$.repertoire_id') = @unit
+              OR EXISTS (SELECT 1 FROM json_each(r.items_json) AS item
+                         JOIN repertoire_positions p ON p.id = json_extract(item.value, '$.id')
+                         WHERE json_extract(item.value, '$.kind') = 'repertoire'
+                           AND p.repertoire_id = @unit))
+       ORDER BY r.id`,
+    )
+    .all({ unit: repertoireId }) as Array<{ id: number }>;
+  return rows.map((row) => row.id);
+}
+
+/**
+ * Deletes one unit and what would dangle after it, in one transaction: a failure leaves the unit,
+ * its cards and the runs as they were. Its positions and its games' reviews go through the cascade,
+ * a card goes once no unit stores its move, and an open run that points at the unit is discarded.
+ * Reviewing those games again is the caller's, after the commit: a review can wait on the explorer
+ * and the engine.
+ */
+export function deleteRepertoireUnit(
+  db: Database,
+  repertoireId: number,
+  at: string,
+): RepertoireUnitDeletion {
+  return db.transaction((): RepertoireUnitDeletion => {
+    const ownMoves = listRepertoireOwnMoveKeys(db, repertoireId);
+    const positions = repertoireCounts(db, repertoireId).total;
+    const gamesToReview = gamesReviewedAgainstUnit(db, repertoireId);
+    const runIds = openRunsOfRepertoireUnit(db, repertoireId);
+    for (const runId of runIds) endTrainingRun(db, runId, "discarded", at);
+    if (db.prepare("DELETE FROM repertoires WHERE id = ?").run(repertoireId).changes === 0) {
+      throw new Error(`repertoire ${repertoireId} does not exist`);
+    }
+    const cards = deleteRepertoireCardsNoVariationPlays(db, ownMoves);
+    return {
+      positions,
+      cardsDeleted: cards.deleted,
+      cardsKept: cards.kept,
+      runsEnded: runIds.length,
+      gamesToReview,
+    };
+  })();
 }
 
 /** How many of a variation's White moves are written with each SAN. */
