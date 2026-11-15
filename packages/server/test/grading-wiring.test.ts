@@ -34,3 +34,17 @@ describe("the evaluation cache reader", () => {
     expect(importers).toEqual(["engine/pool.ts", "main.ts"]);
   });
 });
+
+// The same wiring as above, for the cache: a boot that forgot the log would be silent about an
+// unavailable file, and a pool built without the cache would search every analysis.
+describe("the evaluation cache wired in main.ts", () => {
+  const source = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+
+  it("is opened with the log, so the boot says when it is unavailable", () => {
+    expect(source).toContain("openEvalCache(evalCachePath(), log)");
+  });
+
+  it("is handed to the engine pool, which gives it to the analysis lane only", () => {
+    expect(source).toContain("new EnginePool(() => spawnStockfish(), {}, evalCache)");
+  });
+});
