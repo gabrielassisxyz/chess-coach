@@ -536,6 +536,46 @@ describe("the hub", () => {
     expect(tileElementOf("Cards remembered").querySelector(".practice-tile__delta")).toBeNull();
   });
 
+  it("shows the first-try share with no arrow when the earlier window played nothing", async () => {
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchThemeStats={async () =>
+          overviewThemeStatsOf({ played: 10, first_try: 6 }, { played: 0, first_try: 0 })
+        }
+      />,
+    );
+    await screen.findByText("Solved first try");
+    await within(tileElementOf("Solved first try")).findByText("60%");
+    expect(tileOf("Solved first try")).toEqual(["60% 30 days", ""]);
+    expect(tileElementOf("Solved first try").textContent).not.toContain("NaN");
+    expect(tileElementOf("Solved first try").querySelector(".practice-tile__delta")).toBeNull();
+  });
+
+  it("rounds a forecast bar to the nearest pixel", async () => {
+    render(
+      <Practice
+        server={api(null)}
+        {...hubProps}
+        fetchProgress={async () => progressOf({ due_next_7d: [3, 2, 0, 0, 0, 0, 0] })}
+      />,
+    );
+    const due = await screen.findByRole("region", { name: "Due cards" });
+    await within(due).findByText("Coming up \u00b7 next 7 days");
+    const bars = [...due.querySelectorAll(".practice-forecast__bar")] as HTMLElement[];
+    // 2 / 3 * 40 is 26.67: rounded it is 27 px, floored 26.
+    expect(bars.map((bar) => bar.style.height)).toEqual([
+      "40px",
+      "27px",
+      "2px",
+      "2px",
+      "2px",
+      "2px",
+      "2px",
+    ]);
+  });
+
   it("keeps the numbers it has when rating history or theme statistics fail, without showing an alert", async () => {
     const progress = progressOf({ correct_rate_30d: 0.836, total: 38 }, 1432);
     render(
@@ -3419,9 +3459,8 @@ describe("the hub's frame styles", () => {
     expect(declared(desktop, '.practice-tile__streak-day[data-active="true"]')).toMatchObject({
       background: "var(--status-ready)",
     });
-    expect(
-      declared(desktop, '.practice-tile__streak-day[data-active="true"][data-today="true"]'),
-    ).toMatchObject({
+    // Today is the accent colour whether or not it has practice.
+    expect(declared(desktop, '.practice-tile__streak-day[data-today="true"]')).toMatchObject({
       background: "var(--accent)",
     });
     expect(declared(desktop, ".practice-tile__spark")).toMatchObject({

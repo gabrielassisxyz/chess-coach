@@ -200,7 +200,7 @@
   background: var(--status-ready);
 }
 
-.practice-tile__streak-day[data-active="true"][data-today="true"] {
+.practice-tile__streak-day[data-today="true"] {
   background: var(--accent);
 }
 
