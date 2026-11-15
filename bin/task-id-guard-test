@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# task-id-guard-test: the unit test for bin/task-id-guard, run by bin/ci.
+#
+# WHY these cases. The guard must catch the three shapes an id takes in the wild (a
+# Refs trailer, a Bead trailer, an id inside a subject line) whether it arrives as a
+# title, a body or a commit message, and it must stay quiet on plain text and on every
+# non-id name the repository uses that shares the prefix. Each case below feeds the
+# guard one input and asserts the exit code, so a regression in the pattern, the
+# hyphen and slash rule, or the allowlist fails here first.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+guard="bin/task-id-guard"
+fail=0
+count=0
+
+expect_fail() {  # $1 = label, $2 = text, $3 = text kind for the guard
+    count=$((count + 1))
+    out="$("$guard" --stdin "$3" <<<"$2" 2>&1)" && status=0 || status=$?
+    if [ "$status" -eq 0 ]; then
+        printf 'FAIL %s: guard passed but must fail\ninput: %s\n' "$1" "$2" >&2
+        fail=1
+        return
+    fi
+    printf 'ok %s\n' "$1"
+}
+
+expect_fail_contains() {  # $1 = label, $2 = text, $3 = kind, $4 = needle in output
+    count=$((count + 1))
+    out="$("$guard" --stdin "$3" <<<"$2" 2>&1)" && status=0 || status=$?
+    if [ "$status" -eq 0 ]; then
+        printf 'FAIL %s: guard passed but must fail\ninput: %s\n' "$1" "$2" >&2
+        fail=1
+        return
+    fi
+    if ! grep -qF -- "$4" <<<"$out"; then
+        printf 'FAIL %s: output names no %s\noutput: %s\n' "$1" "$4" "$out" >&2
+        fail=1
+        return
+    fi
+    printf 'ok %s\n' "$1"
+}
+
+expect_pass() {  # $1 = label, $2 = text, $3 = text kind for the guard
+    count=$((count + 1))
+    if ! out="$("$guard" --stdin "$3" <<<"$2" 2>&1)"; then
+        printf 'FAIL %s: guard failed but must pass\ninput: %s\noutput: %s\n' "$1" "$2" "$out" >&2
+        fail=1
+        return
+    fi
+    printf 'ok %s\n' "$1"
+}
+
+# A title carrying an id in its subject.
+expect_fail_contains "title with id in subject" \
+    "feat(board): enable drawing on every board (chess-coach-tx9)" \
+    "PR title" "(chess-coach-tx9)"
+
+# A body carrying a Refs trailer.
+expect_fail_contains "body with Refs trailer" \
+    "Fixes the line drill for tied lines.
+
+Refs: chess-coach-8b0" \
+    "PR body" "Refs: chess-coach-8b0"
+
+# Three commit messages, one per hit kind the bead names.
+expect_fail_contains "commit with Refs trailer" \
+    "fix(openings): keep the plan across replies
+
+Refs: chess-coach-abc123" \
+    "commits" "Refs: chess-coach-abc123"
+
+expect_fail_contains "commit with Bead trailer" \
+    "feat(practice): drill one family at a time
+
+Bead: chess-coach-def456" \
+    "commits" "Bead: chess-coach-def456"
+
+expect_fail_contains "commit with id in subject" \
+    "fix(test): keep each run in one root (chess-coach-ghi789)" \
+    "commits" "(chess-coach-ghi789)"
+
+# Clean text, including chess-coach alone.
+expect_pass "clean text" "Enable circles and arrows on every board" "PR title"
+expect_pass "bare prefix" "chess-coach alone is not an id" "PR body"
+
+# Every non-id name the repository uses.
+expect_pass "package name" "name = \"chess-coach-tools\"" "PR body"
+expect_pass "scratch probe prefix" "root chess-coach-probe-abc123 stays" "commits"
+expect_pass "scratch ideas prefix" "root chess-coach-ideas-xyz789 stays" "commits"
+expect_pass "temp root with pid and random" "root chess-coach-tests-12345-AbCd12 stays" "commits"
+expect_pass "temp root literal from PR 89" "root chess-coach-tests-<pid>-<random> stays" "PR body"
+expect_pass "base directory on the build disk" "scratch under chess-coach-tmp stays" "PR body"
+expect_pass "hyphen after stem is not an id" "chess-coach-abc-def stays out" "PR title"
+expect_pass "slash after stem is not an id" "branch chess-coach-abc/def stays out" "PR title"
+
+if [ "$fail" -ne 0 ]; then
+    printf '==> task-id-guard-test FAILED (%s cases)\n' "$count" >&2
+    exit 1
+fi
+printf '==> task-id-guard-test OK (%s cases)\n' "$count"
