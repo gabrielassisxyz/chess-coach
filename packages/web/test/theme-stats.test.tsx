@@ -311,7 +311,6 @@ describe("Improvement areas and Strengths pages", () => {
       type: "start_training",
       mode: "puzzles",
       motif: "xRayAttack",
-      size: 10,
     });
     expect(within(xrayRow).getByRole("button", { name: "Starting" })).toBeTruthy();
 
@@ -386,7 +385,6 @@ describe("Improvement areas and Strengths pages", () => {
     expect(server.send).toHaveBeenCalledWith({
       type: "start_training",
       mode: "puzzles",
-      size: 10,
     });
   });
 
@@ -413,7 +411,6 @@ describe("Improvement areas and Strengths pages", () => {
     expect(server.send).toHaveBeenCalledWith({
       type: "start_training",
       mode: "puzzles",
-      size: 10,
     });
   });
 
