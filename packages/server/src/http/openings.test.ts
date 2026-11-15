@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   AddableOpeningsResponseSchema,
   OpeningDrillsResponseSchema,
+  PlayedOpeningsResponseSchema,
   UNNAMED_OPENING,
 } from "@chess-coach/shared";
 import { Chess } from "chess.js";
@@ -24,7 +25,7 @@ import { generateOpeningPuzzles, positionKey } from "../openings/from-games.js";
 import { RepertoireBranchError, type RepertoirePoints } from "../openings/from-repertoire.js";
 import { parseOpeningTable } from "../openings/names.js";
 import { IdeaSessionError } from "../openings/repertoire-ideas.js";
-import { registerOpeningDrillRoutes } from "./openings.js";
+import { registerOpeningDrillRoutes, registerPlayedOpeningsRoute } from "./openings.js";
 
 const db = () => openDatabase(mkdtempSync(join(tmpdir(), "opening-route-")));
 
@@ -1357,5 +1358,143 @@ describe("GET /api/openings/addable", () => {
   it("is mounted with the database, whether or not a provider is configured", async () => {
     const app = buildApp({ db: db() });
     expect(await get(app)).toEqual({ entries: [] });
+  });
+});
+
+describe("GET /api/openings/played", () => {
+  const NOW = new Date("2026-11-10T12:00:00.000Z");
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const clock: Clock = { now: () => NOW };
+  const daysAgo = (days: number): string => new Date(NOW.getTime() - days * DAY_MS).toISOString();
+
+  const fenAfter = (...sans: string[]): string => {
+    const board = new Chess();
+    for (const san of sans) board.move(san);
+    return board.fen();
+  };
+  const keyAfter = (...sans: string[]): string =>
+    fenAfter(...sans)
+      .split(" ")
+      .slice(0, 4)
+      .join(" ");
+  const playedNames = parseOpeningTable(
+    [
+      "eco\tname\tpgn\tuci\tepd",
+      `C50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${keyAfter("e4", "e5", "Nf3", "Nc6", "Bc4")}`,
+      `C55\tItalian Game: Two Knights Defense\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6\te2e4\t${keyAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6")}`,
+      `C50\tItalian Game: Giuoco Piano\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5\te2e4\t${keyAfter("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5")}`,
+      `B01\tScandinavian Defense\t1. e4 d5\te2e4\t${keyAfter("e4", "d5")}`,
+      "",
+    ].join("\n"),
+  );
+
+  const KNIGHTS = '[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 1-0';
+  const GIUOCO = '[Result "0-1"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 0-1';
+  const SCANDI = '[Result "1/2-1/2"]\n\n1. e4 d5 1/2-1/2';
+
+  function addGame(store: Database, pgn: string, color: "white" | "black", id: string, at: string) {
+    const gameId = importFinishedGame(store, {
+      pgn,
+      playerColor: color,
+      source: "pgn",
+      sourceId: id,
+      playedAt: at,
+    });
+    if (gameId === null) throw new Error("fixture game was not imported");
+  }
+
+  async function played(store: Database, query: string, routeClock: Clock = clock) {
+    const app = Fastify();
+    registerPlayedOpeningsRoute(app, store, { names: playedNames, clock: routeClock });
+    const response = await app.inject({ method: "GET", url: `/api/openings/played${query}` });
+    await app.close();
+    return response;
+  }
+
+  it("answers the three games as White with the schema", async () => {
+    const store = db();
+    addGame(store, KNIGHTS, "white", "w1", daysAgo(1));
+    addGame(store, GIUOCO, "white", "w2", daysAgo(2));
+    addGame(store, SCANDI, "white", "w3", daysAgo(3));
+    const response = await played(store, "?days=30");
+    expect(response.statusCode).toBe(200);
+    const body = PlayedOpeningsResponseSchema.parse(response.json());
+    expect(body.white.games).toBe(3);
+    expect(body.white.mine.map((entry) => entry.opening)).toEqual(["Italian Game"]);
+    expect(body.white.mine[0]).toMatchObject({ games: 2, wins: 1, losses: 1 });
+    expect(body.white.mine[0]?.variations).toHaveLength(2);
+    expect(body.white.against.map((entry) => entry.opening)).toEqual(["Scandinavian Defense"]);
+    expect(body.black).toEqual({ games: 0, mine: [], against: [] });
+    // Every opening's figures are the sums of its variations'.
+    for (const entry of [...body.white.mine, ...body.white.against]) {
+      const sum = (key: "games" | "wins" | "draws" | "losses"): number =>
+        entry.variations.reduce((total, row) => total + row[key], 0);
+      expect(entry.games).toBe(sum("games"));
+      expect(entry.wins).toBe(sum("wins"));
+      expect(entry.draws).toBe(sum("draws"));
+      expect(entry.losses).toBe(sum("losses"));
+    }
+  });
+
+  it("answers all four windows and defaults absent days to 30 through buildApp", async () => {
+    const store = db();
+    const realNow = Date.now();
+    const ago = (days: number): string => new Date(realNow - days * DAY_MS).toISOString();
+    const seed = (id: string, at: string) => addGame(store, KNIGHTS, "white", id, at);
+    seed("week", ago(6));
+    seed("month", ago(20));
+    seed("quarter", ago(80));
+    seed("old", ago(400));
+    const app = buildApp({ db: store, openingNames: playedNames });
+    try {
+      const def = PlayedOpeningsResponseSchema.parse(
+        (await app.inject({ method: "GET", url: "/api/openings/played" })).json(),
+      );
+      expect(def.white.games).toBe(2);
+      const explicit = PlayedOpeningsResponseSchema.parse(
+        (await app.inject({ method: "GET", url: "/api/openings/played?days=30" })).json(),
+      );
+      expect(explicit).toEqual(def);
+      const week = PlayedOpeningsResponseSchema.parse(
+        (await app.inject({ method: "GET", url: "/api/openings/played?days=7" })).json(),
+      );
+      expect(week.white.games).toBe(1);
+      const quarter = PlayedOpeningsResponseSchema.parse(
+        (await app.inject({ method: "GET", url: "/api/openings/played?days=90" })).json(),
+      );
+      expect(quarter.white.games).toBe(3);
+      const all = PlayedOpeningsResponseSchema.parse(
+        (await app.inject({ method: "GET", url: "/api/openings/played?days=all" })).json(),
+      );
+      expect(all.white.games).toBe(4);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("answers 400 for any other days value", async () => {
+    const store = db();
+    const app = Fastify();
+    registerPlayedOpeningsRoute(app, store, { names: playedNames, clock });
+    try {
+      for (const query of ["?days=14", "?days=abc", "?days=", "?days=7&days=30"]) {
+        const response = await app.inject({ method: "GET", url: `/api/openings/played${query}` });
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toMatchObject({ error: "invalid_days" });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("is mounted with the database, answering no games without any", async () => {
+    const app = buildApp({ db: db() });
+    const response = await app.inject({ method: "GET", url: "/api/openings/played" });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+    expect(PlayedOpeningsResponseSchema.parse(response.json())).toEqual({
+      white: { games: 0, mine: [], against: [] },
+      black: { games: 0, mine: [], against: [] },
+    });
   });
 });
