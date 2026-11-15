@@ -231,6 +231,15 @@ export type RepertoireDrillResult = z.infer<typeof RepertoireDrillResultSchema>;
 // margin, cleared on the next try. A move is left until it is played right at the first attempt
 // of a pass; right and wrong count how that first rated attempt went. `repertoire_id` is the
 // variation of the move in play, as on the item, and `level` the one the drill was started at.
+// `answered` is the move just answered, with its stored idea, shown until the next move is
+// answered; it is null before any answer and at the start of a pass, and its idea is null when
+// none is stored.
+export const RepertoireAnsweredSchema = z.object({
+  san: z.string(),
+  idea: z.string().nullable(),
+});
+export type RepertoireAnswered = z.infer<typeof RepertoireAnsweredSchema>;
+
 export const RepertoireDrillSchema = z.object({
   repertoire_id: z.number().int().positive(),
   scope: RepertoireScopeSchema,
@@ -241,6 +250,7 @@ export const RepertoireDrillSchema = z.object({
   hint: RepertoireHintSchema,
   flagged_opening: z.string().nullable(),
   flagged_sound: z.boolean().optional(),
+  answered: RepertoireAnsweredSchema.nullable(),
   moves_left: z.number().int().nonnegative(),
   moves_right: z.number().int().nonnegative(),
   moves_wrong: z.number().int().nonnegative(),

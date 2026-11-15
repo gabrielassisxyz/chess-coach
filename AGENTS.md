@@ -370,7 +370,8 @@
   attempt rates it (SM-2 in `repertoire_cards`, one card per position and move across variations), and
   a miss comes back on a later pass until it is right first time. In `all`, a move not due keeps its
   schedule when right. A wrong try within 50 cp of the engine's best that reaches another named opening
-  carries that name. `GET /api/repertoires` lists each variation with what each scope would serve.
+  carries that name. After each asked move is answered, the drill carries its stored idea in `answered`
+  and the Practice column shows it as Why with the move number. `GET /api/repertoires` lists each variation with what each scope would serve.
   A `level` on the command widens the drill from that repertoire to every variation of its group
   (`group`) or every unit of its side (`side`, the Openings page's "Train all" button of a colour); without one it is the
   variation. The level's moves are merged so that a move two variations share, one card, is served
