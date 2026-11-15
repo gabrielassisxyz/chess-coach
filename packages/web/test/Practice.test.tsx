@@ -207,6 +207,9 @@ const noMotifs = async () => [];
 const hubProps = {
   fetchProgress: async () => progressOf(),
   fetchMotifs: async () => motifCounts,
+  fetchRepertoires: async () => [],
+  fetchRepertoireList: async () => ({ repertoires: [], met: [] }),
+  fetchOpeningDrills: async () => ({ white: [], black: [] }),
 };
 
 describe("the hub", () => {
@@ -1571,20 +1574,81 @@ describe("the openings met in games", () => {
     renderHub({ fetchRepertoireList: read });
     const white = await whiteOpenings();
     await waitFor(() => expect(read).toHaveBeenCalled());
-    await within(white).findByText(
-      "The openings met in your games could not be loaded. Reload the page to try again.",
-    );
+    const alert = await within(white).findByRole("alert");
+    expect(alert.className).toContain("practice__failure");
+    expect(alert.textContent).toBe("The openings met in your games could not be loaded.");
     expect(within(white).queryByText("Met in your games")).toBeNull();
     expect(within(white).getByRole("heading", { name: "Italian Game" })).toBeTruthy();
-    // The three starts of the one drill, and its Coverage; no Add for an opening that could not be read.
-    expect(within(white).getAllByRole("button")).toHaveLength(4);
+    // The three starts of the one drill, its Coverage, and Try again; no Add for an unreadable opening.
+    expect(within(white).getAllByRole("button")).toHaveLength(5);
+    expect(within(white).getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 
-  it("says to reload when the run ended but the list could not be read again", async () => {
-    const reads = [async () => listing([scandinavian])];
+  it("retries only the met-openings list when Try again is pressed inside White openings", async () => {
+    let resolveSecond: (value: RepertoiresResponse) => void = () => undefined;
+    const secondCall = new Promise<RepertoiresResponse>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchRepertoireList = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("down"))
+      .mockReturnValueOnce(secondCall);
+    const fetchProgress = vi.fn(hubProps.fetchProgress);
+    const fetchMotifs = vi.fn(hubProps.fetchMotifs);
+    const fetchRepertoires = vi.fn(async () => repertoireList);
+    const fetchOpeningDrills = vi.fn(hubProps.fetchOpeningDrills);
+
+    render(
+      <Practice
+        server={api(null)}
+        fetchProgress={fetchProgress}
+        fetchMotifs={fetchMotifs}
+        fetchRepertoires={fetchRepertoires}
+        fetchRepertoireList={fetchRepertoireList}
+        fetchOpeningDrills={fetchOpeningDrills}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Italian Game" });
+    const white = await whiteOpenings();
+    const alert = await within(white).findByRole("alert");
+    expect(alert.className).toContain("practice__failure");
+    expect(alert.textContent).toBe("The openings met in your games could not be loaded.");
+
+    fireEvent.click(within(white).getByRole("button", { name: "Try again" }));
+    expect(within(white).getByRole("status").textContent).toBe(
+      "Loading openings met in your games.",
+    );
+    expect(fetchRepertoireList).toHaveBeenCalledTimes(2);
+    expect(fetchProgress).toHaveBeenCalledTimes(1);
+    expect(fetchMotifs).toHaveBeenCalledTimes(1);
+    expect(fetchRepertoires).toHaveBeenCalledTimes(1);
+    expect(fetchOpeningDrills).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSecond(listing([scandinavian]));
+      await secondCall;
+    });
+    expect(within(white).queryByRole("alert")).toBeNull();
+    const list = await within(white).findByRole("list", { name: "Openings met in your games" });
+    expect(within(list).getByText("Scandinavian Defense")).toBeTruthy();
+  });
+
+  it("offers Try again when the run ended but the list could not be read again", async () => {
+    let resolveThird: (value: RepertoiresResponse) => void = () => undefined;
+    const thirdCall = new Promise<RepertoiresResponse>((resolve) => {
+      resolveThird = resolve;
+    });
+    const reads = [
+      async () => listing([scandinavian]),
+      async () => {
+        throw new Error("down");
+      },
+      () => thirdCall,
+    ];
     const fetchRepertoireList = vi.fn(async () => {
       const next = reads.shift();
-      if (!next) throw new Error("down");
+      if (!next) throw new Error("unexpected read");
       return next();
     });
     renderHub({ fetchRepertoireList, addOpening: async () => ({ truncated: false }) });
@@ -1592,10 +1656,32 @@ describe("the openings met in games", () => {
     fireEvent.click(
       await within(white).findByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
     );
-    const status = await within(white).findByText(/is built/);
-    expect(status.textContent).toBe(
-      "Scandinavian Defense is built. Reload the page to see its drill.",
-    );
+    const status = await within(white).findByText("Scandinavian Defense is built.");
+    expect(status.getAttribute("role")).toBe("status");
+    const alert = await within(white).findByRole("alert");
+    expect(alert.className).toContain("practice__failure");
+    expect(alert.textContent).toBe("The openings list could not be loaded.");
+    expect(within(white).queryByText(/Reload the page/)).toBeNull();
+
+    fireEvent.click(within(white).getByRole("button", { name: "Try again" }));
+    expect(
+      within(white)
+        .getAllByRole("status")
+        .some((item) => item.textContent === "Loading openings."),
+    ).toBe(true);
+    expect(fetchRepertoireList).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      resolveThird(
+        listing([{ ...scandinavian, repertoire_id: 7 }], [...repertoireList, scandinavianDrill]),
+      );
+      await thirdCall;
+    });
+    expect(within(white).queryByRole("alert")).toBeNull();
+    expect(
+      await within(white).findByText("Scandinavian Defense is built. Its drill is listed above."),
+    ).toBeTruthy();
+    expect(within(white).getByRole("heading", { name: "Scandinavian Defense" })).toBeTruthy();
   });
 
   it("posts the root of the row with Add and shows the new drill's menu when the run ends", async () => {
@@ -2657,21 +2743,80 @@ describe("the opening drills from your games", () => {
     expect(within(white).getAllByText("Italian Game")).toHaveLength(1);
   });
 
-  it("lists no drill until they are read, and says so when they could not be", async () => {
+  it("lists no drill until they are read, and offers Try again in Openings when they could not be", async () => {
     const fetchRepertoireList = async () => listing([]);
     renderHub({ openingDrills: { status: "loading" }, onStartOpening: noop, fetchRepertoireList });
+    const openingsLoading = await screen.findByRole("region", { name: "Openings" });
+    expect(within(openingsLoading).getByRole("status").textContent).toBe(
+      "Loading positions from your games.",
+    );
     const white = await whiteOpenings();
     await settle();
     expect(within(white).queryByRole("list", { name: /^Positions from your games/ })).toBeNull();
     expect(screen.queryByRole("region", { name: "Black openings" })).toBeNull();
     cleanup();
 
-    renderHub({ openingDrills: { status: "failed" }, onStartOpening: noop, fetchRepertoireList });
+    const retry = vi.fn();
+    renderHub({
+      openingDrills: { status: "failed", retry },
+      onStartOpening: noop,
+      fetchRepertoireList,
+    });
     const openings = await screen.findByRole("region", { name: "Openings" });
-    expect(within(openings).getByRole("status").textContent).toBe(
-      "The positions from your games could not be loaded. Reload the page to try again.",
-    );
+    const alert = within(openings).getByRole("alert");
+    expect(alert.className).toContain("practice__failure");
+    expect(alert.textContent).toBe("The positions from your games could not be loaded.");
+    fireEvent.click(within(openings).getByRole("button", { name: "Try again" }));
+    expect(retry).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("region", { name: "Black openings" })).toBeNull();
+  });
+
+  it("retries only opening drills when Try again is pressed inside the Openings card", async () => {
+    let resolveSecond: (value: OpeningDrillsResponse) => void = () => undefined;
+    const secondCall = new Promise<OpeningDrillsResponse>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchOpeningDrills = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("down"))
+      .mockReturnValueOnce(secondCall);
+    const fetchProgress = vi.fn(hubProps.fetchProgress);
+    const fetchMotifs = vi.fn(hubProps.fetchMotifs);
+    const fetchRepertoires = vi.fn(async () => repertoireList);
+    const fetchRepertoireList = vi.fn(async () => listing([]));
+
+    render(
+      <Practice
+        server={api(null)}
+        fetchProgress={fetchProgress}
+        fetchMotifs={fetchMotifs}
+        fetchRepertoires={fetchRepertoires}
+        fetchRepertoireList={fetchRepertoireList}
+        fetchOpeningDrills={fetchOpeningDrills}
+      />,
+    );
+
+    const openings = await screen.findByRole("region", { name: "Openings" });
+    const alert = await within(openings).findByRole("alert");
+    expect(alert.className).toContain("practice__failure");
+    expect(alert.textContent).toBe("The positions from your games could not be loaded.");
+
+    fireEvent.click(within(openings).getByRole("button", { name: "Try again" }));
+    expect(within(openings).getByRole("status").textContent).toBe(
+      "Loading positions from your games.",
+    );
+    expect(fetchOpeningDrills).toHaveBeenCalledTimes(2);
+    expect(fetchProgress).toHaveBeenCalledTimes(1);
+    expect(fetchMotifs).toHaveBeenCalledTimes(1);
+    expect(fetchRepertoires).toHaveBeenCalledTimes(1);
+    expect(fetchRepertoireList).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSecond(gameDrills);
+      await secondCall;
+    });
+    expect(within(openings).queryByRole("alert")).toBeNull();
+    expect(await screen.findByRole("region", { name: "Black openings" })).toBeTruthy();
   });
 
   it("offers the colours no row of the whole drill, only the families", async () => {

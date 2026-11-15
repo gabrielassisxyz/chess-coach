@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TrainingActivity } from "@chess-coach/shared";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import { Practice } from "../src/screens/Practice.js";
@@ -26,6 +26,8 @@ const hubProps = {
   fetchProgress: async () => progressOf(),
   fetchMotifs: async () => motifCounts,
   fetchRepertoires: listed,
+  fetchRepertoireList: async () => ({ repertoires: repertoireList, met: [] }),
+  fetchOpeningDrills: async () => ({ white: [], black: [] }),
 };
 
 const seen: { fen?: string; drawable?: { autoShapes?: unknown[] } }[] = [];
@@ -167,11 +169,59 @@ describe("the openings menu on the hub", () => {
     const second = render(
       <Practice server={serverApi(null)} {...hubProps} fetchRepertoires={failing} />,
     );
-    await screen.findByText(/The openings could not be loaded/);
+    const failedCard = await screen.findByRole("region", { name: "White openings" });
+    const alert = await within(failedCard).findByRole("alert");
+    expect(alert.className).toContain("practice__failure");
+    expect(alert.textContent).toBe("The openings could not be loaded.");
+    expect(within(failedCard).getByRole("button", { name: "Try again" })).toBeTruthy();
     second.unmount();
 
     render(<Practice server={serverApi(null)} {...hubProps} fetchRepertoires={async () => []} />);
     await screen.findByText("No opening is stored yet. Generate the Italian repertoire first.");
+  });
+
+  it("retries only repertoires when Try again is pressed on White openings", async () => {
+    let resolveSecond: (value: typeof repertoireList) => void = () => undefined;
+    const secondCall = new Promise<typeof repertoireList>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchRepertoires = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("down"))
+      .mockReturnValueOnce(secondCall);
+    const fetchProgress = vi.fn(hubProps.fetchProgress);
+    const fetchMotifs = vi.fn(hubProps.fetchMotifs);
+    const fetchOpeningDrills = vi.fn(hubProps.fetchOpeningDrills);
+
+    render(
+      <Practice
+        server={serverApi(null)}
+        fetchProgress={fetchProgress}
+        fetchMotifs={fetchMotifs}
+        fetchRepertoires={fetchRepertoires}
+        fetchRepertoireList={hubProps.fetchRepertoireList}
+        fetchOpeningDrills={fetchOpeningDrills}
+      />,
+    );
+
+    const card = await screen.findByRole("region", { name: "White openings" });
+    const alert = await within(card).findByRole("alert");
+    expect(alert.textContent).toBe("The openings could not be loaded.");
+
+    fireEvent.click(within(card).getByRole("button", { name: "Try again" }));
+    expect(within(card).getByRole("status").textContent).toBe("Loading openings.");
+    expect(fetchRepertoires).toHaveBeenCalledTimes(2);
+    expect(fetchProgress).toHaveBeenCalledTimes(1);
+    expect(fetchMotifs).toHaveBeenCalledTimes(1);
+    expect(fetchOpeningDrills).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSecond(repertoireList);
+      await secondCall;
+    });
+    const loadedCard = await whiteOpenings();
+    expect(within(loadedCard).getByRole("heading", { name: "Italian Game" })).toBeTruthy();
+    expect(within(loadedCard).queryByRole("alert")).toBeNull();
   });
 
   it("groups each side under its own heading", async () => {
