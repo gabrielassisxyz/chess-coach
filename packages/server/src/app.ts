@@ -5,6 +5,7 @@ import type { Database } from "./db/open.js";
 import { registerCardRoutes } from "./http/cards.js";
 import { registerClientLogRoute } from "./http/client-log.js";
 import { type ConnectionRoutesOptions, registerConnectionRoutes } from "./http/connections.js";
+import { registerFoundPositionRoutes } from "./http/found-positions.js";
 import { registerGameRoutes } from "./http/games.js";
 import { type ImportRoutesOptions, registerImportRoutes } from "./http/import.js";
 import {
@@ -109,6 +110,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       ...(options.listAddableOpenings ? { list: options.listAddableOpenings } : {}),
     });
     registerCardRoutes(app, options.db);
+    registerFoundPositionRoutes(app, options.db);
     registerGameRoutes(app, options.db, options.openingNames ?? NO_OPENING_NAMES);
     registerOpeningDrillRoutes(app, options.db);
     registerPlayedOpeningsRoute(app, options.db, {
