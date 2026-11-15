@@ -19,6 +19,7 @@ import {
 import {
   type AddOpening,
   type AddVariation,
+  type FetchAddableOpenings,
   type FetchCoverage,
   type FetchRepertoireList,
   fetchRepertoireListFromServer,
@@ -51,6 +52,8 @@ export interface PracticeHubProps {
   addOpening?: AddOpening | undefined;
   // What builds a variation at a branch point; the server's by default.
   addVariation?: AddVariation | undefined;
+  // Where the list of every opening that can be added comes from; the server's by default.
+  fetchAddableOpenings?: FetchAddableOpenings | undefined;
   // Where a variation's coverage comes from when it is opened; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
   // Where ranked puzzle theme stats come from when a Stats theme page opens; the server's by default.
@@ -130,6 +133,7 @@ function OpeningsPage({
         fetchList={fetchList}
         addOpening={hub.addOpening}
         addVariation={hub.addVariation}
+        fetchAddable={hub.fetchAddableOpenings}
         fetchCoverage={hub.fetchCoverage}
       />
       {failure}

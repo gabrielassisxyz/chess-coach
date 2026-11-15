@@ -168,6 +168,23 @@ sentence in the error tone with Try again, and an empty colour a sentence in its
 the five cells wrap to two columns, the head's buttons go under the title, every control is 44 px
 and nothing scrolls sideways. M1 and M2 still find no matches.
 
+The Practice column was re-checked on rows 6, 8, 9, 10, 14, 15, 17 and 19, and the Phone column on
+row 19, for the panel that Add an opening opens, against its markup, `practice-openings.css` and
+`test/practice-add-opening.test.tsx`; the cells were not measured in a browser. The panel is the
+8 px surface of the page's column with 16 px and 20 px of padding and its parts 10 px apart, and
+nothing inside it is a card. Its title is 16 px and 500; its two tabs are one inset track 30 px high
+with 13 px text, the chosen one raised on the border tone, a tablist that the arrow, Home and End
+keys move through, and Close is an outlined 30 px button. Both lists stay mounted and the one not
+chosen is hidden, so a change of tab loses neither the search nor the list read. The search field is
+36 px high with a magnifier and takes the one focus ring. A row is a grid of the name, a column for
+the pill or the count of games, and Add, 12 px apart, with 7 px of padding and a hairline under it;
+the name is 14 px with its moves beside it in 12 px mono, the pill is 11 px in the secondary text on
+`--surface-2` and takes the pill radius, and the heading over each path is 12 px in the secondary
+text. Loading is one quiet sentence, a failed read one sentence in the error tone with Try again in
+the first tab while the second still works, and an empty list a sentence in the place of its rows.
+Under 900 px the tabs and Close go under the title, every control is 44 px, and a row keeps its
+name, pill and Add on one line with the moves under the name. M1 and M2 still find no matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph
@@ -178,7 +195,8 @@ and nothing scrolls sideways. M1 and M2 still find no matches.
 - **8, Practice.** The section title inside a hub page ("Puzzle themes" on the Overview, "White"
   and "Black" on Openings) is 20 px, the redesign's step between the 18 px heading and the 28 px
   title, which has no token yet; a variation's name on Openings is 15 px, between the 14 px body and
-  the 18 px heading.
+  the 18 px heading, and the tabs of the panel that adds an opening are 13 px and its pill 11 px,
+  between the 12 px label and the 14 px body.
 - **10, Play.** The move list and the table rows use `2px`, `6px`, `24px`, `28px` and
   `32px` values (row height, dot size, gaps) that are not on the 4-based space scale; they
   size a data cell, not layout spacing.
@@ -187,8 +205,9 @@ and nothing scrolls sideways. M1 and M2 still find no matches.
   and below a tile's content, none of them on the 4-based scale; they size a row of the
   navigation or a tile, not the page's spacing, which stays on the scale. The Openings page keeps
   `20px` of padding at the sides of a card and of its panel, `28px` between its colours, `24px`
-  between the rows of an open card and `10px` between the parts of its panel, the approved screens'
-  values.
+  between the rows of an open card and `10px` between the parts of its panel, whose rows keep `7px`
+  of padding and `12px` between their columns and whose search field is `36px` high, the approved
+  screens' values.
 - **17, Games.** The game list rows are plain text buttons: pointer, hover and the focus ring
   mark them, but nothing says "button" before the pointer arrives.
 - **15, Practice.** Loading and error states match the rule (quiet sentence, or one sentence in
@@ -245,9 +264,10 @@ and nothing scrolls sideways. M1 and M2 still find no matches.
   are a title and a sentence saying the page is not built yet. The older cards are mounted on their
   pages unchanged.
 - **The Openings page** keeps the machinery that adds an opening or a variation, and its cells hold
-  as they did in the menu it replaced. The list of openings the student's games met sits in the
-  panel that Add an opening opens: a block of rows of a name, a mono line and a count, and an Add
-  button that is 44 px under 900 px. The book's other White moves open from + Add a variation under
+  as they did in the menu it replaced. The panel that Add an opening opens has two tabs: every
+  opening Black can leave the path with, behind a search field and under a heading for each path,
+  and the openings the student's games met; each row is a name, a mono line, a pill or a count and
+  an Add button that is 44 px under 900 px, or the words In your openings in its place. The book's other White moves open from + Add a variation under
   a card's head, each position as a heading line with its mono line and then rows built like the met
   openings', a held move saying where it is in place of the button. The style points control sits in
   both panels, a quiet toggle with a summary and, opened, a row per measure with a stepper. The
