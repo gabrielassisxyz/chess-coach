@@ -329,7 +329,8 @@ describe("queue materialization", () => {
   });
 
   describe("an unthemed queue that leans on the improvement areas", () => {
-    const HISTORY_AT = new Date(T0.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const daysBeforeT0 = (days: number): string =>
+      new Date(T0.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
     let historyCount = 0;
 
     // A rated puzzle at the student's rating, served under each theme it carries: `puzzles.themes`
@@ -356,7 +357,7 @@ describe("queue materialization", () => {
 
     // Attempts on puzzles of the student's own that no draw can serve (popularity 0): they put a
     // theme on the statistics without adding to any pool.
-    function addHistory(theme: string, played: number, firstTry: number): void {
+    function addHistory(theme: string, played: number, firstTry: number, daysAgo = 1): void {
       for (let i = 0; i < played; i++) {
         const id = `history-${historyCount++}`;
         const right = i < firstTry;
@@ -364,7 +365,7 @@ describe("queue materialization", () => {
         db.prepare("UPDATE puzzles SET themes = ?, popularity = 0 WHERE id = ?").run(theme, id);
         recordPuzzleAttempt(db, {
           puzzleId: id,
-          attemptedAt: HISTORY_AT,
+          attemptedAt: daysBeforeT0(daysAgo),
           solved: right,
           answered: [],
           failedPly: right ? null : 0,
@@ -377,10 +378,12 @@ describe("queue materialization", () => {
 
     // Each theme missed 8 times in 8, the fewest a theme needs to be ranked, against a theme solved
     // first try every time, so the overall figure they are measured against sits well above them.
-    function listAsWeak(...themes: string[]): void {
-      for (const theme of themes) addHistory(theme, 8, 0);
-      addHistory("hangingPiece", 16, 16);
+    function listAsWeakDaysAgo(daysAgo: number, ...themes: string[]): void {
+      for (const theme of themes) addHistory(theme, 8, 0, daysAgo);
+      addHistory("hangingPiece", 16, 16, daysAgo);
     }
+
+    const listAsWeak = (...themes: string[]): void => listAsWeakDaysAgo(1, ...themes);
 
     const improvementAreas = (): string[] =>
       [...computeThemeStats(db, "30", fixedClock).improvement_areas].sort();
@@ -429,7 +432,7 @@ describe("queue materialization", () => {
       expect(perTheme(second)).toEqual([1, 2]);
     });
 
-    it("takes one puzzle from each of three listed themes, and all three from a single one", async () => {
+    it("takes one puzzle from each of three listed themes", async () => {
       for (const theme of ["deflection", "pin", "skewer"]) addPool(theme, 12, [theme, "opening"]);
       addPool("plain", 40);
       listAsWeak("deflection", "pin", "skewer");
@@ -473,6 +476,21 @@ describe("queue materialization", () => {
       await passTheTenth(activity, start);
       expect(storedIds()).toHaveLength(20);
       expect(inPool(storedIds(), "plain")).toHaveLength(20);
+    });
+
+    it("reads the attempts of the last 30 days: older ones list nothing", async () => {
+      addPool("pin", 12, ["pin", "opening"]);
+      addPool("plain", 40);
+      listAsWeakDaysAgo(40, "pin");
+      expect(improvementAreas()).toEqual([]);
+      const { activity } = withSeed(1);
+      await activity.startTraining({ mode: "puzzles" });
+      expect(inPool(storedIds(), "plain")).toHaveLength(10);
+      await activity.endTraining();
+      listAsWeakDaysAgo(20, "pin");
+      expect(improvementAreas()).toEqual(["pin"]);
+      await activity.startTraining({ mode: "puzzles" });
+      expect(inPool(storedIds(), "pin")).toHaveLength(3);
     });
 
     it("builds a batch exactly as before when nothing is listed", async () => {
