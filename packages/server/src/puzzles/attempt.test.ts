@@ -128,3 +128,49 @@ describe("attempt state machine", () => {
     expect(giveUp(solved)).toBe(solved);
   });
 });
+
+describe("a position that accepts several moves", () => {
+  const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+  const AFTER_C5 = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
+
+  it("solves first try on an accepted move that is not the stored one, and keeps the move played", () => {
+    const solution = ["e7e5"];
+    const out = accepted(tryMove(startAttempt(AFTER_E4, solution, ["e7e5", "c7c5"]), "c7c5"));
+    expect(out.correct).toBe(true);
+    expect(out.reply).toBeNull();
+    expect(out.state).toMatchObject({
+      status: "solved",
+      fen: AFTER_C5,
+      answered: ["c7c5"],
+      wrongTries: 0,
+    });
+    expect(out.state.solution).toEqual(["c7c5"]);
+    expect(solution).toEqual(["e7e5"]);
+    expect(solvedFirstTry(out.state)).toBe(true);
+  });
+
+  it("solves on the stored move too", () => {
+    const out = accepted(tryMove(startAttempt(AFTER_E4, ["e7e5"], ["e7e5", "c7c5"]), "e7e5"));
+    expect(out.state).toMatchObject({ status: "solved", solution: ["e7e5"] });
+  });
+
+  it("keeps the position open on a legal move outside the accepted ones", () => {
+    const out = accepted(tryMove(startAttempt(AFTER_E4, ["e7e5"], ["e7e5", "c7c5"]), "d7d5"));
+    expect(out.correct).toBe(false);
+    expect(out.state).toMatchObject({ status: "in_progress", cursor: 0, wrongTries: 1 });
+    expect(out.state.fen).toBe(AFTER_E4);
+  });
+
+  it("compares with the stored move alone when no accepted moves are given", () => {
+    const out = accepted(tryMove(startAttempt(AFTER_E4, ["e7e5"]), "c7c5"));
+    expect(out.correct).toBe(false);
+    expect(out.state).toMatchObject({ status: "in_progress", wrongTries: 1 });
+  });
+
+  it("leaves a solution of several moves to its own moves", () => {
+    const start = startAttempt(ROOK_LIFT, ["a1a7", "e8d8", "a7a8"], ["a1a7", "a1a6"]);
+    const out = accepted(tryMove(start, "a1a6"));
+    expect(out.correct).toBe(false);
+    expect(out.state).toMatchObject({ status: "in_progress", cursor: 0, wrongTries: 1 });
+  });
+});

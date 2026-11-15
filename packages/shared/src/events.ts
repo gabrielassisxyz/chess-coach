@@ -8,6 +8,7 @@ import {
   TrainingStatusSchema,
   TrainingSummarySchema,
 } from "./activity.js";
+import { FoundPositionPhaseSchema, MAX_FOUND_POSITION_ID_LENGTH } from "./found-positions.js";
 import { MAX_OPENING_FAMILY_LENGTH } from "./openings.js";
 import { RepertoireLevelSchema, RepertoireScopeSchema } from "./repertoires.js";
 
@@ -312,9 +313,12 @@ export const UndoCommandSchema = z.object({
 // group or side; without one it drills that variation alone. The other modes ignore all three. An
 // opening drill may name one opening family of its colour, or UNNAMED_OPENING for the positions with
 // no name; without one it drills every position of the colour. The other modes ignore `opening`.
-// A queue has no size to choose: the object is strict so that a client still sending the retired
-// `size` is refused instead of being served a queue it did not ask for.
-export const StartTrainingCommandSchema = z.strictObject({
+// A drill of the positions from the student's games (`found`) cannot start without a scope, and
+// `color`, `phase` and `position`, the id the From my games list gives, narrow it; the other modes
+// ignore `phase` and `position`. A queue has no size to choose: the object is strict so that a
+// client still sending the retired `size` is refused instead of being served a queue it did not ask
+// for.
+const StartTrainingFieldsSchema = z.strictObject({
   type: z.literal("start_training"),
   command_id: commandId,
   mode: TrainingModeSchema,
@@ -324,7 +328,21 @@ export const StartTrainingCommandSchema = z.strictObject({
   repertoire_id: z.number().int().positive().optional(),
   scope: RepertoireScopeSchema.optional(),
   level: RepertoireLevelSchema.optional(),
+  phase: FoundPositionPhaseSchema.optional(),
+  position: z.string().min(1).max(MAX_FOUND_POSITION_ID_LENGTH).optional(),
 });
+
+export const StartTrainingCommandSchema = StartTrainingFieldsSchema.superRefine(
+  (command, context) => {
+    if (command.mode === "found" && command.scope === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["scope"],
+        message: "a drill of the positions from your games needs a scope",
+      });
+    }
+  },
+);
 
 const uci = z.string().regex(/^[a-h][1-8][a-h][1-8][qrbn]?$/);
 

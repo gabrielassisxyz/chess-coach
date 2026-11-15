@@ -108,6 +108,7 @@ const TRAINING_LABEL: Record<TrainingMode, string> = {
   puzzles: "Puzzles",
   openings: "Aberturas",
   repertoire: "Repertório",
+  found: "From my games",
 };
 const GAME_LABEL = "Partida";
 
@@ -340,6 +341,8 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
           ...(command.repertoire_id === undefined ? {} : { repertoireId: command.repertoire_id }),
           ...(command.scope === undefined ? {} : { scope: command.scope }),
           ...(command.level === undefined ? {} : { level: command.level }),
+          ...(command.phase === undefined ? {} : { phase: command.phase }),
+          ...(command.position === undefined ? {} : { position: command.position }),
         });
         divide("practice", TRAINING_LABEL[command.mode]);
         return;

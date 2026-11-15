@@ -9,9 +9,11 @@ import { START_FEN } from "../../test/fixture-game.js";
 import type { Clock } from "../clock.js";
 import { type CoachNotification, renderNotifications } from "../coach/notify.js";
 import { appendChatMessage, createCoachSession, listChatTail } from "../db/chat.js";
+import { insertFoundPosition } from "../db/found-positions.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { listPuzzles, recordPuzzleAttempt } from "../db/puzzles.js";
 import { getCard, insertCard, updateSchedule } from "../db/srs.js";
+import { endRunsLeftOpenAtStart } from "../db/training.js";
 import { GameService } from "../game/service.js";
 import { type Log, RecordingLog, silentLog } from "../log.js";
 import { computeThemeStats } from "../progress/theme-stats.js";
@@ -2591,5 +2593,426 @@ describe("a puzzle solved first try", () => {
     await activity.startTraining({ mode: "srs" });
     await activity.trainingTry("d2d4");
     expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
+  });
+});
+
+describe("a drill of the positions from the student's games", () => {
+  const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+  const AFTER_C5 = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
+  const HOUR_MS = 3_600_000;
+  const hoursFromT0 = (hours: number): string =>
+    new Date(T0.getTime() + hours * HOUR_MS).toISOString();
+
+  interface FoundFixture {
+    color?: "white" | "black";
+    phase?: "opening" | "middlegame" | "endgame";
+    fromRepeat?: boolean;
+    listed?: boolean;
+    // Left out after a run had listed it, so its puzzle row stays.
+    keptPuzzle?: boolean;
+    accepted?: string[];
+    foundAt?: string;
+  }
+
+  // A position as the generator stores it: its row and, once listed, its one-move puzzle.
+  function addFound(id: string, fixture: FoundFixture = {}): void {
+    const color = fixture.color ?? "black";
+    const phase = fixture.phase ?? "opening";
+    const fen = color === "black" ? AFTER_E4 : START_FEN;
+    const accepted = fixture.accepted ?? [color === "black" ? "e7e5" : "e2e4"];
+    insertFoundPosition(db, {
+      id,
+      fen,
+      color,
+      phase,
+      fromMistake: !fixture.fromRepeat,
+      fromRepeat: fixture.fromRepeat ?? false,
+      fromDeparture: false,
+      listed: fixture.listed ?? true,
+      acceptedUci: accepted,
+      reachedGames: 1,
+      bestGames: 0,
+      lastReachedAt: T0.toISOString(),
+      gameId: 1,
+      ply: 2,
+      firstFoundAt: fixture.foundAt ?? hoursFromT0(-100),
+    });
+    if (fixture.listed === false && !fixture.keptPuzzle) return;
+    addPuzzle(id, `${phase}-${color}`, fen, [accepted[0] as string]);
+  }
+
+  // A card two right first tries left, due again at `next`.
+  function addFoundCard(id: string, next: string): void {
+    db.prepare(
+      `INSERT INTO found_cards (position_id, interval_hours, ease_factor, repetitions,
+         next_review_at, introduced_at, reviews, last_reviewed_at)
+       VALUES (?, 24, 2.5, 2, ?, ?, 2, ?)`,
+    ).run(id, next, hoursFromT0(-48), hoursFromT0(-24));
+  }
+
+  const foundCard = (id: string): unknown =>
+    db
+      .prepare(
+        `SELECT interval_hours, ease_factor, repetitions, next_review_at, reviews, last_reviewed_at
+         FROM found_cards WHERE position_id = ?`,
+      )
+      .get(id);
+
+  // The queue of the open run, in the order it serves it.
+  const servedIds = (): string[] => (openRun()?.items ?? []).map((item) => String(item.id));
+
+  const runCount = (): number =>
+    (db.prepare("SELECT COUNT(*) AS n FROM training_runs").get() as { n: number }).n;
+
+  // Three due cards, one of them due this very moment, two cards due tomorrow and twelve new
+  // positions, each group stored out of the order it is served in.
+  function fillSeventeen(): string[] {
+    for (const [id, hours] of [
+      ["due-x", 0],
+      ["due-y", -5],
+      ["due-z", -2],
+      ["later-x", 26],
+      ["later-y", 24],
+    ] as const) {
+      addFound(id);
+      addFoundCard(id, hoursFromT0(hours));
+    }
+    const newestFirst: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const id = `new-${String(i).padStart(2, "0")}`;
+      addFound(id, { foundAt: hoursFromT0(-100 + i) });
+      newestFirst.unshift(id);
+    }
+    return newestFirst;
+  }
+
+  it("serves the due cards by review time and then the newest positions, ten in recommended", async () => {
+    const newestFirst = fillSeventeen();
+    const { activity } = setup();
+    const state = training(await activity.startTraining({ mode: "found", scope: "recommended" }));
+    expect(state).toMatchObject({
+      mode: "found",
+      item: { kind: "puzzle", puzzle_id: "due-y", queue_length: 10 },
+    });
+    expect(servedIds()).toEqual(["due-y", "due-z", "due-x", ...newestFirst.slice(0, 7)]);
+  });
+
+  it("serves only the due cards in due, and every position in all, due, new, then the rest", async () => {
+    const newestFirst = fillSeventeen();
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "due" });
+    expect(servedIds()).toEqual(["due-y", "due-z", "due-x"]);
+    const all = training(await activity.startTraining({ mode: "found", scope: "all" }));
+    expect(all.item.queue_length).toBe(17);
+    expect(servedIds()).toEqual(["due-y", "due-z", "due-x", ...newestFirst, "later-y", "later-x"]);
+  });
+
+  it("narrows every scope to the phase and the colour asked for", async () => {
+    addFound("end-due", { phase: "endgame" });
+    addFoundCard("end-due", hoursFromT0(-3));
+    addFound("end-rep", { phase: "endgame", fromRepeat: true });
+    addFound("end-later", { phase: "endgame" });
+    addFoundCard("end-later", hoursFromT0(24));
+    addFound("end-white", { phase: "endgame", color: "white" });
+    addFoundCard("end-white", hoursFromT0(-4));
+    addFound("mid-due", { phase: "middlegame" });
+    addFoundCard("mid-due", hoursFromT0(-6));
+    addFound("open-new", { phase: "opening" });
+    const { activity } = setup();
+    const served = async (input: Parameters<typeof activity.startTraining>[0]) => {
+      await activity.startTraining(input);
+      return servedIds();
+    };
+
+    expect(await served({ mode: "found", scope: "recommended", phase: "endgame" })).toEqual([
+      "end-white",
+      "end-due",
+      "end-rep",
+    ]);
+    expect(await served({ mode: "found", scope: "due", phase: "endgame" })).toEqual([
+      "end-white",
+      "end-due",
+    ]);
+    expect(await served({ mode: "found", scope: "all", phase: "endgame" })).toEqual([
+      "end-white",
+      "end-due",
+      "end-rep",
+      "end-later",
+    ]);
+    expect(await served({ mode: "found", scope: "all", phase: "endgame", color: "black" })).toEqual(
+      ["end-due", "end-rep", "end-later"],
+    );
+    expect(await served({ mode: "found", scope: "all", color: "white" })).toEqual(["end-white"]);
+  });
+
+  it("serves one position alone in all, due or not, and rates it by its first try", async () => {
+    addFound("one");
+    addFoundCard("one", hoursFromT0(24));
+    addFound("other");
+    addFoundCard("other", hoursFromT0(-1));
+    const { activity } = setup();
+    const state = training(
+      await activity.startTraining({ mode: "found", scope: "all", position: "one" }),
+    );
+    expect(state.item).toMatchObject({ puzzle_id: "one", queue_length: 1 });
+    expect(servedIds()).toEqual(["one"]);
+    await activity.trainingTry("d7d5");
+    expect(foundCard("one")).toMatchObject({
+      interval_hours: 4,
+      repetitions: 0,
+      next_review_at: hoursFromT0(4),
+      reviews: 3,
+    });
+  });
+
+  it("narrows the scope to the one position, so recommended refuses one that is not due", async () => {
+    addFound("one");
+    addFoundCard("one", hoursFromT0(24));
+    addFound("other");
+    const { activity } = setup();
+    expect(
+      await code(activity.startTraining({ mode: "found", scope: "recommended", position: "one" })),
+    ).toBe("empty_queue");
+    expect(runCount()).toBe(0);
+  });
+
+  it.each([
+    ["an id nothing has", "own:missing"],
+    ["the id of a position left out of the list", "left-out"],
+  ])("refuses %s with empty_queue and writes no run", async (_name, position) => {
+    addFound("listed");
+    addFound("left-out", { listed: false, keptPuzzle: true });
+    const { activity } = setup();
+    expect(await code(activity.startTraining({ mode: "found", scope: "all", position }))).toBe(
+      "empty_queue",
+    );
+    expect(activity.current()).toBeNull();
+    expect(runCount()).toBe(0);
+  });
+
+  it("never serves a position left out of the list, in any scope", async () => {
+    addFound("listed");
+    addFound("left-out", { listed: false, keptPuzzle: true, foundAt: hoursFromT0(-1) });
+    addFound("never-listed", { listed: false, foundAt: hoursFromT0(-2) });
+    const { activity } = setup();
+    for (const scope of ["recommended", "all"] as const) {
+      await activity.startTraining({ mode: "found", scope });
+      expect(servedIds()).toEqual(["listed"]);
+    }
+  });
+
+  it("refuses recommended and due with no due card and no new position, and writes no run", async () => {
+    addFound("later");
+    addFoundCard("later", hoursFromT0(24));
+    addFound("left-out", { listed: false, keptPuzzle: true });
+    const { activity } = setup();
+    for (const scope of ["recommended", "due"] as const) {
+      expect(await code(activity.startTraining({ mode: "found", scope }))).toBe("empty_queue");
+    }
+    expect(activity.current()).toBeNull();
+    expect(runCount()).toBe(0);
+    await activity.startTraining({ mode: "found", scope: "all" });
+    expect(servedIds()).toEqual(["later"]);
+  });
+
+  it("refuses a drill with no scope", async () => {
+    addFound("one");
+    const { activity } = setup();
+    expect(await code(activity.startTraining({ mode: "found" }))).toBe("empty_queue");
+    expect(runCount()).toBe(0);
+  });
+
+  it("takes any accepted move as right and leaves it on the board", async () => {
+    addFound("two-good", { accepted: ["e7e5", "c7c5"] });
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "all" });
+    const solved = training(await activity.trainingTry("c7c5"));
+    expect(solved).toMatchObject({
+      status: "solved",
+      fen: AFTER_C5,
+      last_move: { from: "c7", to: "c5" },
+      last_try: { uci: "c7c5", correct: true },
+      moves: [{ ply: 0, uci: "c7c5", san: "c5", by: "student" }],
+      tries: 0,
+    });
+    expect(db.prepare("SELECT solved, first_try FROM puzzle_attempts").get()).toEqual({
+      solved: 1,
+      first_try: 1,
+    });
+  });
+
+  it("keeps a move outside the accepted ones a wrong try", async () => {
+    addFound("two-good", { accepted: ["e7e5", "c7c5"] });
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "all" });
+    const missed = training(await activity.trainingTry("d7d5"));
+    expect(missed).toMatchObject({
+      status: "prompt",
+      fen: AFTER_E4,
+      tries: 1,
+      last_try: { uci: "d7d5", correct: false },
+    });
+  });
+
+  it("keeps the same puzzle to its one solution move in mode puzzles", async () => {
+    addFound("two-good", { accepted: ["e7e5", "c7c5"] });
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "opening-black" });
+    const missed = training(await activity.trainingTry("c7c5"));
+    expect(missed).toMatchObject({ mode: "puzzles", status: "prompt", tries: 1 });
+    expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
+  });
+
+  it("rates a first-try solve with quality 4: a new position gets its card, a due one moves up", async () => {
+    addFound("fresh");
+    addFound("due");
+    addFoundCard("due", hoursFromT0(-1));
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "all", position: "fresh" });
+    await activity.trainingTry("e7e5");
+    expect(foundCard("fresh")).toEqual({
+      interval_hours: 4,
+      ease_factor: 2.5,
+      repetitions: 1,
+      next_review_at: hoursFromT0(4),
+      reviews: 1,
+      last_reviewed_at: T0.toISOString(),
+    });
+    await activity.startTraining({ mode: "found", scope: "all", position: "due" });
+    await activity.trainingTry("e7e5");
+    expect(foundCard("due")).toMatchObject({
+      interval_hours: 72,
+      repetitions: 3,
+      next_review_at: hoursFromT0(72),
+      reviews: 3,
+    });
+  });
+
+  it("rates a wrong first try with quality 2, back in 4 hours, and no later try at all", async () => {
+    addFound("due");
+    addFoundCard("due", hoursFromT0(-1));
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "all" });
+    await activity.trainingTry("d7d5");
+    const missed = foundCard("due");
+    expect(missed).toMatchObject({
+      interval_hours: 4,
+      repetitions: 0,
+      next_review_at: hoursFromT0(4),
+      reviews: 3,
+    });
+    // A second wrong try would lower the ease again and count a review if it rated the card.
+    await activity.trainingTry("g8f6");
+    expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
+    expect(foundCard("due")).toEqual(missed);
+  });
+
+  it.each([
+    ["a hint", "hint"],
+    ["a shown solution", "give_up"],
+  ] as const)("rates %s before any try with quality 2, and nothing after it", async (_n, how) => {
+    addFound("fresh");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "all" });
+    if (how === "hint") await activity.trainingHint();
+    else await activity.trainingShowSolution();
+    const rated = foundCard("fresh");
+    expect(rated).toMatchObject({
+      interval_hours: 4,
+      repetitions: 0,
+      next_review_at: hoursFromT0(4),
+      reviews: 1,
+    });
+    if (how === "hint") {
+      await activity.trainingTry("d7d5");
+      expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
+      expect(db.prepare("SELECT first_try FROM puzzle_attempts").get()).toEqual({ first_try: 0 });
+    }
+    expect(foundCard("fresh")).toEqual(rated);
+  });
+
+  it("keeps the schedule of a card not yet due on a right first try", async () => {
+    addFound("early");
+    addFoundCard("early", hoursFromT0(24));
+    const { activity } = setup();
+    const before = foundCard("early");
+    await activity.startTraining({ mode: "found", scope: "all" });
+    expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
+    expect(foundCard("early")).toEqual(before);
+    expect(foundCard("early")).toMatchObject({ next_review_at: hoursFromT0(24) });
+  });
+
+  it("writes the attempt of a miss as for any puzzle, with no review card and no rating move", async () => {
+    addFound("missed");
+    addFound("given-up");
+    setPuzzleRating(db, 1350, T0.toISOString());
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "all", position: "missed" });
+    await activity.trainingTry("d7d5");
+    const solved = training(await activity.trainingTry("e7e5"));
+    expect(solved).toMatchObject({ status: "solved", rating_change: null, student_rating: 1350 });
+    await activity.startTraining({ mode: "found", scope: "all", position: "given-up" });
+    await activity.trainingShowSolution();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM srs_cards").get()).toEqual({ n: 0 });
+    expect(
+      db
+        .prepare(
+          "SELECT puzzle_id, solved, first_try, tries, gave_up FROM puzzle_attempts ORDER BY id",
+        )
+        .all(),
+    ).toEqual([
+      { puzzle_id: "missed", solved: 1, first_try: 0, tries: 1, gave_up: 0 },
+      { puzzle_id: "given-up", solved: 0, first_try: 0, tries: 0, gave_up: 1 },
+    ]);
+    expect(currentPuzzleRating(db)).toBe(1350);
+  });
+
+  it("still turns the same puzzle missed in mode puzzles into a review card", async () => {
+    addFound("missed");
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "opening-black" });
+    await activity.trainingTry("d7d5");
+    await activity.trainingTry("e7e5");
+    expect(db.prepare("SELECT puzzle_id FROM srs_cards").all()).toEqual([{ puzzle_id: "missed" }]);
+    expect(foundCard("missed")).toBeUndefined();
+  });
+
+  it("keeps the run in training_runs and ends it as left when the student leaves the board", async () => {
+    addFound("a");
+    addFound("b", { foundAt: hoursFromT0(-1) });
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "recommended" });
+    const stored = () =>
+      db.prepare("SELECT mode, size, items_json, ended_reason FROM training_runs").get();
+    expect(stored()).toEqual({
+      mode: "found",
+      size: 2,
+      items_json: JSON.stringify([
+        { kind: "puzzle", id: "b" },
+        { kind: "puzzle", id: "a" },
+      ]),
+      ended_reason: null,
+    });
+    await activity.newGame({ color: "white", elo: 1200 });
+    expect(stored()).toMatchObject({ mode: "found", ended_reason: "left" });
+  });
+
+  it("ends a drill of the positions from games as left when the server starts", async () => {
+    addFound("a");
+    addFound("b");
+    const first = setup();
+    await first.activity.startTraining({ mode: "found", scope: "all" });
+    await first.activity.trainingTry("e7e5");
+    expect(openRun()).not.toBeNull();
+
+    endRunsLeftOpenAtStart(db, T0.toISOString());
+    const second = setup();
+    expect(second.activity.current()).toBeNull();
+    expect(db.prepare("SELECT mode, ended_reason FROM training_runs").get()).toEqual({
+      mode: "found",
+      ended_reason: "left",
+    });
+    expect(foundCard("a")).toMatchObject({ reviews: 1 });
+    expect(foundCard("b")).toBeUndefined();
   });
 });
