@@ -454,15 +454,20 @@ describe("the delete:repertoire-unit command", () => {
     clock: { now: () => now },
   });
 
+  // `opened` counts the times the command asked for the database.
   async function runCommand(...argv: string[]) {
     const out: string[] = [];
     const err: string[] = [];
+    let opened = 0;
     const status = await runRepertoireUnitDeleteCommand(argv, {
-      review: reviewDeps(),
+      open: () => {
+        opened += 1;
+        return reviewDeps();
+      },
       out: (line) => out.push(line),
       err: (line) => err.push(line),
     });
-    return { status, out, err };
+    return { status, out, err, opened };
   }
 
   // The unit as the hub's Add left it, with two games reviewed against it: the reviews gave the
@@ -513,6 +518,7 @@ describe("the delete:repertoire-unit command", () => {
         `game ${games.departed}: not_reached against repertoire ${italian} (Italian Game: Giuoco Piano (4.c3))`,
       ],
       err: [],
+      opened: 1,
     });
     for (const gameId of [games.inBook, games.departed]) {
       expect(reviewOf(gameId)).toMatchObject({
@@ -652,6 +658,44 @@ describe("the delete:repertoire-unit command", () => {
     expect(missing.err[0]).toBe("--group is required");
     expect(unknown.err[0]).toContain("--force");
     expect(unknown.out).toEqual([]);
+    expect([missing.opened, unknown.opened]).toEqual([0, 0]);
     expect(tablesSnapshot()).toEqual(before);
+  });
+
+  it("refuses a database whose migrations are not this checkout's and writes nothing", async () => {
+    await seedReviewedMcConnell();
+    const migrations = () => db.prepare("SELECT * FROM schema_migrations ORDER BY name").all();
+    const { name: newest } = db
+      .prepare("SELECT name FROM schema_migrations ORDER BY name DESC LIMIT 1")
+      .get() as { name: string };
+    db.prepare("DELETE FROM schema_migrations WHERE name = ?").run(newest);
+    const behind = { tables: tablesSnapshot(), migrations: migrations() };
+
+    const lacking = await runCommand("--group", MCCONNELL_GROUP, "--dry-run");
+
+    expect(lacking.status).toBe(1);
+    expect(lacking.out).toEqual([]);
+    expect(lacking.err).toEqual([
+      `refused: the database lacks ${newest}: start the server from this checkout first, it migrates at boot`,
+    ]);
+    expect({ tables: tablesSnapshot(), migrations: migrations() }).toEqual(behind);
+
+    db.prepare("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)").run(
+      newest,
+      "2026-11-01T00:00:00.000Z",
+    );
+    db.prepare("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)").run(
+      "999_from_another_checkout.sql",
+      "2026-11-01T00:00:00.000Z",
+    );
+    const ahead = tablesSnapshot();
+
+    const holding = await runCommand("--group", MCCONNELL_GROUP);
+
+    expect(holding.status).toBe(1);
+    expect(holding.err).toEqual([
+      "refused: the database holds 999_from_another_checkout.sql, which this checkout lacks: run the command from the checkout the server runs",
+    ]);
+    expect(tablesSnapshot()).toEqual(ahead);
   });
 });

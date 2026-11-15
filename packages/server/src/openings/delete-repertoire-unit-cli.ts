@@ -1,9 +1,11 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import BetterSqlite3 from "better-sqlite3";
 import { systemClock } from "../clock.js";
 import { resolveLichessToken } from "../db/connections.js";
-import { type Database, openDatabase } from "../db/open.js";
+import { defaultMigrationsDir, listMigrations } from "../db/migrate.js";
+import type { Database } from "../db/open.js";
 import { findDrillRepertoire, listDrillRepertoires } from "../db/repertoire-cards.js";
 import {
   deleteRepertoireUnit,
@@ -27,8 +29,11 @@ const DELETE_UNIT_USAGE =
   'usage: pnpm --filter @chess-coach/server delete:repertoire-unit -- --group "<group>" [--dry-run]';
 
 export interface RepertoireUnitDeleteCommandDeps {
-  /** What the games are reviewed again with; its `db` is the database the unit is deleted from. */
-  review: GameReviewDeps;
+  /**
+   * Called once the arguments are read: the database the unit is deleted from, as `db`, opened as
+   * it is with foreign keys on, and what its games are reviewed again with.
+   */
+  open: () => GameReviewDeps;
   out: (line: string) => void;
   err: (line: string) => void;
 }
@@ -50,6 +55,24 @@ function parseDeleteUnitArgs(argv: readonly string[]): DeleteUnitArgs {
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+// Migrating is the server's: opening the database the way it does would apply this checkout's new
+// migrations, a write even in a refusal or a dry run, under a service that may run older code. So
+// the command runs only on a database whose migrations are exactly this checkout's.
+function migrationMismatch(db: Database): string | null {
+  const known = listMigrations(defaultMigrationsDir);
+  const rows = db.prepare("SELECT name FROM schema_migrations").all() as Array<{ name: string }>;
+  const applied = new Set(rows.map((row) => row.name));
+  const missing = known.filter((name) => !applied.has(name));
+  if (missing.length > 0) {
+    return `the database lacks ${missing.join(", ")}: start the server from this checkout first, it migrates at boot`;
+  }
+  const unknown = [...applied].filter((name) => !known.includes(name));
+  if (unknown.length > 0) {
+    return `the database holds ${unknown.join(", ")}, which this checkout lacks: run the command from the checkout the server runs`;
+  }
+  return null;
 }
 
 type UnitToDelete =
@@ -128,20 +151,21 @@ function printUnitDeletionCounts(
 // After the commit, each game is compared with the units that remain by the grader's own review.
 // One that throws keeps no review row, so the review run after the next graded game tries it again.
 async function reviewGamesAgain(
+  review: GameReviewDeps,
   deps: RepertoireUnitDeleteCommandDeps,
   gameIds: readonly number[],
 ): Promise<number> {
   let failed = 0;
   for (const gameId of gameIds) {
     try {
-      const result = await reviewRepertoireGame(deps.review, gameId);
+      const result = await reviewRepertoireGame(review, gameId);
       if (!result) {
         deps.out(
           `game ${gameId}: not reviewed, no Italian Game is stored or it was reviewed meanwhile`,
         );
         continue;
       }
-      const against = findDrillRepertoire(deps.review.db, result.repertoireId);
+      const against = findDrillRepertoire(review.db, result.repertoireId);
       const named = against ? ` (${against.group_name}: ${against.variation_name})` : "";
       deps.out(
         `game ${gameId}: ${result.outcome} against repertoire ${result.repertoireId}${named}`,
@@ -170,14 +194,20 @@ export async function runRepertoireUnitDeleteCommand(
     deps.err(DELETE_UNIT_USAGE);
     return 2;
   }
-  const { db } = deps.review;
+  const review = deps.open();
+  const { db } = review;
+  const mismatch = migrationMismatch(db);
+  if (mismatch !== null) {
+    deps.err(`refused: ${mismatch}`);
+    return 1;
+  }
   const target = findUnitToDelete(db, args.group);
   if (!target.ok) {
     deps.err(`refused: ${target.reason}`);
     return 1;
   }
   printUnitToDelete(deps.out, target.unit, target.setup);
-  const at = (deps.review.clock ?? systemClock).now().toISOString();
+  const at = (review.clock ?? systemClock).now().toISOString();
   if (args.dryRun) {
     printUnitDeletionCounts(deps.out, previewRepertoireUnitDeletion(db, target.unit.id, at));
     deps.out("dry run: nothing was written");
@@ -185,30 +215,43 @@ export async function runRepertoireUnitDeleteCommand(
   }
   const deletion = deleteRepertoireUnit(db, target.unit.id, at);
   printUnitDeletionCounts(deps.out, deletion);
-  return (await reviewGamesAgain(deps, deletion.gamesToReview)) === 0 ? 0 : 1;
+  return (await reviewGamesAgain(review, deps, deletion.gamesToReview)) === 0 ? 0 : 1;
+}
+
+// The file as it is, never created: a mistyped data directory fails here instead of leaving an
+// empty database behind. Foreign keys are on as the server has them, since the delete counts on
+// the cascade.
+function openDatabaseAsItIs(directory: string): Database {
+  const db = new BetterSqlite3(join(directory, "chess-coach.db"), { fileMustExist: true });
+  db.pragma("foreign_keys = ON");
+  return db;
 }
 
 // The engine starts only if a game's review has to search; a refusal or a dry run never spawns it.
 async function main(): Promise<number> {
-  const db = openDatabase(dataDir());
+  const opened: { db?: Database } = {};
   const engine = new UciEngine(() => spawnStockfish());
   try {
     return await runRepertoireUnitDeleteCommand(process.argv.slice(2), {
-      review: {
-        db,
-        engine,
-        fetcher: httpExplorerFetcher(resolveLichessToken(db)),
-        cacheDir: join(dataDir(), "explorer-cache"),
-        explorerClock: systemExplorerClock,
-        names: loadOpeningNames(contentDir()),
-        clock: systemClock,
+      open: () => {
+        const db = openDatabaseAsItIs(dataDir());
+        opened.db = db;
+        return {
+          db,
+          engine,
+          fetcher: httpExplorerFetcher(resolveLichessToken(db)),
+          cacheDir: join(dataDir(), "explorer-cache"),
+          explorerClock: systemExplorerClock,
+          names: loadOpeningNames(contentDir()),
+          clock: systemClock,
+        };
       },
       out: (line) => process.stdout.write(`${line}\n`),
       err: (line) => process.stderr.write(`${line}\n`),
     });
   } finally {
     await engine.stop();
-    db.close();
+    opened.db?.close();
   }
 }
 
