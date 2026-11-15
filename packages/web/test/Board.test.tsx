@@ -317,6 +317,12 @@ describe("Board try mark", () => {
     expect(style.left).toBe("calc(100% - 14px)");
     expect(style.top).toBe("14px");
   });
+
+  it("keeps the mark fully inside the board for a1 shown from Black", () => {
+    const style = badgeStyle("a1", "black");
+    expect(style.left).toBe("calc(100% - 14px)");
+    expect(style.top).toBe("14px");
+  });
 });
 
 describe("Board lifecycle", () => {
