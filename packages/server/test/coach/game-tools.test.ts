@@ -250,6 +250,32 @@ describe("analyze", () => {
     expect((out.body.lines as unknown[]).length).toBe(3);
   });
 
+  it("names the depth and the source of the answer, since a stored evaluation can be deeper than 18", async () => {
+    const { call, answer } = setup();
+    answer.next = () =>
+      Promise.resolve({
+        fen: AFTER_E4,
+        bestmove: "e7e5",
+        depth: 36,
+        source: "cache",
+        lines: [{ moves: ["e7e5", "g1f3"], score: -18 }],
+      });
+    const out = await call("analyze", { fen: AFTER_E4 });
+    expect(out.body).toMatchObject({
+      depth: 36,
+      source: "cache",
+      scores: "centipawns from the side to move",
+      lines: [{ score_cp: -18, pv: ["e5", "Nf3"] }],
+    });
+  });
+
+  it("leaves the depth and the source out when the answer does not name them", async () => {
+    const { call } = setup();
+    const out = await call("analyze", { fen: AFTER_E4 });
+    expect(out.body).not.toHaveProperty("depth");
+    expect(out.body).not.toHaveProperty("source");
+  });
+
   it("falls back to the position on the board", async () => {
     const { call, analyzed } = setup();
     await call("show_position", { fen: AFTER_E4 });

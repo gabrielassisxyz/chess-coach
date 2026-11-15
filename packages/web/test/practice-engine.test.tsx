@@ -137,6 +137,7 @@ describe("the engine strip", () => {
       type: "analysis",
       fen: START_FEN,
       depth: 18,
+      source: "engine",
       requested_lines: 1,
       lines: [{ moves: ["e2e4", "e7e5"], san: ["e4", "e5"], score_cp: 35 }],
     };
@@ -160,6 +161,7 @@ describe("the engine strip", () => {
       type: "analysis",
       fen: "8/8/8/8/8/8/8/K6k w - - 0 1",
       depth: 18,
+      source: "engine",
       requested_lines: 1,
       lines: [{ moves: ["a1a2"], san: ["Ka2"], score_cp: 0 }],
     };
@@ -179,6 +181,7 @@ describe("the engine strip", () => {
       type: "analysis",
       fen: START_FEN,
       depth: 14,
+      source: "engine",
       requested_lines: 1,
       lines: [{ moves: ["e2e4"], san: ["e4"], score_cp: 35 }],
     };
@@ -208,6 +211,44 @@ describe("the engine strip", () => {
 
     it("is asked for again when nothing says the cap cut it", () => {
       expect(asksAgainAfter(shallow)).toEqual({ asked: true, label: true });
+    });
+  });
+
+  describe("an answer from the evaluation cache", () => {
+    const stored: AnalysisEvent = {
+      type: "analysis",
+      fen: START_FEN,
+      depth: 30,
+      source: "cache",
+      requested_lines: 1,
+      lines: [{ moves: ["e2e4"], san: ["e4"], score_cp: 19 }],
+    };
+
+    function asksAgainAfter(answer: AnalysisEvent): boolean {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        window.localStorage.setItem(ENGINE_PREFS_STORAGE_KEY, JSON.stringify({ on: true }));
+        const server = api(solved(), answer);
+        render(<Practice server={server} createBoard={spyBoard} />);
+        act(() => vi.advanceTimersByTime(ANALYSE_DEBOUNCE_MS * 4));
+        return vi.mocked(server.send).mock.calls.some(([command]) => command.type === "analyse");
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    it("is the answer to the request when it is deeper than the depth asked for, and shows its depth", () => {
+      expect(asksAgainAfter(stored)).toBe(false);
+      expect(screen.getByText("Stockfish · depth 30")).toBeTruthy();
+      expect(screen.getByTestId("engine-eval").textContent).toBe("+0.2");
+    });
+
+    it("is asked for again when the lines it holds are not the number asked for", () => {
+      expect(asksAgainAfter({ ...stored, requested_lines: 3 })).toBe(true);
+    });
+
+    it("is the only kind of answer that may be deeper than the depth asked for", () => {
+      expect(asksAgainAfter({ ...stored, source: "engine" })).toBe(true);
     });
   });
 

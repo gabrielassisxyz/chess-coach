@@ -469,7 +469,13 @@
   after 4 s, whichever first: the request carries `depth` and `capMs` and never `movetime`, which
   would spend the whole 4 s on every position. The event's `depth` is the depth the lines reached,
   and `cutByTime: true` says the cap stopped the search first; the strip takes such an answer for
-  the answer to its request, since asking again meets the same cap. It is refused with
+  the answer to its request, since asking again meets the same cap. The event's `source` is `cache`
+  when a stored evaluation answered (see Evaluation cache, on the server), at once and at its own
+  depth, which is the asked one or deeper, and the strip takes that answer for the answer to its
+  request too; `engine` says a search ran. A connection's older `analyse` answers nothing once a
+  newer one was sent, since a cached answer can come back before the search for the older one ends.
+  The coach's `analyze` reads the cache the same way, for 3 lines at depth 18, and its answer names
+  the `depth` and `source`. It is refused with
   `training_item_open` while an item is open, so the
   engine never helps with the answer, with `not_in_training` or `stale_activity` off the item, and
   with `engine_unavailable` when Stockfish is missing or dead; a request a newer one replaced
