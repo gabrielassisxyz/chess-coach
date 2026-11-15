@@ -23,6 +23,11 @@ import type { ServerApi } from "../hooks/useServer.js";
 import { useBoardPrefs } from "../state/board-prefs.js";
 import { useBoardTheme } from "../state/board-theme.js";
 import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
+import {
+  type FetchFoundPositions,
+  type FoundStartRequest,
+  fetchFoundPositionsFromServer,
+} from "../state/found-api.js";
 import { serviceNotice } from "../state/health.js";
 import { type FetchOpeningDrills, fetchOpeningDrillsFromServer } from "../state/openings-api.js";
 import {
@@ -57,6 +62,9 @@ export interface PracticeProps {
   fetchRepertoireList?: FetchRepertoireList | undefined;
   // The drills from the student's games, grouped by opening family; the server's by default.
   fetchOpeningDrills?: FetchOpeningDrills;
+  // The positions found in the student's games, whole and narrowed by colour and phase; the server's
+  // by default.
+  fetchFoundPositions?: FetchFoundPositions;
   // Ranked puzzle theme stats for Improvement areas and Strengths; the server's by default.
   fetchThemeStats?: FetchThemeStats | undefined;
   fetchHealth?: FetchHealth | undefined;
@@ -76,6 +84,7 @@ interface Starting {
   repertoireId?: number;
   level?: RepertoireLevel;
   opening?: string;
+  position?: string;
   errorsBefore: number;
 }
 
@@ -150,7 +159,23 @@ function useStartOutcome(server: ServerApi) {
       setFailure(OFFLINE_START_TEXT);
     }
   };
-  return { starting, failure, begin, beginRepertoire, beginOpening };
+  // A drill of the positions from the student's games names its scope where a puzzle start names its
+  // motif. A card's drill names its position; the header's carry the filters of the page.
+  const beginFound = (request: FoundStartRequest): void => {
+    setFailure(null);
+    const sent = server.send({ type: "start_training", mode: "found", ...request });
+    if (sent) {
+      setStarting({
+        mode: "found",
+        motif: request.scope,
+        ...(request.position === undefined ? {} : { position: request.position }),
+        errorsBefore: server.errorCount,
+      });
+    } else {
+      setFailure(OFFLINE_START_TEXT);
+    }
+  };
+  return { starting, failure, begin, beginRepertoire, beginOpening, beginFound };
 }
 
 // The login card clears once the student has checked again, and returns on the next auth failure.
@@ -166,24 +191,30 @@ function useCoachLogin(server: ServerApi): { fix: string; checkAgain(): void } |
 
 function Hub({
   server,
+  createBoard,
   fetchMotifs,
   fetchProgress,
   fetchRepertoires,
   fetchRepertoireList,
   fetchOpeningDrills,
+  fetchFoundPositions,
   fetchThemeStats,
   fetchHealth,
 }: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress" | "fetchRepertoires">> &
-  Required<Pick<PracticeProps, "fetchOpeningDrills">> &
-  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList" | "fetchThemeStats">) {
+  Required<Pick<PracticeProps, "fetchOpeningDrills" | "fetchFoundPositions">> &
+  Pick<PracticeProps, "createBoard" | "fetchHealth" | "fetchRepertoireList" | "fetchThemeStats">) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
   const repertoires = useLoaded(fetchRepertoires);
   const openingDrills = useLoaded(fetchOpeningDrills);
+  // The navigation, the Overview and the page start from the whole list, so it is read once.
+  const readWholeFound = useCallback(() => fetchFoundPositions({}), [fetchFoundPositions]);
+  const foundPositions = useLoaded(readWholeFound);
   const [retries, setRetries] = useState(0);
   const notice = serviceNotice(useHealth(retries, fetchHealth ? { fetchHealth } : {}));
   const login = useCoachLogin(server);
-  const { starting, failure, begin, beginRepertoire, beginOpening } = useStartOutcome(server);
+  const { starting, failure, begin, beginRepertoire, beginOpening, beginFound } =
+    useStartOutcome(server);
   const engineMissing = notice?.reason === "stockfish_missing";
 
   return (
@@ -206,6 +237,12 @@ function Hub({
       onStartRepertoire={beginRepertoire}
       openingDrills={openingDrills}
       onStartOpening={beginOpening}
+      foundPositions={{
+        positions: foundPositions,
+        fetchPositions: fetchFoundPositions,
+        onStart: beginFound,
+        createBoard,
+      }}
       fetchRepertoireList={fetchRepertoireList}
       fetchThemeStats={fetchThemeStats}
     />
@@ -402,6 +439,7 @@ export function Practice({
   fetchRepertoires = fetchRepertoiresFromServer,
   fetchRepertoireList,
   fetchOpeningDrills = fetchOpeningDrillsFromServer,
+  fetchFoundPositions = fetchFoundPositionsFromServer,
   fetchThemeStats = fetchThemeStatsFromServer,
   fetchHealth,
 }: PracticeProps) {
@@ -458,11 +496,13 @@ export function Practice({
       <section className="screen screen--wide practice" aria-label="Practice">
         <Hub
           server={server}
+          createBoard={createBoard}
           fetchMotifs={fetchMotifs}
           fetchProgress={fetchProgress}
           fetchRepertoires={fetchRepertoires}
           fetchRepertoireList={fetchRepertoireList}
           fetchOpeningDrills={fetchOpeningDrills}
+          fetchFoundPositions={fetchFoundPositions}
           fetchThemeStats={fetchThemeStats}
           fetchHealth={fetchHealth}
         />

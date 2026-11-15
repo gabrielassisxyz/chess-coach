@@ -362,6 +362,13 @@ export function startFailureText(
   if (code === "empty_queue" && mode === "openings") {
     return `There are no ${motifLabel(motif)} opening drills yet. Import and grade some of your games in Games, then try again.`;
   }
+  // A drill of the positions from the student's games carries its scope where a puzzle carries its
+  // motif. The page disables a start it knows is empty, so an `all` refused here means the list moved on.
+  if (code === "empty_queue" && mode === "found") {
+    return motif === "all"
+      ? "No position from your games matches any more. Reload the page to see the current list."
+      : "No position from your games is due right now. Choose All positions to practise them anyway.";
+  }
   if (code === "empty_queue") {
     return motif === ""
       ? "There are no puzzles to drill. Restart the server to load the puzzle library."

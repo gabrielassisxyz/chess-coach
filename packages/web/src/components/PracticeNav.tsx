@@ -10,9 +10,15 @@ export interface PracticeNavProps {
   onChoose(entry: PracticeEntry): void;
   // The repertoire moves due now, which the Openings entry shows; null or 0 shows no number.
   openingsDue: number | null;
+  // The positions from the student's games due now, which the From my games entry shows the same way.
+  foundDue?: number | null;
 }
 
-const movesDueText = (count: number): string => `${count} ${count === 1 ? "move" : "moves"} due`;
+// What an entry's number counts, for the screen reader that hears it after the name.
+const DUE_TEXT: Partial<Record<PracticeEntry, (count: number) => string>> = {
+  openings: (count) => `${count} ${count === 1 ? "move" : "moves"} due`,
+  "from-my-games": (count) => `${count} due`,
+};
 
 function NavEntry({
   entry,
@@ -29,7 +35,7 @@ function NavEntry({
       type="button"
       className="practice-nav__entry"
       aria-current={entry === current ? "page" : undefined}
-      aria-label={count === null ? undefined : `${name}, ${movesDueText(count)}`}
+      aria-label={count === null ? undefined : `${name}, ${DUE_TEXT[entry]?.(count)}`}
       onClick={() => onChoose(entry)}
     >
       <span className="practice-nav__name">{name}</span>
@@ -43,8 +49,13 @@ function NavGroup({
   current,
   onChoose,
   openingsDue,
+  foundDue = null,
 }: PracticeNavProps & { group: (typeof PRACTICE_NAV_GROUPS)[number] }) {
   const labelId = useId();
+  const dueOf: Partial<Record<PracticeEntry, number | null>> = {
+    openings: openingsDue,
+    "from-my-games": foundDue,
+  };
   return (
     // biome-ignore lint/a11y/useSemanticElements: these are navigation entries, not form fields; a fieldset would present them as a form
     <div className="practice-nav__group" role="group" aria-labelledby={labelId}>
@@ -56,7 +67,7 @@ function NavGroup({
           key={entry}
           entry={entry}
           current={current}
-          count={entry === "openings" && openingsDue ? openingsDue : null}
+          count={dueOf[entry] || null}
           onChoose={onChoose}
         />
       ))}

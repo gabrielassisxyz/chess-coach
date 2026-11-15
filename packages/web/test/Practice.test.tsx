@@ -34,6 +34,7 @@ import {
   CLASSICAL_VARIATION,
   italianRepertoire,
   motifCounts,
+  noFoundPositions,
   openPracticePage,
   progressOf,
   repertoireActivity,
@@ -212,6 +213,7 @@ const hubProps = {
   fetchRepertoires: async () => [],
   fetchRepertoireList: async () => ({ repertoires: [], met: [] }),
   fetchOpeningDrills: async () => ({ white: [], black: [] }),
+  fetchFoundPositions: async () => noFoundPositions,
 };
 
 const practiceNav = (): HTMLElement =>
@@ -3138,7 +3140,7 @@ describe("the hub's frame", () => {
   const pageTitle = (): string => screen.getByRole("heading", { level: 2 }).textContent ?? "";
   const openingsEntry = (): HTMLElement =>
     within(practiceNav()).getByRole("button", { name: /^Openings(,|$)/ });
-  const UNBUILT = ["From my games", "Dashboard", "Openings played"];
+  const UNBUILT = ["Dashboard", "Openings played"];
 
   // An answer that counts the moves due on each side apart from the variations under it.
   const withSides = (

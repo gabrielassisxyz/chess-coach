@@ -1,4 +1,5 @@
 import type {
+  FoundPositionsResponse,
   OpeningDrillColor,
   OpeningDrillsResponse,
   ProgressResponse,
@@ -9,6 +10,11 @@ import type {
 } from "@chess-coach/shared";
 import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
+import {
+  type FetchFoundPositions,
+  type FoundStartRequest,
+  fetchFoundPositionsFromServer,
+} from "../state/found-api.js";
 import type { OpeningDrillControls } from "../state/openings-api.js";
 import {
   italianOpeningCount,
@@ -33,10 +39,25 @@ import {
   fetchRepertoireListFromServer,
 } from "../state/repertoires-api.js";
 import type { FetchThemeStats } from "../state/theme-stats-api.js";
+import type { BoardFactory } from "./Board.js";
+import { FoundOverviewPanel } from "./FoundOverviewPanel.js";
+import { type FoundStarting, PracticeFound } from "./PracticeFound.js";
 import { PracticeNav } from "./PracticeNav.js";
 import { type HubStartButton, PracticeOverview, PracticePageHead } from "./PracticeOverview.js";
 import { PracticeThemeStats } from "./PracticeThemeStats.js";
 import { RepertoireMenu } from "./RepertoireMenu.js";
+
+// The positions found in the student's games, which the hub draws three ways: a count beside its
+// navigation entry, a panel on the Overview and a page of cards. A hub given none draws none.
+export interface FoundPositionsProps {
+  // The whole list, read once for all three.
+  positions: Loaded<FoundPositionsResponse>;
+  // The read that narrows the page's list by colour and phase; the server's by default.
+  fetchPositions?: FetchFoundPositions | undefined;
+  onStart(request: FoundStartRequest): void;
+  // How the page's boards are made; chessground's by default.
+  createBoard?: BoardFactory | undefined;
+}
 
 export interface PracticeHubProps {
   progress: Loaded<ProgressResponse>;
@@ -51,6 +72,7 @@ export interface PracticeHubProps {
     repertoireId?: number;
     level?: RepertoireLevel | undefined;
     opening?: string | undefined;
+    position?: string | undefined;
   } | null;
   failure: string | null;
   onStart(mode: TrainingMode, motif: string): void;
@@ -59,6 +81,7 @@ export interface PracticeHubProps {
   // them, or until they are read, the hub lists none.
   openingDrills?: Loaded<OpeningDrillsResponse> | undefined;
   onStartOpening?: ((color: OpeningDrillColor, opening: string) => void) | undefined;
+  foundPositions?: FoundPositionsProps | undefined;
   now?: Date;
   // The openings met in games and the call that builds a drill for one; the server's by default.
   fetchRepertoireList?: FetchRepertoireList | undefined;
@@ -252,12 +275,15 @@ function useStartsByPage(props: PracticeHubProps, page: PracticePage) {
       start(...args);
     };
   };
-  const { onStartOpening, failure } = props;
+  const { onStartOpening, foundPositions, failure } = props;
   const marked: PracticeHubProps = {
     ...props,
     onStart: pressedHere(props.onStart),
     onStartRepertoire: pressedHere(props.onStartRepertoire),
     onStartOpening: onStartOpening ? pressedHere(onStartOpening) : undefined,
+    foundPositions: foundPositions
+      ? { ...foundPositions, onStart: pressedHere(foundPositions.onStart) }
+      : undefined,
   };
   const failureOn = (target: PracticePage): ReactNode =>
     failure && startedOn === target ? (
@@ -284,6 +310,17 @@ function startButtonOf({ starting, engineMissing, onStart }: PracticeHubProps): 
   };
 }
 
+// A drill of the positions from the student's games names its scope where a puzzle start names its
+// motif, and a card's start names its position.
+function foundStartingOf(starting: PracticeHubProps["starting"]): FoundStarting | null {
+  if (starting?.mode !== "found") return null;
+  return { scope: starting.motif as RepertoireScope, position: starting.position };
+}
+
+// The number beside From my games is the positions due in the whole list, whatever the page filters.
+const foundDueOf = (found: FoundPositionsProps | undefined): number | null =>
+  found?.positions.status === "ready" ? found.positions.value.counts.due : null;
+
 // The hub's frame: the navigation of its pages beside a column that shows one page at a time.
 export function PracticeHub(props: PracticeHubProps) {
   const { entry, choose } = usePracticeEntry();
@@ -299,10 +336,18 @@ export function PracticeHub(props: PracticeHubProps) {
     choose(next);
     setChoices((count) => count + 1);
   };
+  const now = props.now ?? new Date();
+  const found = marked.foundPositions;
+  const foundStarting = foundStartingOf(marked.starting);
 
   return (
     <div className="practice-hub" ref={hub}>
-      <PracticeNav current={entry} onChoose={onChoose} openingsDue={openingsDue.due} />
+      <PracticeNav
+        current={entry}
+        onChoose={onChoose}
+        openingsDue={openingsDue.due}
+        foundDue={foundDueOf(found)}
+      />
       <div className="practice-hub__pages" aria-busy={props.starting !== null}>
         <PageSlot shown={page === "overview"}>
           <PracticeOverview
@@ -313,8 +358,35 @@ export function PracticeHub(props: PracticeHubProps) {
             problems={props.problems}
             failure={failureOn("overview")}
             themesRef={themes}
-            now={props.now ?? new Date()}
+            now={now}
+            foundPanel={
+              found ? (
+                <FoundOverviewPanel
+                  found={found.positions}
+                  starting={foundStarting}
+                  onStart={found.onStart}
+                  onSeeAll={() => onChoose("from-my-games")}
+                  now={now}
+                />
+              ) : undefined
+            }
           />
+        </PageSlot>
+        <PageSlot shown={page === "from-my-games"}>
+          {found ? (
+            <PracticeFound
+              shown={page === "from-my-games"}
+              whole={found.positions}
+              fetchFound={found.fetchPositions ?? fetchFoundPositionsFromServer}
+              starting={foundStarting}
+              onStart={found.onStart}
+              failure={failureOn("from-my-games")}
+              now={now}
+              createBoard={found.createBoard}
+            />
+          ) : (
+            <PracticePageHead title={PRACTICE_ENTRY_LABEL["from-my-games"]} />
+          )}
         </PageSlot>
         <PageSlot shown={page === "openings"}>
           <OpeningsPage

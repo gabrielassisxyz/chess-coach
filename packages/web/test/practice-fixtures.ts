@@ -1,4 +1,7 @@
 import type {
+  FoundPositionCounts,
+  FoundPositionsResponse,
+  FoundPositionView,
   PlayedMove,
   ProgressResponse,
   RepertoireDrill,
@@ -156,3 +159,58 @@ export function repertoireActivity(options: RepertoireActivityOptions = {}): Tra
     ...options.training,
   };
 }
+
+// A position from the student's games as the From my games list holds it: a repeated opening
+// position, new, with the moves that led to it and the game it was shown from.
+export function foundPosition(overrides: Partial<FoundPositionView> = {}): FoundPositionView {
+  return {
+    id: "own:aaaaaaaaaaaaaaaa",
+    fen: "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2",
+    color: "white",
+    phase: "opening",
+    section: "reached",
+    from_mistake: false,
+    from_departure: false,
+    opening_name: "King's Pawn Game",
+    line: { first_ply: 1, san: ["e4", "e5"] },
+    reached_games: 6,
+    best_games: 3,
+    last_reached_at: "2026-02-20T12:00:00.000Z",
+    game: { id: 4, ply: 3, opponent: "Whambalee", played_at: "2026-02-20T12:00:00.000Z" },
+    state: "new",
+    next_review_at: null,
+    ...overrides,
+  };
+}
+
+// An answer whose counts follow from its positions, as the server's do, unless a test sets one.
+export function foundResponse(
+  positions: FoundPositionView[],
+  counts: Partial<FoundPositionCounts> = {},
+): FoundPositionsResponse {
+  const inState = (state: FoundPositionView["state"]): number =>
+    positions.filter((position) => position.state === state).length;
+  const inPhase = (phase: FoundPositionView["phase"]): number =>
+    positions.filter((position) => position.phase === phase).length;
+  const reached = positions.filter((position) => position.section === "reached").length;
+  return {
+    positions,
+    counts: {
+      total: positions.length,
+      due: inState("due"),
+      new: inState("new"),
+      recommended: Math.min(inState("due") + inState("new"), 10),
+      all: positions.length,
+      by_phase: {
+        opening: inPhase("opening"),
+        middlegame: inPhase("middlegame"),
+        endgame: inPhase("endgame"),
+      },
+      by_section: { reached, mistakes: positions.length - reached },
+      left_out: 0,
+      ...counts,
+    },
+  };
+}
+
+export const noFoundPositions: FoundPositionsResponse = foundResponse([]);
