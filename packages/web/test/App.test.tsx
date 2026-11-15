@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { chatReducer, initialChatState } from "../src/state/transcript.js";
 import { FakeSocket } from "./fake-socket.js";
-import { liveGame, START_FEN } from "./fixtures.js";
+import { COACH_GAME_SOURCE, liveGame, START_FEN } from "./fixtures.js";
+import { foundPosition, foundResponse, openPracticePage, progressOf } from "./practice-fixtures.js";
 
 // The stylesheet is read as text because vitest does not process CSS imports.
 const layoutCss = readFileSync(join(import.meta.dirname, "../src/styles/layout.css"), "utf8");
@@ -186,6 +188,122 @@ describe("App", () => {
     const twice = chatReducer(once, { type: "server", event: error });
     expect(twice.errorCount).toBe(2);
     expect(chatReducer(twice, { type: "dismiss_error" }).lastError).toBeNull();
+  });
+});
+
+describe("a From my games opponent", () => {
+  const SANS = ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"];
+
+  function detailOf() {
+    const chess = new Chess();
+    const moves = SANS.map((san, index) => {
+      const played = chess.move(san);
+      return {
+        ply: index + 1,
+        san,
+        uci: `${played.from}${played.to}`,
+        is_player: index % 2 === 0,
+        eval_before_cp: null,
+        eval_after_cp: null,
+        cp_loss: index % 2 === 0 ? (index === 2 ? 120 : 10) : null,
+        classification:
+          index % 2 === 0 ? (index === 2 ? ("inaccuracy" as const) : ("great" as const)) : null,
+        best_move_san: index === 2 ? "d4" : null,
+        fen_after: chess.fen(),
+      };
+    });
+    return {
+      ...COACH_GAME_SOURCE,
+      id: 7,
+      started_at: "2026-01-01T00:00:00.000Z",
+      finished_at: "2026-01-01T01:00:00.000Z",
+      player_color: "white" as const,
+      target_elo: 1200,
+      result: "0-1" as const,
+      termination: "resign" as const,
+      initial_fen: START_FEN,
+      mistakes_count: 3,
+      moves,
+    };
+  }
+
+  const summary = {
+    ...COACH_GAME_SOURCE,
+    id: 7,
+    started_at: "2026-01-01T00:00:00.000Z",
+    finished_at: "2026-01-01T01:00:00.000Z",
+    player_color: "white" as const,
+    target_elo: 1200,
+    result: "0-1" as const,
+    termination: "resign" as const,
+    move_count: 6,
+    accuracy: 0.5,
+    worst_moment: { ply: 3, san: "Nf3", cp_loss: 120, classification: "inaccuracy" as const },
+    cards_count: 2,
+    mistakes_count: 3,
+  };
+
+  it("switches to Games with the review open at the wrong move, once", async () => {
+    const mistake = foundPosition({
+      id: "own:from-app",
+      section: "mistakes",
+      phase: "middlegame",
+      from_mistake: true,
+      opening_name: "Test Opening",
+      game: { id: 7, ply: 3, opponent: "Whambalee", played_at: "2026-02-27T12:00:00.000Z" },
+    });
+    const whole = foundResponse([mistake]);
+    const detail = detailOf();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request) => {
+        const path = typeof url === "string" ? url : url.toString();
+        if (path.includes("/api/found-positions")) return Response.json(whole);
+        if (path === "/api/games") return Response.json({ games: [summary] });
+        if (path.startsWith("/api/games/")) return Response.json({ game: detail });
+        if (path === "/api/progress") return Response.json(progressOf());
+        if (path === "/api/repertoires")
+          return Response.json({ repertoires: [], groups: [], sides: [], met: [], branches: [] });
+        if (path.includes("/api/puzzles/themes/stats"))
+          return Response.json({
+            days: "30",
+            overall: { played: 0, first_try: 0, rating_avg: null, performance: null },
+            overall_previous: null,
+            themes: [],
+            improvement_areas: [],
+            strengths: [],
+            unranked: 0,
+          });
+        return Response.json({ status: "ok", version: "0.0.0", ready: true });
+      }),
+    );
+    render(<App />);
+    connect();
+    fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+    openPracticePage("From my games");
+    const opponent = await screen.findByRole("button", { name: "vs Whambalee" });
+    fireEvent.click(opponent);
+    expect(await screen.findByRole("heading", { name: "White vs Stockfish 1200" })).toBeTruthy();
+    expect(screen.getByTestId("ply-3").getAttribute("aria-current")).toBe("true");
+    expect(screen.getByTestId("ply-detail").textContent).toContain("2. Nf3, Inaccuracy");
+    await waitFor(() => {
+      const sent = FakeSocket.latest.sent as { type: string; game_id?: number; ply?: number }[];
+      expect(sent).toContainEqual(expect.objectContaining({ type: "open_game", game_id: 7 }));
+      expect(sent).toContainEqual(
+        expect.objectContaining({ type: "select_review_ply", game_id: 7, ply: 3 }),
+      );
+    });
+    const opens = (FakeSocket.latest.sent as { type: string }[]).filter(
+      (c) => c.type === "open_game",
+    ).length;
+    expect(opens).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    fireEvent.click(screen.getByRole("button", { name: "Games" }));
+    expect(await screen.findByRole("table", { name: "Finished games" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+    expect(
+      (FakeSocket.latest.sent as { type: string }[]).filter((c) => c.type === "open_game"),
+    ).toHaveLength(1);
   });
 });
 

@@ -83,6 +83,8 @@ export interface OpenGameProps {
   game: GameDetail;
   summary: GameSummary | undefined;
   createBoard: BoardFactory | undefined;
+  // The ply the review opens at; a game from the list starts at 0.
+  initialPly?: number | undefined;
   onClose(): void;
   onCoachIdle?(label: string | null): void;
 }
@@ -92,10 +94,11 @@ export function OpenGame({
   game,
   summary,
   createBoard,
+  initialPly = 0,
   onClose,
   onCoachIdle,
 }: OpenGameProps) {
-  const [ply, setPly] = useState(0);
+  const [ply, setPly] = useState(initialPly);
   const count = plyCount(game);
   const demo = server.activity?.kind === "demo" ? server.activity : null;
   const serverActivityId = server.activity?.activity_id ?? 1;

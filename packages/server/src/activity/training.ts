@@ -137,7 +137,8 @@ export interface TrainingInput {
   /**
    * One opening family of the colour's drill, or UNNAMED_OPENING for its positions with no name;
    * without it the drill serves every position of the colour. A found drill takes one opening
-   * instead: a full name matching it exactly, a family matching every variation of it. The other
+   * instead: a full name matching it exactly, a family matching every variation of it. In mode
+   * puzzles it is a Lichess opening tag, served around the rating in place of a motif. The other
    * modes ignore it.
    */
   opening?: string | undefined;
@@ -539,6 +540,22 @@ function drawRatedBatch(
   return shuffledBatchEntries(batch, deps.shuffleRandom ?? Math.random);
 }
 
+// One batch of a queue of one Lichess opening tag, drawn as a themed batch is: around the rating the
+// student has now, with the puzzles the run already holds left out. Nothing is boosted, since the
+// student chose what the queue is about.
+function drawOpeningTagBatch(
+  deps: TrainingDeps,
+  opening: string,
+  taken: ReadonlySet<string>,
+): QueueEntry[] {
+  const ratingAround = currentPuzzleRating(deps.db);
+  const filter = { opening, ratingAround, limit: PUZZLE_BATCH_SIZE + taken.size };
+  return listPuzzles(deps.db, filter, deps.shuffleRandom)
+    .puzzles.filter((puzzle) => !taken.has(puzzle.id))
+    .slice(0, PUZZLE_BATCH_SIZE)
+    .map(puzzleEntryOf);
+}
+
 export class TrainingRun implements PracticeRunPort {
   private position = 0;
   private solved = 0;
@@ -554,7 +571,8 @@ export class TrainingRun implements PracticeRunPort {
   /**
    * `runId` is the `training_runs` row this queue keeps current; a single item the coach served
    * has none and is never persisted. An `endless` queue has no length: it draws its next batch when
-   * the student asks for the item after the last one.
+   * the student asks for the item after the last one, from `runOpening` when the queue is one
+   * opening tag's.
    */
   private constructor(
     private readonly deps: TrainingDeps,
@@ -563,6 +581,7 @@ export class TrainingRun implements PracticeRunPort {
     readonly runId: number | null,
     private readonly runMotif: string | null = null,
     private readonly endless: boolean = false,
+    private readonly runOpening: string | null = null,
   ) {
     this.clock = deps.clock ?? systemClock;
     this.served = this.serve(0);
@@ -593,7 +612,8 @@ export class TrainingRun implements PracticeRunPort {
         startedAt,
       });
       const runMotif = input.mode === "puzzles" ? (input.motif ?? null) : null;
-      const run = new TrainingRun(deps, input.mode, queue, runId, runMotif, endless);
+      const runOpening = input.mode === "puzzles" ? (input.opening ?? null) : null;
+      const run = new TrainingRun(deps, input.mode, queue, runId, runMotif, endless, runOpening);
       run.save();
       return run;
     })();
@@ -630,6 +650,14 @@ export class TrainingRun implements PracticeRunPort {
       }
       const openingNames = openingNamesOfStart(deps.db, input);
       return drawFixedSet(deps, { motif: `opening-${input.color}`, openingNames });
+    }
+    if (input.opening !== undefined) {
+      // The command schema refuses the pair first; this keeps a caller that skips it to one index.
+      if (input.motif !== undefined) {
+        throw new ActivityError("invalid_command", "a puzzle queue of one opening takes no motif");
+      }
+      // A tag no puzzle carries draws nothing, and `begin` refuses the empty queue by itself.
+      return { entries: drawOpeningTagBatch(deps, input.opening, new Set()), endless: true };
     }
     if (
       input.motif !== undefined &&
@@ -910,7 +938,10 @@ export class TrainingRun implements PracticeRunPort {
     const taken = new Set(
       this.queue.flatMap((entry) => (entry.kind === "puzzle" ? [entry.id] : [])),
     );
-    const added = drawRatedBatch(this.deps, this.runMotif ?? undefined, taken);
+    const added =
+      this.runOpening === null
+        ? drawRatedBatch(this.deps, this.runMotif ?? undefined, taken)
+        : drawOpeningTagBatch(this.deps, this.runOpening, taken);
     if (added.length === 0) return false;
     if (this.runId !== null)
       appendTrainingRunItems(this.deps.db, this.runId, added.map(storedItemOf));

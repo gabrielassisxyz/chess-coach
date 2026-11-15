@@ -167,8 +167,8 @@
 - **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
   adds the whole Lichess puzzle database (`lichess-db:` ids, source `lichess-db`) to the library, reading CSV from
   stdin into the usual data dir and printing rows added, skipped and failed. A row's `FEN` is shown after its first
-  move; the rest is the solution. Every theme gets a `puzzle_themes` row and one motif goes in `puzzles.motif`
-  (rarest first, `tactics` when none maps). A `PuzzleId` already stored as a `lichess_id` is skipped, so a rerun
+  move; the rest is the solution. Every theme gets a `puzzle_themes` row, every opening tag a `puzzle_openings`
+  row (Puzzles by opening), and one motif goes in `puzzles.motif` (rarest first, `tactics` when none maps). A `PuzzleId` already stored as a `lichess_id` is skipped, so a rerun
   adds nothing. Commits in batches of 5000 rows; the file grows the database to about 3.6 GB, so run it on a copy first.
 - **Deleting a unit:** `pnpm --filter @chess-coach/server delete:repertoire-unit -- --group "King's Pawn Game: McConnell Defense" [--dry-run]` removes the unit the hub's Add built from 1.e4 e5 2.Nf3 Qf6 through `deleteRepertoireUnit` (`db/repertoires.ts`), in one transaction: its positions, game reviews and drill first attempts through the cascade, the cards of its White moves that no other unit stores, and every open run whose queue holds one of its rows or whose current item names it, ended as `discarded`. Once that commits, the games whose review went are reviewed again against the units left, with no message to the coach. It prints the unit, its setup line and the counts; it refuses with exit 1 and writes nothing unless the group holds exactly one variation, rooted at e4 e5 Nf3 Qf6; `--dry-run` runs the delete, prints the same and rolls it back. The group is the book's whole name for the root position, so `King's Pawn Game` alone is refused with the stored groups listed. It never migrates: a database whose applied migrations are not exactly the checkout's is refused, so it runs after the server has started from that checkout. Run it on a copy first, and with no drill of the unit on the board: the delete ends that run's row, but the drill the server holds in memory would go on serving rows that are gone.
 - **Grading:** a practice move is graded the moment it is dropped (`try_move`). A wrong try leaves
@@ -255,6 +255,31 @@
   strongest first; both lists break a tie by more attempts and hold at most 8 theme keys. A theme is
   compared with the overall performance of the same window, never with the Elo puzzle rating, which
   is on another scale.
+- **Puzzles by opening:** an imported Lichess puzzle keeps the opening of its game in
+  `puzzles.opening_tags`, tags separated by spaces from the family to the variation
+  (`Italian_Game Italian_Game_Classical_Variation`), and is filed under each of them in
+  `puzzle_openings (opening, rating, puzzle_id)`, a table without row ids keyed by all three as
+  `puzzle_themes` is. Migration 030 filled it with one row per tag of every stored puzzle with a
+  rating, about 2.46 million rows over the owner's 6.2 million puzzles and the slow part of the
+  start that applied it, and the import writes the same rows for each puzzle it adds and none for
+  one it skips. `start_training {mode: "puzzles", opening: <tag>}` serves the puzzles of one tag
+  around the student's rating by the rule a theme follows, ten at a time with no end and nothing
+  boosted, and the run keeps `motif` NULL and `run_motif` null. The tag is 1 to 120 letters,
+  digits, underscores and hyphens; a start that also names a `motif` is refused with
+  `invalid_command`, and a tag no puzzle carries with `empty_queue`, before any run is written or
+  replaced. `openingTagOf` (shared) turns an opening name as the app writes it into its tag, as
+  Lichess does: accents folded, spaces turned into underscores and every other character that is not
+  a letter, a digit or a hyphen dropped, so "Queen's Gambit Declined" is `Queens_Gambit_Declined` and
+  "St. George Defense" is `St_George_Defense`. Lichess also files many puzzles of a family under
+  `<Family>_Other_variations`, which no name maps to, and Petrov's Defense under both
+  `Petrovs_Defense` and the older `Russian_Game`, of which only the first is served.
+  `GET /api/puzzles/openings?names=<name>,<name>` (`OpeningPuzzlesResponseSchema`) takes 1 to 40
+  names of at most 120 characters, separated by a comma with no space after it, since a comma
+  inside a name is always followed by one, and answers `entries`, one per name in the order asked:
+  `name`, `tag`, `puzzles` (the rows of the tag, 0 when there are none), and `played_30d` and
+  `first_try_30d`, the attempts of the 30 days before the request on the tag's puzzles and the
+  first-try solves among them (`tallyOpeningTag`). Anything else answers 400 `bad_query` and reads
+  nothing. A name reaches SQL only as its tag, and a tag only as a bound parameter.
 - **Overview themes:** the Puzzles by weakness card and the Puzzle themes section of the Overview
   (`components/PracticeWeakness.tsx`, `components/PracticeThemes.tsx`) draw the one 30-day
   `GET /api/puzzles/themes/stats` answer that the hub already reads for the Solved first try tile, so

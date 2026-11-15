@@ -1,7 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PuzzleRatingHistoryResponseSchema } from "@chess-coach/shared";
+import {
+  OpeningPuzzlesResponseSchema,
+  PuzzleRatingHistoryResponseSchema,
+} from "@chess-coach/shared";
 import Fastify from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
@@ -184,5 +187,171 @@ describe("GET /api/puzzles/rating/history", () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe("GET /api/puzzles/openings", () => {
+  let tmp: string;
+  let db: Database;
+  const now = new Date("2026-03-31T12:00:00.000Z");
+  const fixedClock: Clock = { now: () => now };
+  const daysAgo = (days: number, ms = 0): string =>
+    new Date(now.getTime() - days * 24 * 60 * 60 * 1000 - ms).toISOString();
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "cc-puzzle-openings-http-"));
+    db = openDatabase(tmp);
+  });
+  afterEach(() => {
+    if (db.open) db.close();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  // An imported puzzle filed under each tag of `openingTags`, as the import files it.
+  function addTagged(id: string, rating: number, openingTags: string): void {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation,
+                            difficulty_rating, opening_tags)
+       VALUES (?, 'lichess-db', 'tactics', 'intermediate', 'x', '[]', '[]', 'why', ?, ?)`,
+    ).run(id, rating, openingTags);
+    for (const tag of openingTags.split(" ")) {
+      db.prepare("INSERT INTO puzzle_openings (opening, rating, puzzle_id) VALUES (?, ?, ?)").run(
+        tag,
+        rating,
+        id,
+      );
+    }
+  }
+
+  function addAttempt(puzzleId: string, firstTry: boolean, at: string): void {
+    db.prepare(
+      `INSERT INTO puzzle_attempts (puzzle_id, attempted_at, solved, answered_uci, failed_ply, first_try)
+       VALUES (?, ?, ?, '[]', NULL, ?)`,
+    ).run(puzzleId, at, firstTry ? 1 : 0, firstTry ? 1 : 0);
+  }
+
+  async function ask(names: readonly string[] | string) {
+    const query =
+      typeof names === "string" ? names : `names=${names.map(encodeURIComponent).join(",")}`;
+    const app = Fastify();
+    registerPuzzleRoutes(app, db, fixedClock);
+    try {
+      return await app.inject({ method: "GET", url: `/api/puzzles/openings?${query}` });
+    } finally {
+      await app.close();
+    }
+  }
+
+  it("answers each name in the order asked with its tag, its puzzles and the last 30 days", async () => {
+    addTagged("it1", 1200, "Italian_Game Italian_Game_Classical_Variation");
+    addTagged("it2", 1500, "Italian_Game Italian_Game_Giuoco_Pianissimo");
+    addTagged("it3", 1900, "Italian_Game Italian_Game_Classical_Variation");
+    addTagged("sc1", 1100, "Scandinavian_Defense Scandinavian_Defense_Main_Line");
+    addTagged("qgd", 1300, "Queens_Gambit_Declined Queens_Gambit_Declined_Exchange_Variation");
+    addAttempt("it1", true, daysAgo(1));
+    addAttempt("it1", false, daysAgo(2));
+    addAttempt("it2", true, daysAgo(30));
+    addAttempt("it3", true, daysAgo(30, 1));
+    addAttempt("sc1", false, daysAgo(3));
+    const response = await ask([
+      "Scandinavian Defense",
+      "Italian Game",
+      "Italian Game: Classical Variation",
+      "Queen's Gambit Declined",
+      "Grünfeld Defense",
+    ]);
+    expect(response.statusCode).toBe(200);
+    expect(OpeningPuzzlesResponseSchema.parse(response.json())).toEqual({
+      entries: [
+        {
+          name: "Scandinavian Defense",
+          tag: "Scandinavian_Defense",
+          puzzles: 1,
+          played_30d: 1,
+          first_try_30d: 0,
+        },
+        { name: "Italian Game", tag: "Italian_Game", puzzles: 3, played_30d: 3, first_try_30d: 2 },
+        {
+          name: "Italian Game: Classical Variation",
+          tag: "Italian_Game_Classical_Variation",
+          puzzles: 2,
+          played_30d: 2,
+          first_try_30d: 1,
+        },
+        {
+          name: "Queen's Gambit Declined",
+          tag: "Queens_Gambit_Declined",
+          puzzles: 1,
+          played_30d: 0,
+          first_try_30d: 0,
+        },
+        {
+          name: "Grünfeld Defense",
+          tag: "Grunfeld_Defense",
+          puzzles: 0,
+          played_30d: 0,
+          first_try_30d: 0,
+        },
+      ],
+    });
+  });
+
+  it("keeps a name with a comma inside whole, and answers a name asked twice twice", async () => {
+    addTagged("naj", 1500, "Sicilian_Defense Sicilian_Defense_Najdorf_Variation");
+    const response = await ask([
+      "Sicilian Defense: Najdorf Variation, English Attack",
+      "Sicilian Defense",
+      "Sicilian Defense",
+    ]);
+    const body = OpeningPuzzlesResponseSchema.parse(response.json());
+    expect(body.entries.map(({ name, tag, puzzles }) => ({ name, tag, puzzles }))).toEqual([
+      {
+        name: "Sicilian Defense: Najdorf Variation, English Attack",
+        tag: "Sicilian_Defense_Najdorf_Variation_English_Attack",
+        puzzles: 0,
+      },
+      { name: "Sicilian Defense", tag: "Sicilian_Defense", puzzles: 1 },
+      { name: "Sicilian Defense", tag: "Sicilian_Defense", puzzles: 1 },
+    ]);
+  });
+
+  it("takes up to 40 names", async () => {
+    const names = Array.from({ length: 40 }, (_, i) => `Opening ${i}`);
+    const response = await ask(names);
+    expect(response.statusCode).toBe(200);
+    expect(OpeningPuzzlesResponseSchema.parse(response.json()).entries).toHaveLength(40);
+  });
+
+  it("answers 400 and reads nothing for a list it cannot take", async () => {
+    // Closing the database guarantees any query attempt throws 500 instead of returning 400.
+    db.close();
+    for (const query of [
+      "",
+      "names=",
+      `names=${Array.from({ length: 41 }, (_, i) => `Opening${i}`).join(",")}`,
+      "names=Italian%20Game,,French%20Defense",
+      "names=Italian%20Game,",
+      `names=${"x".repeat(121)}`,
+      "names=Italian%20Game&names=French%20Defense",
+    ]) {
+      const response = await ask(query);
+      expect(response.statusCode, query).toBe(400);
+      expect(response.json()).toMatchObject({ error: "bad_query" });
+    }
+  });
+
+  it("turns text meant for the query into a tag of letters, digits, underscores and hyphens", async () => {
+    addTagged("it1", 1200, "Italian_Game Italian_Game_Classical_Variation");
+    const response = await ask(["Italian Game' OR '1'='1", "Italian_Game%"]);
+    expect(OpeningPuzzlesResponseSchema.parse(response.json()).entries).toEqual([
+      {
+        name: "Italian Game' OR '1'='1",
+        tag: "Italian_Game_OR_11",
+        puzzles: 0,
+        played_30d: 0,
+        first_try_30d: 0,
+      },
+      { name: "Italian_Game%", tag: "Italian_Game", puzzles: 1, played_30d: 0, first_try_30d: 0 },
+    ]);
   });
 });

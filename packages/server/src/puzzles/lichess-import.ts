@@ -88,6 +88,7 @@ interface ImportRow {
   themes: string;
   themeList: string[];
   openingTags: string;
+  openingTagList: string[];
   gameUrl: string;
   motif: string;
 }
@@ -133,6 +134,7 @@ function toImportRow(line: string): ImportRow {
     themes: themes as string,
     themeList,
     openingTags: tags as string,
+    openingTagList: (tags as string).split(" ").filter((tag) => tag !== ""),
     gameUrl: gameUrl as string,
     motif: pickMotif(themeList),
   };
@@ -149,6 +151,9 @@ function prepareWriters(db: Database) {
   );
   const insertTheme = db.prepare(
     "INSERT OR IGNORE INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)",
+  );
+  const insertOpening = db.prepare(
+    "INSERT OR IGNORE INTO puzzle_openings (opening, rating, puzzle_id) VALUES (?, ?, ?)",
   );
   return (rows: readonly ImportRow[]): { added: number; skipped: number } => {
     let added = 0;
@@ -176,6 +181,7 @@ function prepareWriters(db: Database) {
         if (written.changes === 0) continue;
         added += 1;
         for (const theme of row.themeList) insertTheme.run(theme, row.rating, id);
+        for (const tag of row.openingTagList) insertOpening.run(tag, row.rating, id);
       }
     })();
     return { added, skipped: rows.length - added };

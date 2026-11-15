@@ -1300,6 +1300,21 @@
   white-space: nowrap;
 }
 
+/* The opponent that opens the game's review: plain text until the pointer arrives. */
+.found-card__opponent {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.found-card__opponent:hover,
+.found-card__opponent:focus-visible {
+  text-decoration: underline;
+}
+
 .found-card__state {
   flex: none;
   color: var(--text-2);

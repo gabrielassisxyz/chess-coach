@@ -1,6 +1,7 @@
 import type { GameDetail, GameSummary } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Chess } from "chess.js";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import { useServer } from "../src/hooks/useServer.js";
@@ -345,5 +346,138 @@ describe("failures", () => {
       <Games server={{} as never} api={broken} importApi={idleImportApi} createBoard={factory} />,
     );
     await waitFor(() => expect(screen.getByText(/The games could not be loaded/)).toBeTruthy());
+  });
+});
+
+function TargetHarness({
+  target,
+  onTargetOpened,
+  apiOverride,
+}: {
+  target: { gameId: number; ply: number } | null;
+  onTargetOpened?(): void;
+  apiOverride?: GamesApi;
+}) {
+  const server = useServer({ createSocket: createFakeSocket });
+  return (
+    <Games
+      server={server}
+      api={apiOverride ?? detailApi}
+      importApi={idleImportApi}
+      createBoard={factory}
+      target={target}
+      {...(onTargetOpened ? { onTargetOpened } : {})}
+    />
+  );
+}
+
+function OnceHarness({ opened }: { opened(): void }) {
+  const server = useServer({ createSocket: createFakeSocket });
+  const [target, setTarget] = useState<{ gameId: number; ply: number } | null>({
+    gameId: 7,
+    ply: 3,
+  });
+  return (
+    <Games
+      server={server}
+      api={detailApi}
+      importApi={idleImportApi}
+      createBoard={factory}
+      target={target}
+      onTargetOpened={() => {
+        setTarget(null);
+        opened();
+      }}
+    />
+  );
+}
+
+describe("a review opened from From my games", () => {
+  async function openTarget(target: { gameId: number; ply: number }, onTargetOpened?: () => void) {
+    render(<TargetHarness target={target} {...(onTargetOpened ? { onTargetOpened } : {})} />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
+    await screen.findByRole("button", { name: "Next" });
+    await waitFor(() => expect(boardSets.length).toBeGreaterThan(0));
+    await act(async () => {});
+  }
+
+  it("selects the wrong move and sends open_game then one select_review_ply", async () => {
+    await openTarget({ gameId: 7, ply: 3 });
+    expect(boardSets.at(-1)).toBe(game.moves[2]?.fen_after);
+    expect(screen.getByTestId("ply-3").getAttribute("aria-current")).toBe("true");
+    expect(screen.getByTestId("ply-detail").textContent).toContain(
+      "2. Nf3, Inaccuracy, cp loss 120, best was d4",
+    );
+    await waitFor(() =>
+      expect(commands().filter((c) => c.type === "select_review_ply")).toEqual([
+        expect.objectContaining({ game_id: 7, ply: 3 }),
+      ]),
+    );
+    expect(commands().map((c) => c.type)).toEqual(["open_game", "select_review_ply"]);
+  });
+
+  it("keeps the list on screen with its message when the game is gone", async () => {
+    const missing: GamesApi = {
+      ...api,
+      getGame: async () => Promise.reject(Object.assign(new Error("missing"), { status: 404 })),
+    };
+    const opened = vi.fn();
+    render(
+      <TargetHarness
+        target={{ gameId: 7, ply: 3 }}
+        onTargetOpened={opened}
+        apiOverride={missing}
+      />,
+    );
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
+    expect(await screen.findByRole("table", { name: "Finished games" })).toBeTruthy();
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+    expect(commands()).toEqual([]);
+    expect(opened).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the target once: back to the list and another open starts at ply 0", async () => {
+    const opened = vi.fn();
+    render(<OnceHarness opened={opened} />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
+    await screen.findByRole("button", { name: "Next" });
+    await waitFor(() =>
+      expect(commands().filter((c) => c.type === "select_review_ply")).toHaveLength(1),
+    );
+    expect(opened).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "All games" }));
+    expect(await screen.findByRole("table", { name: "Finished games" })).toBeTruthy();
+    boardSets.length = 0;
+    fireEvent.doubleClick(await screen.findByRole("row", { name: /1200/ }));
+    await screen.findByRole("button", { name: "Next" });
+    await waitFor(() => expect(boardSets.length).toBeGreaterThan(0));
+    expect(boardSets.at(-1)).toBe(START_FEN);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+    expect(commands().filter((c) => c.type === "select_review_ply")).toHaveLength(1);
+    expect(commands().filter((c) => c.type === "open_game")).toHaveLength(2);
   });
 });
