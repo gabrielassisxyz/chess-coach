@@ -111,9 +111,11 @@ describe("EnginePool with an evaluation cache", () => {
     openFixtureCache([{ epd: START_EPD, sets: [threeLinesAtThirty] }]).cache;
 
   it("answers 2 lines at depth 20 from a set of 3 lines at depth 30 without a search", async () => {
-    const { pool, processes } = gatedPool(cacheWithStart());
+    const { pool, processes, settle } = gatedPool(cacheWithStart());
     await pool.start();
     const answer = await pool.analyzeWith({ fen: FEN_A, depth: 20, multipv: 2, capMs: 4000 });
+    // A search the cache should have spared would send its go a few ticks after the answer.
+    await settle();
     expect(answer).toEqual({
       fen: FEN_A,
       bestmove: "e2e4",
@@ -143,6 +145,7 @@ describe("EnginePool with an evaluation cache", () => {
     const hit = gatedPool(cacheWithStart());
     await hit.pool.start();
     expect((await hit.pool.analyze(FEN_A)).source).toBe("cache");
+    await hit.settle();
     expect(goCommandsOf(hit.processes.get("evaluation"))).toEqual([]);
 
     const twoLines = openFixtureCache([
