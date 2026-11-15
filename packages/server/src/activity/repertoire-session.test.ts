@@ -2535,3 +2535,131 @@ describe("pinning the line drill rules that stayed green under mutation", () => 
     expect(notes.filter((note) => note.type === "puzzle_result")).toHaveLength(0);
   });
 });
+
+describe("showing a line drill move's stored idea after the answer", () => {
+  it("carries the answered move's SAN and stored idea after a right first try", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4" || san === "Nf3");
+    setIdea("", "e4", "Take the centre and free the bishop.");
+    setIdea("e4 e5", "Nf3", "Develop and attack e5.");
+    const service = boot();
+    let state = await start(service, id, "due");
+    expect(drillOf(state).answered).toBeNull();
+
+    state = await play(service, state, "e4");
+    expect(drillOf(state).answered).toEqual({
+      san: "e4",
+      idea: "Take the centre and free the bishop.",
+    });
+    expect(drillOf(state).hint).toEqual({ kind: "none" });
+    expect(cardOf("", "e4")).toMatchObject({ repetitions: 3 });
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 1)]);
+  });
+
+  it("carries the idea after a wrong try then the right move, with the same fail rating", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    setIdea("", "e4", "Take the centre and free the bishop.");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = await play(service, state, "h3");
+    expect(drillOf(state).answered).toBeNull();
+    state = await play(service, state, "e4");
+    expect(drillOf(state).answered).toEqual({
+      san: "e4",
+      idea: "Take the centre and free the bishop.",
+    });
+    expect(cardOf("", "e4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+  });
+
+  it("carries the idea after the move is shown by the hint's last step, with the same fail rating", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    setIdea("", "e4", "Take the centre and free the bishop.");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = training(await service.trainingHint(state.activity_id));
+    expect(drillOf(state).answered).toBeNull();
+    state = training(await service.trainingHint(state.activity_id));
+    expect(drillOf(state).answered).toEqual({
+      san: "e4",
+      idea: "Take the centre and free the bishop.",
+    });
+    state = await play(service, state, "e4");
+    expect(drillOf(state).answered).toEqual({
+      san: "e4",
+      idea: "Take the centre and free the bishop.",
+    });
+    expect(cardOf("", "e4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+  });
+
+  it("carries the idea after show_solution, with the same fail rating", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    setIdea("", "e4", "Take the centre and free the bishop.");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = training(await service.trainingShowSolution(state.activity_id));
+    expect(drillOf(state).answered).toEqual({
+      san: "e4",
+      idea: "Take the centre and free the bishop.",
+    });
+    state = await play(service, state, "e4");
+    expect(state.status).toBe("failed");
+    expect(drillOf(state).answered).toEqual({
+      san: "e4",
+      idea: "Take the centre and free the bishop.",
+    });
+    expect(cardOf("", "e4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
+  });
+
+  it("keeps the answered move while the server plays on, replaces it, and starts the next pass null", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4" || san === "Nf3");
+    setIdea("", "e4", "Take the centre.");
+    setIdea("e4 e5", "Nf3", "Develop.");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = await play(service, state, "e4");
+    expect(lineSan(state)).toEqual(["e4", "e5"]);
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: "Take the centre." });
+
+    state = await play(service, state, "h3");
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: "Take the centre." });
+    state = await play(service, state, "Nf3");
+    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: "Develop." });
+    expect(state.status).toBe("failed");
+
+    state = await next(service, state);
+    expect(drillOf(state).answered).toBeNull();
+    state = await play(service, state, "Nf3");
+    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: "Develop." });
+  });
+
+  it("gives answered.idea null when none is stored, never the placeholder", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = await play(service, state, "e4");
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: null });
+    expect(drillOf(state).hint).toEqual({ kind: "none" });
+  });
+
+  it("carries the new move's idea when it is shown with its answer", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(SETUP_ROWS, () => false);
+    const afterBc5 = "e4 e5 Nf3 Nc6 Bc4 Bc5";
+    setIdea(afterBc5, "c3", "Prepare d4.");
+    const service = boot();
+    let state = await start(service, id, "recommended");
+    expect(drillOf(state)).toMatchObject({ first_pass: true, answer: { san: "c3" } });
+    expect(drillOf(state).answered).toEqual({ san: "c3", idea: "Prepare d4." });
+
+    state = await play(service, state, "c3");
+    expect(drillOf(state).answered).toEqual({ san: "c3", idea: "Prepare d4." });
+    expect(firstAttempts()).toEqual([]);
+  });
+});

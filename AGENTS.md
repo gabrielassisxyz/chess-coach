@@ -31,8 +31,8 @@
   `CHESS_COACH_DATA_DIR` moves it, `CHESS_COACH_CONTENT_DIR` moves the teaching content
   (`content/`). Puzzles are seeded from `content/puzzles` at every server start.
 - **Test:** `pnpm test` (vitest, per package). Opt-in flags, off by default and never in
-  `bin/ci`: `CHESS_COACH_STOCKFISH=1` runs the real-engine grading suite
-  (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
+  `bin/ci`: `CHESS_COACH_STOCKFISH=1` runs the real-engine grading suite and the evaluation cache's
+  score-sign check (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
   Claude session probe (`test:sdk`, stdin closed); `CHESS_COACH_RECORD=<file>` records the SDK
   stream to that file. `CHESS_COACH_CHESSCOM=1` makes one real call to the public Chess.com API
   (`chesscom.real.test.ts`, shape only). `CHESS_COACH_EXPLORER=1` does the same for one Lichess explorer
@@ -48,7 +48,8 @@
   path: `test/temp-root.test.ts` fails if one does.
 - **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
   proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
-  Stockfish missing, engine fault, dropped socket, restart per game phase, undelivered
+  Stockfish missing, engine fault, evaluation cache unset or missing, dropped socket, restart per
+  game phase, undelivered
   notifications, refresh per activity kind, restart during training, restart during a rebuild) and reads the files from disk. Renaming or
   deleting one of those tests means updating the inventory in the same change.
 - **Design:** `packages/web/src/styles/tokens.css` is the only file allowed a colour literal;
@@ -164,6 +165,25 @@
   button, kept after the panel closes. The page's styles, the panel's included, are
   `styles/practice-openings.css`; the classes of the style points and the coverage view are in
   `styles/repertoire.css`.
+  Each colour that holds a stored opening closes with the block "Puzzles from these openings"
+  (`components/PracticeOpeningPuzzles.tsx`), under its cards and, for White, the Add an opening
+  button; a colour with no stored opening has none, and the side control hides it with its colour.
+  The names it asks about come from `openingPuzzleNamesOf` in `state/opening-puzzles-api.ts`: the
+  colour's stored openings in the page's order, then, for White, the families (`openingFamilyOf`) of
+  `met[]` in its order, none twice, a `met` entry with no name skipped, at most 12
+  (`OPENING_PUZZLE_TILE_LIMIT`). The block reads `GET /api/puzzles/openings` once for each colour
+  with those names, and again only when the names change or Try again is pressed, and draws a tile
+  for each entry that has puzzles, in the order asked: the name, `first_try_30d` over `played_30d` as
+  a whole percentage in the theme tiles' bands (`new` when `played_30d` is 0) and "N puzzles" with
+  thousands separators. The tiles are the Overview's theme tiles, classes and measures included. A
+  tile sends `start_training {mode: "puzzles", opening: <tag>}` with the entry's `tag` through
+  `beginOpeningPuzzles` in `screens/Practice.tsx`, which keeps the tag in the `motif` field of the
+  start in flight, so the Overview's theme buttons never take it for their own; a refusal shows on
+  this page like any other start. Every tile waits while any start is in flight, while an opening is
+  being added (the hub would unmount and lose the page's memory of the add) and while the engine is
+  missing. A failed read says `The puzzles of your openings could not be loaded.` with Try again
+  inside the block and leaves the rest of the page as it was, and a block whose entries all have no
+  puzzle says `No Lichess puzzle comes from these openings.`.
 - **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
   adds the whole Lichess puzzle database (`lichess-db:` ids, source `lichess-db`) to the library, reading CSV from
   stdin into the usual data dir and printing rows added, skipped and failed. A row's `FEN` is shown after its first
@@ -350,7 +370,8 @@
   attempt rates it (SM-2 in `repertoire_cards`, one card per position and move across variations), and
   a miss comes back on a later pass until it is right first time. In `all`, a move not due keeps its
   schedule when right. A wrong try within 50 cp of the engine's best that reaches another named opening
-  carries that name. `GET /api/repertoires` lists each variation with what each scope would serve.
+  carries that name. After each asked move is answered, the drill carries its stored idea in `answered`
+  and the Practice column shows it as Why with the move number. `GET /api/repertoires` lists each variation with what each scope would serve.
   A `level` on the command widens the drill from that repertoire to every variation of its group
   (`group`) or every unit of its side (`side`, the Openings page's "Train all" button of a colour); without one it is the
   variation. The level's moves are merged so that a move two variations share, one card, is served
@@ -379,6 +400,34 @@
   keeps its schedule. A miss writes no `srs_cards` card, `puzzle_attempts` is written as for any
   puzzle, and the puzzle rating does not move, since these puzzles have no rating. The run's divider
   reads "From my games". `DELETE FROM found_cards` makes every position new again.
+- **Found notes:** a listed position can hold a note, `found_positions.note` (nullable), a sentence or two on why
+  its best accepted move is played there. `POST /api/openings/generate {sources: ["found-notes"]}`
+  (`openings/found-notes.ts`) writes one for every listed position whose `note` is null, the newest
+  `first_found_at` first, so a run cut short has covered what the drill serves first. It is the
+  `repertoire-ideas` batch applied to these positions and shares its pieces: the `IdeaSession`
+  interface, `sdkIdeaSession` (the coach's model, no tools, one turn, `strictMcpConfig: true`, no stored
+  session, 180 s a note, with its own system prompt passed in), the 200 character limit and two
+  attempts a position. It never runs after an import and is refused 409 `already_running` while it or
+  the ideas run runs, the two sharing one guard; a missing generator answers 404
+  `found_notes_unavailable`. It logs `openings.generate` with `considered`, `generated`, `rejected`
+  and `empty`, and each refused text as `openings.found_note_rejected`. A stored note is never
+  rewritten, so `UPDATE found_positions SET note = NULL` is how a note is written again, and a
+  position whose two texts were refused stays empty for the next run. The prompt of a position
+  gives its FEN, the side to move, the phase, the moves of the shown game that led to it (`game_id`
+  and `ply`, nothing after the position), the best accepted move numbered as the game would write it,
+  the engine's evaluation with best play read from that game's grading (`eval_before_cp`, left out
+  when the game has none or is gone) and, only for a position found from a mistake, the move the student
+  played there in that game with its classification; a repeat's prompt does not carry it. The check
+  (`foundNoteRejection`) refuses an empty text, one over 200 characters, one that names the written
+  form of any accepted move (SAN, with or without its check sign, castling with zeros too) and one
+  that names the destination square of any accepted move; the refusal is told to the second attempt.
+  The check cannot prove the chess right. A drill of mode `found` carries `note` in its state once an
+  item ended solved or with the solution shown: `{san, text}` with the stored note and the best
+  accepted move's SAN, since an item solved with another accepted move has no `expected` move to
+  name it by, or null when the position has none. It is null while the item is open, a hint included, and
+  the field is absent in every other mode, whose puzzles may share the id. The Practice column draws it
+  in the item's card under the verdict, as "Why <SAN>" and the text, and draws nothing when it is null
+  or before the end.
 - **From my games list:** `GET /api/found-positions` (optional `color`, `phase` and `opening`) answers
   `{positions, counts}` (`http/found-positions.ts`, schemas in shared `found-positions.ts`). `opening` takes a full name or a family, as the drill does. A listed
   position carries `id`, `fen`, `color`, `phase`, `section` (`reached` when `from_repeat`, else
@@ -443,13 +492,38 @@
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
 - **Evaluation cache:** `tools/build_eval_cache.py` turns the Lichess evaluation file into `evals.db`, a SQLite file keyed by a packed position; the binary format and the one pipeline command are in `tools/README.md`, and its tests run with `uv run --no-project --with orjson --with pytest pytest tools/test_build_eval_cache.py`. It is not in `bin/ci`.
+- **Evaluation cache, on the server:** `packages/server/src/engine/eval-cache.ts` reads that file,
+  read-only, from the path in `CHESS_COACH_EVAL_CACHE`; it stays a file of its own because the app's
+  database would otherwise grow by tens of gigabytes. Unset, missing or unreadable, the boot logs one
+  `eval_cache.unavailable` and every lookup misses, so the app works as it did without one. Only the
+  engine's analysis lane looks a position up, for the strip's `analyse` and the coach's `analyze`;
+  grading, the drill generators and the repertoire review never do, so a `cp_loss` stays comparable
+  within a game at one depth, and `test/grading-wiring.test.ts` fails when a module besides the pool and
+  the entry point imports the reader. The position is the first four fields of the FEN as chess.js writes
+  them, an en passant square only where a capture is possible, as the file does. A request for N lines at
+  depth D hits only on a stored set with at least N lines and a depth of at least D: the deepest such set
+  answers with its first N lines at the depth it holds, so a row of one line never answers a request for
+  three, and anything else is searched as before. The file scores every line from White's side, a mate as
+  moves to mate with that sign; the reader gives the side-to-move score of a search (a mate as 10000), and
+  `eval-cache.stockfish.real.test.ts` checks that sign against the engine under
+  `CHESS_COACH_STOCKFISH=1`. Castling is stored as the king taking its rook (`e1h1`) and is replayed on the
+  board into `e1g1`, while a rook on e1 playing to h1 stays a rook move; a line ends at the first move
+  that does not replay. `eval_cache.hit` and `eval_cache.miss` log each lookup with `fen`, `lines`,
+  `depth` and `duration_ms`, a hit adding `stored_depth` and `stored_lines` and a miss its `reason`
+  (`not_stored` or `insufficient`); `eval_cache.failed` logs a lookup that threw, which answers as a miss.
 - **Engine on Practice:** `analyse {fen, lines 1-5, depth 8-24}` runs the evaluation engine's
   analysis lane on a position and answers that connection with an `analysis` event (lines with
   SAN and a centipawn score from White's side, a mate as 10000). The search stops at the depth or
   after 4 s, whichever first: the request carries `depth` and `capMs` and never `movetime`, which
   would spend the whole 4 s on every position. The event's `depth` is the depth the lines reached,
   and `cutByTime: true` says the cap stopped the search first; the strip takes such an answer for
-  the answer to its request, since asking again meets the same cap. It is refused with
+  the answer to its request, since asking again meets the same cap. The event's `source` is `cache`
+  when a stored evaluation answered (see Evaluation cache, on the server), at once and at its own
+  depth, which is the asked one or deeper, and the strip takes that answer for the answer to its
+  request too; `engine` says a search ran. A connection's older `analyse` answers nothing once a
+  newer one was sent, since a cached answer can come back before the search for the older one ends.
+  The coach's `analyze` reads the cache the same way, for 3 lines at depth 18, and its answer names
+  the `depth` and `source`. It is refused with
   `training_item_open` while an item is open, so the
   engine never helps with the answer, with `not_in_training` or `stale_activity` off the item, and
   with `engine_unavailable` when Stockfish is missing or dead; a request a newer one replaced
@@ -482,7 +556,8 @@
   `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
   `coach.permission_resolved`, `training.item_served`, `training.answer`, `training.runs_left` (the runs a server start ended), `srs.rated`,
   `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `openings.rebuild_copy_removed`, `import_lichess.progress`, `import_lichess.done`,
-  `explorer.failed`, `*.listener_failed`, and `client.*` for what
+  `explorer.failed`, `eval_cache.hit`, `eval_cache.miss`, `eval_cache.unavailable`,
+  `eval_cache.failed`, `*.listener_failed`, and `client.*` for what
   the browser reports through `POST /api/client-log` (uncaught errors, socket drops and
   reconnects, every error frame it received).
 - **Reading:** with `L=data/logs/$(date -u +%F).jsonl`:

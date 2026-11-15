@@ -11,10 +11,10 @@ import { type Log, silentLog } from "../log.js";
 
 export const MAX_IDEA_CHARS = 200;
 // The first try and one retry: a text that fails both is left empty rather than bent into shape.
-const IDEA_ATTEMPTS = 2;
+export const IDEA_ATTEMPTS = 2;
 // A refused text is logged so a bad prompt can be diagnosed, but an answer that ran on would
 // otherwise reach the log's own field limit and be cut there, mid-sentence.
-const LOGGED_TEXT_CHARS = 300;
+export const LOGGED_TEXT_CHARS = 300;
 // One note is a few seconds of model time; a call that outlasts this is stuck, and a stuck call
 // would hold the route's one-run-at-a-time guard until the server restarted.
 const IDEA_CALL_TIMEOUT_MS = 180_000;
@@ -65,7 +65,7 @@ export function ideaRejection(text: string, move: IdeaMove): string | null {
 
 // A check or mate sign is not part of how a student would write the move, and castling is also
 // written with zeros.
-function writtenForms(san: string): string[] {
+export function writtenForms(san: string): string[] {
   const bare = san.replace(/[+#]/g, "").toLowerCase();
   return [bare, bare.replaceAll("o", "0")];
 }
@@ -85,11 +85,11 @@ const IDEA_SYSTEM_PROMPT = [
   "- Answer with the note and nothing else.",
 ].join("\n");
 
-function numberedMoves(sans: string[]): string {
+export function numberedMoves(sans: string[]): string {
   return sans.map((san, index) => (index % 2 === 0 ? `${index / 2 + 1}.${san}` : san)).join(" ");
 }
 
-function evaluationText(evalCp: number): string {
+export function evaluationText(evalCp: number): string {
   if (evalCp >= MATE_SCORE_CP) return "White has a forced mate";
   if (evalCp <= -MATE_SCORE_CP) return "Black has a forced mate";
   const sign = evalCp > 0 ? "+" : "";
@@ -110,7 +110,7 @@ export function ideaPrompt(target: RepertoireIdeaTarget, refusal: string | null)
   return lines.join("\n");
 }
 
-const tidy = (text: string): string => text.replace(/\s+/g, " ").trim();
+export const tidy = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 async function writeOneIdea(
   session: IdeaSession,
@@ -168,6 +168,8 @@ export interface SdkIdeaSessionDeps {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  /** What the notes are written under; the repertoire ideas' own instructions when left out. */
+  systemPrompt?: string;
 }
 
 function failureText(message: SDKResultMessage): string {
@@ -187,7 +189,7 @@ export function sdkIdeaSession(query: IdeaQueryFn, deps: SdkIdeaSessionDeps): Id
     // An empty list loads no user, project or local settings, so the owner's CLAUDE.md and skills
     // never reach the model.
     settingSources: [],
-    systemPrompt: IDEA_SYSTEM_PROMPT,
+    systemPrompt: deps.systemPrompt ?? IDEA_SYSTEM_PROMPT,
     // Without this the CLI also connects the owner's claude.ai connectors and offers their tools.
     strictMcpConfig: true,
     model: COACH_MODEL,

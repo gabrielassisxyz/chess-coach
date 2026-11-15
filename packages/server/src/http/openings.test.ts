@@ -140,6 +140,7 @@ describe("POST /api/openings/generate", () => {
       points: { effectiveness: 2, soundness: 2, learnability: 2 },
     };
     const ideas = { considered: 40, generated: 38, rejected: 5, empty: 2 };
+    const foundNotes = { considered: 163, generated: 160, rejected: 6, empty: 3 };
     const build = (calls: string[]) =>
       buildApp({
         db: db(),
@@ -162,6 +163,10 @@ describe("POST /api/openings/generate", () => {
         generateRepertoireIdeas: async () => {
           calls.push("repertoire-ideas");
           return ideas;
+        },
+        generateFoundNotes: async () => {
+          calls.push("found-notes");
+          return foundNotes;
         },
       });
     const post = async (calls: string[], payload?: unknown) => {
@@ -974,6 +979,202 @@ describe("POST /api/openings/generate", () => {
         await app.close();
       },
     );
+
+    describe("found-notes", () => {
+      const post409 = { method: "POST", url: "/api/openings/generate" } as const;
+      const gateOpen = () => {
+        let release: () => void = () => {};
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return { gate, release };
+      };
+
+      it("runs only the found-notes source when asked for it, and logs its counts", async () => {
+        const calls: string[] = [];
+        const log = new RecordingLog();
+        const app = buildApp({
+          db: db(),
+          log,
+          generateOpenings: async () => own,
+          generateFoundNotes: async () => {
+            calls.push("found-notes");
+            return foundNotes;
+          },
+        });
+        const response = await app.inject({ ...post409, payload: { sources: ["found-notes"] } });
+        await app.close();
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({ foundNotes });
+        expect(calls).toEqual(["found-notes"]);
+        expect(log.named("openings.generate")[0]?.fields).toMatchObject({
+          sources: ["found-notes"],
+          result: { foundNotes: { considered: 163, generated: 160, rejected: 6, empty: 3 } },
+        });
+      });
+
+      it("never writes the notes without being asked", async () => {
+        const calls: string[] = [];
+        await post(calls);
+        await post(calls, { sources: ["own", "explorer", "italian", "repertoire"] });
+        await post(calls, { sources: ["repertoire-ideas"] });
+        expect(calls).not.toContain("found-notes");
+      });
+
+      it("answers 404 when the batch is not injected", async () => {
+        const app = buildApp({ db: db(), generateOpenings: async () => own });
+        const response = await app.inject({ ...post409, payload: { sources: ["found-notes"] } });
+        await app.close();
+        expect(response.statusCode).toBe(404);
+        expect(response.json()).toMatchObject({ error: "found_notes_unavailable" });
+      });
+
+      it("refuses a second found-notes run while one is going, and runs again once it ends", async () => {
+        const { gate, release } = gateOpen();
+        const app = buildApp({
+          db: db(),
+          generateOpenings: async () => own,
+          generateFoundNotes: async () => {
+            await gate;
+            return foundNotes;
+          },
+        });
+        const request = { ...post409, payload: { sources: ["found-notes"] } } as const;
+        const first = app.inject(request);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const second = await app.inject(request);
+        release();
+        expect((await first).statusCode).toBe(200);
+        const third = await app.inject(request);
+        await app.close();
+        expect(second.statusCode).toBe(409);
+        expect(second.json()).toMatchObject({ error: "already_running" });
+        expect(third.statusCode).toBe(200);
+      });
+
+      it("refuses a found-notes run while the ideas run is going", async () => {
+        const { gate, release } = gateOpen();
+        const calls: string[] = [];
+        const app = buildApp({
+          db: db(),
+          generateOpenings: async () => own,
+          generateRepertoireIdeas: async () => {
+            await gate;
+            return ideas;
+          },
+          generateFoundNotes: async () => {
+            calls.push("found-notes");
+            return foundNotes;
+          },
+        });
+        const run = (source: string) => app.inject({ ...post409, payload: { sources: [source] } });
+        const first = run("repertoire-ideas");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const second = await run("found-notes");
+        release();
+        expect((await first).statusCode).toBe(200);
+        await app.close();
+        expect(second.statusCode).toBe(409);
+        expect(second.json()).toMatchObject({ error: "already_running" });
+        expect(calls).toEqual([]);
+      });
+
+      it("refuses an ideas run while the found-notes run is going", async () => {
+        const { gate, release } = gateOpen();
+        const app = buildApp({
+          db: db(),
+          generateOpenings: async () => own,
+          generateRepertoireIdeas: async () => ideas,
+          generateFoundNotes: async () => {
+            await gate;
+            return foundNotes;
+          },
+        });
+        const run = (source: string) => app.inject({ ...post409, payload: { sources: [source] } });
+        const first = run("found-notes");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const second = await run("repertoire-ideas");
+        release();
+        expect((await first).statusCode).toBe(200);
+        await app.close();
+        expect(second.statusCode).toBe(409);
+      });
+
+      it("refuses a found-notes run while a combined run is still on its earlier steps", async () => {
+        const { gate, release } = gateOpen();
+        const app = buildApp({
+          db: db(),
+          generateOpenings: async () => own,
+          generateRepertoireOpenings: async () => {
+            await gate;
+            return repertoire;
+          },
+          generateFoundNotes: async () => foundNotes,
+        });
+        const run = (sources: string[]) => app.inject({ ...post409, payload: { sources } });
+        const first = run(["repertoire", "found-notes"]);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const second = await run(["found-notes"]);
+        release();
+        expect((await first).statusCode).toBe(200);
+        await app.close();
+        expect(second.statusCode).toBe(409);
+      });
+
+      it("frees the guard when the run fails, and names the session in the 502", async () => {
+        let fail = true;
+        const app = buildApp({
+          db: db(),
+          generateOpenings: async () => own,
+          generateFoundNotes: async () => {
+            if (fail) throw new IdeaSessionError("5-hour limit reached");
+            return foundNotes;
+          },
+        });
+        const run = () => app.inject({ ...post409, payload: { sources: ["found-notes"] } });
+        const failed = await run();
+        fail = false;
+        const retried = await run();
+        await app.close();
+        expect(failed.statusCode).toBe(502);
+        expect(failed.json()).toEqual({
+          error: "ideas_unavailable",
+          message: "5-hour limit reached",
+        });
+        expect(retried.statusCode).toBe(200);
+      });
+
+      it("accepts all six sources in one body and runs the notes last", async () => {
+        const calls: string[] = [];
+        const response = await post(calls, {
+          sources: ["found-notes", "repertoire-ideas", "repertoire", "italian", "explorer", "own"],
+        });
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({
+          own,
+          explorer,
+          italian,
+          repertoire,
+          repertoireIdeas: ideas,
+          foundNotes,
+        });
+        expect(calls).toEqual([
+          "own",
+          "explorer",
+          "italian",
+          "repertoire",
+          "repertoire-ideas",
+          "found-notes",
+        ]);
+      });
+
+      it("names found-notes among the sources a bad request lists", async () => {
+        const response = await post([], { sources: ["nothing"] });
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toMatchObject({ error: "invalid_sources" });
+        expect(response.json().message).toContain("found-notes");
+      });
+    });
   });
 });
 

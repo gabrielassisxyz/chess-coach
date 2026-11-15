@@ -19,6 +19,7 @@ import { registerPuzzleRoutes } from "./http/puzzles.js";
 import { type RepertoireRebuildState, registerRepertoireRoutes } from "./http/repertoires.js";
 import { registerRoutineRoutes } from "./http/routine.js";
 import { type Log, silentLog } from "./log.js";
+import type { FoundNotesResult } from "./openings/found-notes.js";
 import type { ExplorerResult } from "./openings/from-explorer.js";
 import type { GenerationResult } from "./openings/from-games.js";
 import {
@@ -75,6 +76,8 @@ export interface AppOptions {
   listAddableOpenings?: () => Promise<AddableOpeningsResponse>;
   /** Writes the idea of each stored White move through the model; only asked for by name, never at boot. */
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>;
+  /** Writes the note of each listed position from the student's games; only asked for by name. */
+  generateFoundNotes?: () => Promise<FoundNotesResult>;
   log?: Log;
 }
 
@@ -142,6 +145,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
         options.generateItalianOpenings,
         options.generateRepertoireOpenings,
         options.generateRepertoireIdeas,
+        options.generateFoundNotes,
         log,
         rebuilding,
       );

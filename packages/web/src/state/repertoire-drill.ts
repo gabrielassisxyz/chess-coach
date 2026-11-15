@@ -147,3 +147,25 @@ export function repertoireCardOf(
 export function nextEndsDrill(drill: RepertoireDrill): boolean {
   return drill.moves_left === 0;
 }
+
+export interface AnsweredLine {
+  title: string;
+  body: string;
+}
+
+// The stored idea of the move just answered, drawn under the drill's card. Nothing when no move
+// was answered yet, at the start of a pass, or when none is stored.
+export function answeredLineOf(
+  training: TrainingActivity,
+  drill: RepertoireDrill,
+): AnsweredLine | null {
+  const answered = drill.answered;
+  if (!answered?.idea) return null;
+  const moves = training.moves ?? [];
+  const lastStudent = [...moves]
+    .reverse()
+    .find((move) => move.by === "student" && move.san === answered.san);
+  const ply = lastStudent ? lastStudent.ply : moves.length;
+  const number = Math.floor(ply / 2) + 1;
+  return { title: `Why ${number}.${answered.san}`, body: answered.idea };
+}

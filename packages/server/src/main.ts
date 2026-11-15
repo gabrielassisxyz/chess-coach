@@ -11,6 +11,7 @@ import { composeServer } from "./compose.js";
 import { resolveLichessToken } from "./db/connections.js";
 import { openDatabase } from "./db/open.js";
 import { bootEngines } from "./engine/boot.js";
+import { openEvalCache } from "./engine/eval-cache.js";
 import { evaluatePlayerMove } from "./engine/evaluate.js";
 import { EnginePool } from "./engine/pool.js";
 import { spawnStockfish } from "./engine/process.js";
@@ -24,10 +25,11 @@ import {
   httpExplorerFetcher,
   systemExplorerClock,
 } from "./openings/explorer-client.js";
+import { FOUND_NOTE_SYSTEM_PROMPT, generateFoundNotes } from "./openings/found-notes.js";
 import { loadRepertoireBranchBook } from "./openings/from-repertoire.js";
 import { loadOpeningNames } from "./openings/names.js";
 import { generateRepertoireIdeas, sdkIdeaSession } from "./openings/repertoire-ideas.js";
-import { contentDir, dataDir, resolveAppRoot } from "./paths.js";
+import { contentDir, dataDir, evalCachePath, resolveAppRoot } from "./paths.js";
 import { ensurePuzzleRating } from "./puzzles/rating.js";
 import { seedPuzzles } from "./puzzles/seed.js";
 import { ReviewDesk } from "./srs/review.js";
@@ -66,7 +68,9 @@ const db = openDatabase(dataDir());
 const openingNames = loadOpeningNames(contentDir());
 // The same table's lines, for the positions where the Italian can branch into another variation.
 const repertoireBranches = loadRepertoireBranchBook(contentDir());
-const pool = new EnginePool(() => spawnStockfish());
+// Only the analysis lane reads it; grading goes to the engine at one depth, whatever the file holds.
+const evalCache = openEvalCache(evalCachePath(), log);
+const pool = new EnginePool(() => spawnStockfish(), {}, evalCache);
 // The sinks read `coach` when a turn commits, long after the constant below is initialised.
 const sinks = coachNotificationSinks({ ensureSessionId: (tab) => coach.ensureSessionId(tab) });
 const game = new GameService({
@@ -104,6 +108,12 @@ const listAddable = () => {
 // Each run starts its own Claude sessions, so nothing here holds a process open between runs.
 const runRepertoireIdeas = () =>
   generateRepertoireIdeas(db, sdkIdeaSession(query, { cwd: dataDir() }), log);
+const runFoundNotes = () =>
+  generateFoundNotes(
+    db,
+    sdkIdeaSession(query, { cwd: dataDir(), systemPrompt: FOUND_NOTE_SYSTEM_PROMPT }),
+    log,
+  );
 const coach = new CoachSession({
   db,
   query,
@@ -154,6 +164,7 @@ const composed = composeServer({
       usernames: (process.env.CHESS_COACH_USERNAMES ?? "").split(",").filter(Boolean),
     },
     generateRepertoireIdeas: runRepertoireIdeas,
+    generateFoundNotes: runFoundNotes,
     listAddableOpenings: listAddable,
   },
 });
@@ -212,7 +223,10 @@ const shutdown = (signal: string): void => {
   if (stopping) return;
   stopping = true;
   log.info("server.stop", { signal });
-  void Promise.all([coach.stop(), pool.stop()]).finally(() => process.exit(0));
+  void Promise.all([coach.stop(), pool.stop()]).finally(() => {
+    evalCache.close();
+    process.exit(0);
+  });
 };
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));

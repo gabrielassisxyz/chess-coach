@@ -392,6 +392,38 @@
 }
 
 /*
+ * The Lichess puzzles of a colour's openings, under its cards: a 14 px title over a 12 px sentence,
+ * then the tiles. The tiles are the Overview's theme tiles (`theme-tiles__grid` and `theme-tile`
+ * in practice-hub.css), so both grids read the same and move together. The 2 px between the title
+ * and the sentence, the 6 px under them and the 16 px above the block, on top of the section's own
+ * gap, are the approved screen's.
+ */
+.opening-puzzles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--space-4);
+}
+
+.opening-puzzles__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.opening-puzzles__title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.opening-puzzles__note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+/*
  * The panel that Add an opening opens, in the button's place: a header with two tabs, the style
  * points, and the list of the tab chosen. Its measures are the approved screens': 16 px and 20 px
  * of padding, parts 10 px apart, tabs and Close 30 px high, a 36 px search field, rows of 7 px of
@@ -635,7 +667,8 @@
   .openings-panel__tab,
   .openings-side .segmented__option,
   .opening-card__adder .button,
-  .opening-row__coverage .button {
+  .opening-row__coverage .button,
+  .opening-puzzles .button {
     min-height: 44px;
   }
 

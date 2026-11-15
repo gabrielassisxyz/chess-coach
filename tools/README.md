@@ -147,4 +147,9 @@ does that.
 
 `decode_value` returns the sets as `{depth, knodes, lines: [{mate, score, moves}]}`.
 `testdata/eval_cache_golden.json` holds source lines with the exact expected key, depth column
-and value in hex, for a reader in another language to test against.
+and value in hex, for a reader in another language to test against. The server's reader,
+`packages/server/src/engine/eval-cache.ts`, is that other reader: its tests decode every case of the
+fixture and rebuild every key, so a change to the format has to change both sides.
+
+Scores are from White's side, whoever is to move, and a mate is stored the same way: a mate in 1
+that Black delivers is `-1`. The server's reader turns them into the side to move's score.

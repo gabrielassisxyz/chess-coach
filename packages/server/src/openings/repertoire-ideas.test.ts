@@ -422,8 +422,10 @@ describe("sdkIdeaSession", () => {
     for (const message of messages) yield message;
   }
 
-  const sessionOver = (fake: ScriptedIdeaQuery, extra: { timeoutMs?: number } = {}) =>
-    sdkIdeaSession(fake.query, { cwd: tmp, env: { PATH: "/bin" }, ...extra });
+  const sessionOver = (
+    fake: ScriptedIdeaQuery,
+    extra: { timeoutMs?: number; systemPrompt?: string } = {},
+  ) => sdkIdeaSession(fake.query, { cwd: tmp, env: { PATH: "/bin" }, ...extra });
 
   it("returns the text of the answer", async () => {
     const fake = new ScriptedIdeaQuery(() => streamOf(answered("It frees the bishop.")));
@@ -447,6 +449,12 @@ describe("sdkIdeaSession", () => {
     expect(options?.mcpServers).toBeUndefined();
     expect(options?.env).toMatchObject({ PATH: "/bin", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
     expect(String(options?.systemPrompt)).toContain("Never write the move");
+  });
+
+  it("writes under the system prompt it is given in place of its own", async () => {
+    const fake = new ScriptedIdeaQuery(() => streamOf(answered("ok")));
+    await sessionOver(fake, { systemPrompt: "You write notes on positions." }).write("p");
+    expect(fake.calls[0]?.options.systemPrompt).toBe("You write notes on positions.");
   });
 
   it("closes the stream once it has the answer", async () => {

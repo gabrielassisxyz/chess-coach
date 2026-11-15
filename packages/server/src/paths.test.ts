@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { contentDir, dataDir, resolveAppRoot } from "./paths.js";
+import { contentDir, dataDir, evalCachePath, resolveAppRoot } from "./paths.js";
 
 const originalCwd = process.cwd();
 let tmp: string;
@@ -11,11 +11,13 @@ beforeEach(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), "cc-paths-")));
   delete process.env.CHESS_COACH_DATA_DIR;
   delete process.env.CHESS_COACH_CONTENT_DIR;
+  delete process.env.CHESS_COACH_EVAL_CACHE;
 });
 afterEach(() => {
   process.chdir(originalCwd);
   delete process.env.CHESS_COACH_DATA_DIR;
   delete process.env.CHESS_COACH_CONTENT_DIR;
+  delete process.env.CHESS_COACH_EVAL_CACHE;
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -42,5 +44,21 @@ describe("overrides", () => {
     process.env.CHESS_COACH_CONTENT_DIR = join(tmp, "c");
     expect(dataDir()).toBe(join(tmp, "d"));
     expect(contentDir()).toBe(join(tmp, "c"));
+  });
+});
+
+describe("evalCachePath", () => {
+  it("is null while CHESS_COACH_EVAL_CACHE is unset or empty, so every analysis is searched", () => {
+    expect(evalCachePath()).toBeNull();
+    process.env.CHESS_COACH_EVAL_CACHE = "";
+    expect(evalCachePath()).toBeNull();
+  });
+
+  it("is the setting, resolved from the working directory", () => {
+    process.chdir(tmp);
+    process.env.CHESS_COACH_EVAL_CACHE = join(tmp, "evals.db");
+    expect(evalCachePath()).toBe(join(tmp, "evals.db"));
+    process.env.CHESS_COACH_EVAL_CACHE = "evals.db";
+    expect(evalCachePath()).toBe(join(tmp, "evals.db"));
   });
 });

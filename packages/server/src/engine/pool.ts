@@ -1,3 +1,4 @@
+import type { EvalCache } from "./eval-cache.js";
 import type { EngineSpawner } from "./process.js";
 import type { Searcher, SearchRequest, SearchResult } from "./uci.js";
 import { type EngineTimeouts, UciEngine } from "./uci.js";
@@ -46,11 +47,17 @@ class PrioritizedSearcher {
       if (lane === "live") {
         this.live.push(waiting);
       } else {
-        this.analyzeSlot?.reject(new AnalyzeSuperseded());
+        this.supersedeQueuedAnalyze();
         this.analyzeSlot = waiting;
       }
       this.pump();
     });
+  }
+
+  /** A request that was answered without the engine is newer than the one still waiting for it. */
+  supersedeQueuedAnalyze(): void {
+    this.analyzeSlot?.reject(new AnalyzeSuperseded());
+    this.analyzeSlot = null;
   }
 
   private pump(): void {
@@ -82,9 +89,14 @@ export class EnginePool {
   private readonly evaluationEngine: UciEngine;
   private readonly scheduler: PrioritizedSearcher;
 
+  /**
+   * `evalCache` answers `analyze` and `analyzeWith` before the engine is asked; the live lane,
+   * which grades, never reads it, so a grade stays comparable within a game at one depth.
+   */
   constructor(
     spawn: (role: EngineRole) => ReturnType<EngineSpawner>,
     timeouts: Partial<EngineTimeouts> = {},
+    private readonly evalCache: EvalCache | null = null,
   ) {
     this.evaluationEngine = new UciEngine(() => spawn("evaluation"), timeouts);
     this.play = new UciEngine(() => spawn("play"), timeouts);
@@ -93,12 +105,43 @@ export class EnginePool {
   }
 
   analyze(fen: string): Promise<SearchResult> {
-    return this.scheduler.analyze({ fen, depth: ANALYZE_DEPTH, multipv: ANALYZE_LINES });
+    return this.analyzeWith({ fen, depth: ANALYZE_DEPTH, multipv: ANALYZE_LINES });
   }
 
-  /** The same lane with the caller's depth and line count: the practice screen's engine strip. */
+  /**
+   * The same lane with the caller's depth and line count: the practice screen's engine strip.
+   * A stored evaluation with at least that many lines and that depth answers at once, at the
+   * depth it holds; anything else is searched, as it was before the cache.
+   */
   analyzeWith(request: SearchRequest): Promise<SearchResult> {
-    return this.scheduler.analyze(request);
+    const cached = this.fromCache(request);
+    if (cached) {
+      // The engine will not run for this request, so one still queued for it is out of date.
+      this.scheduler.supersedeQueuedAnalyze();
+      return Promise.resolve(cached);
+    }
+    return this.scheduler
+      .analyze(request)
+      .then((result): SearchResult => ({ ...result, source: "engine" }));
+  }
+
+  private fromCache(request: SearchRequest): SearchResult | null {
+    // A search by time has no depth to compare a stored one with.
+    if (!this.evalCache || request.depth === undefined || request.movetime !== undefined) {
+      return null;
+    }
+    const hit = this.evalCache.lookup(request.fen, {
+      lines: request.multipv ?? 1,
+      depth: request.depth,
+    });
+    if (!hit) return null;
+    return {
+      fen: request.fen,
+      bestmove: hit.lines[0]?.moves[0] ?? null,
+      lines: hit.lines,
+      depth: hit.depth,
+      source: "cache",
+    };
   }
 
   async start(): Promise<void> {

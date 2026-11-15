@@ -77,6 +77,33 @@ export function listFoundPositions(db: Database): FoundPosition[] {
   return (rows as FoundPositionRow[]).map(toFoundPosition);
 }
 
+// The newest finds first: the drill serves a new position latest-found first, so a run that stops
+// early has already written the notes the student meets first, and a rerun carries on with the rest.
+export function listFoundPositionsLackingNote(db: Database): FoundPosition[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM found_positions WHERE listed = 1 AND note IS NULL
+       ORDER BY first_found_at DESC, id`,
+    )
+    .all();
+  return (rows as FoundPositionRow[]).map(toFoundPosition);
+}
+
+// Never overwrites: a note already stored stays, whoever wrote it. Returns whether this call wrote.
+export function setFoundNote(db: Database, id: string, note: string): boolean {
+  const result = db
+    .prepare("UPDATE found_positions SET note = ? WHERE id = ? AND note IS NULL")
+    .run(note, id);
+  return result.changes > 0;
+}
+
+export function getFoundNote(db: Database, id: string): string | null {
+  const row = db.prepare("SELECT note FROM found_positions WHERE id = ?").get(id) as
+    | { note: string | null }
+    | undefined;
+  return row?.note ?? null;
+}
+
 /** What the From my games list and its drill narrow the positions to; each filter is optional. */
 export interface FoundPositionFilter {
   color?: PlayerColor | undefined;

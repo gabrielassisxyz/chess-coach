@@ -17,6 +17,7 @@ import {
   variationText,
 } from "../src/state/practice-item.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
+import { repertoireActivity } from "./practice-fixtures.js";
 
 // Black to move at move 31, as the prototype's puzzle.
 const BLACK_START = "5rk1/5p1p/Qp4p1/7b/2K5/1P4P1/5P1P/8 b - - 0 31";
@@ -307,6 +308,120 @@ describe("stateCardOf", () => {
   });
 });
 
+describe("the note of a position from the student's games", () => {
+  const NOTE = { san: "Nf3", text: "Develops the knight toward the center and eyes the e5 pawn." };
+  const cardOf = (training: TrainingActivity, scratch: string[] | null = null) =>
+    stateCardOf(training, trainingView(training), scratch, 88_000);
+  const found = (overrides: Partial<TrainingActivity> = {}) =>
+    puzzle({ mode: "found", note: NOTE, ...overrides });
+  const solved = (overrides: Partial<TrainingActivity> = {}) =>
+    found({
+      status: "solved",
+      moves: [{ ply: 0, uci: "g1f3", san: "Nf3", by: "student" }],
+      ...overrides,
+    });
+  const shown = (overrides: Partial<TrainingActivity> = {}) =>
+    found({
+      status: "failed",
+      gave_up: true,
+      expected: { uci: "g1f3", san: "Nf3" },
+      ...overrides,
+    });
+
+  const render = (training: TrainingActivity): string =>
+    renderToStaticMarkup(
+      createElement(PracticeColumn, {
+        training,
+        view: trainingView(training),
+        actions: {
+          showSolution() {},
+          rate() {},
+          next() {},
+          end() {},
+          hint() {},
+          toggleScratch() {},
+          takeBack() {},
+          resetLine() {},
+        },
+        card: stateCardOf(training, trainingView(training), null, 0),
+        elapsedMs: 0,
+        scratchLine: null,
+        shownPly: 0,
+        engineStrip: null,
+      }),
+    );
+
+  it("titles the note by its move and carries its text in the card of a solved item", () => {
+    expect(cardOf(solved())).toEqual({
+      tone: "right",
+      title: "Solved",
+      body: "1 move · 1:28",
+      note: { title: "Why Nf3", body: NOTE.text },
+    });
+  });
+
+  it("carries it in the card of an item whose solution was shown", () => {
+    expect(cardOf(shown())).toEqual({
+      tone: "wrong",
+      title: "Solution shown",
+      body: "Expected Nf3 · 1:28",
+      note: { title: "Why Nf3", body: NOTE.text },
+    });
+  });
+
+  it("names the note's own move, not the move the student played", () => {
+    const withAlternative = solved({
+      moves: [{ ply: 0, uci: "b1c3", san: "Nc3", by: "student" }],
+    });
+    expect(cardOf(withAlternative).note).toEqual({ title: "Why Nf3", body: NOTE.text });
+  });
+
+  it("draws no note when the position has none: the card is the one it was", () => {
+    expect(cardOf(solved({ note: null }))).toEqual({
+      tone: "right",
+      title: "Solved",
+      body: "1 move · 1:28",
+    });
+    expect(cardOf(shown({ note: null }))).toEqual({
+      tone: "wrong",
+      title: "Solution shown",
+      body: "Expected Nf3 · 1:28",
+    });
+    expect(cardOf(solved({ note: undefined }))).not.toHaveProperty("note");
+  });
+
+  it("draws no note before the item has ended, though the state were to carry one", () => {
+    for (const open of [
+      found(),
+      found({ status: "in_progress" }),
+      found({ hint_square: "g1" }),
+      found({ tries: 1, last_try: { uci: "d2d3", san: "d3", correct: false } }),
+    ]) {
+      expect(cardOf(open)).not.toHaveProperty("note");
+    }
+  });
+
+  it("draws no note over the free analysis or on the finished queue's card", () => {
+    expect(cardOf(solved(), ["e4", "e5"])).not.toHaveProperty("note");
+    expect(cardOf(solved({ summary: { solved: 3, failed: 1 } }))).not.toHaveProperty("note");
+  });
+
+  it("renders Why and the move, then the note, in the column once the item ended", () => {
+    for (const ended of [solved(), shown()]) {
+      const html = render(ended);
+      expect(html).toContain('class="state-card__note-title">Why Nf3</p>');
+      expect(html).toContain(`class="state-card__note-body">${NOTE.text}</p>`);
+    }
+  });
+
+  it("renders no such line when the note is null, and none while the item is open", () => {
+    expect(render(solved({ note: null }))).not.toContain("state-card__note");
+    expect(render(shown({ note: null }))).not.toContain("state-card__note");
+    expect(render(found())).not.toContain("state-card__note");
+    expect(render(found({ hint_square: "g1" }))).not.toContain("state-card__note");
+  });
+});
+
 describe("ratings and progress", () => {
   it("hides the puzzle rating until the item ends and signs the change", () => {
     const open = puzzle();
@@ -379,5 +494,48 @@ describe("board positions", () => {
     expect(local.turn).toBe("white");
     expect(local.legalMoves.some((move) => move.from === "g1" && move.to === "f3")).toBe(true);
     expect(local.lastMove).toEqual({ from: "e7", to: "e5" });
+  });
+});
+
+describe("the answered idea under a repertoire drill's card", () => {
+  const renderColumn = (training: TrainingActivity): string => {
+    const view = trainingView(training);
+    return renderToStaticMarkup(
+      createElement(PracticeColumn, {
+        training,
+        view,
+        actions: {
+          showSolution() {},
+          rate() {},
+          next() {},
+          end() {},
+          hint() {},
+          toggleScratch() {},
+          takeBack() {},
+          resetLine() {},
+        },
+        card: stateCardOf(training, view, null, 0),
+        elapsedMs: 0,
+        scratchLine: null,
+        shownPly: 0,
+        engineStrip: null,
+      }),
+    );
+  };
+
+  it("shows Why with the move number and idea after an answer, and nothing before", () => {
+    expect(renderColumn(repertoireActivity({}))).not.toContain("why-line");
+    const html = renderColumn(
+      repertoireActivity({ drill: { answered: { san: "c3", idea: "Prepare d4." } } }),
+    );
+    expect(html).toContain("why-line");
+    expect(html).toContain("Why 4.c3");
+    expect(html).toContain("Prepare d4.");
+  });
+
+  it("draws nothing when the answered move stores no idea", () => {
+    expect(
+      renderColumn(repertoireActivity({ drill: { answered: { san: "c3", idea: null } } })),
+    ).not.toContain("why-line");
   });
 });

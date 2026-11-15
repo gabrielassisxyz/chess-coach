@@ -19,6 +19,7 @@ import {
   variationText,
 } from "../state/practice-item.js";
 import {
+  answeredLineOf,
   hintLabelOf,
   itemOpeningOf,
   itemVariationOf,
@@ -385,6 +386,7 @@ export function PracticeColumn(props: PracticeColumnProps) {
   const trail = training.exploring.trail;
   const drill = training.repertoire ?? null;
   const answer = drill && view.open ? (shownMoveOf(drill)?.san ?? null) : null;
+  const why = drill ? answeredLineOf(training, drill) : null;
   return (
     <section className="screen practice-item" aria-label="Practice">
       <header className="practice-item__head">
@@ -428,6 +430,12 @@ export function PracticeColumn(props: PracticeColumnProps) {
             </p>
           </div>
         </div>
+        {card.note ? (
+          <div className="state-card__note">
+            <p className="state-card__note-title">{card.note.title}</p>
+            <p className="state-card__note-body">{card.note.body}</p>
+          </div>
+        ) : null}
         {!view.open && !view.summary && trail.length > 0 && scratchLine === null ? (
           <ExplorationTrail
             trail={trail}
@@ -455,6 +463,16 @@ export function PracticeColumn(props: PracticeColumnProps) {
           <EndedActions training={training} view={view} actions={actions} />
         )}
       </div>
+      {why ? (
+        <div className="state-card" data-tone="neutral" data-testid="why-line">
+          <div className="state-card__head">
+            <div className="state-card__text">
+              <p className="state-card__title">{why.title}</p>
+              <p className="state-card__body">{why.body}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {confirming && !view.summary ? (
         <dialog open className="practice__confirm" aria-label="End training">
           <p>End this session? What you answered is kept.</p>

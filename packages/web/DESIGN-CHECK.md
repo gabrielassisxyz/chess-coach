@@ -209,6 +209,23 @@ the first tab while the second still works, and an empty list a sentence in the 
 Under 900 px the tabs and Close go under the title, every control is 44 px, and a row keeps its
 name, pill and Add on one line with the moves under the name. M1 and M2 still find no matches.
 
+The Practice column was re-checked on rows 6, 8, 9, 10, 14, 15, 17 and 19, and the Phone column on
+row 19, for the Puzzles from these openings block under each colour's cards on the Openings page,
+against its markup, `practice-openings.css` and `test/practice-opening-puzzles.test.tsx`; the cells
+were not measured in a browser. The block is a labelled region and not a card, so nothing in it is
+nested. Its title is 14 px and 500 over a 12 px sentence in `--text-2`, 2 px apart, and under them
+come the Overview's theme tiles unchanged: the grid is `repeat(auto-fill, minmax(240px, 1fr))` with
+gaps of 2 px and 12 px, and a tile is a 4 px borderless button with 8 px and 12 px of padding, the
+opening's name at 14 px, the first-try share in the mono face at 12 px at its right
+(`--quality-best` from 70, `--quality-inaccuracy` from 55, `--quality-blunder` under it, and `new`
+in `--text-3` for an opening nothing was played on) and the number of puzzles at 12 px under them.
+Loading is one quiet sentence; a failed read is one sentence in the error tone with Try again
+inside the block, while the cards and the other colour's block stay as they were; a block whose
+openings hold no puzzle keeps its title and says so in a quiet sentence. A tile takes the one focus
+ring, drawn 2 px inside it, and waits while a start is in flight, an opening is being added or the
+engine is missing. Under 900 px the grid is one column and every tile and the Try again button are
+44 px. M1 and M2 print nothing for it.
+
 The Practice column was re-checked on rows 4, 6, 8, 9, 10, 14, 15, 16, 17 and 19, and the Phone
 column on row 19, for the Openings played page and the Dashboard's Openings played card, against
 their markup, `practice-hub.css` and `test/practice-openings-played.test.tsx`; the cells were not
@@ -266,7 +283,9 @@ the line is too short, and nothing scrolls sideways. M1 and M2 still find no mat
   themes section `2px` between tiles, `12px` between columns, `6px` from a group's heading to its
   tiles and `20px` at the sides of the healthy mix, the approved screen's values; none is layout
   spacing between blocks. The panel that adds an opening keeps `7px` of padding in its rows, `12px`
-  between their columns and a `36px` search field, also the approved screens' values.
+  between their columns and a `36px` search field, also the approved screens' values. The Puzzles
+  from these openings block keeps `2px` between its title and its sentence and `6px` from them to
+  its tiles, the approved screen's values.
   Openings played keeps `20px` between its blocks, `48px` where a name starts after its chevron,
   `12px` between a row's lines and its figures, rows of `52px` and `44px` and columns of `72px`,
   `160px` and `56px`, the approved screen's values; they size a data cell, not layout spacing.
@@ -275,7 +294,8 @@ the line is too short, and nothing scrolls sideways. M1 and M2 still find no mat
 - **17, Practice.** A theme tile is a borderless button on the page's surface: the pointer, the
   hover fill and the focus ring mark it, and the description under the name reads as the label of a
   button, but nothing says "button" before the pointer arrives. The healthy mix and a row of the
-  weakness card show their edge.
+  weakness card show their edge. The tiles of the Puzzles from these openings block are the same
+  tile and read the same.
 
 ## Documented exceptions
 

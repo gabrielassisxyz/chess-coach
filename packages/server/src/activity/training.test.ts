@@ -16,7 +16,7 @@ import { START_FEN } from "../../test/fixture-game.js";
 import type { Clock } from "../clock.js";
 import { type CoachNotification, renderNotifications } from "../coach/notify.js";
 import { appendChatMessage, createCoachSession, listChatTail } from "../db/chat.js";
-import { insertFoundPosition } from "../db/found-positions.js";
+import { insertFoundPosition, setFoundNote } from "../db/found-positions.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { listPuzzles, recordPuzzleAttempt } from "../db/puzzles.js";
 import { getCard, insertCard, updateSchedule } from "../db/srs.js";
@@ -3597,6 +3597,91 @@ describe("a drill of the positions from the student's games", () => {
     });
     expect(foundCard("a")).toMatchObject({ reviews: 1 });
     expect(foundCard("b")).toBeUndefined();
+  });
+
+  describe("the note of the position", () => {
+    const NOTE = "Claims the center and frees the bishop for the diagonal.";
+
+    function addNoted(id: string, fixture: FoundFixture = {}): void {
+      addFound(id, fixture);
+      expect(setFoundNote(db, id, NOTE)).toBe(true);
+    }
+
+    it("is not in the state while the item is open, a wrong try or a hint included", async () => {
+      addNoted("noted");
+      const { activity } = setup();
+      const served = training(await activity.startTraining({ mode: "found", scope: "all" }));
+      expect(served.note).toBeNull();
+      expect(training(await activity.trainingTry("d7d5")).note).toBeNull();
+      expect(training(await activity.trainingHint()).note).toBeNull();
+      expect(JSON.stringify(activity.current())).not.toContain(NOTE);
+    });
+
+    it("comes with a solved item, titled by the move that was right", async () => {
+      addNoted("noted");
+      const { activity } = setup();
+      await activity.startTraining({ mode: "found", scope: "all" });
+      const solved = training(await activity.trainingTry("e7e5"));
+      expect(solved).toMatchObject({ status: "solved", note: { san: "e5", text: NOTE } });
+    });
+
+    it("names the best accepted move when the student solved it with another accepted one", async () => {
+      addNoted("two-good", { accepted: ["e7e5", "c7c5"] });
+      const { activity } = setup();
+      await activity.startTraining({ mode: "found", scope: "all" });
+      const solved = training(await activity.trainingTry("c7c5"));
+      expect(solved).toMatchObject({
+        status: "solved",
+        moves: [{ uci: "c7c5", san: "c5" }],
+        note: { san: "e5", text: NOTE },
+      });
+    });
+
+    it("comes with the solution once it is shown, even after a wrong try", async () => {
+      addNoted("noted");
+      const { activity } = setup();
+      await activity.startTraining({ mode: "found", scope: "all" });
+      await activity.trainingTry("d7d5");
+      const shown = training(await activity.trainingShowSolution());
+      expect(shown).toMatchObject({
+        status: "failed",
+        gave_up: true,
+        expected: { uci: "e7e5", san: "e5" },
+        note: { san: "e5", text: NOTE },
+      });
+    });
+
+    it("is null at the end of a position that has no note", async () => {
+      addFound("bare");
+      const { activity } = setup();
+      await activity.startTraining({ mode: "found", scope: "all" });
+      const solved = training(await activity.trainingTry("e7e5"));
+      expect(solved.status).toBe("solved");
+      expect(solved).toHaveProperty("note", null);
+    });
+
+    it("moves on with the item: the next position shows its own note and none while open", async () => {
+      addNoted("first", { foundAt: hoursFromT0(-1) });
+      addFound("second");
+      const { activity } = setup();
+      await activity.startTraining({ mode: "found", scope: "all" });
+      expect(training(await activity.trainingTry("e7e5")).note).toMatchObject({ text: NOTE });
+      const next = training(await activity.nextTrainingItem());
+      expect(next.item).toMatchObject({ puzzle_id: "second" });
+      expect(next.note).toBeNull();
+      expect(training(await activity.trainingTry("e7e5")).note).toBeNull();
+    });
+
+    it("is absent in another mode, though that puzzle is the same stored one", async () => {
+      addNoted("noted");
+      const { activity } = setup();
+      await activity.startTraining({ mode: "puzzles", motif: "opening-black" });
+      const solved = training(await activity.trainingTry("e7e5"));
+      expect(solved).toMatchObject({ mode: "puzzles", status: "solved" });
+      expect(solved).not.toHaveProperty("note");
+      const open = training(await activity.startTraining({ mode: "openings", color: "black" }));
+      expect(open).not.toHaveProperty("note");
+    });
   });
 });
 
