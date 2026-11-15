@@ -25,8 +25,6 @@ import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
 import { serviceNotice } from "../state/health.js";
 import {
   demoOverTraining,
-  type FetchMotifs,
-  fetchMotifsFromServer,
   isPracticeHub,
   OFFLINE_START_TEXT,
   startFailureText,
@@ -55,7 +53,6 @@ import {
 export interface PracticeProps {
   server: ServerApi;
   createBoard?: BoardFactory | undefined;
-  fetchMotifs?: FetchMotifs;
   fetchProgress?: FetchProgress;
   fetchRepertoires?: FetchRepertoires;
   // The whole repertoire answer the Openings page draws its cards from; the server's by default.
@@ -155,18 +152,16 @@ function useCoachLogin(server: ServerApi): { fix: string; checkAgain(): void } |
 
 function Hub({
   server,
-  fetchMotifs,
   fetchProgress,
   fetchRepertoireList,
   fetchRatingHistory,
   fetchThemeStats,
   fetchHealth,
-}: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress">> &
+}: Required<Pick<PracticeProps, "server" | "fetchProgress">> &
   Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList"> & {
     fetchRatingHistory: FetchPuzzleRatingHistory;
     fetchThemeStats: FetchThemeStats;
   }) {
-  const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
   const loadRatingHistory = useCallback(() => fetchRatingHistory("7"), [fetchRatingHistory]);
   const loadOverviewThemeStats = useCallback(
@@ -192,7 +187,6 @@ function Hub({
         </>
       }
       progress={progress}
-      motifs={motifs}
       ratingHistory={ratingHistory}
       overviewThemeStats={overviewThemeStats}
       engineMissing={engineMissing}
@@ -391,7 +385,6 @@ function Item({
 export function Practice({
   server,
   createBoard,
-  fetchMotifs = fetchMotifsFromServer,
   fetchProgress = fetchProgressFromServer,
   fetchRepertoires = fetchRepertoiresFromServer,
   fetchRepertoireList,
@@ -452,7 +445,6 @@ export function Practice({
       <section className="screen screen--wide practice" aria-label="Practice">
         <Hub
           server={server}
-          fetchMotifs={fetchMotifs}
           fetchProgress={fetchProgress}
           fetchRepertoireList={fetchRepertoireList}
           fetchRatingHistory={fetchRatingHistory}

@@ -4,7 +4,7 @@ import type { TrainingActivity } from "@chess-coach/shared";
 import type { Config } from "@lichess-org/chessground/config";
 import type { DrawShape } from "@lichess-org/chessground/draw";
 import type { Key } from "@lichess-org/chessground/types";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Chess, type Square } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type BoardFactory, MOVE_PAUSE_MS } from "../src/components/Board.js";
@@ -15,14 +15,7 @@ import { AUTO_NEXT_MS, Practice } from "../src/screens/Practice.js";
 import { BOARD_PREFS_STORAGE_KEY } from "../src/state/board-prefs.js";
 import { initialChatState } from "../src/state/transcript.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
-import {
-  ITALIAN_APPROACH,
-  motifCounts,
-  progressOf,
-  repertoireActivity,
-  repertoireList,
-} from "./practice-fixtures.js";
-import { serverApi } from "./server-api.js";
+import { ITALIAN_APPROACH, repertoireActivity, repertoireList } from "./practice-fixtures.js";
 
 interface HappyWindow {
   happyDOM: { setViewport(size: { width: number; height: number }): void };
@@ -151,7 +144,6 @@ const spyBoard: BoardFactory = (_element, config) => {
     destroy: vi.fn(),
   } as never;
 };
-const noMotifs = async () => [];
 
 // A drop as chessground makes it: the piece lands on the square, then the board hears of the move.
 function drop(from: Square, to: Square): void {
@@ -181,7 +173,7 @@ describe("icon controls on a practice item", () => {
     const server = api(puzzle());
     const { container } = render(
       <>
-        <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />
+        <Practice server={server} createBoard={spyBoard} />
         <Chat server={server} />
         <BoardSettingsToggle open={false} onToggle={vi.fn()} />
       </>,
@@ -210,7 +202,7 @@ describe("icon controls on a practice item", () => {
   });
 
   it("shows Explore as text and keeps its pressed state without an aria-label", () => {
-    render(<Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(puzzle())} createBoard={spyBoard} />);
     const explore = screen.getByRole("button", { name: "Explore" });
     expect(explore.textContent?.trim()).toBe("Explore");
     expect(explore.hasAttribute("aria-label")).toBe(false);
@@ -226,7 +218,7 @@ describe("icon controls on a practice item", () => {
     try {
       const { container } = render(
         <>
-          <Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />
+          <Practice server={api(puzzle())} createBoard={spyBoard} />
           <BoardSettingsToggle open={false} onToggle={vi.fn()} />
         </>,
       );
@@ -259,7 +251,7 @@ describe("icon controls on a practice item", () => {
       const server = api(puzzle());
       render(
         <>
-          <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />
+          <Practice server={server} createBoard={spyBoard} />
           <Chat server={server} />
         </>,
       );
@@ -281,7 +273,7 @@ describe("icon controls on a practice item", () => {
 
 describe("the Board & display popover", () => {
   it("opens from the bar, closes with Escape and with its own button", () => {
-    render(<Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(puzzle())} createBoard={spyBoard} />);
     expect(screen.queryByRole("region", { name: "Board and display" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Board and display settings" }));
     expect(screen.getByRole("region", { name: "Board and display" })).toBeTruthy();
@@ -294,7 +286,7 @@ describe("the Board & display popover", () => {
 
   it("moves the coordinates to the edge, draws it at once and keeps the choice", () => {
     seen.length = 0;
-    render(<Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(puzzle())} createBoard={spyBoard} />);
     expect(seen[0]).toMatchObject({ coordinates: true, coordinatesOnSquares: true });
     fireEvent.click(screen.getByRole("button", { name: "Board and display settings" }));
     fireEvent.click(screen.getByRole("radio", { name: "Edge" }));
@@ -307,7 +299,7 @@ describe("the Board & display popover", () => {
   });
 
   it("lists the four board themes as swatches and picks one", () => {
-    render(<Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(puzzle())} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "Board and display settings" }));
     const radios = screen.getAllByRole("radio", { name: /Lichess|Chess\.com|Slate|Deep teal/ });
     expect(radios).toHaveLength(4);
@@ -321,9 +313,7 @@ describe("keyboard shortcuts on an item", () => {
   it("flips with f, asks for a hint with h and continues with space", () => {
     seen.length = 0;
     const open = api(puzzle());
-    const { rerender } = render(
-      <Practice server={open} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    const { rerender } = render(<Practice server={open} createBoard={spyBoard} />);
     fireEvent.keyDown(window, { key: "f" });
     expect(seen.at(-1)?.orientation).toBe("black");
     fireEvent.keyDown(window, { key: "h" });
@@ -334,7 +324,7 @@ describe("keyboard shortcuts on an item", () => {
     );
 
     const done = api(solved());
-    rerender(<Practice server={done} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    rerender(<Practice server={done} createBoard={spyBoard} />);
     fireEvent.keyDown(window, { key: "h" });
     expect(done.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "hint" }));
     fireEvent.keyDown(window, { key: " " });
@@ -343,7 +333,7 @@ describe("keyboard shortcuts on an item", () => {
 
   it("leaves space to a focused control instead of continuing", () => {
     const done = api(solved());
-    render(<Practice server={done} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={done} createBoard={spyBoard} />);
     fireEvent.keyDown(screen.getByRole("button", { name: "Analyse" }), { key: " " });
     expect(done.send).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "next_training_item" }),
@@ -357,7 +347,7 @@ describe("keyboard shortcuts on an item", () => {
     render(
       <>
         <textarea aria-label="Message to the coach" />
-        <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />
+        <Practice server={server} createBoard={spyBoard} />
       </>,
     );
     fireEvent.keyDown(screen.getByLabelText("Message to the coach"), { key: "h" });
@@ -371,7 +361,7 @@ describe("jump to the next puzzle automatically", () => {
     try {
       window.localStorage.setItem(BOARD_PREFS_STORAGE_KEY, JSON.stringify({ autoNext: true }));
       const server = api(solved());
-      render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      render(<Practice server={server} createBoard={spyBoard} />);
       expect(server.send).not.toHaveBeenCalledWith(
         expect.objectContaining({ type: "next_training_item" }),
       );
@@ -398,7 +388,7 @@ describe("jump to the next puzzle automatically", () => {
         position_in_queue: 11,
       };
       const server = api(answered);
-      render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      render(<Practice server={server} createBoard={spyBoard} />);
       expect(screen.getByRole("heading", { name: "Puzzle 11" })).toBeTruthy();
       expect(screen.queryByRole("button", { name: "Finish training" })).toBeNull();
       act(() => vi.advanceTimersByTime(AUTO_NEXT_MS));
@@ -416,7 +406,7 @@ describe("jump to the next puzzle automatically", () => {
     try {
       window.localStorage.setItem(BOARD_PREFS_STORAGE_KEY, JSON.stringify({ autoNext: true }));
       const server = api(solved());
-      render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      render(<Practice server={server} createBoard={spyBoard} />);
       fireEvent.click(screen.getByRole("button", { name: "Analyse" }));
       act(() => vi.advanceTimersByTime(AUTO_NEXT_MS * 2));
       expect(server.send).not.toHaveBeenCalledWith(
@@ -434,7 +424,7 @@ describe("jump to the next puzzle automatically", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const server = api(solved());
-      render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      render(<Practice server={server} createBoard={spyBoard} />);
       act(() => vi.advanceTimersByTime(AUTO_NEXT_MS * 2));
       expect(server.send).not.toHaveBeenCalledWith(
         expect.objectContaining({ type: "next_training_item" }),
@@ -478,22 +468,12 @@ const listedRepertoires = async () => repertoireList;
 function renderItem(activity: TrainingActivity) {
   const server = api(activity);
   const view = render(
-    <Practice
-      server={server}
-      createBoard={spyBoard}
-      fetchMotifs={noMotifs}
-      fetchRepertoires={listedRepertoires}
-    />,
+    <Practice server={server} createBoard={spyBoard} fetchRepertoires={listedRepertoires} />,
   );
   const publish = (next: TrainingActivity): ServerApi => {
     const updated = api(next);
     view.rerender(
-      <Practice
-        server={updated}
-        createBoard={spyBoard}
-        fetchMotifs={noMotifs}
-        fetchRepertoires={listedRepertoires}
-      />,
+      <Practice server={updated} createBoard={spyBoard} fetchRepertoires={listedRepertoires} />,
     );
     return updated;
   };
@@ -652,101 +632,5 @@ describe("the pause after a try", () => {
 
     wait(MOVE_PAUSE_MS * 2);
     expect(seen.map((config) => config.fen).filter((fen) => fen !== AFTER_NC6)).toEqual([]);
-  });
-});
-
-describe("the hub motif list", () => {
-  const hubMotifs = async () => motifCounts;
-  const hubProgress = async () => progressOf();
-
-  it("shows the fourteen motifs with label and description plus the six remaining, each once", async () => {
-    render(
-      <Practice
-        server={serverApi(null)}
-        createBoard={spyBoard}
-        fetchMotifs={hubMotifs}
-        fetchProgress={hubProgress}
-      />,
-    );
-    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
-    for (const label of [
-      "Advanced pawn",
-      "Attacking f2 or f7",
-      "Capture the defender",
-      "Discovered attack",
-      "Double check",
-      "Exposed king",
-      "Fork",
-      "Hanging piece",
-      "Kingside attack",
-      "Pin",
-      "Queenside attack",
-      "Sacrifice",
-      "Skewer",
-      "Trapped piece",
-      "Back rank mate",
-      "Checkmate",
-      "Endgame",
-      "Promotion",
-      "Opening",
-      "Opening trap",
-    ]) {
-      expect(
-        await within(card).findAllByRole("radio", { name: new RegExp(`^${label},`, "i") }),
-      ).toHaveLength(1);
-    }
-    expect(
-      within(card)
-        .getByRole("radio", { name: /hanging piece/i })
-        .closest("label")?.textContent,
-    ).toContain("An undefended piece, free to capture.");
-    expect(card.textContent).not.toContain("tactics");
-  });
-
-  it("shows a library count only on the choice the library alone serves", async () => {
-    const storedCounts = async () => [
-      { motif: "back_rank_mate", count: 30 },
-      { motif: "checkmate", count: 31 },
-      { motif: "endgame", count: 20 },
-      { motif: "promotion", count: 3 },
-      { motif: "opening", count: 40 },
-      { motif: "opening_trap", count: 37 },
-    ];
-    render(
-      <Practice
-        server={serverApi(null)}
-        createBoard={spyBoard}
-        fetchMotifs={storedCounts}
-        fetchProgress={hubProgress}
-      />,
-    );
-    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
-    await within(card).findByRole("radio", { name: /opening trap, 37 puzzles/i });
-    for (const label of ["Back rank mate", "Checkmate", "Endgame", "Promotion", "Opening"]) {
-      const choice = within(card).getByRole("radio", { name: new RegExp(`^${label},`, "i") });
-      expect(choice.getAttribute("aria-label") ?? "").not.toMatch(/puzzles/i);
-      expect(choice.closest("label")?.textContent).not.toMatch(/\d/);
-      expect((choice as HTMLInputElement).disabled).toBe(false);
-    }
-  });
-
-  it("starts a hangingPiece queue from its choice", async () => {
-    const server = serverApi(null);
-    render(
-      <Practice
-        server={server}
-        createBoard={spyBoard}
-        fetchMotifs={hubMotifs}
-        fetchProgress={hubProgress}
-      />,
-    );
-    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
-    fireEvent.click(within(card).getByRole("radio", { name: /hanging piece/i }));
-    fireEvent.click(within(card).getByRole("button", { name: /start hanging piece/i }));
-    expect(server.send).toHaveBeenCalledWith({
-      type: "start_training",
-      mode: "puzzles",
-      motif: "hangingPiece",
-    });
   });
 });

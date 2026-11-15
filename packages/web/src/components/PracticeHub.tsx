@@ -8,7 +8,6 @@ import type {
 } from "@chess-coach/shared";
 import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
-import type { MotifCount } from "../state/practice.js";
 import {
   openingsDueOf,
   PRACTICE_ENTRY_LABEL,
@@ -33,7 +32,6 @@ import { PracticeThemeStats } from "./PracticeThemeStats.js";
 
 export interface PracticeHubProps {
   progress: Loaded<ProgressResponse>;
-  motifs: Loaded<MotifCount[]>;
   engineMissing: boolean;
   // A repertoire start carries its scope in `motif`, names its repertoire and, above one
   // variation, its level.
@@ -214,11 +212,12 @@ export function PracticeHub(props: PracticeHubProps) {
         <PageSlot shown={page === "overview"}>
           <PracticeOverview
             progress={props.progress}
-            motifs={props.motifs}
             ratingHistory={props.ratingHistory}
             themeStats={props.overviewThemeStats}
             engineMissing={props.engineMissing}
             startButton={startButton}
+            starting={marked.starting}
+            onStart={marked.onStart}
             problems={props.problems}
             failure={failureOn("overview")}
             themesRef={themes}
