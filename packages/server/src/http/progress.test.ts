@@ -5,6 +5,7 @@ import { ProgressResponseSchema } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
+import { INITIAL_PUZZLE_RATING, setPuzzleRating } from "../puzzles/rating.js";
 
 let tmp: string;
 let db: Database;
@@ -43,5 +44,19 @@ describe("GET /api/progress", () => {
     const body = ProgressResponseSchema.parse(response.json());
     expect(body.rating_history.map((p) => p.rating)).toEqual([412, 425]);
     expect(body.games).toHaveLength(2);
+  });
+
+  it("serves the current puzzle rating", async () => {
+    const app = buildApp({ db });
+    const initial = ProgressResponseSchema.parse(
+      (await app.inject({ method: "GET", url: "/api/progress" })).json(),
+    );
+    expect(initial.puzzle_rating).toBe(INITIAL_PUZZLE_RATING);
+    setPuzzleRating(db, 1337, "2026-06-02T11:00:00Z");
+    const updated = ProgressResponseSchema.parse(
+      (await app.inject({ method: "GET", url: "/api/progress" })).json(),
+    );
+    await app.close();
+    expect(updated.puzzle_rating).toBe(1337);
   });
 });

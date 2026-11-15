@@ -50,6 +50,7 @@ describe("get_progress", () => {
         "cards",
         "difficulty",
         "games_played",
+        "puzzle_rating",
         "puzzles_by_motif",
         "rating_history",
         "streak_days",
