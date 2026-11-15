@@ -9,6 +9,7 @@ import { assertSubscriptionAuth } from "./coach/auth.js";
 import { CoachSession, coachNotificationSinks } from "./coach/session.js";
 import { resolveLichessToken } from "./db/connections.js";
 import { openDatabase } from "./db/open.js";
+import { endRunsLeftOpenAtStart } from "./db/training.js";
 import { bootEngines } from "./engine/boot.js";
 import { evaluatePlayerMove } from "./engine/evaluate.js";
 import { EnginePool } from "./engine/pool.js";
@@ -78,6 +79,10 @@ const seeded = seedPuzzles(db, contentDir(), openingNames);
 log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
 const puzzleRating = ensurePuzzleRating(db, systemClock);
 log.info("puzzles.rating", { rating: puzzleRating.rating, replayed: puzzleRating.replayed });
+// Before any client connects: no board survives a restart, so a run still open belongs to the
+// process that is gone.
+const runsLeft = endRunsLeftOpenAtStart(db, systemClock.now().toISOString());
+log.info("training.runs_left", { count: runsLeft });
 const pool = new EnginePool(() => spawnStockfish());
 // The sinks read `coach` when a turn commits, long after the constant below is initialised.
 const sinks = coachNotificationSinks({ ensureSessionId: (tab) => coach.ensureSessionId(tab) });

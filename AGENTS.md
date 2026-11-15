@@ -101,8 +101,8 @@
   unnamed entry last. `start_training {mode: "openings", color, opening}` serves only that family, and
   without `opening` the whole colour, as before. A family the colour does not have is refused with
   `unknown_opening` before any run is written or replaced: it is compared with the stored names, and only
-  those reach SQL, as bound parameters. A paused family run resumes from `training_runs.items_json`, so
-  the family is stored nowhere. The hub puts each family where it is already listed: a "Positions from
+  those reach SQL, as bound parameters. The run stores the items it was drawn with in
+  `training_runs.items_json` and no family. The hub puts each family where it is already listed: a "Positions from
   your games (N)" line in the menu of the opening that has its name, else on the row of the first
   opening met in games of that family, else a row of its own under White openings or a Black openings
   card; the rows wait until the openings met in games have been read. The old per-colour rows that drilled
@@ -146,11 +146,17 @@
   puzzle's own rating never moves, since one student's attempts say nothing about a number built
   from many players.
 - **Practice runs:** a queue started from the Practice hub is kept in `training_runs`, written with
-  each step. Opening a game, starting one or a restart pauses it. The hub offers no resume and
-  shows no paused run: the web sends neither `resume_training` nor `discard_training` (the server
-  still accepts both and still reports the run as `paused_training`), and the next start ends a
-  paused run as `replaced`. What was answered stays rated and the rest stays due. The boot never
-  puts it back on the board by itself. A single item the coach serves is not persisted.
+  each step, and a run is never paused: it ends when it stops being on the board, and its row stays as
+  the record, with the reason it ended. `finished` is a queue whose last item is done, `ended` is
+  `end_training`, `replaced` is a new start that finds it on the board, and `left` is a game opened or
+  started over it, an item the coach serves over a demo shown on it, or a server start that finds it
+  still open, which ends every such run before it serves a client. A coach demo over an item that has
+  ended does not end the run, and leaving the demo shows the item again. The first reason written
+  stays, so a row already ended is never rewritten, and a step that completes after its run ended,
+  such as a line drill's try waiting on the engine, leaves the row as it was. What was answered stays
+  rated and the rest stays due. There is no `resume_training` or `discard_training`, and neither the
+  bootstrap nor the activity event carries a run that is not on the board; `discarded` is only in
+  rows written before they were removed. A single item the coach serves is not persisted.
 - **Repertoire drill:** `start_training {mode: "repertoire", repertoire_id, scope}` runs a stored
   variation as passes from move 1 (`activity/repertoire-session.ts`): the server plays Black and every
   White move not asked, and stops on the moves still to find. `recommended` takes at most 10 due moves,
@@ -166,7 +172,7 @@
   once, under the variation where its reach is higher and the older one at a tie; a position that
   expects different moves in two variations asks the one whose line the pass plays. The item's
   `repertoire_id` and `variation_name`, and the drill's `repertoire_id`, name the variation of the
-  move in play, and the drill and the paused run carry the `level`. `GET /api/repertoires` counts the
+  move in play, and the drill carries the `level`. `GET /api/repertoires` counts the
   levels from the same merge in `groups` and `sides`; the menu offers them where a side holds more
   than one opening or an opening more than one variation.
 - **Coach conversations:** one per tab (`play`, `games`, `practice`), each its own `coach_sessions`
@@ -216,7 +222,7 @@
   `coach.session`, `coach.started`, `coach.start_failed`, `coach.turn_start`, `coach.tool_call`, `coach.tool_result`, `coach.turn_end`,
   `coach.conversation_reset`, `coach.stream_closed`,
   `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
-  `coach.permission_resolved`, `training.item_served`, `training.answer`, `srs.rated`,
+  `coach.permission_resolved`, `training.item_served`, `training.answer`, `training.runs_left` (the runs a server start ended), `srs.rated`,
   `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `import_lichess.progress`, `import_lichess.done`,
   `explorer.failed`, `*.listener_failed`, and `client.*` for what
   the browser reports through `POST /api/client-log` (uncaught errors, socket drops and

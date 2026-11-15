@@ -7,8 +7,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TrainingRun } from "../activity/training.js";
 import { listMoves, setGrading } from "../db/games.js";
 import { type Database, openDatabase } from "../db/open.js";
-import { insertGeneratedPuzzle } from "../db/puzzles.js";
-import { findOpenTrainingRun } from "../db/training.js";
 import { classifyCpLoss } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
 import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
@@ -223,28 +221,6 @@ describe("generateOpeningPuzzles", () => {
     );
     const item = TrainingActivitySchema.parse(run.state(1)).item;
     expect(item).toMatchObject({ kind: "puzzle", opening_name: "Italian Game" });
-  });
-
-  it("keeps the opening name when a practice run resumes", () => {
-    insertGeneratedPuzzle(db, {
-      id: "own:named",
-      source: "own-games",
-      motif: "opening-white",
-      difficulty: "beginner",
-      fen: new Chess().fen(),
-      solutionUci: ["e2e4"],
-      solutionSan: ["e4"],
-      explanation: "Best: e4.",
-      openingName: "Italian Game",
-    });
-    const deps = { db, desk: new ReviewDesk({ db }) };
-    const started = TrainingRun.begin(deps, { mode: "openings", color: "white" });
-    expect(started.state(1).item).toMatchObject({ opening_name: "Italian Game" });
-    const stored = findOpenTrainingRun(db);
-    if (!stored) throw new Error("practice run was not stored");
-    expect(TrainingRun.resume(deps, stored).state(2).item).toMatchObject({
-      opening_name: "Italian Game",
-    });
   });
 
   it("migrates puzzles with a nullable opening name", () => {

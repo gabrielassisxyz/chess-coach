@@ -1,7 +1,6 @@
 import type {
   ActivityKind,
   ActivityState,
-  PausedTraining,
   PromotionPiece,
   RepertoireLevel,
   RepertoireScope,
@@ -16,7 +15,7 @@ import {
   type PlayerColor,
 } from "../db/games.js";
 import type { Database } from "../db/open.js";
-import { type ExplorationKind, findOpenTrainingRun, type TrainingRunRow } from "../db/training.js";
+import type { ExplorationKind } from "../db/training.js";
 import { GameError } from "../game/errors.js";
 import type { GameService, TurnReport } from "../game/service.js";
 import type { GameSnapshot } from "../game/snapshot.js";
@@ -27,7 +26,6 @@ import { demoState, liveGameState, reviewState } from "./state.js";
 import {
   type DrillSize,
   type PracticeRunPort,
-  pausedTrainingOf,
   type TrainingDeps,
   type TrainingItemRef,
   TrainingRun,
@@ -401,62 +399,6 @@ export class ActivityService {
     });
   }
 
-  /** The practice queue that is open but not on the board, or null. */
-  pausedTraining(): PausedTraining | null {
-    const row = this.pausedRun();
-    if (!row) return null;
-    return row.mode === "repertoire" ? RepertoireSession.pausedOf(row) : pausedTrainingOf(row);
-  }
-
-  // The student asked for it from the hub, so it replaces whatever the board shows, as a start does.
-  resumeTraining(): Promise<ActivityState> {
-    return this.enqueue("training", async () => {
-      const deps = this.requireTrainingDeps();
-      const row = this.requirePausedRun();
-      const run =
-        row.mode === "repertoire"
-          ? RepertoireSession.resume(deps, row)
-          : TrainingRun.resume(deps, row);
-      this.leaveSideBoards();
-      this.run = run;
-      return this.logServed(this.publish(run.state(this.nextId++), "resumeTraining"));
-    });
-  }
-
-  // The board does not change; the state is published again so every tab learns the run is gone.
-  discardTraining(): Promise<ActivityState | null> {
-    return this.enqueue("training", async () => {
-      const deps = this.requireTrainingDeps();
-      TrainingRun.discard(deps, this.requirePausedRun().id);
-      return this.publish(this.state, "discardTraining");
-    });
-  }
-
-  private requireTrainingDeps(): TrainingDeps {
-    if (!this.trainingDeps) {
-      throw new ActivityError("not_in_training", "training is not available");
-    }
-    return { ...this.trainingDeps, db: this.db };
-  }
-
-  private requirePausedRun(): TrainingRunRow {
-    const row = this.pausedRun();
-    if (!row) throw new ActivityError("no_paused_training", "no practice session is paused");
-    return row;
-  }
-
-  // An open run is paused unless it is the one on the board. A demo over training keeps
-  // the run on the board, so it is not paused while its demo shows.
-  private pausedRun(): TrainingRunRow | null {
-    const row = findOpenTrainingRun(this.db);
-    if (!row) return null;
-    const trainingOnBoard =
-      this.state?.kind === "training" ||
-      (this.state?.kind === "demo" && this.underneath?.kind === "training");
-    const onBoard = trainingOnBoard ? (this.run?.runId ?? null) : null;
-    return row.id === onBoard ? null : row;
-  }
-
   private stepTraining(
     expectedActivityId: number | undefined,
     cause: string,
@@ -466,8 +408,8 @@ export class ActivityService {
       const run = this.requireTraining(expectedActivityId);
       // A step that does not wait publishes in the same turn it changed the run, so no command for
       // another board can come in between. One that waited on the engine finds the board as it is
-      // now: if the student left the drill meanwhile, the change stays with the paused run and the
-      // board that replaced it is not taken back.
+      // now: if the student left the drill meanwhile, its run has ended and the row stays as it was
+      // left, and the board that replaced it is not taken back.
       const pending = step(run);
       if (pending) {
         await pending;
@@ -634,8 +576,10 @@ export class ActivityService {
     return this.publish(reviewState(this.nextId++, game, moves, ply ?? moves.length), cause);
   }
 
-  // Dropping the run pauses it: its row stays open until it is finished, ended, discarded or replaced.
+  // A run that stops being on the board ends here, so no row is left open that nothing can bring
+  // back. A start has already ended the old run as replaced, and the first reason written stays.
   private leaveSideBoards(): void {
+    this.run?.leave();
     this.run = null;
     this.demo = null;
     this.pendingLine = null;

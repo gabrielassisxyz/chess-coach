@@ -1,6 +1,5 @@
 import type {
   ExpectedMove,
-  PausedTraining,
   PlayedMove,
   QueueOutcome,
   ExploredEvent as ShownEvent,
@@ -45,16 +44,13 @@ import {
   insertExplorationEvent,
   insertTrainingRun,
   insertTrainingTry,
-  lastExplorationSeq,
   linkItemMessage,
   listItemMessageTexts,
-  listTrainingTries,
   openTrainingItem,
   type RunEndReason,
   type StoredRunItem,
   saveTrainingRun,
   setTrainingItemHinted,
-  type TrainingRunRow,
 } from "../db/training.js";
 import { applyUci } from "../engine/moves.js";
 import type { NotificationSink } from "../game/notifications.js";
@@ -110,6 +106,8 @@ export interface PracticeRunPort {
   rate(exposureId: string, quality: number): void;
   next(): void;
   end(): void;
+  /** The run stopped being on the board without the student ending it. */
+  leave(): void;
 }
 
 export interface TrainingInput {
@@ -174,9 +172,8 @@ function suggestedQualityOf(gaveUp: boolean, firstTryRight: boolean, hinted: boo
   return firstTryRight ? 4 : 2;
 }
 
-// The served item as `training_runs.current_json` keeps it: enough to put the same item back at
-// the same puzzle step. The explored line is not kept; a resumed item starts from its position.
-// `hinted` is absent from a step stored before hints existed.
+// The served item as `training_runs.current_json` keeps it: where the run stood at its last step.
+// The explored line is not kept.
 interface StoredCurrent {
   item_id: number;
   served_at: string;
@@ -185,47 +182,17 @@ interface StoredCurrent {
   last_move: string | null;
   expected: ExpectedMove | null;
   reply_uci: string | null;
-  // `wrongTries` is absent from a step stored before retries existed.
-  attempt: (Omit<AttemptState, "solution" | "wrongTries"> & { wrongTries?: number }) | null;
-  hinted?: boolean | undefined;
-  hint_square?: string | null | undefined;
-  rating_change?: number | null | undefined;
-  // Absent from a step stored before a first-try solve went quiet.
-  coach_ask?: Served["coachAsk"] | undefined;
-}
-
-interface ResumePoint {
-  position: number;
-  solved: number;
-  failed: number;
-  outcomes: ItemOutcome[];
-  current: StoredCurrent;
+  attempt: Omit<AttemptState, "solution"> | null;
+  hinted: boolean;
+  hint_square: string | null;
+  rating_change: number | null;
+  coach_ask: Served["coachAsk"];
 }
 
 function storedItemOf(entry: QueueEntry): StoredRunItem {
   return entry.kind === "card"
     ? { kind: "card", id: entry.cardId }
     : { kind: "puzzle", id: entry.id };
-}
-
-function queueEntryOf(db: Database, item: StoredRunItem): QueueEntry {
-  if (item.kind === "card") return { kind: "card", cardId: Number(item.id) };
-  const id = String(item.id);
-  const header = getPuzzleHeader(db, id);
-  return { kind: "puzzle", id, motif: header?.motif ?? "", difficulty: header?.difficulty ?? "" };
-}
-
-export function pausedTrainingOf(row: TrainingRunRow): PausedTraining {
-  return {
-    run_id: row.id,
-    mode: row.mode,
-    motif: row.motif,
-    color: row.color,
-    position: row.position,
-    size: row.size,
-    solved: row.solved,
-    failed: row.failed,
-  };
 }
 
 const turnOf = (fen: string): PlayerColor => (fen.split(" ")[1] === "b" ? "black" : "white");
@@ -315,23 +282,14 @@ export class TrainingRun implements PracticeRunPort {
     private readonly mode: TrainingMode,
     private readonly queue: QueueEntry[],
     readonly runId: number | null,
-    resume: ResumePoint | null = null,
     private readonly runMotif: string | null = null,
   ) {
     this.clock = deps.clock ?? systemClock;
-    if (resume === null) {
-      this.served = this.serve(0);
-      return;
-    }
-    this.position = resume.position;
-    this.solved = resume.solved;
-    this.failed = resume.failed;
-    this.outcomes = [...resume.outcomes];
-    this.served = this.restoreServed(resume.current);
+    this.served = this.serve(0);
   }
 
   // A queue that would hold nothing is refused, so the board never shows an item that is not there.
-  // A new queue ends any run still open, paused or on the board, as replaced.
+  // A new queue ends any run still open as replaced.
   static begin(deps: TrainingDeps, input: TrainingInput): TrainingRun {
     const queue = TrainingRun.materialize(deps, input);
     if (queue.length === 0) {
@@ -355,31 +313,10 @@ export class TrainingRun implements PracticeRunPort {
         startedAt,
       });
       const runMotif = input.mode === "puzzles" ? (input.motif ?? null) : null;
-      const run = new TrainingRun(deps, input.mode, queue, runId, null, runMotif);
+      const run = new TrainingRun(deps, input.mode, queue, runId, runMotif);
       run.save();
       return run;
     })();
-  }
-
-  /** Puts a paused run back at its stored item; a card is served again, with a fresh exposure. */
-  static resume(deps: TrainingDeps, row: TrainingRunRow): TrainingRun {
-    const queue = row.items.map((item) => queueEntryOf(deps.db, item));
-    const resume: ResumePoint = {
-      position: row.position,
-      solved: row.solved,
-      failed: row.failed,
-      outcomes: row.outcomes,
-      current: JSON.parse(row.currentJson) as StoredCurrent,
-    };
-    return deps.db.transaction(() => {
-      const run = new TrainingRun(deps, row.mode, queue, row.id, resume, row.motif);
-      run.save();
-      return run;
-    })();
-  }
-
-  static discard(deps: TrainingDeps, runId: number): void {
-    endTrainingRun(deps.db, runId, "discarded", (deps.clock ?? systemClock).now().toISOString());
   }
 
   /** A queue of one item the coach picked; unlike `begin`, an unknown id is refused by name. */
@@ -664,6 +601,11 @@ export class TrainingRun implements PracticeRunPort {
     this.closeRun("ended");
   }
 
+  /** The board moved on without the student ending the queue; a run already ended keeps its reason. */
+  leave(): void {
+    this.closeRun("left");
+  }
+
   private finish(): void {
     this.summary = { solved: this.solved, failed: this.failed };
     this.notify({ type: "training_summary", mode: this.mode, ...this.summary });
@@ -675,8 +617,8 @@ export class TrainingRun implements PracticeRunPort {
     endTrainingRun(this.deps.db, this.runId, reason, this.clock.now().toISOString());
   }
 
-  // The ledger rows a step writes and the run row that follows them commit together, so a restart
-  // between two steps finds the run exactly where the ledger says it was.
+  // The ledger rows a step writes and the run row that follows them commit together, so the row
+  // always says where the ledger says the run was.
   private transition(change: () => void): void {
     this.wake = false;
     this.deps.db.transaction(() => {
@@ -998,87 +940,6 @@ export class TrainingRun implements PracticeRunPort {
       expected: null,
       attempt: startAttempt(puzzle.fen, puzzle.solution),
       ...ledger({ kind: "puzzle", cardId: null, puzzleId: entry.id, exposureId: null }, puzzle.fen),
-    };
-  }
-
-  private restoreServed(current: StoredCurrent): Served {
-    const entry = this.queue[this.position] as QueueEntry;
-    if (entry.kind === "card") return this.restoreCard(current);
-    return this.restorePuzzle(entry, current);
-  }
-
-  // An exposure lives only in the desk's memory, so the card is served again. One answered but not
-  // yet rated cannot be rated without its exposure: it is asked again and its tally taken back.
-  private restoreCard(current: StoredCurrent): Served {
-    if (current.status === "solved") this.solved -= 1;
-    if (current.status === "failed") this.failed -= 1;
-    if (current.status === "solved" || current.status === "failed") {
-      this.outcomes.splice(this.position, 1);
-    }
-    const served = this.serve(this.position);
-    const hinted = current.hinted ?? false;
-    const hintSquare = current.hint_square ?? null;
-    if (current.status !== "rated") return { ...served, hinted, hintSquare };
-    return {
-      ...served,
-      status: "rated",
-      expected: current.expected,
-      lastMove: current.last_move,
-      hinted,
-      hintSquare,
-    };
-  }
-
-  private restorePuzzle(entry: QueueEntry & { kind: "puzzle" }, current: StoredCurrent): Served {
-    const puzzle = getPuzzle(this.deps.db, entry.id);
-    if (!puzzle) throw new ActivityError("empty_queue", `puzzle ${entry.id} no longer exists`);
-    const stored = current.attempt ?? startAttempt(puzzle.fen, puzzle.solution);
-    const attempt: AttemptState = {
-      ...stored,
-      wrongTries: stored.wrongTries ?? 0,
-      solution: puzzle.solution,
-    };
-    const gaveUp = attempt.status === "failed";
-    return {
-      item: {
-        kind: "puzzle",
-        puzzle_id: entry.id,
-        motif: entry.motif,
-        difficulty: entry.difficulty,
-        fen: puzzle.fen,
-        cursor: attempt.cursor,
-        reply_uci: current.reply_uci,
-        rating: puzzle.rating,
-        opening_name: puzzle.openingName,
-        position_in_queue: this.position + 1,
-        queue_length: this.queue.length,
-      },
-      status: current.status,
-      fen: current.fen,
-      orientation: turnOf(puzzle.fen),
-      lastMove: current.last_move,
-      expected: current.expected,
-      attempt,
-      itemId: current.item_id,
-      servedAtMs: Date.parse(current.served_at),
-      explore: new Exploration(current.fen),
-      seq: lastExplorationSeq(this.deps.db, current.item_id),
-      trail: [],
-      shown: [],
-      tries: listTrainingTries(this.deps.db, current.item_id).map((stored) => ({
-        at_ms: stored.atMs,
-        ply: stored.ply,
-        uci: stored.uci,
-        san: sanFor(fenAfter(puzzle.fen, puzzle.solution.slice(0, stored.ply)), stored.uci),
-        correct: stored.correct,
-      })),
-      gaveUp,
-      solutionLine: gaveUp ? solutionLineOf(attempt) : null,
-      suggestedQuality: null,
-      hintSquare: current.hint_square ?? null,
-      hinted: current.hinted ?? false,
-      ratingChange: current.rating_change ?? null,
-      coachAsk: current.coach_ask ?? "none",
     };
   }
 

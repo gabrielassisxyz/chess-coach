@@ -2,7 +2,6 @@ import { z } from "zod";
 import {
   ActivityStateSchema,
   ExpectedMoveSchema,
-  PausedTrainingSchema,
   PromotionSchema,
   TrainingItemSchema,
   TrainingModeSchema,
@@ -70,7 +69,6 @@ export const BootstrapEventSchema = z.object({
   }),
   activity: ActivityStateSchema.nullable(),
   current_elo: z.number().int().optional(),
-  paused_training: PausedTrainingSchema.nullable().optional(),
 });
 export type BootstrapEvent = z.infer<typeof BootstrapEventSchema>;
 
@@ -145,7 +143,6 @@ export const ErrorCodeSchema = z.enum([
   "use_try_move",
   "not_exploring",
   "illegal_exploration",
-  "no_paused_training",
   "unknown_opening",
   "engine_unavailable",
   "already_requested",
@@ -160,12 +157,10 @@ export const ErrorEventSchema = z.object({
 });
 export type ErrorEvent = z.infer<typeof ErrorEventSchema>;
 
-// `state` is null when nothing is on the board. `paused_training` is the practice queue that is
-// open but not on the board, so the hub can offer it back; the server always sends it.
+// `state` is null when nothing is on the board.
 export const ActivityEventSchema = z.object({
   type: z.literal("activity"),
   state: ActivityStateSchema.nullable(),
-  paused_training: PausedTrainingSchema.nullable().optional(),
 });
 export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
 
@@ -411,17 +406,6 @@ export const EndTrainingCommandSchema = z.object({
   activity_id: activityId,
 });
 
-// Both act on the paused practice queue the hub offers; with none paused they are refused.
-export const ResumeTrainingCommandSchema = z.object({
-  type: z.literal("resume_training"),
-  command_id: commandId,
-});
-
-export const DiscardTrainingCommandSchema = z.object({
-  type: z.literal("discard_training"),
-  command_id: commandId,
-});
-
 export const CreateCardsCommandSchema = z.object({
   type: z.literal("create_cards"),
   command_id: commandId,
@@ -457,8 +441,6 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   RateCardCommandSchema,
   NextTrainingItemCommandSchema,
   EndTrainingCommandSchema,
-  ResumeTrainingCommandSchema,
-  DiscardTrainingCommandSchema,
   CreateCardsCommandSchema,
   AskCoachAboutPlyCommandSchema,
   AnalyseCommandSchema,

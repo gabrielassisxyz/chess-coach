@@ -168,7 +168,6 @@ describe("hub", () => {
       conversations: { play: [], games: [], practice: [] },
       activity: null,
       current_elo: 600,
-      paused_training: null,
     });
   });
 

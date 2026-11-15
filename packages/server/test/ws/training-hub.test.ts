@@ -8,11 +8,12 @@ import { ActivityService } from "../../src/activity/service.js";
 import { buildApp } from "../../src/app.js";
 import { createCoachSession } from "../../src/db/chat.js";
 import { type Database, openDatabase } from "../../src/db/open.js";
+import { endRunsLeftOpenAtStart } from "../../src/db/training.js";
 import { EngineFault } from "../../src/engine/errors.js";
 import { AnalyzeSuperseded, EnginePool } from "../../src/engine/pool.js";
 import type { SearchRequest, SearchResult } from "../../src/engine/uci.js";
 import { GameService } from "../../src/game/service.js";
-import { type Log, RecordingLog } from "../../src/log.js";
+import type { Log } from "../../src/log.js";
 import { ReviewDesk } from "../../src/srs/review.js";
 import { FakeCoach } from "../fakes/fake-coach.js";
 import { ScriptedEngine } from "../fakes/scripted-engine.js";
@@ -41,8 +42,10 @@ function seededDatabase(): Database {
   return db;
 }
 
-// A second call over the same database is a server restart: every in-memory object is new.
+// A second call over the same database is a server restart: every in-memory object is new, and the
+// runs the last process left open are ended before anything is served, as the server's start does.
 async function start(db: Database = seededDatabase(), log?: Log) {
+  endRunsLeftOpenAtStart(db, new Date().toISOString());
   const session = createCoachSession(db, { promptVersion: "v" });
   const notifications = { sessionId: () => session.id };
   const activity = new ActivityService({
@@ -104,8 +107,6 @@ describe("training over the socket", () => {
       { type: "show_solution" },
       { type: "show_solution", activity_id: 3 },
       { type: "ask_coach_about_item", activity_id: 3 },
-      { type: "resume_training" },
-      { type: "discard_training" },
       { type: "analyse", fen: BACK_RANK, lines: 3, depth: 12 },
       { type: "analyse", fen: BACK_RANK, activity_id: 3 },
     ];
@@ -126,6 +127,8 @@ describe("training over the socket", () => {
       { type: "answer", uci: "a1a8" },
       { type: "try_move" },
       { type: "try_move", uci: "z9z9" },
+      { type: "resume_training" },
+      { type: "discard_training" },
       { type: "analyse", fen: "short" },
       { type: "analyse", fen: BACK_RANK, lines: 6 },
       { type: "analyse", fen: BACK_RANK, depth: 4 },
@@ -363,11 +366,13 @@ describe("training over the socket", () => {
   });
 });
 
-describe("a paused practice session over the socket", () => {
+describe("a practice run that leaves the board, over the socket", () => {
   const send = (socket: { send(text: string): void }, command: Record<string, unknown>) =>
     socket.send(JSON.stringify(command));
+  const runs = (db: Database): unknown[] =>
+    db.prepare("SELECT ended_reason, solved FROM training_runs ORDER BY id").all();
 
-  it("offers the run in the bootstrap after a server restart and resumes it at the same item", async () => {
+  it("shows no training in the bootstrap after a server restart in the middle of a run", async () => {
     const db = seededDatabase();
     const before = await start(db);
     const first = await connect(before);
@@ -381,7 +386,6 @@ describe("a paused practice session over the socket", () => {
     });
     const served = ServerEventSchema.parse(await first.next("activity"));
     if (served.type !== "activity" || served.state?.kind !== "training") throw new Error("no item");
-    expect(served.paused_training).toBeNull();
     const activityId = served.state.activity_id;
     send(first.socket, {
       type: "try_move",
@@ -391,63 +395,54 @@ describe("a paused practice session over the socket", () => {
     });
     await first.next("activity");
     send(first.socket, { type: "next_training_item", command_id: "c3", activity_id: activityId });
-    const second = ServerEventSchema.parse(await first.next("activity"));
-    if (second.type !== "activity" || second.state?.kind !== "training") throw new Error("no item");
+    await first.next("activity");
+    expect(runs(db)).toEqual([{ ended_reason: null, solved: 1 }]);
     first.socket.terminate();
     await before.close();
     app = undefined;
 
     const after = await start(db);
     const { socket, next } = await connect(after);
-    const boot = ServerEventSchema.parse(await next("bootstrap"));
-    if (boot.type !== "bootstrap") throw new Error("expected bootstrap");
+    const boot = await next("bootstrap");
     expect(boot.activity).toBeNull();
-    expect(boot.paused_training).toMatchObject({
-      mode: "puzzles",
-      motif: "drill",
-      position: 1,
-      size: 5,
-      solved: 1,
-      failed: 0,
-    });
+    expect(boot).not.toHaveProperty("paused_training");
+    expect(runs(db)).toEqual([{ ended_reason: "left", solved: 1 }]);
 
-    send(socket, { type: "resume_training", command_id: "r1" });
-    const resumed = ServerEventSchema.parse(await next("activity"));
-    if (resumed.type !== "activity" || resumed.state?.kind !== "training") {
+    send(socket, { type: "start_training", command_id: "r1", mode: "puzzles", motif: "drill" });
+    const fresh = ServerEventSchema.parse(await next("activity"));
+    if (fresh.type !== "activity" || fresh.state?.kind !== "training") {
       throw new Error("expected training");
     }
-    expect(resumed.state.item).toEqual(second.state.item);
-    expect(resumed.paused_training).toBeNull();
+    expect(fresh.state).toMatchObject({ status: "prompt", input_enabled: true });
+    expect(runs(db)).toEqual([
+      { ended_reason: "left", solved: 1 },
+      { ended_reason: null, solved: 0 },
+    ]);
   });
 
-  it("discards a paused run, logs both commands, and refuses them when none is paused", async () => {
-    const log = new RecordingLog();
-    const server = await start(seededDatabase(), log);
+  it("ends the run when a game is started, and sends no paused run with the activity", async () => {
+    const db = seededDatabase();
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    send(socket, { type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" });
+    expect(await next("activity")).not.toHaveProperty("paused_training");
+
+    send(socket, { type: "new_game", command_id: "c2", color: "white", elo: 1200 });
+    const left = await next("activity");
+    expect(left).toMatchObject({ state: { kind: "live_game" } });
+    expect(left).not.toHaveProperty("paused_training");
+    expect(runs(db)).toEqual([{ ended_reason: "left", solved: 0 }]);
+  });
+
+  it("refuses resume_training and discard_training as commands that do not exist", async () => {
+    const server = await start();
     const { socket, next } = await connect(server);
     await next("bootstrap");
     send(socket, { type: "resume_training", command_id: "r0" });
-    expect(await next("error")).toMatchObject({ code: "no_paused_training", command_id: "r0" });
+    expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: "r0" });
     send(socket, { type: "discard_training", command_id: "d0" });
-    expect(await next("error")).toMatchObject({ code: "no_paused_training", command_id: "d0" });
-
-    send(socket, { type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" });
-    await next("activity");
-    send(socket, { type: "new_game", command_id: "c2", color: "white", elo: 1200 });
-    const paused = ServerEventSchema.parse(await next("activity"));
-    if (paused.type !== "activity") throw new Error("expected activity");
-    expect(paused.state?.kind).toBe("live_game");
-    expect(paused.paused_training).toMatchObject({ mode: "puzzles", position: 0, size: 1 });
-
-    send(socket, { type: "discard_training", command_id: "d1" });
-    const discarded = ServerEventSchema.parse(await next("activity"));
-    if (discarded.type !== "activity") throw new Error("expected activity");
-    expect(discarded.state?.kind).toBe("live_game");
-    expect(discarded.paused_training).toBeNull();
-
-    const commands = log.named("ws.command").map((entry) => entry.fields.type);
-    expect(commands).toEqual(
-      expect.arrayContaining(["resume_training", "discard_training", "start_training"]),
-    );
+    expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: "d0" });
   });
 });
 

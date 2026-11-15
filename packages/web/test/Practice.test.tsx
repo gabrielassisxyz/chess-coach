@@ -6,7 +6,6 @@ import {
   type MetOpening,
   type OpeningDrill,
   type OpeningDrillsResponse,
-  type PausedTraining,
   type RepertoireSummary,
   type RepertoiresResponse,
   type TrainingActivity,
@@ -917,20 +916,9 @@ function Connected() {
   return <Practice server={server} {...hubProps} fetchRepertoires={listedRepertoires} />;
 }
 
-// The server still reports a run it paused; the hub neither shows it nor lets it hold a start.
-describe("a paused session the server reports", () => {
-  const paused: PausedTraining = {
-    run_id: 3,
-    mode: "puzzles",
-    motif: "fork",
-    color: null,
-    position: 2,
-    size: 5,
-    solved: 1,
-    failed: 1,
-  };
-
-  function bootInto(pausedTraining: PausedTraining | null) {
+// The hub starts a session with the one command of its button and nothing else.
+describe("starting a session from the hub", () => {
+  function bootIntoHub() {
     FakeSocket.reset();
     render(<Connected />);
     act(() => FakeSocket.latest.open());
@@ -939,52 +927,17 @@ describe("a paused session the server reports", () => {
         type: "bootstrap",
         conversations: { play: [], games: [], practice: [] },
         activity: null,
-        paused_training: pausedTraining,
       }),
     );
     return FakeSocket.latest;
   }
 
-  // Waits for every part of the hub that decides a button's state, then reads them all.
-  async function hubButtons(): Promise<string[]> {
+  // Waits for every part of the hub that decides a button's state.
+  async function hubReady(): Promise<void> {
     await screen.findByRole("button", { name: "Review 4 cards" });
     await screen.findByRole("heading", { name: "Italian Game" });
     await screen.findByText("Generate the Italian drill first");
-    return screen
-      .getAllByRole("button")
-      .map(
-        (button) =>
-          `${button.getAttribute("aria-label") ?? button.textContent}: ${(button as HTMLButtonElement).disabled ? "disabled" : "enabled"}`,
-      );
   }
-
-  it("draws no card and no Resume or Discard from a bootstrap carrying a paused run", async () => {
-    bootInto(paused);
-    await screen.findByRole("region", { name: "Due cards" });
-    expect(screen.queryByRole("region", { name: "Paused session" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /resume|discard/i })).toBeNull();
-    expect(screen.queryByText(/Resume:|missed so far/)).toBeNull();
-  });
-
-  it("draws nothing for a run an activity update reports paused later", async () => {
-    const socket = bootInto(null);
-    await screen.findByRole("region", { name: "Due cards" });
-    act(() => socket.receive({ type: "activity", state: null, paused_training: paused }));
-    expect(screen.queryByRole("region", { name: "Paused session" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /resume|discard/i })).toBeNull();
-  });
-
-  it("leaves every button of the hub as it is without a paused run", async () => {
-    bootInto(null);
-    const without = await hubButtons();
-    cleanup();
-    bootInto(paused);
-    const reported = await hubButtons();
-    expect(reported).toEqual(without);
-    expect(reported).toContain("Review 4 cards: enabled");
-    expect(reported).toContain("Start any motif: enabled");
-    expect(reported).toContain("Recommended 10: enabled");
-  });
 
   it.each([
     ["Review 4 cards", { type: "start_training", mode: "srs", size: 10 }],
@@ -994,8 +947,8 @@ describe("a paused session the server reports", () => {
       { type: "start_training", mode: "repertoire", repertoire_id: 3, scope: "recommended" },
     ],
   ])("sends the start of %s and nothing else", async (name, command) => {
-    const socket = bootInto(paused);
-    await hubButtons();
+    const socket = bootIntoHub();
+    await hubReady();
     fireEvent.click(screen.getByRole("button", { name }));
     // The socket stamps each frame with a command id of its own.
     expect(socket.sent).toHaveLength(1);
