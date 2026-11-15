@@ -60,9 +60,9 @@ const REPERTOIRE_SIBLING_STABLE_HOURS = 72;
 /** At most this many new moves are introduced in any 24 hours. */
 const REPERTOIRE_NEW_MOVES_PER_DAY = 5;
 const REPERTOIRE_NEW_MOVE_WINDOW_MS = 24 * 3_600_000;
-/** A wrong try this close to the engine's best that reaches another named opening is flagged. */
+/** A wrong try this close to the engine's best earns a warning, naming any other opening it reached. */
 export const REPERTOIRE_FLAG_CP = 50;
-/** How long a try waits for the engine before it is left unflagged. */
+/** How long a try waits for the engine before it stays a plain miss. */
 export const REPERTOIRE_FLAG_BUDGET_MS = 4000;
 /** What the first hint says when the position stores no idea. */
 export const REPERTOIRE_NO_IDEA = "No idea is stored for this position yet.";
@@ -326,8 +326,7 @@ function fenAfterRepertoireUci(fen: string, uci: string): string {
   return board.fen();
 }
 
-// The half of the flag the table answers alone: the opening a wrong try reaches, when that is a
-// named position other than the expected line's. Only such a try is worth asking the engine about.
+// The opening a wrong try reaches, when that is a named position other than the expected line's.
 export function repertoireFlagCandidate(
   judge: RepertoireTryJudge,
   fen: string,
@@ -381,6 +380,7 @@ interface DrillAsk {
   /** A try or a hint was spent on this move in this pass; only the first one can rate it. */
   attempted: boolean;
   flagged: string | null;
+  flaggedSound: boolean;
 }
 
 interface DrillTry {
@@ -417,7 +417,13 @@ interface StoredDrillPass {
   chain: number[];
   line: PlayedMove[];
   fen: string;
-  ask: { row_id: number; hint: 0 | 1 | 2; attempted: boolean; flagged: string | null } | null;
+  ask: {
+    row_id: number;
+    hint: 0 | 1 | 2;
+    attempted: boolean;
+    flagged: string | null;
+    flagged_sound: boolean;
+  } | null;
   variation_id: number;
   missed: boolean;
   hinted: boolean;
@@ -462,6 +468,7 @@ export class RepertoireSession implements PracticeRunPort {
   private outcomes: ItemOutcome[] = [];
   private pass: DrillPass;
   private result: RepertoireDrillResult | null = null;
+  private closed = false;
   // Set while a transition writes, so the coach is woken once the rows are committed.
   private wake = false;
 
@@ -616,6 +623,7 @@ export class RepertoireSession implements PracticeRunPort {
       answer: intro && asked ? { uci: asked.move.uci, san: asked.move.san } : null,
       hint: repertoireHintOf(ask, asked),
       flagged_opening: ask?.flagged ?? null,
+      flagged_sound: ask?.flaggedSound ?? false,
       moves_left: count((state) => state.stage !== "done"),
       moves_right: count((state) => state.rating === "right"),
       moves_wrong: count((state) => state.rating === "wrong"),
@@ -667,12 +675,13 @@ export class RepertoireSession implements PracticeRunPort {
     }
   }
 
-  // A wrong try is kept at once and the position stays open. When the table says it reached
-  // another opening, the engine is asked whether it was good enough to name; only that name waits
-  // for the answer, so a board that moves on meanwhile loses nothing else.
-  tryMove(uci: string): void | Promise<void> {
+  // A wrong try is kept at once and the position stays open. The engine is asked in the
+  // background whether the move stayed within the margin, naming any other opening it reached;
+  // only that warning arrives later, so a board that moves on meanwhile loses nothing else.
+  tryMove(uci: string): void | Promise<() => boolean> {
     const { ask, state } = this.requireAsk();
-    const fen = this.pass.fen;
+    const pass = this.pass;
+    const fen = pass.fen;
     if (
       !new Chess(fen).moves({ verbose: true }).some((move) => uciOfRepertoireMove(move) === uci)
     ) {
@@ -681,13 +690,25 @@ export class RepertoireSession implements PracticeRunPort {
     if (uci === state.move.uci) return this.transition(() => this.playRight(ask, state, uci));
     this.transition(() => this.playWrong(ask, state, uci));
     const judge = this.deps.repertoireJudge;
-    const candidate = judge ? repertoireFlagCandidate(judge, fen, uci, state.move) : null;
-    if (!judge || candidate === null) return;
-    return withinRepertoireFlagMargin(judge, fen, uci).then((close) => {
-      if (!close) return;
+    if (!judge) return;
+    const candidate = repertoireFlagCandidate(judge, fen, uci, state.move);
+    const tryCount = pass.tries.length;
+    return withinRepertoireFlagMargin(judge, fen, uci).then((close) => () => {
+      if (
+        !close ||
+        this.closed ||
+        this.result !== null ||
+        this.pass !== pass ||
+        pass.ask !== ask ||
+        pass.tries.length !== tryCount
+      ) {
+        return false;
+      }
       this.transition(() => {
         ask.flagged = candidate;
+        ask.flaggedSound = true;
       });
+      return true;
     });
   }
 
@@ -773,6 +794,7 @@ export class RepertoireSession implements PracticeRunPort {
   private playWrong(ask: DrillAsk, state: DrillMoveState, uci: string): void {
     this.recordTry(this.pass, uci, false);
     ask.flagged = null;
+    ask.flaggedSound = false;
     this.pass.missed = true;
     if (!ask.attempted) this.rateFirstAttempt(state, false);
     ask.attempted = true;
@@ -911,7 +933,13 @@ export class RepertoireSession implements PracticeRunPort {
 
   private ask(pass: DrillPass, state: DrillMoveState): void {
     state.asked = true;
-    pass.ask = { rowId: state.move.rowId, hint: 0, attempted: false, flagged: null };
+    pass.ask = {
+      rowId: state.move.rowId,
+      hint: 0,
+      attempted: false,
+      flagged: null,
+      flaggedSound: false,
+    };
     pass.variation = state.move.variation;
     pass.openingName = state.move.openingName;
     // Showing a new move with its answer is what makes it known.
@@ -964,6 +992,7 @@ export class RepertoireSession implements PracticeRunPort {
   }
 
   private closeRun(reason: RunEndReason): void {
+    this.closed = true;
     endTrainingRun(this.deps.db, this.runId, reason, this.clock.now().toISOString());
   }
 
@@ -1023,7 +1052,13 @@ export class RepertoireSession implements PracticeRunPort {
       line: pass.line,
       fen: pass.fen,
       ask: ask
-        ? { row_id: ask.rowId, hint: ask.hint, attempted: ask.attempted, flagged: ask.flagged }
+        ? {
+            row_id: ask.rowId,
+            hint: ask.hint,
+            attempted: ask.attempted,
+            flagged: ask.flagged,
+            flagged_sound: ask.flaggedSound,
+          }
         : null,
       variation_id: pass.variation.id,
       missed: pass.missed,

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RepertoiresResponseSchema } from "@chess-coach/shared";
 import { Chess, type Move } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeClock } from "../../test/fakes/fake-explorer.js";
@@ -15,10 +16,12 @@ import {
 import {
   createRepertoireVariation,
   findFirstRepertoireVariation,
+  findRepertoireBuild,
   findRepertoireVariationByName,
   insertRepertoireOwnMove,
   type RepertoireRow,
   raiseRepertoireOwnMoveReach,
+  repertoireSetupLine,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { applyUci } from "../engine/moves.js";
@@ -46,6 +49,7 @@ import {
   type RepertoirePoints,
   RepertoirePointsError,
   type RepertoireResult,
+  repertoireRootOf,
 } from "./from-repertoire.js";
 import { NO_OPENING_NAMES, type OpeningNames, parseOpeningTable } from "./names.js";
 import {
@@ -484,7 +488,16 @@ describe("the repertoire tables", () => {
       (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(
         (column) => column.name,
       );
-    expect(columnsOf("repertoires")).toEqual(["id", "side", "group_name", "variation_name"]);
+    expect(columnsOf("repertoires")).toEqual([
+      "id",
+      "side",
+      "group_name",
+      "variation_name",
+      "points_effectiveness",
+      "points_soundness",
+      "points_learnability",
+      "branch_san",
+    ]);
     expect(columnsOf("repertoire_positions")).toEqual([
       "id",
       "repertoire_id",
@@ -2235,6 +2248,21 @@ describe("the documentation of the repertoire source", () => {
     }
   });
 
+  it("says under Openings what a unit keeps of how it was built and how a rebuild names it again", () => {
+    const agents = readFileSync(join(repositoryRoot, "AGENTS.md"), "utf8");
+    const openings = /- \*\*Openings:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "";
+    for (const documented of [
+      "`points_effectiveness`, `points_soundness` and `points_learnability`",
+      "returns them as `points`",
+      "`repertoires.branch_san`",
+      "Posting a unit's `root` or `branch` as listed, null included, with `rebuild: true` rebuilds that unit and no other",
+      "posting both null rebuilds the first Italian variation",
+    ]) {
+      expect(openings).toContain(documented);
+    }
+    expect(openings).not.toContain("They are not stored with the unit");
+  });
+
   it("never names a rating group the explorer does not have", () => {
     const filesUnder = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -2952,6 +2980,351 @@ describe("rebuilding a unit", () => {
         repertoire: { cardsKept: 1, cardsDeleted: 1, planChoices: answered.planChoices },
       },
     });
+  });
+});
+
+const POINTS_321: RepertoirePoints = { effectiveness: 3, soundness: 2, learnability: 1 };
+const POINTS_114: RepertoirePoints = { effectiveness: 1, soundness: 1, learnability: 4 };
+
+const buildOf = (variation: RepertoireRow) => findRepertoireBuild(db, variation.id);
+
+function firstItalianVariation(): RepertoireRow {
+  const found = findFirstRepertoireVariation(db, "white", "Italian Game");
+  if (!found) throw new Error("no Italian variation is stored");
+  return found;
+}
+
+function scandinavianUnit(): RepertoireRow {
+  const found = findFirstRepertoireVariation(db, "white", "Scandinavian Defense");
+  if (!found) throw new Error("no Scandinavian unit is stored");
+  return found;
+}
+
+describe("what a unit keeps of how it was built", () => {
+  it("stores the default 2, 2 and 2 on a unit built without points, and no branch", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    expect(buildOf(firstItalianVariation())).toEqual({
+      points: REPERTOIRE_DEFAULT_POINTS,
+      branch: null,
+    });
+  });
+
+  it("stores the points a run weighed by on the unit it creates", async () => {
+    writeItalianTree();
+    await generate({ points: POINTS_321 }, BRANCH_FIXTURE_NAMES);
+    expect(buildOf(firstItalianVariation()).points).toEqual(POINTS_321);
+  });
+
+  it("stores the points on a unit built from a root, which has no branch", async () => {
+    writeScandinavianTree();
+    await generate({ root: SCANDINAVIAN, points: POINTS_114 }, ROOT_FIXTURE_NAMES);
+    expect(buildOf(scandinavianUnit())).toEqual({ points: POINTS_114, branch: null });
+  });
+
+  it("stores the points and the branch of a variation built at a branch point, and leaves the first variation's own", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    await generateBranch(D3_BRANCH, { points: POINTS_321 });
+    expect(buildOf(variationNamed("Giuoco Pianissimo (4.d3)"))).toEqual({
+      points: POINTS_321,
+      branch: D3_BRANCH,
+    });
+    expect(buildOf(variationNamed("Classical Variation (4.c3)"))).toEqual({
+      points: REPERTOIRE_DEFAULT_POINTS,
+      branch: null,
+    });
+  });
+
+  it("keeps the points a unit was created with when a later run adds rows to it under other points", async () => {
+    writeStyleChoice();
+    await styled(POINTS_ON.soundness);
+    const carried = await generate({ points: POINTS_ON.learnability });
+    expect(carried.created).toBeGreaterThan(0);
+    expect(buildOf(firstItalianVariation()).points).toEqual(POINTS_ON.soundness);
+  });
+
+  it("leaves the points and the branch of a unit built before they were stored empty, whatever a later run weighs by", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    db.prepare(
+      `UPDATE repertoires SET points_effectiveness = NULL, points_soundness = NULL,
+         points_learnability = NULL, branch_san = NULL`,
+    ).run();
+    const rerun = await generate({ points: POINTS_321 }, BRANCH_FIXTURE_NAMES);
+    expect(rerun.created).toBe(0);
+    expect(buildOf(firstItalianVariation())).toEqual({ points: null, branch: null });
+  });
+
+  it("stores the points of a rebuild on the unit it replaces, which keeps its id", async () => {
+    writeItalianTree();
+    await generate({ points: POINTS_321 }, BRANCH_FIXTURE_NAMES);
+    const before = firstItalianVariation();
+    await rebuild({ points: POINTS_114 });
+    const after = firstItalianVariation();
+    expect(after.id).toBe(before.id);
+    expect(buildOf(after).points).toEqual(POINTS_114);
+  });
+
+  it("stores the points of a rebuild on a unit built before they were stored", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    db.prepare(
+      `UPDATE repertoires SET points_effectiveness = NULL, points_soundness = NULL,
+         points_learnability = NULL`,
+    ).run();
+    await rebuild({ points: POINTS_321 });
+    expect(buildOf(firstItalianVariation()).points).toEqual(POINTS_321);
+  });
+
+  it("keeps the branch of a variation built at a branch point through a rebuild and stores the rebuild's points, leaving the first variation alone", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    await generateBranch(D3_BRANCH, { points: POINTS_321 });
+    const first = firstItalianVariation();
+    const firstRows = digestOf(rowsOfVariation(first.id));
+
+    const result = await rebuild({ branch: D3_BRANCH, points: POINTS_114 });
+
+    expect(result).toMatchObject({
+      variation: "Giuoco Pianissimo (4.d3)",
+      cardsKept: expect.any(Number),
+    });
+    expect(buildOf(variationNamed("Giuoco Pianissimo (4.d3)"))).toEqual({
+      points: POINTS_114,
+      branch: D3_BRANCH,
+    });
+    expect(buildOf(first)).toEqual({ points: REPERTOIRE_DEFAULT_POINTS, branch: null });
+    expect(digestOf(rowsOfVariation(first.id))).toBe(firstRows);
+  });
+
+  it("keeps the points of a unit whose rebuild the budget cut short", async () => {
+    writeItalianTree();
+    await generate({ points: POINTS_321 }, BRANCH_FIXTURE_NAMES);
+    writePlanWithinMargin();
+    const cut = await rebuild({ maxRequests: 0, points: POINTS_114 });
+    expect(cut.truncated).toBe(true);
+    expect(buildOf(firstItalianVariation()).points).toEqual(POINTS_321);
+    expect(variationsOf(db)).toHaveLength(1);
+  });
+
+  it("keeps the cards of the moves a rebuild under new points still stores, with their schedule, and deletes those it dropped", async () => {
+    writeStyleChoice();
+    await styled(POINTS_ON.soundness);
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("O-O");
+    const kept = scheduleCard(
+      ON_SETUP,
+      { interval_hours: 72, ease_factor: 2.36, repetitions: 3 },
+      2,
+    );
+    scheduleCard(
+      { line: AFTER_BC5, uci: "e1g1" },
+      { interval_hours: 168, ease_factor: 2.2, repetitions: 4 },
+      3,
+    );
+
+    const result = await styled(POINTS_ON.learnability, { rebuild: true });
+
+    expect(ownAt(AFTER_BC5)?.move_san).toBe("d3");
+    expect(cardsOf(db)).toEqual([kept]);
+    expect(result).toMatchObject({ cardsKept: 1, cardsDeleted: 1 });
+    expect(buildOf(firstItalianVariation()).points).toEqual(POINTS_ON.learnability);
+  });
+});
+
+describe("the root of a stored unit", () => {
+  const storedSetupRow = (unit: RepertoireRow, ply: number, line: string[], san: string) => ({
+    repertoireId: unit.id,
+    positionKey: keyOf(line),
+    ply,
+    line,
+    reach: 1,
+    openingName: null,
+    uci: san === "e4" ? "e2e4" : "e7e5",
+    san,
+    share: null,
+    source: "setup" as const,
+  });
+
+  it("is the setup moves of a unit built from a root", async () => {
+    writeScandinavianTree();
+    await generate({ root: SCANDINAVIAN }, ROOT_FIXTURE_NAMES);
+    expect(repertoireRootOf(db, scandinavianUnit())).toEqual(SCANDINAVIAN);
+  });
+
+  it("is the whole root of a unit whose root passes the moves the Italian setup fixes", async () => {
+    engine.write(RUSSIAN, [["f3e5", 40]]);
+    await generate({ root: RUSSIAN }, ROOT_FIXTURE_NAMES);
+    const unit = findFirstRepertoireVariation(db, "white", "Russian Game");
+    expect(unit).toBeDefined();
+    expect(repertoireRootOf(db, unit as RepertoireRow)).toEqual(RUSSIAN);
+  });
+
+  it("is none for a variation of the Italian, whole or cut short, though a cut short setup can look like a short root", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    expect(repertoireRootOf(db, firstItalianVariation())).toBeNull();
+
+    const cutShort = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Cut short",
+    });
+    insertRepertoireOwnMove(db, {
+      ...storedSetupRow(cutShort, 1, [], "e4"),
+      cpLoss: 0,
+      evalCp: 30,
+      results: null,
+    });
+    upsertRepertoireReply(db, storedSetupRow(cutShort, 2, ["e4"], "e5"));
+    expect(repertoireSetupLine(db, cutShort.id)).toEqual(["e4", "e5"]);
+    expect(checkRepertoireRoot(["e4", "e5"]).ok).toBe(true);
+    expect(repertoireRootOf(db, cutShort)).toBeNull();
+  });
+
+  it("is none for a unit whose run stored no setup row, which has no root to read", async () => {
+    writeScandinavianTree();
+    const cut = await generate({ root: SCANDINAVIAN, maxRequests: 2 }, ROOT_FIXTURE_NAMES);
+    expect(cut).toMatchObject({ truncated: true, created: 0 });
+    expect(rowsOf(db)).toEqual([]);
+    expect(repertoireRootOf(db, scandinavianUnit())).toBeNull();
+  });
+});
+
+// The three kinds of unit in one book: the first Italian variation, one built at a branch point and
+// one built from a root.
+const UNIT_ORIGIN_NAMES: OpeningNames = parseOpeningTable(
+  [
+    "eco\tname\tpgn\tuci\tepd",
+    `C50\tItalian Game\t-\t-\t${keyOf(SETUP)}`,
+    `C50\tItalian Game: Giuoco Piano\t-\t-\t${keyOf(AFTER_BC5)}`,
+    `C53\tItalian Game: Classical Variation\t-\t-\t${keyOf(AFTER_C3)}`,
+    `C50\tItalian Game: Giuoco Pianissimo\t-\t-\t${keyOf(D3_BRANCH)}`,
+    `C55\tItalian Game: Two Knights Defense\t-\t-\t${keyOf([...SETUP, "Nf6"])}`,
+    `B00\tKing's Pawn Game\t-\t-\t${keyOf(["e4"])}`,
+    `B01\tScandinavian Defense\t-\t-\t${keyOf(SCANDINAVIAN)}`,
+    `B01\tScandinavian Defense: Mieses-Kotroc Variation\t-\t-\t${keyOf(AFTER_EXD5)}`,
+  ].join("\n"),
+);
+
+describe("GET /api/repertoires and a rebuild posted with what it says", () => {
+  const appWithFakes = (names: OpeningNames) =>
+    buildApp({
+      db,
+      log: new RecordingLog(),
+      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateRepertoireOpenings: (root, branch, rebuilding, points) =>
+        generateRepertoire(db, engine, explorer, cacheDir, clock, names, {
+          root,
+          branch,
+          rebuild: rebuilding,
+          points,
+        }),
+    });
+  type AppWithFakes = ReturnType<typeof appWithFakes>;
+
+  const post = (app: AppWithFakes, payload: object) =>
+    app.inject({ method: "POST", url: "/api/openings/generate", payload });
+
+  const listedUnits = async (app: AppWithFakes) => {
+    const response = await app.inject({ method: "GET", url: "/api/repertoires" });
+    expect(response.statusCode).toBe(200);
+    return RepertoiresResponseSchema.parse(response.json()).repertoires;
+  };
+
+  it("lists 3, 2 and 1 after the build and 2, 2 and 2 after the rebuild, and keeps the next review of a card both builds store", async () => {
+    writeStyleChoice();
+    const app = appWithFakes(ITALIAN_FIXTURE_NAMES);
+    const built = await post(app, { sources: ["repertoire"], points: POINTS_321 });
+    expect(built.statusCode).toBe(200);
+    expect((await listedUnits(app)).map((unit) => unit.points)).toEqual([POINTS_321]);
+    const card = scheduleCard(
+      ON_SETUP,
+      { interval_hours: 72, ease_factor: 2.36, repetitions: 3 },
+      2,
+    );
+
+    const rebuilt = await post(app, {
+      sources: ["repertoire"],
+      rebuild: true,
+      points: REPERTOIRE_DEFAULT_POINTS,
+    });
+
+    expect(rebuilt.statusCode).toBe(200);
+    expect(rebuilt.json().repertoire).toMatchObject({ cardsKept: 1, cardsDeleted: 0 });
+    expect((await listedUnits(app)).map((unit) => unit.points)).toEqual([
+      REPERTOIRE_DEFAULT_POINTS,
+    ]);
+    expect(cardsOf(db)).toEqual([card]);
+    await app.close();
+  });
+
+  it("rebuilds the unit that the listed root or branch names and no other, and the first Italian variation for neither", async () => {
+    writeItalianTree();
+    writeScandinavianTree();
+    const app = appWithFakes(UNIT_ORIGIN_NAMES);
+    await post(app, { sources: ["repertoire"] });
+    await post(app, { sources: ["repertoire"], branch: D3_BRANCH, points: POINTS_321 });
+    await post(app, { sources: ["repertoire"], root: SCANDINAVIAN, points: POINTS_114 });
+
+    const listed = await listedUnits(app);
+    const origin = ({ variation_name, points, root, branch }: (typeof listed)[number]) => ({
+      variation_name,
+      points,
+      root,
+      branch,
+    });
+    expect(listed.map(origin)).toEqual([
+      {
+        variation_name: "Classical Variation (4.c3)",
+        points: REPERTOIRE_DEFAULT_POINTS,
+        root: null,
+        branch: null,
+      },
+      {
+        variation_name: "Giuoco Pianissimo (4.d3)",
+        points: POINTS_321,
+        root: null,
+        branch: D3_BRANCH,
+      },
+      {
+        variation_name: "Mieses-Kotroc Variation (2.exd5)",
+        points: POINTS_114,
+        root: SCANDINAVIAN,
+        branch: null,
+      },
+    ]);
+
+    // Each unit is posted exactly as the list returned it, null root and branch included.
+    const newPoints: RepertoirePoints[] = [
+      { effectiveness: 6, soundness: 0, learnability: 0 },
+      { effectiveness: 0, soundness: 6, learnability: 0 },
+      { effectiveness: 0, soundness: 0, learnability: 6 },
+    ];
+    const expectedPoints = listed.map((unit) => unit.points);
+    for (const [index, unit] of listed.entries()) {
+      const others = listed.filter((other) => other.id !== unit.id);
+      const othersRows = others.map((other) => digestOf(rowsOfVariation(other.id)));
+
+      const response = await post(app, {
+        sources: ["repertoire"],
+        rebuild: true,
+        root: unit.root,
+        branch: unit.branch,
+        points: newPoints[index],
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().repertoire).toMatchObject({ variation: unit.variation_name });
+      expect(response.json().repertoire).toHaveProperty("cardsKept");
+      expectedPoints[index] = newPoints[index] as RepertoirePoints;
+      const after = await listedUnits(app);
+      expect(after.map((listedUnit) => listedUnit.points)).toEqual(expectedPoints);
+      expect(after.map((listedUnit) => listedUnit.id)).toEqual(listed.map((u) => u.id));
+      expect(others.map((other) => digestOf(rowsOfVariation(other.id)))).toEqual(othersRows);
+    }
+    expect(variationsOf(db)).toHaveLength(3);
+    await app.close();
   });
 });
 

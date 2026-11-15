@@ -23,7 +23,9 @@ export type ChatItem =
   | { type: "turn_error"; key: string; message: string }
   | { type: "notice"; key: string; text: string }
   // Where a practice queue or a game began inside the tab's conversation.
-  | { type: "divider"; key: string; label: string; at: string };
+  | { type: "divider"; key: string; label: string; at: string }
+  // Hidden boundary written when a delivery enters the SDK, separating consecutive coach turns.
+  | { type: "turn_start"; key: string };
 
 export interface PendingPermission {
   requestId: string;
@@ -103,8 +105,12 @@ function applyEntry(items: ChatItem[], entry: TranscriptEntry): void {
   const content = entry.content as Record<string, unknown> | null;
   if (entry.kind === "text") {
     if (entry.role === "system") {
-      const label = String(content?.label ?? "");
-      items.push({ type: "divider", key, label, at: String(content?.at ?? entry.created_at) });
+      if (typeof content?.turn_start === "string") {
+        items.push({ type: "turn_start", key });
+      } else {
+        const label = String(content?.label ?? "");
+        items.push({ type: "divider", key, label, at: String(content?.at ?? entry.created_at) });
+      }
     } else {
       items.push({ type: "text", key, role: entry.role, text: textOf(content) });
     }

@@ -146,11 +146,34 @@ describe("the state card", () => {
     });
   });
 
-  it("names the other opening of a flagged try and nothing for a plain miss", () => {
-    const flagged = cardOf({ drill: { flagged_opening: "Scotch Game" } });
-    expect(flagged.title).toBe("Good move, but that is the Scotch Game");
+  it("names the other opening or warns on any sound move, and says nothing for a plain miss", () => {
+    const named = cardOf({ drill: { flagged_opening: "Scotch Game", flagged_sound: true } });
+    expect(named).toEqual({
+      tone: "neutral",
+      title: "Good move, but that is the Scotch Game",
+      body: "It is not the move of this line. Try again.",
+    });
+    const unnamedSound = cardOf({ drill: { flagged_opening: null, flagged_sound: true } });
+    expect(unnamedSound).toEqual({
+      tone: "neutral",
+      title: "Good move, but this line plays another move",
+      body: "It is not the move of this line. Try again.",
+    });
+    const hintedSound = cardOf({
+      drill: {
+        flagged_opening: null,
+        flagged_sound: true,
+        hint: { kind: "idea", text: "Prepare d4." },
+      },
+    });
+    expect(hintedSound).toEqual({
+      tone: "neutral",
+      title: "Good move, but this line plays another move",
+      body: "Prepare d4.",
+    });
     const plain = cardOf({
       training: { tries: 2, last_try: { uci: "d2d3", san: "d3", correct: false } },
+      drill: { flagged_opening: null, flagged_sound: false },
     });
     expect(plain).toEqual(cardOf({}));
   });

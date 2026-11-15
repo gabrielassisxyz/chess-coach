@@ -484,25 +484,48 @@ describe("the hints", () => {
 
 describe("a flagged try", () => {
   it("names the other opening the good move reached", () => {
-    renderDrill(repertoireActivity({ drill: { flagged_opening: "Scotch Game" } }));
+    renderDrill(
+      repertoireActivity({ drill: { flagged_opening: "Scotch Game", flagged_sound: true } }),
+    );
     expect(screen.getByText("Good move, but that is the Scotch Game")).toBeTruthy();
-    expect(stateCard().textContent).toContain("Try again");
+    expect(stateCard().textContent).toContain("It is not the move of this line. Try again.");
+  });
+
+  it("warns without naming an opening when any other sound move is played", () => {
+    renderDrill(repertoireActivity({ drill: { flagged_opening: null, flagged_sound: true } }));
+    expect(screen.getByText("Good move, but this line plays another move")).toBeTruthy();
+    expect(stateCard().textContent).toContain("It is not the move of this line. Try again.");
   });
 
   it("keeps an idea the student asked for beside the flag", () => {
     renderDrill(
       repertoireActivity({
-        drill: { flagged_opening: "Scotch Game", hint: { kind: "idea", text: IDEA } },
+        drill: {
+          flagged_opening: "Scotch Game",
+          flagged_sound: true,
+          hint: { kind: "idea", text: IDEA },
+        },
       }),
     );
     expect(screen.getByText("Good move, but that is the Scotch Game")).toBeTruthy();
     expect(stateCard().textContent).toContain(IDEA);
   });
 
-  it("drops the name once the server clears it on the next try", () => {
-    const { rerender } = renderDrill(
-      repertoireActivity({ drill: { flagged_opening: "Scotch Game" } }),
+  it("keeps an idea the student asked for beside a sound-move warning", () => {
+    renderDrill(
+      repertoireActivity({
+        drill: { flagged_opening: null, flagged_sound: true, hint: { kind: "idea", text: IDEA } },
+      }),
     );
+    expect(screen.getByText("Good move, but this line plays another move")).toBeTruthy();
+    expect(stateCard().textContent).toContain(IDEA);
+  });
+
+  it("drops the warning once the server clears it on the next try", () => {
+    const { rerender } = renderDrill(
+      repertoireActivity({ drill: { flagged_opening: null, flagged_sound: true } }),
+    );
+    expect(screen.getByText("Good move, but this line plays another move")).toBeTruthy();
     rerender(
       <Practice
         server={serverApi(repertoireActivity({ training: { tries: 2 } }), { tab: "practice" })}
@@ -510,7 +533,7 @@ describe("a flagged try", () => {
         fetchRepertoires={listed}
       />,
     );
-    expect(screen.queryByText(/Scotch Game|Good move/)).toBeNull();
+    expect(screen.queryByText(/Good move/)).toBeNull();
     expect(stateCard().textContent).toContain("Your move");
   });
 });

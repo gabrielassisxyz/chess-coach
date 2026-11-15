@@ -196,6 +196,7 @@ describe("the 2026-11-05 incident, read back from the log alone", () => {
       send: async () => {},
       resolvePermission: () => false,
       onEvent: () => () => {},
+      onRow: () => () => {},
       onPermissionRequest: () => () => {},
       ensureSessionId: () => 1,
       flushNotifications: () => {},

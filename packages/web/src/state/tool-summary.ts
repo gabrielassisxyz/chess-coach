@@ -135,8 +135,8 @@ type ToolLine = { type: string; key: string } & Partial<{
 }>;
 
 // The coach's `show_position` and `make_move` calls that Practice answered with an offer become one
-// card per show_position, hung under the last coach message of the turn (the stretch between two
-// student messages). Built from the stored tool calls alone, so a refresh rebuilds it.
+// card per show_position, hung under the last coach message of the turn (bounded by turn_start,
+// divider, or user message). Built from stored transcript rows alone, so a refresh rebuilds it.
 export function lineCardsByAnchor(items: readonly ToolLine[]): Map<string, LineCard[]> {
   const anchored = new Map<string, LineCard[]>();
   let turn: LineCard[] = [];
@@ -147,7 +147,11 @@ export function lineCardsByAnchor(items: readonly ToolLine[]): Map<string, LineC
     anchor = null;
   };
   for (const item of items) {
-    if (item.type === "divider" || (item.type === "text" && item.role === "user")) {
+    if (
+      item.type === "divider" ||
+      item.type === "turn_start" ||
+      (item.type === "text" && item.role === "user")
+    ) {
       close();
       continue;
     }

@@ -117,7 +117,8 @@ export function amendPendingNotification(
   return true;
 }
 
-// `discarded` is only read: it comes from the rows written while a paused run could be discarded.
+// `discarded` is written only for a run a repertoire unit's delete ends; the older rows with it come
+// from when a paused run could be discarded.
 export type RunEndReason = "finished" | "ended" | "discarded" | "replaced" | "left";
 
 export interface StoredRunItem {

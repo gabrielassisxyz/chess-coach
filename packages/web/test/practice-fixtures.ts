@@ -146,6 +146,7 @@ export function repertoireActivity(options: RepertoireActivityOptions = {}): Tra
       answer: null,
       hint: { kind: "none" },
       flagged_opening: null,
+      flagged_sound: false,
       moves_left: 4,
       moves_right: 0,
       moves_wrong: 0,

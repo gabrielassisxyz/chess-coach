@@ -22,10 +22,10 @@ export function recordUserText(
  * row: the kind CHECK on chat_messages cannot be widened without rebuilding a table that
  * training_explorations references, and a system row is never sent to the coach.
  */
-export function recordDivider(
+function recordSystemText(
   db: Database,
   sessionId: number,
-  label: string,
+  payload: Record<string, unknown>,
   clock: Clock,
 ): ChatMessage {
   return appendChatMessage(
@@ -34,10 +34,28 @@ export function recordDivider(
     {
       role: "system",
       kind: "text",
-      contentJson: JSON.stringify({ label, at: clock.now().toISOString() }),
+      contentJson: JSON.stringify(payload),
     },
     clock,
   );
+}
+
+export function recordDivider(
+  db: Database,
+  sessionId: number,
+  label: string,
+  clock: Clock,
+): ChatMessage {
+  return recordSystemText(db, sessionId, { label, at: clock.now().toISOString() }, clock);
+}
+
+/** Records the hidden turn-start boundary before a delivery reaches the SDK queue. */
+export function recordTurnStart(
+  db: Database,
+  sessionId: number,
+  clock: Clock = systemClock,
+): ChatMessage {
+  return recordSystemText(db, sessionId, { turn_start: clock.now().toISOString() }, clock);
 }
 
 export function recordFinalized(
@@ -54,16 +72,30 @@ export function recordFinalized(
   );
 }
 
-// A restart can land between a user row and the answer to it; the marker keeps the transcript honest.
+function isTurnStartRow(row: ChatMessage): boolean {
+  if (row.role !== "system" || row.kind !== "text") return false;
+  try {
+    const parsed = JSON.parse(row.contentJson) as Record<string, unknown> | null;
+    return typeof parsed?.turn_start === "string";
+  } catch {
+    return false;
+  }
+}
+
+// A restart can land between a user row (or its turn-start marker) and the answer to it; the marker keeps the transcript honest.
 export function markIncompleteIfDangling(
   db: Database,
   sessionId: number,
   clock: Clock = systemClock,
 ): boolean {
   const newest = listChatTail(db, sessionId, 1)[0];
-  if (newest?.role !== "user") return false;
-  // A notification nobody has delivered yet is waiting to be sent, not an answer that was lost.
-  if (newest.kind === "notification" && !newest.delivered) return false;
+  if (!newest) return false;
+  if (newest.role === "user") {
+    // A notification nobody has delivered yet is waiting to be sent, not an answer that was lost.
+    if (newest.kind === "notification" && !newest.delivered) return false;
+  } else if (!isTurnStartRow(newest)) {
+    return false;
+  }
   appendChatMessage(
     db,
     sessionId,
