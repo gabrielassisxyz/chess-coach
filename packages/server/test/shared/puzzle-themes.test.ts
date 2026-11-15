@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest";
 import {
   EXTRA_PUZZLE_THEMES,
   isGoalOrLengthTheme,
   PUZZLE_THEME_GROUPS,
   PUZZLE_THEMES,
   puzzleThemeInfo,
-} from "./puzzle-themes.js";
+} from "@chess-coach/shared";
+import { describe, expect, it } from "vitest";
 
 describe("puzzle themes catalogue", () => {
   it("lists all 54 themes across the 6 groups in prototype order with unique Lichess keys", () => {
