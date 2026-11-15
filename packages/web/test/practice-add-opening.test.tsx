@@ -839,3 +839,17 @@ describe("its stylesheet", () => {
     expect(declared(phone, ".openings-panel .button")).toMatchObject({ "min-height": "44px" });
   });
 });
+
+describe("its design check", () => {
+  it("records the re-check of the Practice column and of the Phone column for the panel", () => {
+    const check = readFileSync(join(import.meta.dirname, "../DESIGN-CHECK.md"), "utf8");
+    const recheck = check
+      .split(/\n\s*\n/)
+      .map((paragraph) => paragraph.replace(/\s+/g, " "))
+      .find((paragraph) => paragraph.includes("for the panel that Add an opening opens"));
+    expect(recheck).toMatch(
+      /^The Practice column was re-checked on rows [\d, and]+, and the Phone column on row 19/,
+    );
+    expect(recheck).toContain("M1 and M2 still find no matches.");
+  });
+});
