@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   type ActivityState,
   type DemoActivity,
@@ -1054,6 +1056,26 @@ describe("finishing a queue", () => {
       writes.mockRestore();
     }
     expect(touched.filter((key) => key.includes("last-session"))).toEqual([]);
+  });
+});
+
+// What the student decided the hub does without stays out of the web's sources, so a screen
+// cannot bring it back unseen.
+describe("what the hub no longer carries", () => {
+  const sourceDir = join(import.meta.dirname, "../src");
+  const sourceFiles = readdirSync(sourceDir, { recursive: true, encoding: "utf8" }).filter((file) =>
+    /\.(tsx?|css)$/.test(file),
+  );
+
+  it.each([
+    ["the commands that resume or discard a paused run", /(resume|discard)_training/],
+    ["the stored tally of the last session", /last-?session/i],
+    ["the card that offered a paused run", /resumeLabelOf|ResumeCard|resume-actions/],
+  ])("leaves %s out of every source file", (_what, pattern) => {
+    const offenders = sourceFiles.filter((file) =>
+      pattern.test(readFileSync(join(sourceDir, file), "utf8")),
+    );
+    expect(offenders).toEqual([]);
   });
 });
 
