@@ -104,9 +104,9 @@ States
 | 12 | Running text near 65ch | ok | ok | ok | ok | ok | ok |
 | 13 | Motion under 300 ms, ease-out, transform and opacity only, reduced motion respected | ok | ok | ok | ok | ok | ok |
 | 14 | Focus visible on every interactive element, one ring | ok | ok | ok | ok | ok | ok |
-| 15 | Loading quiet sentence; error one error-tone sentence + Try again in same card; empty card/section stays, empty row/segment hidden | ok | ok | ok | partial | ok | ok |
+| 15 | Loading quiet sentence; error one error-tone sentence + Try again in same card; empty card/section stays, empty row/segment hidden | ok | ok | ok | ok | ok | ok |
 | 16 | Summary before detail; one focus per glance | ok | ok | ok | ok | ok | ok |
-| 17 | What is interactive looks interactive | ok | ok | partial | ok | ok | ok |
+| 17 | What is interactive looks interactive | ok | ok | partial | partial | ok | ok |
 | 18 | Both themes exist and follow `prefers-color-scheme` until the button overrides them | ok | ok | ok | ok | ok | ok |
 | 19 | Phone: under 900 px, board first, 44 px targets | n/a | ok | ok | ok | ok | ok |
 
@@ -168,6 +168,30 @@ sentence in the error tone with Try again, and an empty colour a sentence in its
 the five cells wrap to two columns, the head's buttons go under the title, every control is 44 px
 and nothing scrolls sideways. M1 and M2 still find no matches.
 
+The Practice column was re-checked on rows 6, 8, 9, 10, 14, 15, 16, 17 and 19, and the Phone column
+on row 19, for the Overview's Puzzles by weakness card and Puzzle themes section, against the markup,
+`practice-hub.css` and the measures `test/practice-themes.test.tsx` reads off the stylesheet; the
+cells were not measured in a browser. The card is the page's other 8 px panel, with the same title and
+note as Due cards over a head row of three 12 px labels and up to five rows. A row is a 4 px control
+36 px high with a hairline border, in the grid `minmax(0, 1fr) 56px 64px 36px` with a 10 px gap: the
+name at 14 px, the rating and the share in the mono face at 12 px in the secondary text, and a 4 px bar
+in `--status-ready`, `--status-busy` or `--status-error` by the same 70 and 55 bands as the theme
+pages. The chosen row takes the accent for its border and the app surface for its fill, and it is the
+first row until another is pressed; the rows are radios, so a screen reader hears one of them chosen.
+Train and Mix practice are 36 px buttons, the first the accent and the second outlined. The section
+under its 20 px title and a 12 px note on one baseline holds the healthy mix, one 8 px button outlined
+in the accent with a 16 px title, a 12 px sentence, the share in mono and a 32 px Start pill, then six
+groups each with a 14 px heading over a hairline and a grid `repeat(auto-fill, minmax(240px, 1fr))`
+with gaps of 2 px and 12 px. A tile is a 4 px borderless button, the name at 14 px with the share at
+its right in mono at 12 px (`--quality-best` from 70, `--quality-inaccuracy` from 55,
+`--quality-blunder` under it, and `new` in `--text-3` for a theme the answer does not list) and the
+description at 12 px under them. Loading is one quiet sentence in the card and the tiles draw no
+figure; a failed read is one sentence in the error tone with Try again in the card, the tiles still
+start their theme; with no improvement area the card keeps its place with a sentence and a Start a
+healthy mix button. Every button takes the one focus ring, drawn 2 px inside a row or a tile because
+its neighbours sit 4 px and 2 px away. Under 900 px the grid is one column and every row, tile, pill
+and button is 44 px. M1 and M2 print nothing for it.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph
@@ -178,7 +202,7 @@ and nothing scrolls sideways. M1 and M2 still find no matches.
 - **8, Practice.** The section title inside a hub page ("Puzzle themes" on the Overview, "White"
   and "Black" on Openings) is 20 px, the redesign's step between the 18 px heading and the 28 px
   title, which has no token yet; a variation's name on Openings is 15 px, between the 14 px body and
-  the 18 px heading.
+  the 18 px heading; the healthy mix's title is 16 px (`--text-md`), also between them.
 - **10, Play.** The move list and the table rows use `2px`, `6px`, `24px`, `28px` and
   `32px` values (row height, dot size, gaps) that are not on the 4-based space scale; they
   size a data cell, not layout spacing.
@@ -188,13 +212,16 @@ and nothing scrolls sideways. M1 and M2 still find no matches.
   navigation or a tile, not the page's spacing, which stays on the scale. The Openings page keeps
   `20px` of padding at the sides of a card and of its panel, `28px` between its colours, `24px`
   between the rows of an open card and `10px` between the parts of its panel, the approved screens'
-  values.
+  values. The weakness card keeps `10px` between the cells of a row and at its sides, and the Puzzle
+  themes section `2px` between tiles, `12px` between columns, `6px` from a group's heading to its
+  tiles and `20px` at the sides of the healthy mix, the approved screen's values; none is layout
+  spacing between blocks.
 - **17, Games.** The game list rows are plain text buttons: pointer, hover and the focus ring
   mark them, but nothing says "button" before the pointer arrives.
-- **15, Practice.** Loading and error states match the rule (quiet sentence, or one sentence in
-  the error tone with Try again in the same card), and Due cards keeps the card at 0 due while
-  omitting empty breakdown rows; however, empty library motif rows still draw disabled with
-  `none`. The Openings page keeps an empty colour with a sentence in a dashed box, as the rule asks.
+- **17, Practice.** A theme tile is a borderless button on the page's surface: the pointer, the
+  hover fill and the focus ring mark it, and the description under the name reads as the label of a
+  button, but nothing says "button" before the pointer arrives. The healthy mix and a row of the
+  weakness card show their edge.
 
 ## Documented exceptions
 
@@ -239,9 +266,9 @@ and nothing scrolls sideways. M1 and M2 still find no matches.
   Stats, sticky beside a page column of at most 1440 px that shows one page at a time, the page
   scrolling as a whole and only the navigation scrolling by itself when it is taller than the
   window. The Overview opens first, with four tiles (Day streak, Puzzle rating, Solved first try,
-  Cards remembered) over the Due cards card (with its Coming up 7-day forecast) and a Puzzle
-  themes section holding the older Puzzles by motif card; Puzzle themes in the navigation shows the
-  Overview scrolled to that section. The Openings page is built as described in the check above,
+  Cards remembered) over a row of the Due cards card (with its Coming up 7-day forecast) and the
+  Puzzles by weakness card, and a Puzzle themes section holding the Healthy mix and a tile for each
+  of the 54 themes; Puzzle themes in the navigation shows the Overview scrolled to that section. The Openings page is built as described in the check above,
   Improvement areas and Strengths show the ranked puzzle theme tables, and the three other pages
   are a title and a sentence saying the page is not built yet. The older cards are mounted on their
   pages unchanged.
