@@ -9,7 +9,7 @@ import {
   TrainingSummarySchema,
 } from "./activity.js";
 import { FoundPositionPhaseSchema, MAX_FOUND_POSITION_ID_LENGTH } from "./found-positions.js";
-import { MAX_OPENING_FAMILY_LENGTH } from "./openings.js";
+import { MAX_OPENING_FAMILY_LENGTH, MAX_OPENING_TAG_LENGTH, OpeningTagSchema } from "./openings.js";
 import { RepertoireLevelSchema, RepertoireScopeSchema } from "./repertoires.js";
 
 // The wire contract between server and browser. Every frame is validated on arrival by the side
@@ -312,8 +312,8 @@ export const UndoCommandSchema = z.object({
 // A repertoire drill names its repertoire and scope, and a level that widens it to that repertoire's
 // group or side; without one it drills that variation alone. The other modes ignore all three. An
 // opening drill may name one opening family of its colour, or UNNAMED_OPENING for the positions with
-// no name; without one it drills every position of the colour. The other modes ignore `opening`.
-// A drill of the positions from the student's games (`found`) cannot start without a scope, and
+// no name; without one it drills every position of the colour. A puzzle queue may name one Lichess
+// opening tag instead of a motif. The other modes ignore `opening`. A drill of the positions from the student's games (`found`) cannot start without a scope, and
 // `color`, `phase` and `position`, the id the From my games list gives, narrow it; the other modes
 // ignore `phase` and `position`. A queue has no size to choose: the object is strict so that a
 // client still sending the retired `size` is refused instead of being served a queue it did not ask
@@ -324,13 +324,46 @@ const StartTrainingFieldsSchema = z.strictObject({
   mode: TrainingModeSchema,
   motif: z.string().min(1).max(64).optional(),
   color: z.enum(["white", "black"]).optional(),
-  opening: z.string().min(1).max(MAX_OPENING_FAMILY_LENGTH).optional(),
+  opening: z.string().min(1).max(MAX_OPENING_TAG_LENGTH).optional(),
   repertoire_id: z.number().int().positive().optional(),
   scope: RepertoireScopeSchema.optional(),
   level: RepertoireLevelSchema.optional(),
   phase: FoundPositionPhaseSchema.optional(),
   position: z.string().min(1).max(MAX_FOUND_POSITION_ID_LENGTH).optional(),
 });
+
+// `opening` is a tag in mode puzzles, whose queue is drawn from that tag's puzzles alone, so a motif
+// cannot narrow it as well; in every other mode it keeps the bound of an opening family.
+function checkStartTrainingOpening(
+  { mode, motif, opening }: z.infer<typeof StartTrainingFieldsSchema>,
+  context: z.RefinementCtx,
+): void {
+  if (opening === undefined) return;
+  if (mode !== "puzzles") {
+    if (opening.length > MAX_OPENING_FAMILY_LENGTH) {
+      context.addIssue({
+        code: "custom",
+        path: ["opening"],
+        message: `an opening family is at most ${MAX_OPENING_FAMILY_LENGTH} characters`,
+      });
+    }
+    return;
+  }
+  if (!OpeningTagSchema.safeParse(opening).success) {
+    context.addIssue({
+      code: "custom",
+      path: ["opening"],
+      message: "an opening tag holds only letters, digits, underscores and hyphens",
+    });
+  }
+  if (motif !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["motif"],
+      message: "a puzzle queue of one opening takes no motif",
+    });
+  }
+}
 
 export const StartTrainingCommandSchema = StartTrainingFieldsSchema.superRefine(
   (command, context) => {
@@ -341,6 +374,7 @@ export const StartTrainingCommandSchema = StartTrainingFieldsSchema.superRefine(
         message: "a drill of the positions from your games needs a scope",
       });
     }
+    checkStartTrainingOpening(command, context);
   },
 );
 
