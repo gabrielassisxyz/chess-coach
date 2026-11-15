@@ -30,7 +30,9 @@ Tokens and their origin
   prototype's `#2f6fdc` because that value measured 4.46:1 on the panel and the text rule is
   4.5:1.
 - Board squares are Lichess by default; `[data-board]` swaps the square set. Board and arrow
-  overlay colours are tokens too.
+  overlay colours are tokens too. Knight-move arrows render as an L through `customSvg`
+  (two-square leg first, then one-square turn) in the same arrow tokens, opacity and stroke
+  widths as straight arrows.
 
 Type
 
@@ -106,8 +108,9 @@ screens were built to are in the design probe's spec (token layer and interactio
 
 The Play, Games and Practice columns were re-checked for board drawing. All three render the
 same `Board`, including the read-only review and demo boards. Right-click drawings use four
-distinct arrow tokens and share the overlay with app arrows; they add no control, layout,
-motion or focus treatment. M1 and M2 still find no matches.
+distinct arrow tokens and share the overlay with app arrows, with knight-move arrows drawn as
+an L through `customSvg` in the same tokens, opacity and stroke widths; they add no control,
+layout, motion or focus treatment. M1 and M2 still find no matches.
 
 The Play, Games and Practice columns were re-checked for icon controls in light and dark at
 390 px. In Chromium, Play's empty state, Games' load failure state and Practice's open puzzle
@@ -141,8 +144,8 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
 - The checkerboard is a `conic-gradient` of two token colours; it is a pattern, not a
   gradient treatment.
 - Four selectors in `board.css` (`square.move-dest`, `square.oc`, `square.last-move`,
-  `square.check`) target classes that chessground writes into the DOM, so no `.tsx` mentions
-  them.
+  `square.check`) plus `.cg-wrap .cg-custom-svgs` and `.cg-wrap .cg-custom-svgs svg` target
+  elements and classes that chessground writes into the DOM, so no `.tsx` mentions them.
 
 ## Screens and states still carrying old structure
 
