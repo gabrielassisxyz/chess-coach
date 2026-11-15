@@ -195,6 +195,8 @@ describe("focus ring", () => {
     );
     await screen.findByRole("radio", { name: /fork/i });
     expect(expectFocusRing(chooser.container)).toBeGreaterThanOrEqual(3);
+    // The hub's navigation draws the ring inside its entries, since it scrolls by itself.
+    expect(expectFocusRing(screen.getByRole("navigation", { name: "Practice sections" }))).toBe(8);
     chooser.unmount();
 
     const training = render(<Practice server={serverApi(card)} createBoard={inertBoard} />);
