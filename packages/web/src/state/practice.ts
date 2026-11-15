@@ -112,10 +112,6 @@ export function motifRows(list: MotifCount[], progress: ProgressResponse | null)
   return [...lichess, ...library];
 }
 
-export function openingCount(list: MotifCount[], color: "white" | "black"): number {
-  return list.find((entry) => entry.motif === OPENING_MOTIFS[color])?.count ?? 0;
-}
-
 const CLASSIFICATION_ORDER = ["blunder", "mistake", "inaccuracy", "opening", "teaching"];
 const CLASSIFICATION_LABEL: Record<string, string> = {
   blunder: "Blunders",
