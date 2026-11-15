@@ -325,8 +325,9 @@
   `scope: "all"` with its `position` and no filter. The Overview's panel reads D due, R recurring of
   N, the first three positions due, and Drill D positions sends `due` (Train all positions sends
   `all` when nothing is due). With no position at all the page and the panel say so, and a read that
-  failed says so with Try again. A found start the server refuses is explained under the header of
-  the page it was pressed on.
+  failed says so with Try again. A start in flight anywhere in the hub, a found one or not, disables
+  every one of these buttons. A found start the server refuses is explained under the header of the
+  page it was pressed on.
 - **Coach conversations:** one per tab (`play`, `games`, `practice`), each its own `coach_sessions`
   row (`tab` column) resumed by its own Claude session id. The live game and the student's chat on
   Play write to `play`, training to `practice`, a question about a stored game to `games`. A tab's

@@ -290,8 +290,11 @@ and phone icon controls are at least 44 px wide. M1 and M2 still find no matches
   Loading (`role="status"`), the failed read (`role="alert"` and `Try again`) and the empty
   sentence follow Rule 15 inside the page and inside the panel: a section with no position keeps its
   heading and says so, and a page with no position at all keeps its title and the sentence and draws
-  no control. Under 900 px the controls wrap under the title, the cards are one column and every
-  button is 44 px. `2px`, `5px`, `6px`, `10px`, `14px`, `18px` and `28px` size a chip, a card's text
+  no control. Under 900 px the controls wrap under the title, the cards are one column, a card's
+  title wraps and every button is 44 px; in a column narrower than the design's, as the page is with
+  the coach panel open, the heading and the filters wrap instead of being clipped. The boards are
+  hidden from assistive technology, since the title, the moves and the chips say what a board shows.
+  `2px`, `5px`, `6px`, `10px`, `14px`, `18px` and `28px` size a chip, a card's text
   column, the panel's rows, the pill and the gap between sections rather than layout spacing. The
   Practice column was re-checked on rows 4, 5, 6, 9, 10, 14, 15 and 17, and the Phone column on row
   19, for this page and its panel, and the cells hold. M1 and M2 print nothing for it. The cells

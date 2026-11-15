@@ -18,7 +18,10 @@ import type { FoundStarting } from "./PracticeFound.js";
 
 export interface FoundOverviewPanelProps {
   found: Loaded<FoundPositionsResponse>;
+  // The found start in flight, which says Starting on the button that made it.
   starting: FoundStarting | null;
+  // Any start of the hub is in flight, a found one or not, and every start waits for it.
+  busy: boolean;
   onStart(request: FoundStartRequest): void;
   // Opens the From my games page.
   onSeeAll(): void;
@@ -43,11 +46,8 @@ function PanelRow({ position, now }: { position: FoundPositionView; now: Date })
         {line}
       </span>
       {reached ? (
-        <span
-          className="found-panel__result"
-          data-tone={foundBestToneOf(position)}
-          title={`Found best ${foundBestText(position)}`}
-        >
+        <span className="found-panel__result" data-tone={foundBestToneOf(position)}>
+          <span className="sr-only">Found best </span>
           {foundBestText(position)}
         </span>
       ) : (
@@ -59,7 +59,7 @@ function PanelRow({ position, now }: { position: FoundPositionView; now: Date })
   );
 }
 
-function PanelBody({ found, starting, onStart, onSeeAll, now }: FoundOverviewPanelProps) {
+function PanelBody({ found, starting, busy, onStart, onSeeAll, now }: FoundOverviewPanelProps) {
   if (found.status === "loading") {
     return (
       <p className="practice__card-note" role="status">
@@ -101,7 +101,7 @@ function PanelBody({ found, starting, onStart, onSeeAll, now }: FoundOverviewPan
         <button
           type="button"
           className="button button--primary"
-          disabled={starting !== null}
+          disabled={busy}
           onClick={() => onStart({ scope })}
         >
           {own

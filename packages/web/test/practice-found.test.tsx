@@ -6,7 +6,7 @@ import type {
   FoundPositionView,
 } from "@chess-coach/shared";
 import type { Config } from "@lichess-org/chessground/config";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardFactory } from "../src/components/Board.js";
 import { MiniBoard } from "../src/components/MiniBoard.js";
@@ -22,6 +22,7 @@ import {
   fetchFoundPositionsFromServer,
   foundLineText,
   foundReturnsText,
+  foundTitleOf,
 } from "../src/state/found-api.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
@@ -33,6 +34,12 @@ import {
   progressOf,
 } from "./practice-fixtures.js";
 import { serverApi } from "./server-api.js";
+
+// The same module with its title builder counted, to see whether a card draws again.
+vi.mock("../src/state/found-api.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/state/found-api.js")>();
+  return { ...actual, foundTitleOf: vi.fn(actual.foundTitleOf) };
+});
 
 afterEach(() => {
   cleanup();
@@ -143,6 +150,8 @@ interface HubOptions {
   onStart?: (request: FoundStartRequest) => void;
   starting?: PracticeHubProps["starting"];
   failure?: string | null;
+  // "real" leaves the clock to the hub, which is what the app does.
+  now?: Date | "real";
 }
 
 function hubElement(options: HubOptions) {
@@ -157,7 +166,7 @@ function hubElement(options: HubOptions) {
       onStart={noop}
       onStartRepertoire={noop}
       fetchRepertoireList={async () => ({ repertoires: [], met: [] })}
-      now={NOW}
+      {...(options.now === "real" ? {} : { now: options.now ?? NOW })}
       foundPositions={{
         positions: options.positions ?? ready(WHOLE),
         fetchPositions: options.fetchPositions ?? (async () => WHOLE),
@@ -259,6 +268,8 @@ describe("how a position is told", () => {
     expect(later(70 * DAY_MS)).toBe("in 2 months");
     expect(later(400 * DAY_MS)).toBe("in a year");
     expect(later(800 * DAY_MS)).toBe("in 2 years");
+    // A position whose time came after the list was read is due, not about to return.
+    expect(later(-60_000)).toBe("due");
     expect(foundReturnsText("not a date", NOW)).toBe("scheduled");
   });
 });
@@ -446,8 +457,8 @@ describe("the From my games page", () => {
       viewOnly: true,
     });
     expect(
-      cardOf("Scandinavian Defense").querySelector('[role="img"]')?.getAttribute("aria-label"),
-    ).toBe("Position, Black to move");
+      cardOf("Scandinavian Defense").querySelector(".found-board")?.getAttribute("aria-hidden"),
+    ).toBe("true");
   });
 
   it("draws its cards at once when the hub comes back to this page", () => {
@@ -474,6 +485,36 @@ describe("the From my games page", () => {
     const titleId = card.querySelector(".found-card__title")?.id;
     expect(titleId).toBeTruthy();
     expect(drill.getAttribute("aria-describedby")).toBe(titleId);
+  });
+});
+
+describe("drawing the cards", () => {
+  // The panel on the Overview builds titles too, for the positions due; the scheduled position is
+  // only ever a card of the page, so a title built for it is a card drawn.
+  const cardsDrawn = (): boolean =>
+    vi.mocked(foundTitleOf).mock.calls.some(([position]) => position.id === petrov.id);
+
+  it("does not draw them again when the hub renders for another reason", () => {
+    const view = renderPage();
+    expect(cardsDrawn()).toBe(true);
+    vi.mocked(foundTitleOf).mockClear();
+    // A new list object with the same positions and new callbacks, as every hub render makes.
+    view.rerenderWith({});
+    expect(cardsDrawn()).toBe(false);
+  });
+
+  it("does not draw them again either when the hub keeps its own clock", () => {
+    const view = renderPage({ now: "real" });
+    vi.mocked(foundTitleOf).mockClear();
+    view.rerenderWith({ now: "real" });
+    expect(cardsDrawn()).toBe(false);
+  });
+
+  it("draws them again when a start begins, which disables every Drill", () => {
+    const view = renderPage();
+    vi.mocked(foundTitleOf).mockClear();
+    view.rerenderWith({ starting: { mode: "found", motif: "recommended" } });
+    expect(cardsDrawn()).toBe(true);
   });
 });
 
@@ -548,10 +589,41 @@ describe("the page's filters", () => {
     expect(within(pageOf()).queryAllByRole("listitem")).toEqual([]);
     // The controls keep the counts they had while the answer is on its way.
     expect(phaseButton(/^Opening/).textContent).toBe("Opening · 4");
-    expect(within(pageOf()).queryByRole("button", { name: /^Train/ })).toBeNull();
+    // The header does not reflow: the pill stays, with its last count, and starts nothing until the
+    // answer it would start from is there.
+    expect((trainButton("Train 4") as HTMLButtonElement).disabled).toBe(true);
+    expect((trainButton("More ways to train") as HTMLButtonElement).disabled).toBe(true);
     answer(foundResponse([scandinavian]));
     await waitFor(() => expect(within(pageOf()).getAllByRole("listitem")).toHaveLength(1));
-    expect(within(pageOf()).getByRole("button", { name: "Train 1" })).toBeTruthy();
+    expect((trainButton("Train 1") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("ignores a read that lands after a newer choice was made", async () => {
+    const answers: Record<string, (value: FoundPositionsResponse) => void> = {};
+    const fetchPositions = vi.fn<FetchFoundPositions>(
+      (query) => new Promise((resolve) => (answers[query.color ?? ""] = resolve)),
+    );
+    renderPage({ fetchPositions });
+    fireEvent.click(colourButton("As White"));
+    fireEvent.click(colourButton("As Black"));
+    await act(async () => answers.black?.(foundResponse([scandinavian])));
+    expect(within(pageOf()).getAllByRole("listitem")).toHaveLength(1);
+    // The answer for White, which is no longer the choice, arrives last and must change nothing.
+    await act(async () => answers.white?.(whiteOnly));
+    expect(within(pageOf()).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(pageOf()).getByText("Scandinavian Defense")).toBeTruthy();
+  });
+
+  it("reads a choice again when it is made again after the filters were cleared", async () => {
+    const fetchPositions = vi.fn<FetchFoundPositions>(async () => whiteOnly);
+    renderPage({ fetchPositions });
+    fireEvent.click(colourButton("As White"));
+    await waitFor(() => expect(within(pageOf()).getAllByRole("listitem")).toHaveLength(3));
+    fireEvent.click(colourButton("All"));
+    fireEvent.click(colourButton("As White"));
+    // The answer read before is not shown while the new one is on its way.
+    expect(screen.getByRole("status").textContent).toBe(FOUND_LOADING_TEXT);
+    await waitFor(() => expect(fetchPositions).toHaveBeenCalledTimes(2));
   });
 
   it("returns to the whole list at once, with no read, when the filters are cleared", async () => {
@@ -571,6 +643,7 @@ describe("the page's filters", () => {
       await within(pageOf()).findByText("No position from your games matches these filters."),
     ).toBeTruthy();
     expect(within(pageOf()).queryByText(FOUND_EMPTY_TEXT)).toBeNull();
+    expect((trainButton("Train all positions") as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(within(pageOf()).getByRole("button", { name: "Clear filters" }));
     expect(within(pageOf()).getAllByRole("listitem")).toHaveLength(LIST.length);
     expect(colourButton("All").getAttribute("aria-pressed")).toBe("true");
@@ -633,6 +706,32 @@ describe("starting a drill from the page", () => {
     expect(within(pageOf()).getByRole("button", { name: "All positions" })).toBeTruthy();
     fireEvent.mouseDown(document.body);
     expect(within(pageOf()).queryByRole("button", { name: "All positions" })).toBeNull();
+  });
+
+  it("closes the menu when focus moves out of it, and keeps it while focus moves inside", () => {
+    renderPage();
+    fireEvent.click(trainButton("More ways to train"));
+    fireEvent.focusIn(trainButton("All positions"));
+    expect(within(pageOf()).getByRole("button", { name: "All positions" })).toBeTruthy();
+    fireEvent.focusIn(colourButton("As Black"));
+    expect(within(pageOf()).queryByRole("button", { name: "All positions" })).toBeNull();
+  });
+
+  it("disables every start while any start of the hub is in flight, a found one or not", () => {
+    renderPage({ starting: { mode: "puzzles", motif: "fork" } });
+    expect((trainButton("Train 4") as HTMLButtonElement).disabled).toBe(true);
+    expect((trainButton("More ways to train") as HTMLButtonElement).disabled).toBe(true);
+    for (const button of within(pageOf()).getAllByRole("button", { name: "Drill" })) {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+    }
+    // None of them says Starting, since the start in flight is not theirs.
+    expect(within(pageOf()).queryByRole("button", { name: "Starting" })).toBeNull();
+    openPracticePage("Overview");
+    const panel = screen.getByRole("region", { name: "Positions from your games" });
+    expect(
+      (within(panel).getByRole("button", { name: "Drill 3 positions" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it("reads Train all positions and sends the all scope when nothing is recommended", () => {
@@ -822,7 +921,10 @@ describe("the panel on the Overview", () => {
   it("shows how often the best move was found for a repeated position, and the date for a mistake", () => {
     render(hubElement({}));
     const rows = within(panel()).getAllByRole("listitem");
-    expect(textOf(rows[0] as HTMLElement, ".found-panel__result")).toBe("2 of 10");
+    expect(textOf(rows[0] as HTMLElement, ".found-panel__result")).toBe("Found best 2 of 10");
+    expect(rows[0]?.querySelector(".found-panel__result .sr-only")?.textContent).toBe(
+      "Found best ",
+    );
     expect(rows[0]?.querySelector(".found-panel__result")?.getAttribute("data-tone")).toBe("low");
     expect(textOf(rows[1] as HTMLElement, ".found-panel__result")).toBe("Fri");
   });
@@ -837,6 +939,9 @@ describe("the panel on the Overview", () => {
         .getAllByRole("listitem")
         .map((row) => textOf(row, ".found-panel__title")),
     ).toEqual(["Due 1", "Due 2", "Due 3"]);
+    // Four are due though three are drawn, and the button says four.
+    expect(textOf(panel(), ".found-panel__counts")).toBe("4 due · 5 recurring of 5");
+    expect(within(panel()).getByRole("button", { name: "Drill 4 positions" })).toBeTruthy();
   });
 
   it("drills the due positions from Drill D positions", () => {
@@ -1008,6 +1113,22 @@ describe("the screen's starts of a drill from your games", () => {
     );
   });
 
+  it("says the list moved on when a card's drill is refused for want of its position", async () => {
+    const { view, server } = await openPage(async () => WHOLE);
+    fireEvent.click(within(cardOf("Petrov's Defense")).getByRole("button", { name: "Drill" }));
+    view.rerender(
+      <Practice
+        server={{ ...server, errorCount: 1, lastError: "none", lastErrorCode: "empty_queue" }}
+        {...hubReads}
+        fetchFoundPositions={async () => WHOLE}
+        createBoard={recordingBoard}
+      />,
+    );
+    expect((await within(pageOf()).findByRole("alert")).textContent).toBe(
+      "No position from your games matches any more. Reload the page to see the current list.",
+    );
+  });
+
   it("says the server is not connected when the start cannot be sent", async () => {
     const { server } = await openPage(
       async () => WHOLE,
@@ -1073,6 +1194,24 @@ describe("the page's styles", () => {
     expect(declared(block.slice(0, phoneAt), ".found-head")).toMatchObject({ "flex-wrap": "wrap" });
   });
 
+  it("lets the heading and the controls give way in a narrow column, such as the page with the coach open", () => {
+    const desktop = block.slice(0, phoneAt);
+    expect(declared(desktop, ".found-head__heading")["min-width"]).toBe("min(280px, 100%)");
+    expect(declared(desktop, ".found-filter")["flex-wrap"]).toBe("wrap");
+    expect(declared(desktop, ".found-filter")["min-height"]).toBe("32px");
+    expect(declared(desktop, ".found-filter").height).toBeUndefined();
+  });
+
+  it("wraps a title under 900 px instead of cutting it off, where it cannot be read by touch", () => {
+    expect(declared(block.slice(phoneAt), ".found-card__title")).toMatchObject({
+      "white-space": "normal",
+    });
+    expect(declared(block.slice(0, phoneAt), ".found-card__title")).toMatchObject({
+      "white-space": "nowrap",
+      "text-overflow": "ellipsis",
+    });
+  });
+
   it("holds no colour literal, only tokens", () => {
     expect(block).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
     expect(block).not.toMatch(/box-shadow|text-shadow/);
@@ -1120,8 +1259,11 @@ describe("the read-only board", () => {
     expect(made[1]?.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it("names the side to move for a screen reader, since the pieces carry no label", () => {
+  it("is hidden from assistive technology, since the card's title, moves and chips say what it shows", () => {
     render(<MiniBoard fen={kingsPawn.fen} orientation="white" createBoard={recordingBoard} />);
-    expect(screen.getByRole("img", { name: "Position, White to move" })).toBeTruthy();
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(
+      screen.getByTestId("found-board").closest("[aria-hidden]")?.getAttribute("aria-hidden"),
+    ).toBe("true");
   });
 });

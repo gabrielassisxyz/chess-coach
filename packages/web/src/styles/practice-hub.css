@@ -486,7 +486,7 @@
   flex: 1;
   flex-direction: column;
   gap: var(--space-1);
-  min-width: 280px;
+  min-width: min(280px, 100%);
 }
 
 .found-head__controls {
@@ -499,8 +499,9 @@
 /* The phase and colour controls: a bordered row of toggles, the chosen one raised. */
 .found-filter {
   display: flex;
+  flex-wrap: wrap;
   min-width: 0;
-  height: 32px;
+  min-height: 32px;
   margin: 0;
   padding: 0;
   border: 1px solid var(--border);
@@ -880,13 +881,18 @@
     min-width: 0;
   }
 
-  .found-filter {
-    flex-wrap: wrap;
-    height: auto;
-  }
-
   .found-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* A title that is cut off cannot be read on a touch screen, so on a phone it wraps. */
+  .found-card__head {
+    align-items: flex-start;
+  }
+
+  .found-card__title {
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .found-filter__button,

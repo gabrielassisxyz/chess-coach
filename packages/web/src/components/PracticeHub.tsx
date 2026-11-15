@@ -8,7 +8,15 @@ import type {
   RepertoireSummary,
   TrainingMode,
 } from "@chess-coach/shared";
-import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
 import {
   type FetchFoundPositions,
@@ -336,9 +344,12 @@ export function PracticeHub(props: PracticeHubProps) {
     choose(next);
     setChoices((count) => count + 1);
   };
-  const now = props.now ?? new Date();
+  // One clock for as long as the hub is drawn, so the cards, which wait for a change of their own
+  // props, are not drawn again at every render.
+  const now = useMemo(() => props.now ?? new Date(), [props.now]);
   const found = marked.foundPositions;
   const foundStarting = foundStartingOf(marked.starting);
+  const busy = props.starting !== null;
 
   return (
     <div className="practice-hub" ref={hub}>
@@ -364,6 +375,7 @@ export function PracticeHub(props: PracticeHubProps) {
                 <FoundOverviewPanel
                   found={found.positions}
                   starting={foundStarting}
+                  busy={busy}
                   onStart={found.onStart}
                   onSeeAll={() => onChoose("from-my-games")}
                   now={now}
@@ -379,6 +391,7 @@ export function PracticeHub(props: PracticeHubProps) {
               whole={found.positions}
               fetchFound={found.fetchPositions ?? fetchFoundPositionsFromServer}
               starting={foundStarting}
+              busy={busy}
               onStart={found.onStart}
               failure={failureOn("from-my-games")}
               now={now}

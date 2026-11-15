@@ -37,12 +37,10 @@ export function MiniBoard({ fen, orientation, createBoard = Chessground }: MiniB
     return () => api.destroy();
   }, [createBoard, fen, orientation]);
 
+  // The pieces carry no labels and a list of boards would read the same label out many times; the
+  // card's title, its moves and its chips tell a screen reader what the board shows.
   return (
-    <div
-      className="found-board"
-      role="img"
-      aria-label={`Position, ${orientation === "white" ? "White" : "Black"} to move`}
-    >
+    <div className="found-board" aria-hidden="true">
       <div ref={surface} className="found-board__surface" data-testid="found-board" />
     </div>
   );

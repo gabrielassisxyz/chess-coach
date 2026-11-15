@@ -63,9 +63,9 @@ export const positionsText = (count: number): string =>
 export const foundDueCount = (positions: readonly FoundPositionView[]): number =>
   positions.filter((position) => position.state === "due").length;
 
-// "23.Kh1 Qf2 24.e6 Nc8" from ply 45, "3…exd4 4.cxd4" from a Black move; a line that starts after
-// the first move opens with an ellipsis, since the server keeps only the last four plies once the
-// position is past ply 8.
+// "1.e4 e5 2.Nf3" from the first move. The server keeps only the last four plies once the position is
+// past ply 8, so a line that starts later opens with an ellipsis, "… 23.Kh1 Qf2 24.e6 Nc8", and one
+// that starts on a Black move names it, "… 3…exd4 4.cxd4".
 export function foundLineText(line: FoundPositionLine): string {
   if (line.san.length === 0) return "";
   const moves = line.san.map((san, index) => {
@@ -81,10 +81,11 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
 // When a scheduled position comes back, in the units the student thinks in: "in 3 days",
-// "next week", "in 2 weeks".
+// "next week", "in 2 weeks". A position whose time came after the list was read is due by the clock.
 export function foundReturnsText(nextReviewAt: string, now: Date): string {
   const wait = Date.parse(nextReviewAt) - now.getTime();
   if (Number.isNaN(wait)) return "scheduled";
+  if (wait <= 0) return "due";
   if (wait < HOUR_MS) return "in under an hour";
   if (wait < DAY_MS) {
     const hours = Math.round(wait / HOUR_MS);
