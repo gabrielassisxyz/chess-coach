@@ -1,4 +1,9 @@
-import type { ProgressResponse, TrainingMode } from "@chess-coach/shared";
+import type {
+  ProgressResponse,
+  PuzzleRatingHistoryResponse,
+  ThemeStatsResponse,
+  TrainingMode,
+} from "@chess-coach/shared";
 import { type ReactNode, type Ref, useId, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
 import {
@@ -11,6 +16,7 @@ import {
   nextBatchParts,
   percent,
 } from "../state/practice.js";
+import { ratingSparklinePoints } from "../state/puzzle-rating-api.js";
 
 export interface HubStartProps {
   mode: TrainingMode;
@@ -25,6 +31,8 @@ export type HubStartButton = (props: HubStartProps) => ReactNode;
 export interface PracticeOverviewProps {
   progress: Loaded<ProgressResponse>;
   motifs: Loaded<MotifCount[]>;
+  ratingHistory?: Loaded<PuzzleRatingHistoryResponse> | undefined;
+  themeStats?: Loaded<ThemeStatsResponse> | undefined;
   engineMissing: boolean;
   startButton: HubStartButton;
   // The engine and coach problem cards, drawn under the title when they apply.
@@ -52,32 +60,190 @@ const dayWordOf = (days: number): string => (days === 1 ? "day" : "days");
 const rotationText = (total: number): string =>
   `${total} ${total === 1 ? "card" : "cards"} in rotation`;
 
-// The numbers the progress answer already holds, one tile each.
-function OverviewTiles({ progress }: { progress: ProgressResponse }) {
-  const { streak_days: streak, puzzle_rating: rating, cards } = progress;
+function ratePointsDelta(currentRate: number | null, previousRate: number | null): number | null {
+  if (currentRate === null || previousRate === null) return null;
+  return Math.round(currentRate * 100) - Math.round(previousRate * 100);
+}
+
+function TileDelta({ delta, period }: { delta: number | null; period: string }) {
+  return (
+    <>
+      {delta !== null && delta !== 0 ? (
+        <>
+          {" "}
+          <span className="practice-tile__delta" data-direction={delta > 0 ? "up" : "down"}>
+            {delta > 0 ? `\u25b2 ${delta}` : `\u25bc ${Math.abs(delta)}`}
+          </span>
+        </>
+      ) : null}{" "}
+      <span className="practice-tile__unit">{period}</span>
+    </>
+  );
+}
+
+function DayStreakTile({ progress }: { progress: ProgressResponse }) {
+  const { streak_days: streak, streak_best: best, activity_7d: activity } = progress;
+  return (
+    <div className="practice-tile">
+      <dt>Day streak</dt>
+      <dd className="practice-tile__value">
+        <span className="practice-tile__figure">{streak}</span>{" "}
+        <span className="practice-tile__unit">{`${dayWordOf(streak)} · best ${best}`}</span>
+      </dd>
+      <dd className="practice-tile__streak">
+        <div className="practice-tile__streak-bars" role="img" aria-label="Last 7 days">
+          {activity.map((active, index) => {
+            const daysAgo = activity.length - 1 - index;
+            return (
+              <span
+                key={`ago-${daysAgo}`}
+                className="practice-tile__streak-day"
+                data-active={active ? "true" : "false"}
+                data-today={daysAgo === 0 ? "true" : "false"}
+              />
+            );
+          })}
+        </div>
+      </dd>
+    </div>
+  );
+}
+
+function PuzzleRatingTile({
+  rating,
+  ratingHistory,
+}: {
+  rating: number;
+  ratingHistory: Loaded<PuzzleRatingHistoryResponse> | undefined;
+}) {
+  const history = ratingHistory?.status === "ready" ? ratingHistory.value : null;
+  const sparkPoints = history ? ratingSparklinePoints(history.points) : null;
+  return (
+    <div className="practice-tile">
+      <dt>Puzzle rating</dt>
+      <dd className="practice-tile__value">
+        <span className="practice-tile__figure">{rating}</span>
+        {history ? <TileDelta delta={history.change} period="7 days" /> : null}
+      </dd>
+      {sparkPoints ? (
+        <dd className="practice-tile__visual">
+          <svg
+            className="practice-tile__spark"
+            viewBox="0 0 200 28"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <polyline
+              points={sparkPoints}
+              fill="none"
+              stroke="var(--status-ready)"
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </dd>
+      ) : null}
+    </div>
+  );
+}
+
+function SolvedFirstTryTile({
+  themeStats,
+}: {
+  themeStats: Loaded<ThemeStatsResponse> | undefined;
+}) {
+  const stats = themeStats?.status === "ready" ? themeStats.value : null;
+  const current = stats && stats.overall.played > 0 ? stats.overall : null;
+  const currentRate = current ? current.first_try / current.played : null;
+  const previous =
+    current && stats?.overall_previous && stats.overall_previous.played > 0
+      ? stats.overall_previous
+      : null;
+  const previousRate = previous ? previous.first_try / previous.played : null;
+  const solvedPct = currentRate !== null ? Math.round(currentRate * 100) : null;
+  const delta = ratePointsDelta(currentRate, previousRate);
+
+  return (
+    <div className="practice-tile">
+      <dt>Solved first try</dt>
+      <dd className="practice-tile__value">
+        <span className="practice-tile__figure">{solvedPct !== null ? `${solvedPct}%` : NONE}</span>
+        {solvedPct !== null ? <TileDelta delta={delta} period="30 days" /> : null}
+      </dd>
+      {solvedPct !== null ? (
+        <dd className="practice-tile__split" aria-hidden="true">
+          <span className="practice-tile__split-solved" style={{ width: `${solvedPct}%` }} />
+          <span className="practice-tile__split-rest" />
+        </dd>
+      ) : null}
+    </div>
+  );
+}
+
+function CardsRememberedTile({ cards }: { cards: ProgressResponse["cards"] }) {
+  const delta = ratePointsDelta(cards.correct_rate_30d, cards.correct_rate_prev_30d);
+  return (
+    <div className="practice-tile">
+      <dt>Cards remembered</dt>
+      <dd className="practice-tile__value">
+        <span className="practice-tile__figure">{percent(cards.correct_rate_30d)}</span>
+        {cards.correct_rate_30d !== null ? <TileDelta delta={delta} period="30 days" /> : null}
+      </dd>
+      <dd className="practice-tile__note">{rotationText(cards.total)}</dd>
+    </div>
+  );
+}
+
+function OverviewTiles({
+  progress,
+  ratingHistory,
+  themeStats,
+}: {
+  progress: ProgressResponse;
+  ratingHistory: Loaded<PuzzleRatingHistoryResponse> | undefined;
+  themeStats: Loaded<ThemeStatsResponse> | undefined;
+}) {
   return (
     <dl className="practice-tiles">
-      <div className="practice-tile">
-        <dt>Day streak</dt>
-        <dd className="practice-tile__value">
-          <span className="practice-tile__figure">{streak}</span>{" "}
-          <span className="practice-tile__unit">{dayWordOf(streak)}</span>
-        </dd>
-      </div>
-      <div className="practice-tile">
-        <dt>Puzzle rating</dt>
-        <dd className="practice-tile__value">
-          <span className="practice-tile__figure">{rating}</span>
-        </dd>
-      </div>
-      <div className="practice-tile">
-        <dt>Cards remembered</dt>
-        <dd className="practice-tile__value">
-          <span className="practice-tile__figure">{percent(cards.correct_rate_30d)}</span>
-        </dd>
-        <dd className="practice-tile__note">{rotationText(cards.total)}</dd>
-      </div>
+      <DayStreakTile progress={progress} />
+      <PuzzleRatingTile rating={progress.puzzle_rating} ratingHistory={ratingHistory} />
+      <SolvedFirstTryTile themeStats={themeStats} />
+      <CardsRememberedTile cards={progress.cards} />
     </dl>
+  );
+}
+
+function forecastDayLabel(now: Date, offset: number): string {
+  if (offset === 0) return "Today";
+  // Anchor at local noon so DST shifts never roll a calendar date backwards or forwards.
+  const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 12);
+  return day.toLocaleDateString("en-US", { weekday: "short" });
+}
+
+function DueForecast({ dueNext7d, now }: { dueNext7d: readonly number[]; now: Date }) {
+  const max = Math.max(...dueNext7d, 1);
+  return (
+    <div className="practice-forecast">
+      <p className="practice-forecast__title">Coming up · next 7 days</p>
+      <div className="practice-forecast__bars">
+        {dueNext7d.map((count, offset) => {
+          const height = Math.max(2, Math.round((count / max) * 40));
+          const label = forecastDayLabel(now, offset);
+          return (
+            <div
+              key={label}
+              className="practice-forecast__day"
+              data-today={offset === 0 ? "true" : "false"}
+            >
+              <span className="practice-forecast__count">{count}</span>
+              <span className="practice-forecast__bar" style={{ height: `${height}px` }} />
+              <span className="practice-forecast__label">{label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -133,6 +299,7 @@ function DueCards({ progress, now }: { progress: Loaded<ProgressResponse>; now: 
           </div>
         ) : null}
       </dl>
+      <DueForecast dueNext7d={cards.due_next_7d} now={now} />
     </>
   );
 }
@@ -306,7 +473,13 @@ export function PracticeOverview(props: PracticeOverviewProps) {
         note="Pick a session. The board appears once an item starts."
       />
       {props.problems}
-      {progress.status === "ready" ? <OverviewTiles progress={progress.value} /> : null}
+      {progress.status === "ready" ? (
+        <OverviewTiles
+          progress={progress.value}
+          ratingHistory={props.ratingHistory}
+          themeStats={props.themeStats}
+        />
+      ) : null}
       <div className="practice-page__cards">
         <section className="practice__card" aria-label="Due cards">
           <h3 className="practice__card-title">Due cards</h3>
