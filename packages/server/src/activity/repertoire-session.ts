@@ -19,6 +19,7 @@ import {
   countRepertoireCardsIntroducedSince,
   findDrillRepertoire,
   findRepertoireCard,
+  insertRepertoireFirstAttempt,
   introduceRepertoireCard,
   listDrillRepertoires,
   listRepertoireDrillMoves,
@@ -855,6 +856,9 @@ export class RepertoireSession implements PracticeRunPort {
 
   // Only the first attempt at a move in the drill rates it, and the pass that shows a move with
   // its answer rates nothing. A miss sends the move back until a pass gets it right first time.
+  // The attempt is kept whether or not the card moves, since a right move that was not due keeps
+  // its schedule and was still remembered. Every caller runs inside `transition`, so the attempt
+  // and the card's schedule commit together or not at all.
   private rateFirstAttempt(state: DrillMoveState, right: boolean): void {
     if (state.stage === "intro" || state.stage === "done") return;
     if (state.stage === "retry") {
@@ -863,15 +867,25 @@ export class RepertoireSession implements PracticeRunPort {
     }
     state.rating = right ? "right" : "wrong";
     state.stage = right ? "done" : "retry";
-    this.reschedule(state, right);
+    const now = this.clock.now();
+    this.reschedule(state, right, now);
+    insertRepertoireFirstAttempt(
+      this.deps.db,
+      {
+        positionKey: state.move.positionKey,
+        uci: state.move.uci,
+        repertoireId: state.move.variation.id,
+        correct: right,
+      },
+      now.toISOString(),
+    );
   }
 
   // A move played right before it is due keeps its schedule, so practising early earns no longer
   // interval; a miss fails it like any other. Due is read when the move is played, so a drill
   // resumed after its moves fell due treats them as due.
-  private reschedule(state: DrillMoveState, right: boolean): void {
+  private reschedule(state: DrillMoveState, right: boolean, now: Date): void {
     const db = this.deps.db;
-    const now = this.clock.now();
     introduceRepertoireCard(db, state.move, now.toISOString());
     const card = findRepertoireCard(db, state.move) as RepertoireCardSchedule;
     if (right && Date.parse(card.next_review_at) > now.getTime()) return;
