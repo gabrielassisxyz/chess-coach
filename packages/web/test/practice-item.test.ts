@@ -17,6 +17,7 @@ import {
   variationText,
 } from "../src/state/practice-item.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
+import { repertoireActivity } from "./practice-fixtures.js";
 
 // Black to move at move 31, as the prototype's puzzle.
 const BLACK_START = "5rk1/5p1p/Qp4p1/7b/2K5/1P4P1/5P1P/8 b - - 0 31";
@@ -379,5 +380,48 @@ describe("board positions", () => {
     expect(local.turn).toBe("white");
     expect(local.legalMoves.some((move) => move.from === "g1" && move.to === "f3")).toBe(true);
     expect(local.lastMove).toEqual({ from: "e7", to: "e5" });
+  });
+});
+
+describe("the answered idea under a repertoire drill's card", () => {
+  const renderColumn = (training: TrainingActivity): string => {
+    const view = trainingView(training);
+    return renderToStaticMarkup(
+      createElement(PracticeColumn, {
+        training,
+        view,
+        actions: {
+          showSolution() {},
+          rate() {},
+          next() {},
+          end() {},
+          hint() {},
+          toggleScratch() {},
+          takeBack() {},
+          resetLine() {},
+        },
+        card: stateCardOf(training, view, null, 0),
+        elapsedMs: 0,
+        scratchLine: null,
+        shownPly: 0,
+        engineStrip: null,
+      }),
+    );
+  };
+
+  it("shows Why with the move number and idea after an answer, and nothing before", () => {
+    expect(renderColumn(repertoireActivity({}))).not.toContain("why-line");
+    const html = renderColumn(
+      repertoireActivity({ drill: { answered: { san: "c3", idea: "Prepare d4." } } }),
+    );
+    expect(html).toContain("why-line");
+    expect(html).toContain("Why 4.c3");
+    expect(html).toContain("Prepare d4.");
+  });
+
+  it("draws nothing when the answered move stores no idea", () => {
+    expect(
+      renderColumn(repertoireActivity({ drill: { answered: { san: "c3", idea: null } } })),
+    ).not.toContain("why-line");
   });
 });
