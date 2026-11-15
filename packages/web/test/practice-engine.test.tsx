@@ -96,11 +96,10 @@ const spyBoard: BoardFactory = (_element, config) => {
   seen.push(config as (typeof seen)[number]);
   return { set: (next: (typeof seen)[number]) => seen.push(next), destroy: vi.fn() } as never;
 };
-const noMotifs = async () => [];
 
 describe("the engine strip", () => {
   it("keeps the switch off and disabled while the item is open", () => {
-    render(<Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(puzzle())} createBoard={spyBoard} />);
     const toggle = screen.getByRole("switch", { name: "Engine" }) as HTMLButtonElement;
     expect(toggle.disabled).toBe(true);
     expect(toggle.getAttribute("aria-checked")).toBe("false");
@@ -111,7 +110,7 @@ describe("the engine strip", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const server = api(solved());
-      render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      render(<Practice server={server} createBoard={spyBoard} />);
       const toggle = screen.getByRole("switch", { name: "Engine" }) as HTMLButtonElement;
       expect(toggle.disabled).toBe(false);
       fireEvent.click(toggle);
@@ -142,7 +141,7 @@ describe("the engine strip", () => {
       lines: [{ moves: ["e2e4", "e7e5"], san: ["e4", "e5"], score_cp: 35 }],
     };
     const { rerender } = render(
-      <Practice server={api(solved(), analysis)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+      <Practice server={api(solved(), analysis)} createBoard={spyBoard} />,
     );
     expect(screen.getByTestId("engine-eval").textContent).toBe("+0.3");
     expect(screen.getByTestId("engine-eval").getAttribute("data-tone")).toBe("better");
@@ -150,9 +149,7 @@ describe("the engine strip", () => {
     expect(seen.at(-1)?.drawable?.autoShapes).toEqual([{ orig: "e2", dest: "e4", brush: "green" }]);
 
     const black = { ...solved(), orientation: "black" as const };
-    rerender(
-      <Practice server={api(black, analysis)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    rerender(<Practice server={api(black, analysis)} createBoard={spyBoard} />);
     expect(screen.getByTestId("engine-eval").textContent).toBe("−0.3");
     expect(screen.getByTestId("engine-eval").getAttribute("data-tone")).toBe("worse");
   });
@@ -166,18 +163,14 @@ describe("the engine strip", () => {
       requested_lines: 1,
       lines: [{ moves: ["a1a2"], san: ["Ka2"], score_cp: 0 }],
     };
-    const { rerender } = render(
-      <Practice server={api(solved(), other)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    const { rerender } = render(<Practice server={api(solved(), other)} createBoard={spyBoard} />);
     expect(screen.queryByTestId("engine-eval")).toBeNull();
     const mate: AnalysisEvent = {
       ...other,
       fen: START_FEN,
       lines: [{ moves: ["e2e4"], san: ["e4"], score_cp: 10000 }],
     };
-    rerender(
-      <Practice server={api(solved(), mate)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    rerender(<Practice server={api(solved(), mate)} createBoard={spyBoard} />);
     expect(screen.getByTestId("engine-eval").textContent).toBe("M");
   });
 
@@ -195,7 +188,7 @@ describe("the engine strip", () => {
       try {
         window.localStorage.setItem(ENGINE_PREFS_STORAGE_KEY, JSON.stringify({ on: true }));
         const server = api(solved(), answer);
-        render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+        render(<Practice server={server} createBoard={spyBoard} />);
         act(() => vi.advanceTimersByTime(ANALYSE_DEBOUNCE_MS * 4));
         return {
           asked: vi.mocked(server.send).mock.calls.some(([command]) => command.type === "analyse"),
@@ -219,7 +212,7 @@ describe("the engine strip", () => {
   });
 
   it("opens the engine settings and keeps the lines and depth", () => {
-    render(<Practice server={api(solved())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(solved())} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "Engine settings" }));
     expect(screen.getByRole("region", { name: "Engine" })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Lines"), { target: { value: "3" } });
@@ -236,13 +229,11 @@ describe("a request that drew an error", () => {
     try {
       window.localStorage.setItem(ENGINE_PREFS_STORAGE_KEY, JSON.stringify({ on: true }));
       const server = api(solved());
-      const { rerender } = render(
-        <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-      );
+      const { rerender } = render(<Practice server={server} createBoard={spyBoard} />);
       act(() => vi.advanceTimersByTime(ANALYSE_DEBOUNCE_MS));
       expect(server.send).toHaveBeenCalledTimes(1);
       const failed = api(solved(), null, { errorCount: 1, lastErrorCode: "engine_unavailable" });
-      rerender(<Practice server={failed} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      rerender(<Practice server={failed} createBoard={spyBoard} />);
       act(() => vi.advanceTimersByTime(ANALYSE_DEBOUNCE_MS * 4));
       expect(failed.send).not.toHaveBeenCalled();
       expect(screen.getByText("Stockfish \u00b7 unavailable")).toBeTruthy();

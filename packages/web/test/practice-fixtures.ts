@@ -67,14 +67,6 @@ export function progressOf(cards: Partial<Cards> = {}, puzzleRating = 1200): Pro
   };
 }
 
-export const motifCounts = [
-  { motif: "fork", count: 28 },
-  { motif: "pin", count: 9 },
-  { motif: "smothered-mate", count: 0 },
-  { motif: "opening-white", count: 12 },
-  { motif: "opening-black", count: 0 },
-];
-
 export const CLASSICAL_VARIATION = "Classical Variation (4.c3)";
 
 export const italianRepertoire: RepertoireSummary = {
