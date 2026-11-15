@@ -104,7 +104,11 @@ describe("notification delivery", () => {
     add(turn(1));
     await session.start();
     const rows = listChatTail(db, session.ensureSessionId("play"), 10);
-    expect(rows.map((row) => row.kind)).toEqual(["notification"]);
+    expect(rows.some((row) => row.kind === "incomplete")).toBe(false);
+    expect(rows.map((row) => `${row.role}:${row.kind}`)).toEqual([
+      "user:notification",
+      "system:text",
+    ]);
     await session.stop();
   });
 

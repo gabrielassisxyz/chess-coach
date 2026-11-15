@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { COACH_TABS, type CoachTab } from "@chess-coach/shared";
 import { type Clock, systemClock } from "../clock.js";
-import type { CoachSession as CoachSessionRow } from "../db/chat.js";
+import type { ChatMessage, CoachSession as CoachSessionRow } from "../db/chat.js";
 import {
   closeCoachSession,
   createCoachSession,
@@ -24,6 +24,7 @@ import { COACH_TOOL_NAMES, createCoachMcpServer, MCP_SERVER_NAME } from "./tools
 import {
   markIncompleteIfDangling,
   recordFinalized,
+  recordTurnStart,
   recordUserText,
   storeClaudeSessionId,
 } from "./transcript.js";
@@ -92,6 +93,7 @@ interface TabConversation {
 }
 
 export type CoachEventListener = (event: CoachEvent, tab: CoachTab) => void;
+export type ChatRowListener = (row: ChatMessage, tab: CoachTab) => void;
 
 /**
  * Where each producer's notifications land: the live game is Play's conversation and training is
@@ -114,6 +116,7 @@ export function coachNotificationSinks(coach: Pick<CoachSession, "ensureSessionI
  */
 export class CoachSession {
   private readonly eventListeners = new Set<CoachEventListener>();
+  private readonly rowListeners = new Set<ChatRowListener>();
   private readonly permissionListeners = new Set<(request: PermissionRequest) => void>();
   private readonly permissions = new Map<string, PendingPermission>();
   private readonly clock: Clock;
@@ -141,6 +144,11 @@ export class CoachSession {
   onEvent(listener: CoachEventListener): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
+  }
+
+  onRow(listener: ChatRowListener): () => void {
+    this.rowListeners.add(listener);
+    return () => this.rowListeners.delete(listener);
   }
 
   onPermissionRequest(listener: (request: PermissionRequest) => void): () => void {
@@ -347,6 +355,9 @@ export class CoachSession {
       ...origin,
       message: text,
     });
+    const row = conversation.row as CoachSessionRow;
+    const turnStart = recordTurnStart(this.deps.db, row.id, this.clock);
+    this.emitRow(turnStart, conversation.tab);
     queue.push({
       type: "user",
       message: { role: "user", content: text },
@@ -569,6 +580,16 @@ export class CoachSession {
         listener(event, tab);
       } catch (error) {
         this.log.error("coach.listener_failed", error, { kind: event.kind });
+      }
+    }
+  }
+
+  private emitRow(row: ChatMessage, tab: CoachTab): void {
+    for (const listener of this.rowListeners) {
+      try {
+        listener(row, tab);
+      } catch (error) {
+        this.log.error("coach.listener_failed", error, { kind: "chat_row" });
       }
     }
   }

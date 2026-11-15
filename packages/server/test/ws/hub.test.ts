@@ -387,4 +387,30 @@ describe("hub", () => {
     socket.send(JSON.stringify({ type: "move", command_id: "m", from: "z9", to: "e4" }));
     expect(await next()).toMatchObject({ code: "invalid_command", command_id: "m" });
   });
+
+  it("broadcasts coach row emissions as chat_row frames", async () => {
+    const { app, db, coach } = await start();
+    const { next } = await connect(app);
+    await next();
+    const sessionId = coach.ensureSessionId("practice");
+    const row = appendChatMessage(db, sessionId, {
+      role: "system",
+      kind: "text",
+      contentJson: JSON.stringify({ turn_start: "2026-01-01T00:00:00.000Z" }),
+    });
+    coach.emitRow(row, "practice");
+    const event = await next();
+    expect(ServerEventSchema.safeParse(event).success).toBe(true);
+    expect(event).toMatchObject({
+      type: "chat_row",
+      tab: "practice",
+      entry: {
+        id: row.id,
+        seq: row.seq,
+        role: "system",
+        kind: "text",
+        content: { turn_start: "2026-01-01T00:00:00.000Z" },
+      },
+    });
+  });
 });
