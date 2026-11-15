@@ -671,6 +671,9 @@ export class RepertoireSession implements PracticeRunPort {
     throw new ActivityError("not_exploring", "a repertoire line has no scratch board");
   }
 
+  /** A repertoire drill has no coach reasoning trail, so drawings are accepted and dropped. */
+  drawings(): void {}
+
   /** Ties a chat line the student typed to the open pass. */
   linkMessage(messageId: number): void {
     if (this.result === null && this.pass.ask) {

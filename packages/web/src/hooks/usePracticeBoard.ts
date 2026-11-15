@@ -1,7 +1,7 @@
 import type { PromotionPiece, TrainingActivity } from "@chess-coach/shared";
 import type { DrawShape } from "@lichess-org/chessground/draw";
 import { Chess } from "chess.js";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MOVE_PAUSE_MS, type MovePause } from "../components/Board.js";
 import { positionsAlong } from "../state/play.js";
 import { boardOf, trainingView } from "../state/practice.js";
@@ -19,6 +19,9 @@ import type { ServerApi } from "./useServer.js";
 // How long the right or wrong mark stays on the destination square; the final right mark stays.
 // As long as the pause, so a wrong move's cross lasts while the piece rests where it landed.
 export const BADGE_MS = MOVE_PAUSE_MS;
+
+// How long the hand drawings rest before they are sent: one snapshot per pause in drawing.
+export const DRAWINGS_DEBOUNCE_MS = 500;
 
 const NO_SHAPES: readonly DrawShape[] = [];
 
@@ -42,6 +45,8 @@ export interface PracticeBoard {
   badge: SquareBadge | null;
   // The free line's SAN while exploring (open item) or analysing (ended item); null otherwise.
   scratchLine: string[] | null;
+  // Sends the student's hand drawings to the server, debounced; Practice only.
+  onDrawChange(shapes: DrawShape[]): void;
   shownPly: number;
   tip: number;
   step(to: number): void;
@@ -113,6 +118,53 @@ export function usePracticeBoard(
   const [viewPly, setViewPly] = useState<number | null>(null);
   const [flipped, setFlipped] = useState(false);
   const [badge, setBadge] = useState<SquareBadge | null>(null);
+  const drawTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSentDrawings = useRef<string | null>(null);
+
+  // A new item starts with no drawings sent; a pending send belongs to the item it was drawn on.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the served key names the item
+  useEffect(() => {
+    if (drawTimer.current) {
+      clearTimeout(drawTimer.current);
+      drawTimer.current = null;
+    }
+    lastSentDrawings.current = null;
+  }, [servedKey]);
+  useEffect(
+    () => () => {
+      if (drawTimer.current) clearTimeout(drawTimer.current);
+    },
+    [],
+  );
+
+  // The student's hand drawings, debounced: one snapshot per pause in drawing, open item or ended.
+  const onDrawChange = useCallback(
+    (drawnShapes: DrawShape[]): void => {
+      type SentShape = { orig: string; dest?: string; color: "green" | "red" | "blue" | "yellow" };
+      const snapshot: SentShape[] = drawnShapes.flatMap((shape): SentShape[] => {
+        const color = shape.brush;
+        if (color !== "green" && color !== "red" && color !== "blue" && color !== "yellow") {
+          return [];
+        }
+        return [
+          {
+            orig: shape.orig,
+            ...(shape.dest ? { dest: shape.dest } : {}),
+            color,
+          },
+        ];
+      });
+      const key = JSON.stringify(snapshot);
+      if (drawTimer.current) clearTimeout(drawTimer.current);
+      drawTimer.current = setTimeout(() => {
+        drawTimer.current = null;
+        if (lastSentDrawings.current === key) return;
+        lastSentDrawings.current = key;
+        send({ type: "drawings", activity_id: activityId, shapes: snapshot });
+      }, DRAWINGS_DEBOUNCE_MS);
+    },
+    [send, activityId],
+  );
 
   // A new item starts at its tip, graded, with no free line.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the served key names the item
@@ -297,6 +349,7 @@ export function usePracticeBoard(
     line: atTip && training.gave_up ? training.solution_line : null,
     pause: !scratch && !stepping ? pause : null,
     hintSquare: atTip ? training.hint_square : null,
+    onDrawChange,
     answerShapes: atTip ? answerShapes : NO_SHAPES,
     orientation: flipped
       ? training.orientation === "white"

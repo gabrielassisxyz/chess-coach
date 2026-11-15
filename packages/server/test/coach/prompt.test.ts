@@ -32,6 +32,22 @@ describe("buildCoachPrompt", () => {
     expect(coach).toContain("All replies to the student are in Brazilian Portuguese.");
   });
 
+  it("explains how to read the hint and the drawn shapes as the student's reasoning", () => {
+    const coach = readFileSync(join(contentDir(), "prompts", "coach.md"), "utf8");
+    for (const phrase of [
+      "Read the drawings and the hint as the student's reasoning",
+      '"Hint used: yes"',
+      'the "Drawn" shapes',
+      "a red arrow is a move or threat of an opponent's piece",
+      "a red circle is a square that neither side can safely go to",
+      "a green circle is one of the student's pieces or a square either side can reach",
+      "a green arrow is a move the student is considering",
+      "yellow has no set meaning",
+    ]) {
+      expect(coach).toContain(phrase);
+    }
+  });
+
   it("lists exactly the stored motif values plus the two opening drills", () => {
     const stored = new Set<string>();
     for (const file of readdirSync(join(contentDir(), "puzzles"))) {

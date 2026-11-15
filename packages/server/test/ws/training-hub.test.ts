@@ -113,6 +113,15 @@ describe("training over the socket", () => {
       { type: "show_solution" },
       { type: "show_solution", activity_id: 3 },
       { type: "ask_coach_about_item", activity_id: 3 },
+      { type: "drawings", shapes: [], activity_id: 3 },
+      {
+        type: "drawings",
+        shapes: [
+          { orig: "e4", dest: "e5", color: "red" },
+          { orig: "d5", color: "green" },
+        ],
+        activity_id: 3,
+      },
       { type: "analyse", fen: BACK_RANK, lines: 3, depth: 12 },
       { type: "analyse", fen: BACK_RANK, activity_id: 3 },
     ];
@@ -137,6 +146,13 @@ describe("training over the socket", () => {
       { type: "answer", uci: "a1a8" },
       { type: "try_move" },
       { type: "try_move", uci: "z9z9" },
+      { type: "drawings", shapes: [{ orig: "e9", color: "green" }] },
+      { type: "drawings", shapes: [{ orig: "e4", dest: "e9", color: "green" }] },
+      { type: "drawings", shapes: [{ orig: "e4", color: "purple" }] },
+      {
+        type: "drawings",
+        shapes: Array.from({ length: 33 }, () => ({ orig: "e4", color: "green" })),
+      },
       { type: "resume_training" },
       { type: "discard_training" },
       { type: "analyse", fen: "short" },
@@ -431,6 +447,83 @@ describe("training over the socket", () => {
     await next("bootstrap");
     socket.send(JSON.stringify({ type: "explore", command_id: "c1", kind: "undo" }));
     expect(await next("error")).toMatchObject({ code: "not_exploring", command_id: "c1" });
+    socket.close();
+  });
+
+  it("stores drawings for the current item, and refuses them off training or on a stale id", async () => {
+    const db = seededDatabase();
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "drawings",
+        command_id: "c0",
+        shapes: [{ orig: "e4", color: "red" }],
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c0" });
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = ServerEventSchema.parse(await next("activity")) as {
+      state: { activity_id: number };
+    };
+    await next("training");
+    const id = served.state.activity_id;
+    socket.send(
+      JSON.stringify({
+        type: "drawings",
+        command_id: "c2",
+        activity_id: id + 1,
+        shapes: [{ orig: "e4", dest: "e5", color: "red" }],
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "c2" });
+    socket.send(
+      JSON.stringify({
+        type: "drawings",
+        command_id: "c3",
+        activity_id: id,
+        shapes: [{ orig: "e4", dest: "e5", color: "red" }],
+      }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({
+        type: "drawings",
+        command_id: "c4",
+        activity_id: id,
+        shapes: [{ orig: "e4", dest: "e5", color: "red" }],
+      }),
+    );
+    await next("activity");
+    socket.send(JSON.stringify({ type: "hint", command_id: "c5", activity_id: id }));
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "drawings", command_id: "c6", activity_id: id, shapes: [] }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c7", activity_id: id, uci: "a1a8" }),
+    );
+    await next("activity");
+    const rows = db
+      .prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification'")
+      .all() as { content_json: string }[];
+    expect(rows).toHaveLength(1);
+    const note = JSON.parse(rows[0]?.content_json as string) as {
+      reasoning: { hint_at_ms: number; drawings: { at_ms: number; shapes: unknown[] }[] };
+    };
+    expect(note.reasoning.hint_at_ms).toBeGreaterThanOrEqual(0);
+    expect(note.reasoning.drawings).toHaveLength(2);
+    expect(note.reasoning.drawings[0]).toMatchObject({
+      shapes: [{ orig: "e4", dest: "e5", color: "red" }],
+    });
+    expect(note.reasoning.drawings[1]?.shapes).toEqual([]);
+    for (const snapshot of note.reasoning.drawings) {
+      expect(snapshot.at_ms).toBeGreaterThanOrEqual(0);
+    }
     socket.close();
   });
 

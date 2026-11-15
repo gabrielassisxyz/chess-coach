@@ -192,6 +192,10 @@
   `training_tries`, and puzzle accuracy is first-try solves
   (`puzzle_attempts.first_try`). The coach hears once per item, when it ends, except a puzzle solved first try without a hint: that writes no notification, the state carries `coach_comment: "offered"`, and `ask_coach_about_item {activity_id}` (refused with `stale_activity`, `not_in_training` or `already_requested`) writes it with the position and the solution. A `hint` marks the
   origin square of the expected move, clears on the next try, and makes the solve count as missed.
+  The web sends the student's hand drawings as `drawings {activity_id, shapes}` 500 ms after the
+  last change, only on Practice while a training item is on the board; the item's notification
+  prints "Hint used: yes (+Ns)" or "Hint used: no" and, when drawings exist, a "Drawn" section
+  listing each snapshot with its shapes.
   Explore is a client mode that routes drops to `explore` instead of grading; Back to puzzle clears
   the line and restores graded drops. The activity carries the item's line so far (`moves`), the
   wrong tries beside their ply (`wrong_tries`) and one outcome per queue position

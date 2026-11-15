@@ -20,6 +20,8 @@ import {
 import { Chess } from "chess.js";
 import { type Clock, systemClock } from "../clock.js";
 import type {
+  DrawnShape,
+  DrawnSnapshot,
   ExploredEvent,
   PuzzleResultNotification,
   SrsAnswerNotification,
@@ -110,6 +112,8 @@ export interface PracticeRunPort {
   readonly runId: number | null;
   state(activityId: number): TrainingActivity;
   explore(kind: ExplorationKind, uci?: string): void;
+  /** Records one snapshot of the student's hand drawings on the board. */
+  drawings(shapes: DrawnShape[]): void;
   linkMessage(messageId: number): void;
   /** A repertoire try may check the engine in the background and return a follow-up update. */
   tryMove(uci: string): void | Promise<() => boolean>;
@@ -122,6 +126,9 @@ export interface PracticeRunPort {
   /** The run stopped being on the board without the student ending it. */
   leave(): void;
 }
+
+// At most this many drawing snapshots are kept per item; a newer one replaces the last kept.
+export const MAX_DRAWING_SNAPSHOTS = 30;
 
 export interface TrainingInput {
   mode: TrainingMode;
@@ -181,6 +188,10 @@ interface Served {
   suggestedQuality: number | null;
   hintSquare: string | null;
   hinted: boolean;
+  // Offset of the first hint from when the item was served; null when no hint was given.
+  hintAtMs: number | null;
+  // Snapshots of the student's hand drawings, in the order they arrived.
+  drawings: DrawnSnapshot[];
   // How this item moved the student's puzzle rating; null until a rated puzzle ends.
   ratingChange: number | null;
   // A puzzle solved first try without a hint writes no coach notification; `coachAsk` says whether
@@ -223,6 +234,17 @@ function storedItemOf(entry: QueueEntry): StoredRunItem {
 }
 
 const turnOf = (fen: string): PlayerColor => (fen.split(" ")[1] === "b" ? "black" : "white");
+
+// Two drawing snapshots hold the same shapes in the same order.
+function sameDrawnShapes(a: readonly DrawnShape[], b: readonly DrawnShape[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every(
+    (shape, index) =>
+      shape.orig === b[index]?.orig &&
+      shape.dest === b[index]?.dest &&
+      shape.color === b[index]?.color,
+  );
+}
 
 // The solution moves on the board so far: everything before the cursor, plus the student's last
 // move once the puzzle is solved, because the cursor stays on it.
@@ -732,7 +754,32 @@ export class TrainingRun implements PracticeRunPort {
       explored: [...s.trail],
       tries: s.tries.map(({ at_ms, uci, san, correct }) => ({ at_ms, uci, san, correct })),
       gave_up: s.gaveUp,
+      hint_at_ms: s.hintAtMs,
+      drawings: s.drawings.map((snapshot) => ({
+        at_ms: snapshot.at_ms,
+        shapes: snapshot.shapes.map((shape) => ({ ...shape })),
+      })),
     };
+  }
+
+  /** Records one snapshot of the student's hand drawings with its offset from the serve. */
+  drawings(shapes: DrawnShape[]): void {
+    const s = this.served;
+    if (this.summary !== null) {
+      throw new ActivityError("not_in_training", "no training item is on the board");
+    }
+    const previous = s.drawings.at(-1);
+    if (previous && sameDrawnShapes(previous.shapes, shapes)) return;
+    const atMs = Math.max(0, this.clock.now().getTime() - s.servedAtMs);
+    const snapshot: DrawnSnapshot = {
+      at_ms: atMs,
+      shapes: shapes.map((shape) => ({ ...shape })),
+    };
+    if (s.drawings.length >= MAX_DRAWING_SNAPSHOTS) {
+      s.drawings[s.drawings.length - 1] = snapshot;
+    } else {
+      s.drawings.push(snapshot);
+    }
   }
 
   private closeItem(s: Served, uci: string | null, correct: boolean): void {
@@ -792,6 +839,7 @@ export class TrainingRun implements PracticeRunPort {
       s.hintSquare = square;
       if (!s.hinted) {
         s.hinted = true;
+        s.hintAtMs = Math.max(0, this.clock.now().getTime() - s.servedAtMs);
         setTrainingItemHinted(this.deps.db, s.itemId);
       }
     });
@@ -1231,6 +1279,8 @@ export class TrainingRun implements PracticeRunPort {
       suggestedQuality: null,
       hintSquare: null,
       hinted: false,
+      hintAtMs: null,
+      drawings: [],
       ratingChange: null,
     });
     if (entry.kind === "card") {

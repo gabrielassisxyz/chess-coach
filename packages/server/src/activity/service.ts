@@ -333,6 +333,22 @@ export class ActivityService {
     return this.stepTraining(expectedActivityId, "trainingHint", (run) => run.hint());
   }
 
+  // The student's hand drawings on the Practice board. Accepted while a training item is on the
+  // board, open or ended and being looked at; unlike exploration it never grades and never closes.
+  trainingDrawings(
+    shapes: { orig: string; dest?: string | undefined; color: string }[],
+    expectedActivityId?: number,
+  ): Promise<ActivityState> {
+    return this.enqueue("training", async () => {
+      this.checkFresh(expectedActivityId);
+      if (this.state?.kind !== "training" || !this.run) {
+        throw new ActivityError("not_in_training", "no training item is on the board");
+      }
+      this.run.drawings(shapes);
+      return this.publish(this.run.state(this.state.activity_id), "trainingDrawings");
+    });
+  }
+
   trainingAskCoach(expectedActivityId?: number): Promise<ActivityState> {
     return this.stepTraining(expectedActivityId, "trainingAskCoach", (run) => run.askCoach());
   }
