@@ -361,10 +361,6 @@
   gap: var(--space-3);
 }
 
-.openings-add:empty {
-  display: none;
-}
-
 .openings-add__open {
   padding-inline: var(--space-4);
   border-style: dashed;
@@ -375,6 +371,13 @@
   color: var(--text-1);
 }
 
+/*
+ * The panel that Add an opening opens, in the button's place: a header with two tabs, the style
+ * points, and the list of the tab chosen. Its measures are the approved screens': 16 px and 20 px
+ * of padding, parts 10 px apart, tabs and Close 30 px high, a 36 px search field, rows of 7 px of
+ * padding with a 12 px gap. The 13 px of the tabs, the 11 px of the pill and the 7 px of a row sit
+ * between steps of the type and space scales.
+ */
 .openings-panel {
   display: flex;
   flex-direction: column;
@@ -388,6 +391,7 @@
 
 .openings-panel__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
@@ -397,6 +401,178 @@
   margin: 0;
   font-size: var(--text-md);
   font-weight: 500;
+}
+
+.openings-panel__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Two tabs on one inset track, the chosen one raised on the border tone, as the side control is. */
+.openings-panel__tabs {
+  display: flex;
+  box-sizing: border-box;
+  height: 30px;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+}
+
+.openings-panel__tab {
+  padding: 0 10px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.openings-panel__tab[aria-selected="true"] {
+  background: var(--border);
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+.openings-panel__close,
+.openings-panel__add {
+  height: 30px;
+  padding-block: 0;
+}
+
+/* Both lists stay mounted; the one not chosen is hidden, and its own display must not undo that. */
+.openings-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.openings-panel__body[hidden] {
+  display: none;
+}
+
+.openings-panel__search {
+  position: relative;
+}
+
+.openings-panel__search-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  color: var(--text-2);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.openings-panel__search-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  padding-block: 0;
+  padding-inline: 36px var(--space-3);
+  appearance: none;
+  font-size: var(--text-sm);
+}
+
+.openings-panel__search-input::placeholder {
+  color: var(--text-3);
+}
+
+.openings-panel__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.openings-panel__group-title {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+.openings-panel__rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.openings-panel__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.openings-panel__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.openings-panel__opening {
+  font-size: var(--text-sm);
+}
+
+.openings-panel__moves {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* The second column holds what the student has to go on, the third what the row does with it. */
+.openings-panel__pill,
+.openings-panel__games {
+  grid-column: 2;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.openings-panel__pill {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  font-size: 11px;
+}
+
+.openings-panel__games {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.openings-panel__add,
+.openings-panel__built {
+  grid-column: 3;
+}
+
+.openings-panel__built {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.openings-panel__foot,
+.openings-panel__note,
+.openings-panel__empty {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.openings-panel__empty {
+  font-size: var(--text-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -436,6 +612,7 @@
   .opening-card__add,
   .openings-add__open,
   .openings-panel .button,
+  .openings-panel__tab,
   .openings-side .segmented__option,
   .opening-card__adder .button,
   .opening-row__coverage .button {
@@ -454,5 +631,26 @@
   .train__more {
     min-width: 44px;
     justify-content: center;
+  }
+
+  /* The tabs and Close go under the title; a row keeps its name, pill and Add on one line, with the
+   * moves under the name. */
+  .openings-panel__controls {
+    flex: 1 1 100%;
+  }
+
+  .openings-panel__tabs {
+    flex: 1;
+    height: auto;
+  }
+
+  .openings-panel__tab {
+    flex: 1;
+  }
+
+  .openings-panel__name {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
   }
 }

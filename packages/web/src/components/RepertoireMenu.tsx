@@ -9,15 +9,10 @@ import { useId, useState } from "react";
 import { useLoaded } from "../hooks/useLoaded.js";
 import {
   type AddedOpening,
-  type AddOpening,
   type AddVariation,
   branchKey,
   type FetchRepertoireList,
   isDefaultStylePoints,
-  metGamesText,
-  metLabelOf,
-  metNameOf,
-  metRootKey,
   moveStylePoint,
   replyMoveText,
   STYLE_MEASURES,
@@ -401,77 +396,3 @@ export const withStylePoints =
   (add: AddLine, points: StylePoints) =>
   (line: readonly string[]): Promise<AddedOpening> =>
     isDefaultStylePoints(points) ? add(line) : add(line, points);
-
-function MetRow({
-  entry,
-  disabled,
-  adding,
-  onAdd,
-}: {
-  entry: MetOpening;
-  disabled: boolean;
-  adding: boolean;
-  onAdd(entry: MetOpening): void;
-}) {
-  const name = metNameOf(entry);
-  return (
-    <li className="repertoire-menu__met-row">
-      <div className="repertoire-menu__met-name">
-        <span>{name}</span>
-        {entry.opening_name === null ? null : (
-          <span className="repertoire-menu__met-line">{repertoireRootText(entry.root)}</span>
-        )}
-      </div>
-      <span className="repertoire-menu__met-games">{metGamesText(entry.games)}</span>
-      <button
-        type="button"
-        className="button"
-        aria-label={`${adding ? "Building" : "Add"} ${metLabelOf(entry)}`}
-        disabled={disabled}
-        onClick={() => onAdd(entry)}
-      >
-        {adding ? "Building" : "Add"}
-      </button>
-    </li>
-  );
-}
-
-// The openings the student's reviewed games met and no drill covers yet. Adding one builds its drill,
-// which takes minutes, and the new opening's card joins the page when the run ends.
-export function MetToAdd({
-  entries,
-  adds,
-  busy,
-  addOpening,
-}: {
-  entries: readonly MetOpening[];
-  adds: OpeningAdds;
-  busy: boolean;
-  addOpening: AddOpening;
-}) {
-  const add = (entry: MetOpening): Promise<void> =>
-    adds.add({
-      key: metRootKey(entry.root),
-      name: metNameOf(entry),
-      origin: "met",
-      run: () => addOpening(entry.root),
-    });
-  return (
-    <div className="repertoire-menu__met">
-      <p className="practice__card-note">
-        Openings your opponents played that have no drill yet. Add one to practise against it.
-      </p>
-      <ul className="repertoire-menu__met-list" aria-label="Openings met in your games">
-        {entries.map((entry) => (
-          <MetRow
-            key={metRootKey(entry.root)}
-            entry={entry}
-            disabled={busy || adds.adding !== null || adds.refreshing !== null}
-            adding={adds.adding?.key === metRootKey(entry.root)}
-            onAdd={add}
-          />
-        ))}
-      </ul>
-    </div>
-  );
-}

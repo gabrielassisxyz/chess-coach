@@ -2697,6 +2697,36 @@ describe("a puzzle solved first try", () => {
   });
 });
 
+describe("a quiet coach ask after a miss or a give-up stays refused", () => {
+  it("refuses an ask on a puzzle solved after a wrong try, writing nothing and not waking the coach", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, flushed, notes } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("a1a2");
+    const missed = training(await activity.trainingTry("a1a8"));
+    expect(missed.coach_comment).toBeNull();
+    expect(notes()).toHaveLength(1);
+    expect(notes()[0]).toMatchObject({ type: "puzzle_result", first_try: false });
+    const wakes = flushed.mock.calls.length;
+    expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
+    expect(notes()).toHaveLength(1);
+    expect(flushed.mock.calls.length).toBe(wakes);
+  });
+
+  it("refuses an ask on a given-up puzzle, writing nothing and not waking the coach", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, flushed, notes } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const failed = training(await activity.trainingShowSolution());
+    expect(failed.status).toBe("failed");
+    expect(notes()).toHaveLength(1);
+    const wakes = flushed.mock.calls.length;
+    expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
+    expect(notes()).toHaveLength(1);
+    expect(flushed.mock.calls.length).toBe(wakes);
+  });
+});
+
 describe("a mix practice queue drawn equally from the improvement areas", () => {
   const daysBeforeT0 = (days: number): string =>
     new Date(T0.getTime() - days * 24 * 60 * 60 * 1000).toISOString();

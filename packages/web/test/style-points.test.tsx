@@ -55,6 +55,7 @@ function renderPage(
       starting={null}
       onStart={vi.fn()}
       fetchList={async () => answer}
+      fetchAddable={async () => []}
       addOpening={adds.addOpening ?? (async () => ({ truncated: false }))}
       addVariation={adds.addVariation ?? (async () => ({ truncated: false }))}
     />,
@@ -73,10 +74,13 @@ const rowOf = (scope: HTMLElement, label: string): HTMLElement =>
   within(scope).getByText(label).closest(".repertoire-menu__points-row") as HTMLElement;
 
 // The panel Add an opening… opens in the button's place, and the positions + Add a variation opens
-// under the card's head: the two places the control sits.
+// under the card's head: the two places the control sits. The panel is read on its second tab, the
+// openings met in games.
 async function openAddPanel(white: HTMLElement): Promise<HTMLElement> {
   fireEvent.click(await within(white).findByRole("button", { name: "Add an opening…" }));
-  return within(white).getByRole("region", { name: "Add an opening" });
+  const panel = within(white).getByRole("region", { name: "Add an opening" });
+  fireEvent.click(within(panel).getByRole("tab", { name: /^From my games/ }));
+  return panel;
 }
 
 async function openVariationPanel(white: HTMLElement): Promise<HTMLElement> {

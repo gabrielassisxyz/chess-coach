@@ -20,6 +20,7 @@ import { AnalyzeSuperseded, EnginePool } from "../../src/engine/pool.js";
 import type { SearchRequest, SearchResult } from "../../src/engine/uci.js";
 import { GameService } from "../../src/game/service.js";
 import type { Log } from "../../src/log.js";
+import { RecordingLog } from "../../src/log.js";
 import { ReviewDesk } from "../../src/srs/review.js";
 import { FakeCoach } from "../fakes/fake-coach.js";
 import { ScriptedEngine } from "../fakes/scripted-engine.js";
@@ -1182,6 +1183,121 @@ describe("a found drill narrowed to one opening over the socket", () => {
       }),
     );
     expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: "c4" });
+    socket.close();
+  });
+});
+
+const START_POSITION = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+describe("a clicked line card opens the demo with its own moves", () => {
+  it("opens a show_line with three moves as a demo holding those three moves", async () => {
+    const server = await start();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({
+        type: "show_line",
+        command_id: "c1",
+        fen: START_POSITION,
+        moves: ["e4", "e5", "Nf3"],
+      }),
+    );
+    const activity = ServerEventSchema.parse(await next("activity"));
+    expect(activity).toMatchObject({
+      type: "activity",
+      state: { kind: "demo", moves_played: ["e4", "e5", "Nf3"] },
+    });
+    socket.close();
+  });
+});
+
+describe("every refused ask over the socket is logged with its code", () => {
+  it("logs ws.command_failed for a prompt ask, a stale ask and a second ask", async () => {
+    const log = new RecordingLog();
+    const server = await start(seededDatabase(), log);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    const id = served.state.activity_id;
+    const failedOf = (commandId: string) =>
+      log.named("ws.command_failed").find((entry) => entry.fields.command_id === commandId);
+
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c2", activity_id: id }),
+    );
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c2" });
+    expect(failedOf("c2")).toMatchObject({ fields: { code: "not_in_training" } });
+
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c3", uci: "a1a8", activity_id: id }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c4", activity_id: id + 1 }),
+    );
+    expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "c4" });
+    expect(failedOf("c4")).toMatchObject({ fields: { code: "stale_activity" } });
+
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c5", activity_id: id }),
+    );
+    expect(await next("activity")).toMatchObject({ state: { coach_comment: "requested" } });
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c6", activity_id: id }),
+    );
+    expect(await next("error")).toMatchObject({ code: "already_requested", command_id: "c6" });
+    expect(failedOf("c6")).toMatchObject({ fields: { code: "already_requested" } });
+    socket.close();
+  });
+
+  it("logs ws.command_failed for an ask after a wrong try and after a give-up", async () => {
+    const log = new RecordingLog();
+    const server = await start(seededDatabase(), log);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    const failedOf = (commandId: string) =>
+      log.named("ws.command_failed").find((entry) => entry.fields.command_id === commandId);
+
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    const id = served.state.activity_id;
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c2", uci: "a1a2", activity_id: id }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "c3", uci: "a1a8", activity_id: id }),
+    );
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c4", activity_id: id }),
+    );
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c4" });
+    expect(failedOf("c4")).toMatchObject({ fields: { code: "not_in_training" } });
+
+    socket.send(JSON.stringify({ type: "end_training", command_id: "c5", activity_id: id }));
+    await next("activity");
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c6", mode: "puzzles", motif: "fork" }),
+    );
+    const second = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    const secondId = second.state.activity_id;
+    socket.send(JSON.stringify({ type: "show_solution", command_id: "c7", activity_id: secondId }));
+    await next("activity");
+    await next("training");
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "c8", activity_id: secondId }),
+    );
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c8" });
+    expect(failedOf("c8")).toMatchObject({ fields: { code: "not_in_training" } });
     socket.close();
   });
 });
