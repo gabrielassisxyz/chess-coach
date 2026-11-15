@@ -52,6 +52,10 @@ const buschGass = playedOpening("Busch-Gass Gambit", "1.e4 e5 2.Nf3 Bc5", [
 const petrov = playedOpening("Petrov's Defense", "1.e4 e5 2.Nf3 Nf6", [
   playedVariation("Petrov's Defense", [1, 0, 1], "1.e4 e5 2.Nf3 Nf6"),
 ]);
+// An opening with no game in the period, which the server may still list and the page never draws.
+const latvian = playedOpening("Latvian Gambit", "1.e4 e5 2.Nf3 f5", [
+  playedVariation("Latvian Gambit", [0, 0, 0], "1.e4 e5 2.Nf3 f5"),
+]);
 const queensGambitDeclined = playedOpening("Queen's Gambit Declined", "1.d4 d5 2.c4 e6", [
   playedVariation(EXCHANGE, [2, 1, 5], "3.cxd5 exd5"),
 ]);
@@ -64,7 +68,7 @@ const london = playedOpening("London System", "1.d4 d5 2.Bf4", [
 
 // White played 22 games and Black 9.
 const ANSWER: PlayedOpeningsResponse = {
-  white: playedColour([italian, kingsPawn], [scandinavian, buschGass, petrov]),
+  white: playedColour([italian, kingsPawn], [scandinavian, buschGass, latvian, petrov]),
   black: playedColour([queensGambitDeclined, slav], [london]),
 };
 
