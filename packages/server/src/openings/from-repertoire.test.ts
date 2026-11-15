@@ -35,6 +35,7 @@ import {
   checkRepertoireBranch,
   checkRepertoirePoints,
   generateRepertoire,
+  listRepertoireBranches,
   loadRepertoireBranchBook,
   parseRepertoireBranchBook,
   REPERTOIRE_DEFAULT_POINTS,
@@ -975,6 +976,22 @@ describe("generateRepertoire", () => {
       losses: 46000,
     });
   });
+
+  it.each([
+    { games: 1, counts: [1, 0, 0] },
+    { games: 150, counts: [70, 10, 70] },
+    { games: 199, counts: [100, 9, 90] },
+  ] as const)(
+    "stores the result counts of a White move whose next position has fewer than 200 games, $games of them",
+    async ({ counts: [wins, draws, losses] }) => {
+      writeItalianTree();
+      // Under the 200 games a reply needs, the position still says how the move scored, and the
+      // statistics read those counts.
+      explorer.writeResults(AFTER_C3, EXPLORER_RATINGS, { Nf6: [wins, draws, losses] });
+      await generate({ maxPly: 7 });
+      expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "c3", wins, draws, losses });
+    },
+  );
 
   it("adds no row on a second run and asks neither the network nor the engine", async () => {
     writeItalianTree();
@@ -3174,6 +3191,16 @@ describe("the style points", () => {
       expect(result.planChoices).toBe(1);
     });
 
+    it("counts a move exactly 50 cp under the engine's best as a candidate of the plan, whatever the points", async () => {
+      // 4.a4 is 50 cp under 4.O-O, the margin's last centipawn, and the unit already plays it. With
+      // every point on soundness the engine's best would win unless the plan rule keeps 4.a4 in.
+      writeStyleChoice(-10);
+      seedPlayedSans(["a4"]);
+      const result = await styled(POINTS_ON.soundness);
+      expect(ownAt(AFTER_BC5)).toMatchObject({ move_san: "a4", cp_loss: 50 });
+      expect(result.planChoices).toBe(1);
+    });
+
     it.each([
       { measure: "soundness", answer: "O-O" },
       { measure: "learnability", answer: "c3" },
@@ -3395,5 +3422,36 @@ describe("the book's branch points", () => {
       "C50\tA\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. Ke3\t-\t-",
     ];
     expect(() => parseRepertoireBranchBook(table.join("\n"), "book.tsv")).toThrow(/^book\.tsv:2: /);
+  });
+});
+
+describe("the branch points the first variation reaches", () => {
+  it("names a choice after the line it branches from: 5.d4 after 4.c3 Nf6 is not 4.d4", async () => {
+    writeItalianTree();
+    await generate({}, BRANCH_FIXTURE_NAMES);
+    // The book plays two White moves after 3...Bc5 and two after 4.c3 Nf6, White's 5th move.
+    const book = parseRepertoireBranchBook(
+      [
+        "eco\tname\tpgn\tuci\tepd",
+        "C50\tA\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6 5. d4\t-\t-",
+        "C50\tB\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6 5. d3\t-\t-",
+        "C50\tC\t1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. d3\t-\t-",
+      ].join("\n"),
+    );
+
+    const listed = listRepertoireBranches(db, book, BRANCH_FIXTURE_NAMES);
+
+    expect(
+      listed.map((branch) => ({
+        line: branch.line,
+        names: branch.choices.map((choice) => choice.variationName),
+      })),
+    ).toEqual([
+      { line: AFTER_BC5, names: ["Classical Variation (4.c3)", "Giuoco Pianissimo (4.d3)"] },
+      {
+        line: [...AFTER_C3, "Nf6"],
+        names: ["Classical Variation (5.d3)", "Classical Variation (5.d4)"],
+      },
+    ]);
   });
 });
