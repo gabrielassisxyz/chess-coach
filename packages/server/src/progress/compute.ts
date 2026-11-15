@@ -7,6 +7,7 @@ import type {
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/open.js";
 import { getCurrentElo, lastDifficultyChange } from "../db/settings.js";
+import { currentPuzzleRating } from "../puzzles/rating.js";
 
 const GAME_LIST_LIMIT = 50;
 const CLEAN_CP_LOSS = 30;
@@ -141,6 +142,29 @@ function nextDue(
   return { next_due_at: next.at, next_due_count: batch.n };
 }
 
+function dueNext7d(db: Database, now: Date): ProgressResponse["cards"]["due_next_7d"] {
+  const rows = db.prepare("SELECT next_review_at AS at FROM srs_cards").all() as { at: string }[];
+  const counts = [0, 0, 0, 0, 0, 0, 0];
+  const noon = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  const days: string[] = [];
+  for (let offset = 0; offset < 7; offset += 1) {
+    const day = new Date(noon);
+    day.setDate(noon.getDate() + offset);
+    days.push(localDay(day));
+  }
+  const today = days[0] ?? "";
+  for (const row of rows) {
+    const cardDay = localDay(new Date(row.at));
+    if (cardDay <= today) {
+      counts[0] = (counts[0] ?? 0) + 1;
+    } else {
+      const index = days.indexOf(cardDay);
+      if (index > 0) counts[index] = (counts[index] ?? 0) + 1;
+    }
+  }
+  return counts as [number, number, number, number, number, number, number];
+}
+
 function cardProgress(db: Database, now: Date): ProgressResponse["cards"] {
   const cards = db
     .prepare(
@@ -149,6 +173,11 @@ function cardProgress(db: Database, now: Date): ProgressResponse["cards"] {
     .get(now.toISOString()) as { total: number; due_now: number };
   const week = correctRate(db, new Date(now.getTime() - WEEK_MS), now);
   const month = correctRate(db, new Date(now.getTime() - MONTH_MS), now);
+  const previous = correctRate(
+    db,
+    new Date(now.getTime() - 2 * MONTH_MS),
+    new Date(now.getTime() - MONTH_MS),
+  );
   return {
     ...cards,
     reviewed_7d: week.reviewed,
@@ -156,6 +185,8 @@ function cardProgress(db: Database, now: Date): ProgressResponse["cards"] {
     ...dueBreakdown(db, now),
     ...nextDue(db, now),
     correct_rate_30d: month.rate,
+    due_next_7d: dueNext7d(db, now),
+    correct_rate_prev_30d: previous.rate,
   };
 }
 
@@ -166,16 +197,20 @@ function localDay(date: Date): string {
 }
 
 // A day without activity today breaks the streak outright: yesterday alone does not keep it alive.
-function streakDays(db: Database, now: Date): number {
+function activeDays(db: Database): Set<string> {
   const stamps = db
     .prepare(
       `SELECT started_at AS at FROM games
        UNION ALL SELECT attempted_at FROM puzzle_attempts
        UNION ALL SELECT reviewed_at FROM srs_reviews
+       UNION ALL SELECT served_at FROM training_items
        UNION ALL SELECT created_at FROM chat_messages WHERE role = 'user'`,
     )
     .all() as { at: string }[];
-  const days = new Set(stamps.map((row) => localDay(new Date(row.at))));
+  return new Set(stamps.map((row) => localDay(new Date(row.at))));
+}
+
+function streakDaysFromSet(days: Set<string>, now: Date): number {
   const cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
   let streak = 0;
   while (days.has(localDay(cursor))) {
@@ -185,15 +220,64 @@ function streakDays(db: Database, now: Date): number {
   return streak;
 }
 
+function streakBestFromSet(days: Set<string>): number {
+  if (days.size === 0) return 0;
+  const sorted = [...days].sort();
+  let best = 1;
+  let current = 1;
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previousDay = sorted[index - 1];
+    const thisDay = sorted[index];
+    if (previousDay === undefined || thisDay === undefined) continue;
+    const [py, pm, pd] = previousDay.split("-").map(Number) as [number, number, number];
+    const previous = new Date(py, pm - 1, pd, 12);
+    const expected = new Date(previous);
+    expected.setDate(previous.getDate() + 1);
+    if (localDay(expected) === thisDay) {
+      current += 1;
+      best = Math.max(best, current);
+    } else {
+      current = 1;
+    }
+  }
+  return best;
+}
+
+function activity7dFromSet(
+  days: Set<string>,
+  now: Date,
+): [boolean, boolean, boolean, boolean, boolean, boolean, boolean] {
+  const noon = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  const flags: [boolean, boolean, boolean, boolean, boolean, boolean, boolean] = [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+  ];
+  for (let offset = 6; offset >= 0; offset -= 1) {
+    const day = new Date(noon);
+    day.setDate(noon.getDate() - offset);
+    flags[6 - offset] = days.has(localDay(day));
+  }
+  return flags;
+}
+
 export function computeProgress(db: Database, clock: Clock): ProgressResponse {
   const now = clock.now();
+  const days = activeDays(db);
   return {
     rating_history: ratingHistory(db),
     games: recentGames(db),
     puzzles_by_motif: puzzlesByMotif(db, now),
     cards: cardProgress(db, now),
-    streak_days: streakDays(db, now),
+    streak_days: streakDaysFromSet(days, now),
+    streak_best: streakBestFromSet(days),
+    activity_7d: activity7dFromSet(days, now),
     difficulty: { current_elo: getCurrentElo(db), last_change: lastDifficultyChange(db) },
+    puzzle_rating: currentPuzzleRating(db),
   };
 }
 

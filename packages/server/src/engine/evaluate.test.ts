@@ -5,7 +5,17 @@ import {
   replayFixture,
 } from "../../test/support/fake-engine-process.js";
 import { classifyCpLoss, evaluatePlayerMove } from "./evaluate.js";
-import { UciEngine } from "./uci.js";
+import { type Searcher, type SearchRequest, type SearchResult, UciEngine } from "./uci.js";
+
+/** Answers every search with one scored line and keeps the requests it was sent. */
+class RecordingSearcher implements Searcher {
+  readonly requests: SearchRequest[] = [];
+
+  async search(request: SearchRequest): Promise<SearchResult> {
+    this.requests.push(request);
+    return { fen: request.fen, bestmove: "e2e4", lines: [{ moves: ["e2e4"], score: 30 }] };
+  }
+}
 
 async function recordedEngine(fixtureName: string): Promise<UciEngine> {
   const behavior = replayFixture(loadFixture(fixtureName));
@@ -86,6 +96,15 @@ describe("evaluatePlayerMove", () => {
     expect(result.evalAfterCp).toBe(-669);
     expect(result.cpLoss).toBe(0);
     expect(result.classification).toBe("best");
+  });
+
+  it("sends neither of its two searches with a time cap", async () => {
+    // A live game cannot wait the 30 s a batch of opening searches can. Without a cap a slow search
+    // fails once it is past the engine's slack, rather than holding the grade for up to 30 s.
+    const engine = new RecordingSearcher();
+    await evaluatePlayerMove(engine, OPENING, "e2e4", "w");
+    expect(engine.requests).toHaveLength(2);
+    expect(engine.requests.map((request) => request.capMs)).toEqual([undefined, undefined]);
   });
 });
 

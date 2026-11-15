@@ -31,5 +31,6 @@ echo "==> build";      pnpm run build
 echo "==> audit";      pnpm audit --audit-level=high
 echo "==> gitleaks";   gitleaks git --no-banner --redact .
 # Last on purpose: the other checks still run when this one trips.
+echo "==> task-id-guard-test"; bin/task-id-guard-test
 echo "==> slop-guard"; bin/slop-guard
 echo "CI green."

@@ -64,8 +64,21 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The task id check reads the pull request's commits, so it needs them.
+          fetch-depth: 0
       - name: PR text has no slop
         env:
           TITLE: ${{ github.event.pull_request.title }}
           BODY: ${{ github.event.pull_request.body }}
         run: printf '%s\n%s\n' "$TITLE" "$BODY" | bin/slop-guard --stdin "PR text"
+      - name: PR has no task ids
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '%s\n' "$TITLE" | bin/task-id-guard --stdin "PR title"
+          printf '%s\n' "$BODY" | bin/task-id-guard --stdin "PR body"
+          bin/task-id-guard --commits "$BASE" "$HEAD"

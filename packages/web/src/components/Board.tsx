@@ -23,6 +23,7 @@ import {
   positionsAlong,
   promotionsFor,
 } from "../state/play.js";
+import { convertKnightArrowShape, reconcileHandKnightArrows } from "./knight-arrow.js";
 import { PromotionChooser } from "./PromotionChooser.js";
 
 export type BoardFactory = (element: HTMLElement, config: Config) => Api;
@@ -109,16 +110,19 @@ function toConfig(
   prefs: BoardPrefs,
   shapes: readonly DrawShape[],
   pausing: boolean,
+  onDrawChange?: (shapes: DrawShape[]) => void,
 ): Config {
   const last = shown ?? activity.last_move;
   const lastMove = last ? [last.from, last.to] : [];
   const fen = shown ? shown.fen : activity.fen;
+  const palette = arrowBrushes();
   const drawable = {
     enabled: true,
     visible: true,
-    autoShapes: [...shapes],
-    brushes: arrowBrushes(),
+    autoShapes: shapes.map((shape) => convertKnightArrowShape(shape, orientation, palette)),
+    brushes: palette,
     eraseOnClick: true,
+    ...(onDrawChange ? { onChange: onDrawChange } : {}),
   };
   return {
     fen,
@@ -246,6 +250,7 @@ export function Board({
   const apiRef = useRef<Api | null>(null);
   const appliedPosition = useRef<{ key: string; syncToken: number; resync: number } | null>(null);
   const localMove = useRef<{ activityId: number; from: Key; to: Key } | null>(null);
+  const handDrawingsRef = useRef<DrawShape[]>([]);
   const [pending, setPending] = useState<PendingPromotion | null>(null);
   const [resync, setResync] = useState(0);
   const played = useLinePlayback(activity.fen, line);
@@ -266,11 +271,23 @@ export function Board({
   });
   latest.current = { activity, onMove, bothSides, hintSquare, facing, prefs, shapes, pausing };
 
+  const handleDrawChange = useRef((drawnShapes: DrawShape[]) => {
+    const { shapes: next, changed } = reconcileHandKnightArrows(
+      drawnShapes,
+      handDrawingsRef.current,
+      latest.current.facing,
+      arrowBrushes(),
+    );
+    handDrawingsRef.current = next;
+    if (changed) apiRef.current?.setShapes?.(next);
+  });
+
   useEffect(() => {
     const element = elementRef.current;
     if (!element) return;
     appliedPosition.current = null;
     localMove.current = null;
+    handDrawingsRef.current = [];
     const api = createBoard(element, {
       ...toConfig(
         latest.current.activity,
@@ -281,6 +298,7 @@ export function Board({
         latest.current.prefs,
         latest.current.shapes,
         false,
+        handleDrawChange.current,
       ),
       draggable: { enabled: false },
       premovable: { enabled: false },
@@ -312,7 +330,17 @@ export function Board({
   useEffect(() => {
     const api = apiRef.current;
     if (!api) return;
-    const config = toConfig(activity, bothSides, shown, hintSquare, facing, prefs, shapes, pausing);
+    const config = toConfig(
+      activity,
+      bothSides,
+      shown,
+      hintSquare,
+      facing,
+      prefs,
+      shapes,
+      pausing,
+      handleDrawChange.current,
+    );
     const positionKey = `${activity.activity_id} ${shown?.fen ?? activity.fen}`;
     const previous = appliedPosition.current;
     const positionChanged = previous?.key !== positionKey;
@@ -333,9 +361,14 @@ export function Board({
       api.getFen() === echoed.fen.split(" ")[0];
     // Chessground clears user shapes whenever set() receives a fen, even if the fen is unchanged.
     const keepDrawings = (!positionChanged && !needsResync) || localEcho;
-    const handDrawn = keepDrawings ? (api.state?.drawable.shapes.slice() ?? []) : [];
+    const handDrawn = keepDrawings
+      ? (api.state?.drawable.shapes ?? []).map((shape) =>
+          convertKnightArrowShape(shape, facing, arrowBrushes()),
+        )
+      : [];
+    handDrawingsRef.current = handDrawn;
     api.set(config);
-    if (handDrawn.length) api.setShapes(handDrawn);
+    if (handDrawn.length) api.setShapes?.(handDrawn);
     // A pause step is only shown: what follows it is compared with the position before it, so a
     // wrong move going back keeps the drawings it found there.
     const key = pausing && previous ? previous.key : positionKey;

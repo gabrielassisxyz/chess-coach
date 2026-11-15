@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServerApi } from "../hooks/useServer.js";
 
 export const COACH_OPEN_STORAGE_KEY = "chess-coach.coach-open";
+export const COACH_HUB_OPEN_STORAGE_KEY = "chess-coach.coach-open-hub";
 
 export const DEFAULT_COACH_IDLE = "watching the board";
 
@@ -17,6 +18,24 @@ function readOpen(): boolean {
 function storeOpen(open: boolean): void {
   try {
     window.localStorage.setItem(COACH_OPEN_STORAGE_KEY, String(open));
+  } catch {
+    // Storage can be refused (private mode); the choice then lasts for the session only.
+  }
+}
+
+// The hub starts closed until the student opens it there; missing storage means closed,
+// unlike the general choice, where missing storage means open.
+function readHubOpen(): boolean {
+  try {
+    return window.localStorage.getItem(COACH_HUB_OPEN_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function storeHubOpen(open: boolean): void {
+  try {
+    window.localStorage.setItem(COACH_HUB_OPEN_STORAGE_KEY, String(open));
   } catch {
     // Storage can be refused (private mode); the choice then lasts for the session only.
   }
@@ -53,11 +72,16 @@ export interface CoachPanel {
 //
 // On a phone the panel is a sheet over the board, so it starts closed on every visit and its
 // state is kept apart from the desktop choice instead of overwriting it.
-export function useCoachPanel(coachMessages: number, tab: CoachTab = "play"): CoachPanel {
+export function useCoachPanel(
+  coachMessages: number,
+  tab: CoachTab = "play",
+  hubVisible = false,
+): CoachPanel {
   const phone = usePhone();
   const [desktopOpen, setDesktopOpen] = useState(readOpen);
+  const [hubOpen, setHubOpen] = useState(readHubOpen);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const open = phone ? sheetOpen : desktopOpen;
+  const open = phone ? sheetOpen : hubVisible ? hubOpen : desktopOpen;
   const [unread, setUnread] = useState(false);
   const seen = useRef({ tab, count: coachMessages });
 
@@ -70,12 +94,15 @@ export function useCoachPanel(coachMessages: number, tab: CoachTab = "play"): Co
   const toggle = useCallback(() => {
     const next = !open;
     if (phone) setSheetOpen(next);
-    else {
+    else if (hubVisible) {
+      storeHubOpen(next);
+      setHubOpen(next);
+    } else {
       storeOpen(next);
       setDesktopOpen(next);
     }
     if (next) setUnread(false);
-  }, [open, phone]);
+  }, [open, phone, hubVisible]);
 
   return { open, unread, toggle };
 }

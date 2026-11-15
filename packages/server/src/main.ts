@@ -3,13 +3,13 @@ import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { repertoireTryJudge } from "./activity/repertoire-session.js";
 import { ActivityService } from "./activity/service.js";
-import { buildApp, type Readiness } from "./app.js";
+import type { Readiness } from "./app.js";
 import { systemClock } from "./clock.js";
 import { assertSubscriptionAuth } from "./coach/auth.js";
 import { CoachSession, coachNotificationSinks } from "./coach/session.js";
+import { composeServer } from "./compose.js";
 import { resolveLichessToken } from "./db/connections.js";
 import { openDatabase } from "./db/open.js";
-import { endRunsLeftOpenAtStart } from "./db/training.js";
 import { bootEngines } from "./engine/boot.js";
 import { evaluatePlayerMove } from "./engine/evaluate.js";
 import { EnginePool } from "./engine/pool.js";
@@ -17,20 +17,16 @@ import { spawnStockfish } from "./engine/process.js";
 import { poolGameEngine } from "./game/engine.js";
 import { GameService } from "./game/service.js";
 import { ChessComSource, httpFetcher } from "./import/chesscom.js";
-import { ImportGrader } from "./import/grader.js";
 import { createFileLog, pruneLogs } from "./log.js";
-import { httpExplorerFetcher, systemExplorerClock } from "./openings/explorer-client.js";
-import { generateExplorerPuzzles } from "./openings/from-explorer.js";
-import { generateOpeningPuzzles } from "./openings/from-games.js";
-import { generateItalianPuzzles } from "./openings/from-italian.js";
+import { listAddableOpenings } from "./openings/addable-openings.js";
 import {
-  generateRepertoire,
-  loadRepertoireBranchBook,
-  type RepertoirePoints,
-} from "./openings/from-repertoire.js";
+  CachedExplorer,
+  httpExplorerFetcher,
+  systemExplorerClock,
+} from "./openings/explorer-client.js";
+import { loadRepertoireBranchBook } from "./openings/from-repertoire.js";
 import { loadOpeningNames } from "./openings/names.js";
 import { generateRepertoireIdeas, sdkIdeaSession } from "./openings/repertoire-ideas.js";
-import { reviewRepertoireGames } from "./openings/repertoire-review.js";
 import { contentDir, dataDir, resolveAppRoot } from "./paths.js";
 import { ensurePuzzleRating } from "./puzzles/rating.js";
 import { seedPuzzles } from "./puzzles/seed.js";
@@ -70,19 +66,6 @@ const db = openDatabase(dataDir());
 const openingNames = loadOpeningNames(contentDir());
 // The same table's lines, for the positions where the Italian can branch into another variation.
 const repertoireBranches = loadRepertoireBranchBook(contentDir());
-log.info("openings.names_loaded", {
-  positions: openingNames.size,
-  branch_points: repertoireBranches.length,
-});
-// A bad puzzle entry throws here, naming <file>:<index>, before anything else starts.
-const seeded = seedPuzzles(db, contentDir(), openingNames);
-log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
-const puzzleRating = ensurePuzzleRating(db, systemClock);
-log.info("puzzles.rating", { rating: puzzleRating.rating, replayed: puzzleRating.replayed });
-// Before any client connects: no board survives a restart, so a run still open belongs to the
-// process that is gone.
-const runsLeft = endRunsLeftOpenAtStart(db, systemClock.now().toISOString());
-log.info("training.runs_left", { count: runsLeft });
 const pool = new EnginePool(() => spawnStockfish());
 // The sinks read `coach` when a turn commits, long after the constant below is initialised.
 const sinks = coachNotificationSinks({ ensureSessionId: (tab) => coach.ensureSessionId(tab) });
@@ -105,71 +88,22 @@ const activity = new ActivityService({
   },
   log,
 });
-const generateOpenings = () => generateOpeningPuzzles(db, pool.evaluation, openingNames);
-const generateExplorerOpenings = () =>
-  generateExplorerPuzzles(
-    db,
-    pool.evaluation,
-    httpExplorerFetcher(resolveLichessToken(db)),
-    join(dataDir(), "explorer-cache"),
-    systemExplorerClock,
-    {},
-    openingNames,
-  );
-const generateItalianOpenings = () =>
-  generateItalianPuzzles(
-    db,
-    pool.evaluation,
-    httpExplorerFetcher(resolveLichessToken(db)),
-    join(dataDir(), "explorer-cache"),
-    systemExplorerClock,
-    {},
-    openingNames,
-  );
-const generateRepertoireOpenings = (
-  root?: readonly string[],
-  branch?: readonly string[],
-  rebuild?: boolean,
-  points?: RepertoirePoints,
-) =>
-  generateRepertoire(
-    db,
-    pool.evaluation,
-    httpExplorerFetcher(resolveLichessToken(db)),
-    join(dataDir(), "explorer-cache"),
-    systemExplorerClock,
-    openingNames,
-    { root, branch, rebuild, points },
-  );
+// The token is read per request, so saving one in Connections lights the shares up with no
+// restart; without one the route answers with null shares and makes no call.
+const listAddable = () => {
+  const token = resolveLichessToken(db);
+  const explorer = token
+    ? new CachedExplorer(
+        httpExplorerFetcher(token),
+        join(dataDir(), "explorer-cache"),
+        systemExplorerClock,
+      )
+    : null;
+  return listAddableOpenings(db, openingNames, explorer);
+};
 // Each run starts its own Claude sessions, so nothing here holds a process open between runs.
 const runRepertoireIdeas = () =>
   generateRepertoireIdeas(db, sdkIdeaSession(query, { cwd: dataDir() }), log);
-// The Games conversation is the one that reads about a stored game, and the coach's own sinks do not
-// cover it. `coach` is read when a review commits, long after the constants here are initialised.
-const gamesNotifications = { sessionId: () => coach.ensureSessionId("games") };
-const reviewRepertoireAfterGrading = () =>
-  reviewRepertoireGames({
-    db,
-    engine: pool.evaluation,
-    fetcher: httpExplorerFetcher(resolveLichessToken(db)),
-    cacheDir: join(dataDir(), "explorer-cache"),
-    explorerClock: systemExplorerClock,
-    names: openingNames,
-    log,
-    notifications: gamesNotifications,
-    onNotification: () => coach.flushNotifications(),
-  });
-// The review logs a failing game itself and goes on, so it runs first: whatever the openings step
-// does, every game that was graded has been compared with the repertoire by then.
-const importGrader = new ImportGrader({
-  db,
-  log,
-  onGraded: async () => {
-    const repertoire = await reviewRepertoireAfterGrading();
-    return { repertoire, openings: await generateOpenings() };
-  },
-  evaluate: (fen, moveUci, color) => evaluatePlayerMove(pool.evaluation, fen, moveUci, color),
-});
 const coach = new CoachSession({
   db,
   query,
@@ -185,6 +119,51 @@ const coach = new CoachSession({
     evaluateMove: (fen, moveUci, color) => evaluatePlayerMove(pool.evaluation, fen, moveUci, color),
   },
 });
+// The Games conversation is the one that reads about a stored game, and the coach's own sinks do not
+// cover it. `coach` is read when a review commits, long after the constants here are initialised.
+const gamesNotifications = { sessionId: () => coach.ensureSessionId("games") };
+// The one wiring of names into routes and the review into grading: the composition test pins both.
+const composed = composeServer({
+  db,
+  openingNames,
+  repertoireBranches,
+  cacheDir: join(dataDir(), "explorer-cache"),
+  engine: pool.evaluation,
+  fetcherFor: () => httpExplorerFetcher(resolveLichessToken(db)),
+  explorerClock: systemExplorerClock,
+  evaluate: (fen, moveUci, color) => evaluatePlayerMove(pool.evaluation, fen, moveUci, color),
+  log,
+  notifications: gamesNotifications,
+  onNotification: () => coach.flushNotifications(),
+  appExtras: {
+    readiness: () => readiness,
+    hub: {
+      analyse: (request) => pool.analyzeWith(request),
+      coach,
+      activity,
+      db,
+      allowedOrigins: allowedOriginsFrom(),
+    },
+    connections: {
+      chessCom: httpFetcher(),
+      explorerFor: (token) => httpExplorerFetcher(token),
+      allowedOrigins: allowedOriginsFrom(),
+    },
+    importer: {
+      source: new ChessComSource(httpFetcher()),
+      usernames: (process.env.CHESS_COACH_USERNAMES ?? "").split(",").filter(Boolean),
+    },
+    generateRepertoireIdeas: runRepertoireIdeas,
+    listAddableOpenings: listAddable,
+  },
+});
+const importGrader = composed.grader;
+const app = composed.app;
+// A bad puzzle entry throws here, naming <file>:<index>, before anything else starts.
+const seeded = seedPuzzles(db, contentDir(), openingNames);
+log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
+const puzzleRating = ensurePuzzleRating(db, systemClock);
+log.info("puzzles.rating", { rating: puzzleRating.rating, replayed: puzzleRating.replayed });
 game.onNotification(() => coach.flushNotifications());
 // The fault itself is logged by the game service; here it only changes what /api/health says.
 game.onEngineFault(() => {
@@ -208,36 +187,6 @@ if (engines.ok) {
   readiness = { ready: false, reason: engines.reason };
   log.warn("engine.start_failed", { reason: engines.reason, detail: engines.detail });
 }
-
-const app = buildApp({
-  readiness: () => readiness,
-  db,
-  openingNames,
-  repertoireBranches,
-  generateOpenings,
-  generateExplorerOpenings,
-  generateItalianOpenings,
-  generateRepertoireOpenings,
-  generateRepertoireIdeas: runRepertoireIdeas,
-  connections: {
-    chessCom: httpFetcher(),
-    explorerFor: (token) => httpExplorerFetcher(token),
-    allowedOrigins: allowedOriginsFrom(),
-  },
-  importer: {
-    source: new ChessComSource(httpFetcher()),
-    grader: importGrader,
-    usernames: (process.env.CHESS_COACH_USERNAMES ?? "").split(",").filter(Boolean),
-  },
-  hub: {
-    analyse: (request) => pool.analyzeWith(request),
-    coach,
-    activity,
-    db,
-    allowedOrigins: allowedOriginsFrom(),
-  },
-  log,
-});
 
 app.listen({ port, host: "127.0.0.1" }).then(async (address) => {
   log.info("server.listening", { address });

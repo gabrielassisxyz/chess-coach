@@ -10,7 +10,7 @@ import { legalMovesOf, START_FEN } from "./fixtures.js";
 
 type Cards = ProgressResponse["cards"];
 
-export function progressOf(cards: Partial<Cards> = {}): ProgressResponse {
+export function progressOf(cards: Partial<Cards> = {}, puzzleRating = 1200): ProgressResponse {
   return {
     rating_history: [],
     games: [],
@@ -44,10 +44,15 @@ export function progressOf(cards: Partial<Cards> = {}): ProgressResponse {
       next_due_at: "2026-03-02T07:00:00.000Z",
       next_due_count: 3,
       correct_rate_30d: 0.83,
+      due_next_7d: [4, 1, 0, 2, 0, 0, 0],
+      correct_rate_prev_30d: 0.75,
       ...cards,
     },
     streak_days: 2,
+    streak_best: 11,
+    activity_7d: [false, false, false, false, false, true, true],
     difficulty: { current_elo: 1200, last_change: null },
+    puzzle_rating: puzzleRating,
   };
 }
 
