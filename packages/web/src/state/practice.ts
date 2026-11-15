@@ -3,7 +3,6 @@ import type {
   DemoActivity,
   ErrorCode,
   ExploredEvent,
-  ProgressResponse,
   TrainingActivity,
   TrainingItem,
   TrainingMode,
@@ -16,21 +15,7 @@ import {
   puzzleThemeInfo,
 } from "@chess-coach/shared";
 
-export interface MotifCount {
-  motif: string;
-  count: number;
-}
-
-export type FetchMotifs = () => Promise<MotifCount[]>;
-
-export const fetchMotifsFromServer: FetchMotifs = async () => {
-  const response = await fetch("/api/puzzles/motifs");
-  if (!response.ok) throw new Error(`motifs: ${response.status}`);
-  const body = (await response.json()) as { motifs?: unknown };
-  return Array.isArray(body.motifs) ? (body.motifs as MotifCount[]) : [];
-};
-
-// Opening drills are their own card, so their puzzles stay out of the motif rows.
+// Opening drills are not themes, so their puzzles stay out of the theme tiles.
 export const OPENING_MOTIFS = {
   white: "opening-white",
   black: "opening-black",
@@ -63,57 +48,6 @@ export function motifLabel(motif: string): string {
 
 export function motifDescription(motif: string): string | null {
   return PRACTICE_DESCRIPTION_OF.get(motif) ?? null;
-}
-
-export interface MotifRow {
-  motif: string;
-  count: number;
-  // Share solved over the last 30 days; null when the motif has had no attempt in that window,
-  // undefined when the row hides its rate (a Lichess theme, whose history is not grouped by theme).
-  rate30d: number | null | undefined;
-  attempts30d: number;
-  solved30d: number;
-  label: string;
-  description: string | null;
-  kind: "lichess" | "library";
-}
-
-// The hub offers the fourteen Lichess motifs, the five other choices a Lichess theme serves, and
-// the library's opening traps. Library fork, pin and skewer merge into the Lichess rows; the
-// imported-only fallback tactics and every opening drill stay out of this card.
-export function motifRows(list: MotifCount[], progress: ProgressResponse | null): MotifRow[] {
-  const counts = new Map(list.map((entry) => [entry.motif, entry.count]));
-  const byMotif = new Map((progress?.puzzles_by_motif ?? []).map((entry) => [entry.motif, entry]));
-  const lichess = LICHESS_SERVED_MOTIFS.map(
-    (entry): MotifRow => ({
-      motif: entry.theme,
-      count: 0,
-      rate30d: undefined,
-      attempts30d: 0,
-      solved30d: 0,
-      label: entry.label,
-      description: entry.description,
-      kind: "lichess",
-    }),
-  );
-  const library = LIBRARY_PRACTICE_MOTIFS.map((entry): MotifRow => {
-    const found = byMotif.get(entry.theme);
-    return {
-      motif: entry.theme,
-      count: counts.get(entry.theme) ?? 0,
-      rate30d: found?.success_rate_30d ?? null,
-      attempts30d: found?.attempts_30d ?? 0,
-      solved30d: found?.solved_30d ?? 0,
-      label: entry.label,
-      description: entry.description,
-      kind: "library",
-    };
-  });
-  return [...lichess, ...library];
-}
-
-export function openingCount(list: MotifCount[], color: "white" | "black"): number {
-  return list.find((entry) => entry.motif === OPENING_MOTIFS[color])?.count ?? 0;
 }
 
 const CLASSIFICATION_ORDER = ["blunder", "mistake", "inaccuracy", "opening", "teaching"];
@@ -361,7 +295,7 @@ export function startFailureText(
   if (code === "empty_queue") {
     return motif === ""
       ? "There are no puzzles to drill. Restart the server to load the puzzle library."
-      : `There are no ${motifLabel(motif)} puzzles. Choose Any motif or another motif.`;
+      : `There are no ${motifLabel(motif)} puzzles. Try the Healthy mix or another theme.`;
   }
   const reason = message ? `${message.replace(/\.$/, "")}. ` : "";
   return `Training could not start. ${reason}Try again; if it keeps failing, restart the server.`;

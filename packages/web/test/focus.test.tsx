@@ -190,10 +190,8 @@ describe("focus ring", () => {
   });
 
   it("covers the Practice chooser and a card with its rating buttons", async () => {
-    const chooser = render(
-      <Practice server={serverApi()} fetchMotifs={async () => [{ motif: "fork", count: 2 }]} />,
-    );
-    await screen.findByRole("radio", { name: /fork/i });
+    const chooser = render(<Practice server={serverApi()} />);
+    await screen.findByRole("button", { name: /^Fork\b/ });
     expect(expectFocusRing(chooser.container)).toBeGreaterThanOrEqual(3);
     // The hub's navigation draws the ring inside its entries, since it scrolls by itself.
     expect(expectFocusRing(screen.getByRole("navigation", { name: "Practice sections" }))).toBe(8);

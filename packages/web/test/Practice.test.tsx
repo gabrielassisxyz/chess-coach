@@ -35,7 +35,6 @@ import { createFakeSocket, FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
 import {
   CLASSICAL_VARIATION,
-  motifCounts,
   openPracticePage,
   progressOf,
   repertoireActivity,
@@ -210,8 +209,6 @@ const spyBoard: BoardFactory = (_element, config) => {
   } as never;
 };
 
-const noMotifs = async () => [];
-
 const ratingHistoryOf = (
   ratings: readonly number[] = [1408, 1412, 1410, 1418, 1422, 1428, 1432],
   change = (ratings.at(-1) ?? 0) - (ratings[0] ?? 0),
@@ -243,7 +240,6 @@ const overviewThemeStatsOf = (
 
 const hubProps = {
   fetchProgress: async () => progressOf(),
-  fetchMotifs: async () => motifCounts,
   fetchRepertoires: async () => [],
   fetchRepertoireList: async () => ({ repertoires: [], met: [] }),
   fetchRatingHistory: async () => ratingHistoryOf(),
@@ -576,7 +572,7 @@ describe("the hub", () => {
     ]);
   });
 
-  it("keeps the numbers it has when rating history or theme statistics fail, without showing an alert", async () => {
+  it("keeps the numbers it has when rating history or theme statistics fail, saying so once, in the weakness card", async () => {
     const progress = progressOf({ correct_rate_30d: 0.836, total: 38 }, 1432);
     render(
       <Practice
@@ -601,7 +597,12 @@ describe("the hub", () => {
     expect(tileOf("Solved first try")).toEqual([NONE]);
     expect(tileElementOf("Solved first try").querySelector(".practice-tile__split")).toBeNull();
     expect(tileElementOf("Solved first try").querySelector(".practice-tile__delta")).toBeNull();
-    expect(screen.queryByRole("alert")).toBeNull();
+    // The tiles stay quiet; the one alert is the weakness card's, and a failed rating history has none.
+    const card = screen.getByRole("region", { name: "Puzzles by weakness" });
+    expect((await within(card).findByRole("alert")).textContent).toBe(
+      "Your theme statistics could not be loaded.",
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 
   it("fetches /api/puzzles/rating/history for the chosen window, parses the schema and rejects errors", async () => {
@@ -648,59 +649,12 @@ describe("the hub", () => {
     expect(screen.queryByText("Puzzle rating")).toBeNull();
   });
 
-  it("lists the fourteen Lichess motifs with descriptions plus the six library choices, each once", async () => {
-    const motifs = async () => [...motifCounts, { motif: "opening-italian", count: 7 }];
-    render(<Practice server={api(null)} {...hubProps} fetchMotifs={motifs} />);
-    const card = await screen.findByRole("region", { name: "Puzzles by motif" });
-    await within(card).findByRole("radio", { name: /hanging piece/i });
-    for (const label of [
-      "Advanced pawn",
-      "Attacking f2 or f7",
-      "Capture the defender",
-      "Discovered attack",
-      "Double check",
-      "Exposed king",
-      "Fork",
-      "Hanging piece",
-      "Kingside attack",
-      "Pin",
-      "Queenside attack",
-      "Sacrifice",
-      "Skewer",
-      "Trapped piece",
-      "Back rank mate",
-      "Checkmate",
-      "Endgame",
-      "Promotion",
-      "Opening",
-      "Opening trap",
-    ]) {
-      const matches = await within(card).findAllByRole("radio", {
-        name: new RegExp(`^${label},`, "i"),
-      });
-      expect(matches).toHaveLength(1);
-    }
-    expect(
-      within(card)
-        .getByRole("radio", { name: /hanging piece/i })
-        .closest("label")?.textContent,
-    ).toContain("An undefended piece, free to capture.");
-    expect(
-      (within(card).getByRole("radio", { name: /hanging piece/i }) as HTMLInputElement).disabled,
-    ).toBe(false);
-    expect(card.textContent).not.toContain("smothered-mate");
-    expect(card.textContent).not.toContain("tactics");
-    expect(within(card).queryByRole("radio", { name: /opening-white/ })).toBeNull();
-    expect(within(card).queryByRole("radio", { name: /italian/i })).toBeNull();
-  });
-
-  it("starts the chosen motif with no size to choose or to send", async () => {
+  it("starts the chosen theme with no size to choose or to send", async () => {
     const server = api(null);
     render(<Practice server={server} {...hubProps} />);
-    await screen.findByRole("radio", { name: /fork/i });
+    await screen.findByRole("button", { name: /^Fork\b/ });
     expect(screen.queryByRole("group", { name: "Drill size" })).toBeNull();
-    fireEvent.click(screen.getByRole("radio", { name: /fork/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Start Fork" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Fork\b/ }));
     expect(server.send).toHaveBeenCalledWith({
       type: "start_training",
       mode: "puzzles",
@@ -752,7 +706,8 @@ describe("a hub with a problem", () => {
     render(<Practice server={api(null)} {...hubProps} fetchHealth={fetchHealth} />);
     const card = await screen.findByRole("alert", { name: "Engine missing" });
     expect(card.textContent).toContain("Stockfish isn't running");
-    for (const name of ["Review 4 cards", "Start any motif"]) {
+    // The weakness card has no improvement area here, so its one button is Start a healthy mix.
+    for (const name of ["Review 4 cards", /^Healthy mix/, /^Fork\b/, "Start a healthy mix"]) {
       const button = await screen.findByRole("button", { name });
       expect((button as HTMLButtonElement).disabled).toBe(true);
     }
@@ -812,7 +767,7 @@ describe("a hub with a problem", () => {
 
 describe("a card on the board", () => {
   it("shows the breadcrumb, the side to move and the prompt status, with no rating yet", () => {
-    render(<Practice server={api(card())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(card())} createBoard={spyBoard} />);
     expect(screen.getByRole("heading", { name: "Card 1 of 3" })).toBeTruthy();
     expect(screen.getByText(/White to play/)).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain("Your move");
@@ -822,7 +777,7 @@ describe("a card on the board", () => {
 
   it("shows the verdict, the expected move, the looked-at trail and a locked board once given up", () => {
     boards.length = 0;
-    render(<Practice server={api(answeredCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(answeredCard)} createBoard={spyBoard} />);
     expect(screen.getByText("Solution shown")).toBeTruthy();
     expect(screen.getByText(/Expected d4/)).toBeTruthy();
     expect(screen.getByRole("region", { name: "What you looked at \u00b7 0:07" })).toBeTruthy();
@@ -832,18 +787,12 @@ describe("a card on the board", () => {
 
   it("lets the student move only their own side while the card is open", () => {
     boards.length = 0;
-    render(<Practice server={api(card())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(card())} createBoard={spyBoard} />);
     expect(boards.at(-1)?.movableColor).toBe("white");
   });
 
   it("allows next once rated and stops offering the rating", () => {
-    render(
-      <Practice
-        server={api(card({ ...failed, status: "rated" }))}
-        createBoard={spyBoard}
-        fetchMotifs={noMotifs}
-      />,
-    );
+    render(<Practice server={api(card({ ...failed, status: "rated" }))} createBoard={spyBoard} />);
     expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
     expect(
       (screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement).disabled,
@@ -868,13 +817,9 @@ describe("a card on the board", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       boards.length = 0;
-      const { rerender } = render(
-        <Practice server={api(card())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-      );
+      const { rerender } = render(<Practice server={api(card())} createBoard={spyBoard} />);
       dropOnPracticeBoard("e2", "e4");
-      rerender(
-        <Practice server={api(repliedCard())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-      );
+      rerender(<Practice server={api(repliedCard())} createBoard={spyBoard} />);
       expect(boards.at(-1)?.fen).toBe(AFTER_E4);
       act(() => {
         vi.advanceTimersByTime(MOVE_PAUSE_MS);
@@ -890,9 +835,7 @@ describe("a card on the board", () => {
   });
 
   it("offers the rating and Continue only after the last move of the line", () => {
-    const { rerender } = render(
-      <Practice server={api(repliedCard())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    const { rerender } = render(<Practice server={api(repliedCard())} createBoard={spyBoard} />);
     expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Continue training" })).toBeNull();
     const solved = card({
@@ -907,7 +850,7 @@ describe("a card on the board", () => {
       moves: [...playedE4E5, { ply: 2, uci: "g1f3", san: "Nf3", by: "student" }],
       suggested_quality: 4,
     });
-    rerender(<Practice server={api(solved)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    rerender(<Practice server={api(solved)} createBoard={spyBoard} />);
     expect(screen.getByRole("heading", { name: "Card 1 of 3" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Rate your recall" })).toBeTruthy();
     expect(screen.getByRole("status").textContent).toBe("Solved");
@@ -919,7 +862,7 @@ describe("a puzzle on the board", () => {
   it("never offers a rating, before or after the answer", () => {
     for (const status of ["prompt", "in_progress", "solved", "failed"] as const) {
       const { unmount } = render(
-        <Practice server={api(puzzle({ status }))} createBoard={spyBoard} fetchMotifs={noMotifs} />,
+        <Practice server={api(puzzle({ status }))} createBoard={spyBoard} />,
       );
       expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
       expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
@@ -930,50 +873,44 @@ describe("a puzzle on the board", () => {
   it("heads an item of a queue with a length with its total", () => {
     const fixed = puzzle();
     if (fixed.item.kind === "puzzle") fixed.item.queue_length = 10;
-    render(<Practice server={api(fixed)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(fixed)} createBoard={spyBoard} />);
     expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
   });
 
   it("hides the motif for an Any-motif run while open and names it after the item ends", () => {
     const open = puzzle({ status: "prompt" });
-    const { unmount } = render(
-      <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    const { unmount } = render(<Practice server={api(open)} createBoard={spyBoard} />);
     const heading = screen.getByRole("heading", { name: "Puzzle 2" });
     expect(heading.textContent).not.toContain("fork");
     expect(heading.textContent).not.toContain("Fork");
     expect(screen.queryByText("Fork")).toBeNull();
     unmount();
     const ended = puzzle({ status: "solved" });
-    render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(ended)} createBoard={spyBoard} />);
     expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
     expect(screen.getByText("Fork")).toBeTruthy();
   });
 
   it("keeps the motif in the heading for a single-motif run", () => {
     const open = puzzle({ status: "prompt", run_motif: "fork" });
-    const { unmount } = render(
-      <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    const { unmount } = render(<Practice server={api(open)} createBoard={spyBoard} />);
     expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
     expect(screen.getByText("Fork")).toBeTruthy();
     unmount();
     const ended = puzzle({ status: "solved", run_motif: "fork" });
-    render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(ended)} createBoard={spyBoard} />);
     expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
     expect(screen.getAllByText("Fork")).toHaveLength(1);
   });
 
   it("reads Italian Opening for an italian drill", () => {
     const open = puzzle({ status: "prompt", run_motif: "opening-italian" });
-    const { unmount } = render(
-      <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    const { unmount } = render(<Practice server={api(open)} createBoard={spyBoard} />);
     expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
     expect(screen.getByText("Italian Opening")).toBeTruthy();
     unmount();
     const ended = puzzle({ status: "solved", run_motif: "opening-italian" });
-    render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(ended)} createBoard={spyBoard} />);
     expect(screen.getByText("Italian Opening")).toBeTruthy();
     expect(screen.queryByText("Fork")).toBeNull();
   });
@@ -986,21 +923,11 @@ describe("a puzzle on the board", () => {
 
   it("offers Continue only once the puzzle is solved or failed", () => {
     const { rerender } = render(
-      <Practice
-        server={api(puzzle({ status: "in_progress" }))}
-        fetchMotifs={noMotifs}
-        createBoard={spyBoard}
-      />,
+      <Practice server={api(puzzle({ status: "in_progress" }))} createBoard={spyBoard} />,
     );
     expect(screen.getByRole("status").textContent).toBe("Best move");
     expect(screen.queryByRole("button", { name: "Continue training" })).toBeNull();
-    rerender(
-      <Practice
-        server={api(puzzle({ status: "solved" }))}
-        fetchMotifs={noMotifs}
-        createBoard={spyBoard}
-      />,
-    );
+    rerender(<Practice server={api(puzzle({ status: "solved" }))} createBoard={spyBoard} />);
     const next = screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement;
     expect(next.disabled).toBe(false);
   });
@@ -1014,14 +941,12 @@ describe("the end of the queue", () => {
       last.item.queue_length = 10;
     }
     const server = api(last);
-    const { rerender } = render(
-      <Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />,
-    );
+    const { rerender } = render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "Finish training" }));
     expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
 
     const ended = api(puzzle({ status: "solved", summary: { solved: 7, failed: 3 } }));
-    rerender(<Practice server={ended} fetchMotifs={noMotifs} createBoard={spyBoard} />);
+    rerender(<Practice server={ended} createBoard={spyBoard} />);
     expect(screen.getByTestId("summary").textContent).toContain("7 solved, 3 failed");
     expect(screen.queryByRole("button", { name: "Continue training" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
@@ -1033,9 +958,7 @@ describe("the end of the queue", () => {
       const answered = puzzle({ status: "solved" });
       if (answered.item.kind === "puzzle") answered.item.position_in_queue = position;
       const server = api(answered);
-      const { unmount } = render(
-        <Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />,
-      );
+      const { unmount } = render(<Practice server={server} createBoard={spyBoard} />);
       expect(screen.queryByRole("button", { name: "Finish training" })).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Continue training" }));
       expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
@@ -1046,7 +969,7 @@ describe("the end of the queue", () => {
   it("draws one segment per item served, none pending, and names the place without a total", () => {
     const served = puzzle({ queue_outcomes: ["solved", "failed", "current"] });
     if (served.item.kind === "puzzle") served.item.position_in_queue = 3;
-    render(<Practice server={api(served)} fetchMotifs={noMotifs} createBoard={spyBoard} />);
+    render(<Practice server={api(served)} createBoard={spyBoard} />);
     const bar = screen.getByRole("list", { name: "Session progress: 1 solved, 1 missed, item 3" });
     const outcomes = within(bar)
       .getAllByRole("listitem")
@@ -1057,7 +980,7 @@ describe("the end of the queue", () => {
   it("keeps a segment pending, and the total in words, on a queue with a length", () => {
     const fixed = puzzle({ queue_outcomes: ["solved", "current", "pending"] });
     if (fixed.item.kind === "puzzle") fixed.item.queue_length = 3;
-    render(<Practice server={api(fixed)} fetchMotifs={noMotifs} createBoard={spyBoard} />);
+    render(<Practice server={api(fixed)} createBoard={spyBoard} />);
     const bar = screen.getByRole("list", {
       name: "Session progress: 1 solved, 0 missed, item 2 of 3",
     });
@@ -1109,7 +1032,7 @@ function dropOnPracticeBoard(from: string, to: string): void {
 describe("grading on drop", () => {
   it("sends a drop as try_move, and never as exploration", () => {
     const server = api(card());
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     (boardMove as (from: string, to: string) => void)("e2", "e4");
     expect(server.send).toHaveBeenCalledWith({ type: "try_move", uci: "e2e4", activity_id: 4 });
     expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "explore" }));
@@ -1119,13 +1042,11 @@ describe("grading on drop", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       boards.length = 0;
-      const { rerender } = render(
-        <Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-      );
+      const { rerender } = render(<Practice server={api(puzzle())} createBoard={spyBoard} />);
       expect(screen.getByRole("status").textContent).toBe("Your move");
       const before = boards.length;
       const missed = puzzle({ tries: 1, last_try: { uci: "e2e4", san: "e4", correct: false } });
-      rerender(<Practice server={api(missed)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      rerender(<Practice server={api(missed)} createBoard={spyBoard} />);
       expect(screen.getByRole("status").textContent).toBe("Not that move");
       act(() => {
         vi.advanceTimersByTime(MOVE_PAUSE_MS);
@@ -1143,21 +1064,19 @@ describe("grading on drop", () => {
       tries: 1,
       last_try: { uci: "e2e4", san: "e4", correct: true },
     });
-    render(<Practice server={api(next)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(next)} createBoard={spyBoard} />);
     expect(screen.getByRole("status").textContent).toBe("Best move");
   });
 
   it("offers View solution while open, sends show_solution, and has no Answer, Take back or Reset", () => {
     const server = api(card());
-    const { rerender } = render(
-      <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    const { rerender } = render(<Practice server={server} createBoard={spyBoard} />);
     for (const name of [/^Answer/, "Take back", "Reset"]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
     fireEvent.click(screen.getByRole("button", { name: "View solution" }));
     expect(server.send).toHaveBeenCalledWith({ type: "show_solution", activity_id: 4 });
-    rerender(<Practice server={api(answeredCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    rerender(<Practice server={api(answeredCard)} createBoard={spyBoard} />);
     expect(screen.queryByRole("button", { name: "View solution" })).toBeNull();
     expect(
       (screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement).disabled,
@@ -1175,7 +1094,7 @@ describe("grading on drop", () => {
         gave_up: true,
         solution_line: ["e2e4", "e7e5"],
       });
-      render(<Practice server={api(gaveUp)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      render(<Practice server={api(gaveUp)} createBoard={spyBoard} />);
       expect(boards.at(-1)?.fen).toBe(START_FEN);
       act(() => {
         vi.advanceTimersByTime(599);
@@ -1206,7 +1125,7 @@ describe("the exploration trail and the timer", () => {
       ...failed,
       exploring: { fen: START_FEN, line_san: [], trail: looked.slice(0, 3) },
     });
-    render(<Practice server={api(afterUndo)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(afterUndo)} createBoard={spyBoard} />);
     const items = within(screen.getByRole("region", { name: /What you looked at/ })).getAllByRole(
       "listitem",
     );
@@ -1229,12 +1148,12 @@ describe("the exploration trail and the timer", () => {
         ],
       },
     });
-    render(<Practice server={api(reset)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(reset)} createBoard={spyBoard} />);
     expect(screen.getByText("e4 \u2014 reset")).toBeTruthy();
   });
 
   it("leaves the trail out when nothing was explored", () => {
-    render(<Practice server={api(card(failed))} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(card(failed))} createBoard={spyBoard} />);
     expect(screen.queryByRole("region", { name: /What you looked at/ })).toBeNull();
   });
 
@@ -1242,7 +1161,7 @@ describe("the exploration trail and the timer", () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     try {
       vi.setSystemTime(new Date("2026-03-01T00:02:45.000Z"));
-      render(<Practice server={api(card())} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      render(<Practice server={api(card())} createBoard={spyBoard} />);
       expect(screen.getByRole("timer").textContent).toBe("2:45");
       act(() => {
         vi.advanceTimersByTime(3000);
@@ -1255,8 +1174,7 @@ describe("the exploration trail and the timer", () => {
 });
 
 describe("rating a card", () => {
-  const rate = () =>
-    render(<Practice server={api(answeredCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+  const rate = () => render(<Practice server={api(answeredCard)} createBoard={spyBoard} />);
 
   it("says in words and days what each grade means, from the rating preview", () => {
     rate();
@@ -1283,7 +1201,7 @@ describe("rating a card", () => {
 
   it("rates by clicking a button", () => {
     const server = api(answeredCard);
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: /^4 Right, hesitated/ }));
     expect(server.send).toHaveBeenCalledWith({
       type: "rate_card",
@@ -1295,7 +1213,7 @@ describe("rating a card", () => {
 
   it("rates with the keys 0 to 5, except while typing", () => {
     const server = api(answeredCard);
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.keyDown(document.body, { key: "2" });
     expect(server.send).toHaveBeenCalledWith(
       expect.objectContaining({ type: "rate_card", quality: 2 }),
@@ -1311,7 +1229,7 @@ describe("rating a card", () => {
 
   it("stops listening for the keys once the card is rated", () => {
     const server = api(card({ ...answeredCard, status: "rated" }));
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.keyDown(document.body, { key: "2" });
     expect(server.send).not.toHaveBeenCalled();
     expect(screen.getByText("Rated")).toBeTruthy();
@@ -1319,7 +1237,7 @@ describe("rating a card", () => {
 
   it("pre-selects the suggested rating and still rates any other", () => {
     const server = api(card({ ...failed, suggested_quality: 2 }));
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     const group = screen.getByRole("group", { name: "Rate your recall" });
     const pressed = within(group)
       .getAllByRole("button")
@@ -1339,12 +1257,10 @@ describe("rating a card", () => {
         .filter((button) => button.getAttribute("aria-pressed") === "true")
         .map((button) => button.textContent?.charAt(0));
     const right = card({ status: "solved", input_enabled: false, suggested_quality: 4 });
-    const { unmount } = render(
-      <Practice server={api(right)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    const { unmount } = render(<Practice server={api(right)} createBoard={spyBoard} />);
     expect(pressedOf()).toEqual(["4"]);
     unmount();
-    render(<Practice server={api(answeredCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(answeredCard)} createBoard={spyBoard} />);
     expect(pressedOf()).toEqual(["0"]);
   });
 
@@ -1353,7 +1269,7 @@ describe("rating a card", () => {
       status: "solved",
       last_try: { uci: "e2e4", san: "e4", correct: true },
     });
-    render(<Practice server={api(solved)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(solved)} createBoard={spyBoard} />);
     expect(screen.getByRole("status").textContent).toBe("Solved");
     expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
   });
@@ -1379,7 +1295,7 @@ describe("a coach demo over training", () => {
   it("renders the demo board with a Back to session button that leaves the demo", () => {
     boards.length = 0;
     const server = api(demoActivity() as unknown as TrainingActivity);
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     expect(boards.at(-1)?.fen).toBe(START_FEN);
     const back = screen.getByRole("button", { name: "Back to session" });
     expect(back).toBeTruthy();
@@ -1442,9 +1358,16 @@ describe("starting a session from the hub", () => {
   }
 
   it.each([
-    ["Review 4 cards", "Overview", { type: "start_training", mode: "srs" }],
-    ["Start any motif", "Overview", { type: "start_training", mode: "puzzles" }],
+    ["Review 4 cards", "Review 4 cards", "Overview", { type: "start_training", mode: "srs" }],
+    ["Healthy mix", /^Healthy mix/, "Overview", { type: "start_training", mode: "puzzles" }],
     [
+      "the Fork tile",
+      /^Fork\b/,
+      "Overview",
+      { type: "start_training", mode: "puzzles", motif: "fork" },
+    ],
+    [
+      "Train 10, Italian Game",
       "Train 10, Italian Game",
       "Openings",
       {
@@ -1455,7 +1378,7 @@ describe("starting a session from the hub", () => {
         level: "group",
       },
     ],
-  ])("sends the start of %s and nothing else", async (name, page, command) => {
+  ])("sends the start of %s and nothing else", async (_label, name, page, command) => {
     const socket = bootIntoHub();
     await hubReady();
     openPracticePage(page);
@@ -1554,7 +1477,7 @@ describe("what the hub no longer carries", () => {
 describe("ending a session", () => {
   it("asks first, keeps the item on Cancel and ends on End", () => {
     const server = api(card());
-    render(<Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "End" }));
     const dialog = screen.getByRole("dialog", { name: "End training" });
     expect(dialog.textContent).toContain("End this session? What you answered is kept.");
@@ -1570,7 +1493,7 @@ describe("ending a session", () => {
 
   it("ends a session of a queue without a length the same way", () => {
     const server = api(puzzle());
-    render(<Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "End" }));
     const confirm = screen.getByRole("dialog", { name: "End training" });
     fireEvent.click(within(confirm).getByRole("button", { name: "End" }));
@@ -1590,19 +1513,19 @@ describe("a right card answer", () => {
   });
 
   it("reads Solved and no Expected line", () => {
-    render(<Practice server={api(solvedCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(solvedCard)} createBoard={spyBoard} />);
     expect(screen.getByRole("status").textContent).toBe("Solved");
     expect(screen.queryByText(/Expected/)).toBeNull();
   });
 
   it("says how many wrong tries it took when the first try missed", () => {
     const retried = card({ ...solvedCard, tries: 2 });
-    render(<Practice server={api(retried)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(retried)} createBoard={spyBoard} />);
     expect(screen.getByText(/1 move · 2 wrong tries/)).toBeTruthy();
   });
 
   it("keeps the rating group visible and Continue enabled", () => {
-    render(<Practice server={api(solvedCard)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={api(solvedCard)} createBoard={spyBoard} />);
     expect(screen.getByRole("group", { name: "Rate your recall" })).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement).disabled,
@@ -1613,7 +1536,7 @@ describe("a right card answer", () => {
 describe("hint", () => {
   it("sends hint from the button", () => {
     const server = api(card());
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "Get a hint" }));
     expect(server.send).toHaveBeenCalledWith({ type: "hint", activity_id: 4 });
   });
@@ -1621,20 +1544,10 @@ describe("hint", () => {
   it("renders the highlight and clears it after a try", () => {
     boards.length = 0;
     const { rerender } = render(
-      <Practice
-        server={api(card({ hint_square: "d2" }))}
-        createBoard={spyBoard}
-        fetchMotifs={noMotifs}
-      />,
+      <Practice server={api(card({ hint_square: "d2" }))} createBoard={spyBoard} />,
     );
     expect(boards.at(-1)?.hint).toEqual({ d2: "hint" });
-    rerender(
-      <Practice
-        server={api(card({ hint_square: null }))}
-        createBoard={spyBoard}
-        fetchMotifs={noMotifs}
-      />,
-    );
+    rerender(<Practice server={api(card({ hint_square: null }))} createBoard={spyBoard} />);
     expect(boards.at(-1)?.hint).toEqual({});
   });
 });
@@ -1645,9 +1558,7 @@ describe("explore mode", () => {
 
   it("steps across item and explored moves with arrows and all four buttons", () => {
     boards.length = 0;
-    render(
-      <Practice server={api(exploredPuzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    render(<Practice server={api(exploredPuzzle())} createBoard={spyBoard} />);
     fireEvent.click(stepButton("Explore"));
     expect(stepButton("Next move").disabled).toBe(true);
     expect(stepButton("Last move").disabled).toBe(true);
@@ -1673,9 +1584,7 @@ describe("explore mode", () => {
 
   it("flips the board with f while exploring", () => {
     boardOrientations.length = 0;
-    render(
-      <Practice server={api(puzzleAfterE5())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    render(<Practice server={api(puzzleAfterE5())} createBoard={spyBoard} />);
     fireEvent.click(stepButton("Explore"));
     expect(boardOrientations.at(-1)).toBe("white");
     fireEvent.keyDown(window, { key: "f" });
@@ -1685,9 +1594,7 @@ describe("explore mode", () => {
   it("undoes the open explored suffix before sending a new branch move", () => {
     boards.length = 0;
     const server = api(exploredPuzzle());
-    const { rerender } = render(
-      <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-    );
+    const { rerender } = render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(stepButton("Explore"));
     fireEvent.click(stepButton("Previous move"));
     fireEvent.click(stepButton("Previous move"));
@@ -1704,7 +1611,6 @@ describe("explore mode", () => {
       <Practice
         server={api(exploredPuzzle(["Nf3", "Nc6", "d4"], AFTER_D4))}
         createBoard={spyBoard}
-        fetchMotifs={noMotifs}
       />,
     );
     expect(boards.at(-1)?.fen).toBe(AFTER_D4);
@@ -1715,7 +1621,7 @@ describe("explore mode", () => {
   it("replaces the ended item's local suffix without sending a command", () => {
     boards.length = 0;
     const server = api(puzzleAfterE5({ status: "solved", input_enabled: false, legal_moves: [] }));
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(stepButton("Explore"));
     for (const [from, to] of [
       ["g1", "f3"],
@@ -1745,7 +1651,7 @@ describe("explore mode", () => {
   it("checks a drop at a stepped-back point of an ended line against that point", () => {
     boards.length = 0;
     const server = api(puzzleAfterE5({ status: "solved", input_enabled: false, legal_moves: [] }));
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(stepButton("Explore"));
     for (const [from, to] of [
       ["g1", "f3"],
@@ -1771,7 +1677,7 @@ describe("explore mode", () => {
   it("keeps the item's earlier positions read-only in Explore", () => {
     boards.length = 0;
     const server = api(exploredPuzzle());
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(stepButton("Explore"));
     fireEvent.click(stepButton("First move"));
     expect(boards.at(-1)?.movableColor).toBeUndefined();
@@ -1797,7 +1703,7 @@ describe("explore mode", () => {
   it("still steps and blocks drops through the item outside Explore", () => {
     boards.length = 0;
     const server = api(puzzleAfterE5());
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(stepButton("Previous move"));
     expect(boards.at(-1)?.fen).toBe(AFTER_E4);
     expect(boards.at(-1)?.movableColor).toBeUndefined();
@@ -1811,7 +1717,7 @@ describe("explore mode", () => {
 
   it("routes drops to explore while exploring and never to try_move", () => {
     const server = api(card());
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "Explore" }));
     (boardMove as (from: string, to: string) => void)("e2", "e4");
     expect(server.send).toHaveBeenCalledWith({
@@ -1829,7 +1735,7 @@ describe("explore mode", () => {
 
   it("sends take back and reset through explore", () => {
     const server = api(card());
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "Explore" }));
     fireEvent.click(screen.getByRole("button", { name: "Take back" }));
     expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "undo", activity_id: 4 });
@@ -1839,7 +1745,7 @@ describe("explore mode", () => {
 
   it("back to puzzle sends reset and restores graded drops", () => {
     const server = api(card({ exploring: { fen: AFTER_E4, line_san: ["e4"], trail: [] } }));
-    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    render(<Practice server={server} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "Explore" }));
     fireEvent.click(screen.getByRole("button", { name: "Back to puzzle" }));
     expect(server.send).toHaveBeenCalledWith({ type: "explore", kind: "reset", activity_id: 4 });
@@ -1862,11 +1768,9 @@ describe("what the board shows at once, with no pause", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       boards.length = 0;
-      const { rerender } = render(
-        <Practice server={api(from)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-      );
+      const { rerender } = render(<Practice server={api(from)} createBoard={spyBoard} />);
       dropOnPracticeBoard(...drop);
-      rerender(<Practice server={api(to)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      rerender(<Practice server={api(to)} createBoard={spyBoard} />);
       const shown = boards.at(-1);
       const settled = boards.length;
       act(() => {
@@ -1922,9 +1826,7 @@ describe("what the board shows at once, with no pause", () => {
     try {
       boards.length = 0;
       const server = api(puzzle());
-      const { rerender } = render(
-        <Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-      );
+      const { rerender } = render(<Practice server={server} createBoard={spyBoard} />);
       fireEvent.click(stepButton("Explore"));
       dropOnPracticeBoard("e2", "e4");
       expect(server.send).toHaveBeenCalledWith({
@@ -1939,7 +1841,7 @@ describe("what the board shows at once, with no pause", () => {
         legal_moves: legalMovesOf(AFTER_E4),
         exploring: { fen: AFTER_E4, line_san: ["e4"], trail: [] },
       });
-      rerender(<Practice server={api(explored)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+      rerender(<Practice server={api(explored)} createBoard={spyBoard} />);
       expect(boards.at(-1)).toEqual({ movableColor: "both", fen: AFTER_E4, hint: {} });
       const settled = boards.length;
       act(() => {
@@ -1955,13 +1857,9 @@ describe("what the board shows at once, with no pause", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       boards.length = 0;
-      const { rerender } = render(
-        <Practice server={api(puzzle())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-      );
+      const { rerender } = render(<Practice server={api(puzzle())} createBoard={spyBoard} />);
       dropOnPracticeBoard("e2", "e4");
-      rerender(
-        <Practice server={api(repliedE5())} createBoard={spyBoard} fetchMotifs={noMotifs} />,
-      );
+      rerender(<Practice server={api(repliedE5())} createBoard={spyBoard} />);
       expect(boards.at(-1)?.fen).toBe(AFTER_E4);
       fireEvent.click(stepButton("First move"));
       expect(boards.at(-1)).toEqual({ movableColor: undefined, fen: START_FEN, hint: {} });
@@ -1981,13 +1879,13 @@ function renderHub(props: Partial<PracticeHubProps> = {}) {
   const view = render(
     <PracticeHub
       progress={{ status: "ready", value: progressOf() }}
-      motifs={{ status: "ready", value: motifCounts }}
       engineMissing={false}
       starting={null}
       failure={null}
       onStart={noop}
       onStartRepertoire={noop}
       fetchRepertoireList={async () => repertoireAnswer()}
+      fetchAddableOpenings={async () => []}
       {...props}
     />,
   );
@@ -2037,15 +1935,25 @@ const whiteOpenings = (): Promise<HTMLElement> => screen.findByRole("region", { 
 // The list is read once after mount; this waits for that read to settle, however it ended.
 const settle = (): Promise<void> => act(async () => {});
 
-// The panel that Add an opening… opens in the button's place, with the openings met in games.
+// The panel that Add an opening… opens in the button's place, on its second tab: the openings met
+// in games, which the first tab's list of every opening does not replace.
 async function openAddPanel(white: HTMLElement): Promise<HTMLElement> {
   fireEvent.click(await within(white).findByRole("button", { name: "Add an opening…" }));
-  return within(white).getByRole("region", { name: "Add an opening" });
+  const panel = within(white).getByRole("region", { name: "Add an opening" });
+  fireEvent.click(within(panel).getByRole("tab", { name: /^From my games/ }));
+  return panel;
 }
 
 const isDisabled = (element: HTMLElement): boolean => (element as HTMLButtonElement).disabled;
 
+// What the server answers when no opening is left to add. A page rendered whole reads it from the
+// network when the panel opens, so a test that opens the panel there stands in for the call.
+const noAddableOpenings = async (): Promise<Response> =>
+  new Response(JSON.stringify({ entries: [] }), { status: 200 });
+
 describe("the openings met in games", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("lists in the panel behind Add an opening… each met root that has no drill, with its opening and game count", async () => {
     renderHub({
       fetchRepertoireList: async () => listing([scandinavian, alekhine, caroKann, unnamed]),
@@ -2085,7 +1993,7 @@ describe("the openings met in games", () => {
     expect(document.activeElement).toBe(button);
   });
 
-  it("draws the button after the last White card, and none when every root already has a drill", async () => {
+  it("draws the button after the last White card, and keeps it when every root already has a drill", async () => {
     renderHub({ fetchRepertoireList: async () => listing([scandinavian]) });
     const white = await whiteOpenings();
     const button = await within(white).findByRole("button", { name: "Add an opening…" });
@@ -2093,12 +2001,13 @@ describe("the openings met in games", () => {
     expect(follows(italian, button)).toBe(true);
     cleanup();
 
-    const read = vi.fn(async () => listing([caroKann]));
-    renderHub({ fetchRepertoireList: read });
+    renderHub({ fetchRepertoireList: async () => listing([caroKann]) });
     const again = await whiteOpenings();
     await within(again).findByRole("article", { name: "Italian Game" });
-    expect(within(again).queryByRole("button", { name: "Add an opening…" })).toBeNull();
-    expect(within(again).queryByRole("region", { name: "Add an opening" })).toBeNull();
+    expect(within(again).getByRole("button", { name: "Add an opening…" })).toBeTruthy();
+    const panel = await openAddPanel(again);
+    expect(within(panel).getByText("Every opening from your games has a line.")).toBeTruthy();
+    expect(within(panel).queryByRole("list", { name: "Openings met in your games" })).toBeNull();
   });
 
   it("offers Add an opening… in an empty White section, after its sentence", async () => {
@@ -2122,13 +2031,14 @@ describe("the openings met in games", () => {
       .mockRejectedValueOnce(new Error("down"))
       .mockReturnValueOnce(secondCall);
     const fetchProgress = vi.fn(hubProps.fetchProgress);
-    const fetchMotifs = vi.fn(hubProps.fetchMotifs);
+    const fetchThemeStats = vi.fn(hubProps.fetchThemeStats);
+    vi.stubGlobal("fetch", noAddableOpenings);
 
     render(
       <Practice
         server={api(null)}
         fetchProgress={fetchProgress}
-        fetchMotifs={fetchMotifs}
+        fetchThemeStats={fetchThemeStats}
         fetchRepertoireList={fetchRepertoireList}
       />,
     );
@@ -2142,7 +2052,7 @@ describe("the openings met in games", () => {
     expect(screen.getByRole("status").textContent).toBe("Loading your openings.");
     expect(fetchRepertoireList).toHaveBeenCalledTimes(2);
     expect(fetchProgress).toHaveBeenCalledTimes(1);
-    expect(fetchMotifs).toHaveBeenCalledTimes(1);
+    expect(fetchThemeStats).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       resolveSecond(listing([scandinavian]));
@@ -3071,7 +2981,7 @@ describe("the hub's frame", () => {
       openPracticePage("Puzzle themes");
       expect(pageTitle()).toBe("Practice");
       const themes = screen.getByRole("region", { name: "Puzzle themes" });
-      expect(within(themes).getByRole("region", { name: "Puzzles by motif" })).toBeTruthy();
+      expect(within(themes).getByRole("button", { name: /^Healthy mix/ })).toBeTruthy();
       expect(scrolled.mock.contexts).toEqual([themes]);
       expect(currentEntries()).toEqual(["Puzzle themes"]);
       expect(window.localStorage.getItem(PRACTICE_PAGE_STORAGE_KEY)).toBe("puzzle-themes");
@@ -3120,7 +3030,7 @@ describe("the hub's frame", () => {
     },
   );
 
-  it("draws the Overview in order: title, problem cards, tiles, Due cards, Puzzle themes", async () => {
+  it("draws the Overview in order: title, problem cards, tiles, Due cards, Puzzles by weakness, Puzzle themes", async () => {
     const missing = async () => ({
       status: "ok" as const,
       version: "test",
@@ -3143,18 +3053,18 @@ describe("the hub's frame", () => {
     const login = screen.getByRole("alert", { name: "Coach not logged in" });
     const tiles = (await screen.findByText("Day streak")).closest("dl") as HTMLElement;
     const due = screen.getByRole("region", { name: "Due cards" });
+    const weakness = screen.getByRole("region", { name: "Puzzles by weakness" });
     const themes = screen.getByRole("region", { name: "Puzzle themes" });
     expect(within(themes).getByRole("heading", { name: "Puzzle themes" })).toBeTruthy();
-    const motifs = within(themes).getByRole("region", { name: "Puzzles by motif" });
-    const order = [title, engine, login, tiles, due, themes];
+    const order = [title, engine, login, tiles, due, weakness, themes];
     for (const [index, node] of order.slice(1).entries()) {
       expect(follows(order[index] as Element, node)).toBe(true);
     }
-    // The motif card keeps its rows and its start, and offers no size to choose.
-    expect(within(motifs).getByRole("radio", { name: /^Fork,/ })).toBeTruthy();
-    expect(within(motifs).queryByRole("group", { name: "Drill size" })).toBeNull();
-    expect(within(motifs).queryByRole("button", { name: /^(5|10|20)$/ })).toBeNull();
-    expect(within(motifs).getByRole("button", { name: "Start any motif" })).toBeTruthy();
+    // The section offers no size to choose: the healthy mix leads its tiles.
+    const mix = within(themes).getByRole("button", { name: /^Healthy mix/ });
+    expect(follows(within(themes).getByRole("heading", { name: "Puzzle themes" }), mix)).toBe(true);
+    expect(within(themes).queryByRole("group", { name: "Drill size" })).toBeNull();
+    expect(within(themes).queryByRole("button", { name: /^(5|10|20)$/ })).toBeNull();
   });
 
   it.each(UNBUILT)("says %s is not built yet, and nothing else", (name) => {
@@ -3187,7 +3097,6 @@ describe("the hub's frame", () => {
     expect(follows(white, black)).toBe(true);
     expect(screen.queryByRole("region", { name: "Openings" })).toBeNull();
     expect(screen.queryByText("Italian Opening")).toBeNull();
-    expect(screen.queryByRole("region", { name: "Puzzles by motif" })).toBeNull();
   });
 
   it("counts on Openings the repertoire moves due now over both sides, and on no other entry", async () => {

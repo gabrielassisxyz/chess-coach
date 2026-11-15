@@ -81,15 +81,8 @@
   text-align: center;
 }
 
-/* The openings the student's games met that have no drill yet, in the panel that adds one: a name,
- * the line, how many games met it and an Add action. */
-.repertoire-menu__met {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-self: stretch;
-}
-
+/* The rows that add a variation under a card's head: a name, what the choice says of itself and an
+ * Add action. */
 .repertoire-menu__met-list {
   display: flex;
   flex-direction: column;

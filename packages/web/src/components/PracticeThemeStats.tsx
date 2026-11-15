@@ -51,7 +51,7 @@ function subtitleOf(kind: ThemeStatsPageKind, overallRating: number | null): str
   return `Themes where your rating is furthest above your overall ${yardstick}. Up to 8 themes, each with 8 or more played.`;
 }
 
-/** Empty-state guidance shared by Dashboard cards and the Improvement areas / Strengths pages. */
+/** Empty-state guidance shared by Dashboard cards, the Improvement areas / Strengths pages and the Overview weakness card. */
 export function emptyThemeMessageOf(kind: ThemeStatsPageKind, data: ThemeStatsResponse): string {
   if (data.overall.played === 0 || data.themes.length === 0) {
     return "No puzzle played in this period yet.";
@@ -68,6 +68,9 @@ export function emptyThemeMessageOf(kind: ThemeStatsPageKind, data: ThemeStatsRe
   const { name } = themeDisplayOf(closest.theme);
   return `No theme is ranked yet. A theme is ranked once you have played 8 puzzles of it; your most played theme, ${name}, has ${closest.played}.`;
 }
+
+// The name the Overview weakness card imports; same copy as the Dashboard cards use.
+export const emptyMessageOf = emptyThemeMessageOf;
 
 /** Tracks lazy page activation and the selected time window (`7`, `30`, `90`, `all`). */
 export function useActivatedWindow(shown: boolean): {

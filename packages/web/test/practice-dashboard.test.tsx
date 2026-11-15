@@ -165,7 +165,6 @@ function renderPractice(
     <Practice
       server={serverApi(null, { send })}
       fetchProgress={async () => progressOf({ due_now: options.dueNow ?? 4 })}
-      fetchMotifs={async () => []}
       fetchRepertoires={async () => []}
       fetchRepertoireList={async () => ({ repertoires: [], met: [] })}
       fetchHealth={async () => ({
@@ -560,7 +559,8 @@ describe("PracticeDashboard", () => {
   it("defines desktop side-by-side grids and single-column <= 899 px responsive layout cleanly", () => {
     const cssPath = join(__dirname, "..", "src", "styles", "practice-hub.css");
     const css = readFileSync(cssPath, "utf8");
-    const [desktop = "", mobile = ""] = css.split("@media (max-width: 899px)");
+    const [desktop = "", ...rest] = css.split("@media (max-width: 899px)");
+    const mobile = rest.join("@media (max-width: 899px)");
 
     expect(desktop).toContain(
       ".practice-dashboard__tiles {\n  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));",

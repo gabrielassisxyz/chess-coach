@@ -25,6 +25,8 @@ const ColorSchema = z.enum(["white", "black"]);
 export const FoundPositionsQuerySchema = z.object({
   color: ColorSchema.optional(),
   phase: FoundPositionPhaseSchema.optional(),
+  // A full opening name matches it exactly; a value with no colon matches the family instead.
+  opening: z.string().min(1).max(120).optional(),
 });
 export type FoundPositionsQuery = z.infer<typeof FoundPositionsQuerySchema>;
 
@@ -66,9 +68,10 @@ export const FoundPositionViewSchema = z.object({
 });
 export type FoundPositionView = z.infer<typeof FoundPositionViewSchema>;
 
-// `total`, `due`, `new`, `recommended`, `all` and `left_out` follow both filters; `recommended`,
+// `total`, `due`, `new`, `recommended`, `all` and `left_out` follow every filter; `recommended`,
 // `due` and `all` are the lengths of the queues those drills would serve now. `by_phase` and
-// `by_section` follow the colour alone, so the phase filter can show what each choice holds.
+// `by_section` follow the colour and the opening, so the phase filter can show what each choice
+// holds.
 export const FoundPositionCountsSchema = z.object({
   total: z.number().int().nonnegative(),
   due: z.number().int().nonnegative(),

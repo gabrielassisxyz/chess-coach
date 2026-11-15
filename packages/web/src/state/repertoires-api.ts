@@ -1,4 +1,6 @@
 import {
+  type AddableOpening,
+  AddableOpeningsResponseSchema,
   type CoverageReply,
   type CoverageStatus,
   type MetOpening,
@@ -9,6 +11,7 @@ import {
   type RepertoireSummary,
   type RepertoiresResponse,
   RepertoiresResponseSchema,
+  repertoireMovesText,
   repertoireRootText,
 } from "@chess-coach/shared";
 
@@ -187,6 +190,77 @@ export const metLabelOf = (entry: MetOpening): string =>
     : `${entry.opening_name}, ${repertoireRootText(entry.root)}`;
 
 export const metGamesText = (games: number): string => `${games} ${games === 1 ? "game" : "games"}`;
+
+// The openings of the student's games that the panel offers, the most met first. The sort is stable,
+// so the server's order settles a tie.
+export const metToAddMostMetFirst = (
+  met: readonly MetOpening[],
+  unfinished: ReadonlySet<string>,
+): MetOpening[] => metToAdd(met, unfinished).sort((a, b) => b.games - a.games);
+
+// Every opening Black can leave the student's 1.e4 path with, met in a game or not, most played at
+// the student's level first. The server asks the explorer for the shares, so the page reads this
+// when the panel opens and never with the page.
+export type FetchAddableOpenings = () => Promise<AddableOpening[]>;
+
+export const fetchAddableOpeningsFromServer: FetchAddableOpenings = async () => {
+  const response = await fetch("/api/openings/addable");
+  if (!response.ok) throw new Error(`addable openings: ${response.status}`);
+  return AddableOpeningsResponseSchema.parse(await response.json()).entries;
+};
+
+// The openings of one position Black leaves the path from, in the order the server gave them.
+export interface AddableGroup {
+  // The position's line as the book writes it: "1.e4", "1.e4 e5 2.Nf3".
+  path: string;
+  entries: AddableOpening[];
+}
+
+// Grouped by where Black leaves the path, the shorter path first. The group is read off the root
+// itself, so no entry is ever left out of the list for a root of an unexpected length.
+export function addableGroupsOf(entries: readonly AddableOpening[]): AddableGroup[] {
+  const groups = new Map<string, AddableGroup & { plies: number }>();
+  for (const entry of entries) {
+    const path = entry.root.slice(0, -1);
+    const key = path.join(" ");
+    const group = groups.get(key) ?? {
+      path: repertoireRootText(path),
+      plies: path.length,
+      entries: [],
+    };
+    group.entries.push(entry);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => a.plies - b.plies);
+}
+
+// Beside a name: the whole line for Black's first move, and for a later one only that move, since
+// the heading over the group already says the path that leads to it.
+export const addableMovesText = (entry: AddableOpening): string =>
+  entry.root.length <= 2
+    ? repertoireRootText(entry.root)
+    : repertoireMovesText(entry.root.slice(-1), entry.root.length - 1);
+
+// The line is named with the opening so a screen reader tells two rows apart by it.
+export const addableLabelOf = (entry: AddableOpening): string =>
+  `${entry.opening_name}, ${repertoireRootText(entry.root)}`;
+
+export const addableGamesText = (games: number): string => `${metGamesText(games)} of yours`;
+
+// What a search compares: lower case, without the dots of the move numbers and with one space
+// between words, so "1.e4 c5", "e4 c5" and "1e4  C5" read alike.
+const searchableText = (text: string): string =>
+  text.toLowerCase().replaceAll(".", "").replace(/\s+/g, " ").trim();
+
+// A row is kept when the text is in its name or in its moves, written in full or as the row shows
+// them: what the student types is what the row says, or what the book writes.
+export function addableMatches(entry: AddableOpening, query: string): boolean {
+  const wanted = searchableText(query);
+  if (wanted === "") return true;
+  return [entry.opening_name, repertoireRootText(entry.root), addableMovesText(entry)].some(
+    (text) => searchableText(text).includes(wanted),
+  );
+}
 
 // What one variation covers, read from its stored moves when the student opens it.
 export type FetchCoverage = (repertoireId: number) => Promise<RepertoireCoverage>;
