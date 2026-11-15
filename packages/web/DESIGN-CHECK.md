@@ -284,11 +284,12 @@ name, pill and Add on one line with the moves under the name. M1 and M2 still fi
   Stats, sticky beside a page column of at most 1440 px that shows one page at a time, the page
   scrolling as a whole and only the navigation scrolling by itself when it is taller than the
   window. The Overview opens first, with four tiles (Day streak, Puzzle rating, Solved first try,
-  Cards remembered) over a row of the Due cards card (with its Coming up 7-day forecast) and the
+  Cards remembered) over the Due cards card (with its Coming up 7-day forecast) and the
   Puzzles by weakness card, and a Puzzle themes section holding the Healthy mix and a tile for each
   of the 54 themes; Puzzle themes in the navigation shows the Overview scrolled to that section. The Openings page is built as described in the check above,
+  Dashboard summarizes puzzle activity, rating history, Improvement areas and Strengths,
   Improvement areas and Strengths show the ranked puzzle theme tables, From my games lists the
-  positions from the student's games (its own entry below), and the two other pages are a title and
+  positions from the student's games (its own entry below), and the one other page is a title and
   a sentence saying the page is not built yet. The older cards are mounted on their pages unchanged.
 - **The Openings page** keeps the machinery that adds an opening or a variation, and its cells hold
   as they did in the menu it replaced. The panel that Add an opening opens has two tabs: every
@@ -329,6 +330,18 @@ name, pill and Add on one line with the moves under the name. M1 and M2 still fi
   forecast with a `1px solid var(--surface-2)` top border, uses `--accent` on today and
   `--surface-2` on upcoming days, and leaves partial data without alerts when rating history or
   theme stats fail. M1 and M2 still print nothing.
+- **Dashboard** (`Practice` and `Phone` columns) sits inside the Stats group of the Practice hub
+  with `screen__title`, `screen__note`, and the four-window control (`7 days`, `30 days`,
+  `90 days`, `All`, defaulting to `30 days`). Four KPI tiles (`Played`, `Performance rating`,
+  `Solved first try`, `Due cards`) share `.practice-tile` styling (`--surface-1`, `--border`,
+  `--quality-best`/`--quality-blunder` arrows, `--status-ready`/`--status-error` split bar, and
+  accent `Review` action when `due_now > 0`) in a `minmax(180px, 1fr)` / `12px` grid above the
+  `140px` Puzzle rating SVG (`--surface-2` midline, `--accent` polyline) and the two side-by-side
+  `Improvement areas` and `Strengths` cards (`minmax(360px, 1fr)`, `48px` theme rows with `See all`
+  links). Loading (`role="status"`), read failures (`role="alert"` + `Try again` per block), and
+  empty/unranked periods keep card structure and follow Rule 15. Under 900 px all KPI tiles and
+  theme cards stack to one column, link buttons meet `44px`, and no desktop card scrolls inside
+  itself. M1 and M2 print nothing.
 - **From my games** sits in the Train group of the Practice hub, and the Overview draws a panel of
   the same positions beside the Due cards card. The page is a `screen__title`, a `screen__note` and
   a row of controls (a phase control and a colour control, each a bordered row of `32px` toggles

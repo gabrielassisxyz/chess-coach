@@ -232,6 +232,7 @@ function Hub({
         createBoard,
       }}
       fetchRepertoireList={fetchRepertoireList}
+      fetchRatingHistory={fetchRatingHistory}
       fetchThemeStats={fetchThemeStats}
     />
   );
