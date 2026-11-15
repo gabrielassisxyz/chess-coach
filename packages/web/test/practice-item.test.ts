@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { PracticeColumn } from "../src/components/PracticeColumn.js";
 import { trainingView } from "../src/state/practice.js";
 import {
+  contextLineOf,
   headingOf,
   localBoard,
   moveRowsOf,
@@ -75,6 +76,12 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
   };
 }
 
+// The same item in a queue drawn around the student's rating, which has no length.
+function unbounded(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
+  const { queue_length: _length, ...item } = puzzle().item;
+  return puzzle({ item: item as TrainingActivity["item"], ...overrides });
+}
+
 describe("headingOf", () => {
   it("counts the item and names only what the student already knows", () => {
     expect(headingOf(puzzle(), null)).toEqual({
@@ -96,6 +103,16 @@ describe("headingOf", () => {
     expect(headingOf(puzzle({ mode: "openings", orientation: "black" }), null).tag).toBe(
       "As Black",
     );
+  });
+
+  it("counts the item without a total when the queue has no length", () => {
+    expect(headingOf(unbounded(), null)).toEqual({
+      title: "Puzzle 3",
+      tag: null,
+      openingName: null,
+    });
+    expect(headingOf(unbounded({ status: "solved" }), "fork").title).toBe("Puzzle 3");
+    expect(contextLineOf(unbounded(), "fork")).toBe("Puzzle 3 \u00b7 Fork \u00b7 you play White");
   });
 
   it("shows an opening drill's name when present and no name when null", () => {
@@ -130,6 +147,45 @@ describe("headingOf", () => {
       'class="practice-item__opening-name">Italian Game</p>',
     );
     expect(renderColumn(null)).not.toContain("practice-item__opening-name");
+  });
+
+  it("shows an Italian Opening run's opening name in the Practice column", () => {
+    const training = puzzle({
+      mode: "puzzles",
+      run_motif: "opening-italian",
+      item: {
+        ...puzzle().item,
+        opening_name: "Italian Game: Giuoco Piano",
+      } as TrainingActivity["item"],
+    });
+    expect(headingOf(training, "opening-italian")).toEqual({
+      title: "Puzzle 3 of 10",
+      tag: "Italian Opening",
+      openingName: "Italian Game: Giuoco Piano",
+    });
+    const html = renderToStaticMarkup(
+      createElement(PracticeColumn, {
+        training,
+        view: trainingView(training),
+        actions: {
+          showSolution() {},
+          rate() {},
+          next() {},
+          end() {},
+          hint() {},
+          toggleScratch() {},
+          takeBack() {},
+          resetLine() {},
+        },
+        card: stateCardOf(training, trainingView(training), null, 0),
+        elapsedMs: 0,
+        scratchLine: null,
+        shownPly: 0,
+        engineStrip: null,
+      }),
+    );
+    expect(html).toContain("Italian Opening");
+    expect(html).toContain('class="practice-item__opening-name">Italian Game: Giuoco Piano</p>');
   });
 });
 
@@ -281,6 +337,30 @@ describe("ratings and progress", () => {
       "pending",
       "pending",
     ]);
+  });
+});
+
+describe("a queue without a length", () => {
+  it("draws the outcomes the server sent, with no segment for an item to come", () => {
+    const served = unbounded({ queue_outcomes: ["solved", "failed", "current"] });
+    expect(outcomesOf(served)).toEqual(["solved", "failed", "current"]);
+  });
+
+  it("draws only the item on the board when the server sent no outcomes", () => {
+    const bare = unbounded();
+    bare.queue_outcomes = undefined;
+    expect(outcomesOf(bare)).toEqual(["current"]);
+  });
+
+  it("never reads Finish, wherever the item stands", () => {
+    for (const position of [1, 10, 11, 40]) {
+      const training = unbounded({ status: "solved" });
+      if (training.item.kind === "puzzle") training.item.position_in_queue = position;
+      expect(trainingView(training).advanceLabel).toBe("Next");
+    }
+    const last = puzzle({ status: "solved" });
+    if (last.item.kind === "puzzle") last.item.position_in_queue = 10;
+    expect(trainingView(last).advanceLabel).toBe("Finish");
   });
 });
 

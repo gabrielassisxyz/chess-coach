@@ -34,12 +34,12 @@ import {
   openingNamesOfFamily,
   type PuzzleFilter,
   type PuzzleSummary,
-  type RatingSampleFilter,
   recordPuzzleAttempt,
 } from "../db/puzzles.js";
 import { getCard, insertCard } from "../db/srs.js";
 import {
   amendPendingNotification,
+  appendTrainingRunItems,
   closeTrainingItem,
   type ExplorationKind,
   endOpenTrainingRuns,
@@ -82,8 +82,9 @@ export type DeskPort = Pick<
 >;
 
 export const DUE_QUEUE_SIZE = 20;
-export const DEFAULT_DRILL_SIZE = 10;
-export type DrillSize = 5 | 10 | 20;
+// The puzzles drawn at a time: a queue without an end gets this many when it starts and again each
+// time the student reaches its last item, and a drill over a fixed set holds this many.
+export const PUZZLE_BATCH_SIZE = 10;
 
 export interface TrainingDeps {
   db: Database;
@@ -125,8 +126,6 @@ export interface TrainingInput {
    * without it the drill serves every position of the colour. Other modes ignore it.
    */
   opening?: string | undefined;
-  /** How many positions a puzzle or opening drill holds; a review queue ignores it. */
-  size?: DrillSize | undefined;
   /** Which positions from the student's games a found drill serves; the other modes ignore it. */
   scope?: RepertoireScope | undefined;
   /** A found drill narrowed to one phase, or to one listed position by its id. */
@@ -344,6 +343,49 @@ function hasStoredMotifOrTheme(db: Database, motif: string): boolean {
   );
 }
 
+const puzzleEntryOf = (puzzle: PuzzleSummary): QueueEntry => ({
+  kind: "puzzle",
+  id: puzzle.id,
+  motif: puzzle.motif,
+  difficulty: puzzle.difficulty,
+});
+
+// What a start draws: the first items, and whether the queue goes on past them. A queue sampled
+// around the student's rating has no end of its own; every other queue is a set fixed at the start.
+interface DrawnQueue {
+  entries: QueueEntry[];
+  endless: boolean;
+}
+
+// A fixed set holds one batch: the opening drills, and a motif no theme row names.
+function drawFixedSet(deps: TrainingDeps, filter: PuzzleFilter): DrawnQueue {
+  const listing = listPuzzles(deps.db, { ...filter, limit: PUZZLE_BATCH_SIZE }, deps.shuffleRandom);
+  return { entries: listing.puzzles.map(puzzleEntryOf), endless: false };
+}
+
+// One batch of a queue sampled around the student's rating, of one theme or of none. The sampler
+// drops duplicates inside a call only, and a puzzle the run already served has been answered, so
+// it is returned last, and again once a window holds too few new ones. Asking for as many extra
+// puzzles as the run holds leaves a whole batch after those are dropped; the sampler's own bound
+// per call (50) is where that stops being true, and a batch that then comes back short or empty is
+// the end of the run.
+function drawRatedBatch(
+  deps: TrainingDeps,
+  motif: string | undefined,
+  taken: ReadonlySet<string>,
+): QueueEntry[] {
+  const theme = motif && (THEME_OF_MOTIF[motif] ?? motif);
+  const filter = {
+    theme,
+    ratingAround: currentPuzzleRating(deps.db),
+    limit: PUZZLE_BATCH_SIZE + taken.size,
+  };
+  return listPuzzles(deps.db, filter, deps.shuffleRandom)
+    .puzzles.filter((puzzle) => !taken.has(puzzle.id))
+    .slice(0, PUZZLE_BATCH_SIZE)
+    .map(puzzleEntryOf);
+}
+
 export class TrainingRun implements PracticeRunPort {
   private position = 0;
   private solved = 0;
@@ -358,7 +400,8 @@ export class TrainingRun implements PracticeRunPort {
 
   /**
    * `runId` is the `training_runs` row this queue keeps current; a single item the coach served
-   * has none and is never persisted.
+   * has none and is never persisted. An `endless` queue has no length: it draws its next batch when
+   * the student asks for the item after the last one.
    */
   private constructor(
     private readonly deps: TrainingDeps,
@@ -366,6 +409,7 @@ export class TrainingRun implements PracticeRunPort {
     private readonly queue: QueueEntry[],
     readonly runId: number | null,
     private readonly runMotif: string | null = null,
+    private readonly endless: boolean = false,
   ) {
     this.clock = deps.clock ?? systemClock;
     this.served = this.serve(0);
@@ -374,7 +418,7 @@ export class TrainingRun implements PracticeRunPort {
   // A queue that would hold nothing is refused, so the board never shows an item that is not there.
   // A new queue ends any run still open as replaced.
   static begin(deps: TrainingDeps, input: TrainingInput): TrainingRun {
-    const queue = TrainingRun.materialize(deps, input);
+    const { entries: queue, endless } = TrainingRun.materialize(deps, input);
     if (queue.length === 0) {
       const what = input.mode === "srs" ? "no review card is due" : "no puzzle matches";
       throw new ActivityError("empty_queue", what);
@@ -396,7 +440,7 @@ export class TrainingRun implements PracticeRunPort {
         startedAt,
       });
       const runMotif = input.mode === "puzzles" ? (input.motif ?? null) : null;
-      const run = new TrainingRun(deps, input.mode, queue, runId, runMotif);
+      const run = new TrainingRun(deps, input.mode, queue, runId, runMotif, endless);
       run.save();
       return run;
     })();
@@ -421,44 +465,30 @@ export class TrainingRun implements PracticeRunPort {
     return new TrainingRun(deps, "puzzles", [entry], null);
   }
 
-  private static materialize(deps: TrainingDeps, input: TrainingInput): QueueEntry[] {
-    if (input.mode === "found") return foundDrillQueueOf(deps, input);
+  private static materialize(deps: TrainingDeps, input: TrainingInput): DrawnQueue {
+    if (input.mode === "found") return { entries: foundDrillQueueOf(deps, input), endless: false };
     if (input.mode === "srs") {
-      return deps.desk
-        .listDueCards(DUE_QUEUE_SIZE)
-        .map((card) => ({ kind: "card", cardId: card.id }));
+      const due = deps.desk.listDueCards(DUE_QUEUE_SIZE);
+      return { entries: due.map((card) => ({ kind: "card", cardId: card.id })), endless: false };
     }
-    if (input.mode === "openings" && !input.color) {
-      throw new ActivityError("empty_queue", "choose White or Black for the opening drill");
-    }
-    const limit = input.size ?? DEFAULT_DRILL_SIZE;
-    const random = deps.shuffleRandom ?? Math.random;
-    const listed = (filter: PuzzleFilter | RatingSampleFilter): PuzzleSummary[] =>
-      listPuzzles(deps.db, filter, random).puzzles;
-    let puzzles: PuzzleSummary[];
     if (input.mode === "openings") {
-      const openingNames = openingNamesOfStart(deps.db, input);
-      puzzles = listed({ motif: `opening-${input.color}`, openingNames, limit });
-    } else {
-      if (input.motif !== undefined && !isFixedPracticeMotif(input.motif)) {
-        if (!hasStoredMotifOrTheme(deps.db, input.motif)) {
-          throw new ActivityError("empty_queue", "no puzzle matches");
-        }
+      if (!input.color) {
+        throw new ActivityError("empty_queue", "choose White or Black for the opening drill");
       }
-      const ratingAround = currentPuzzleRating(deps.db);
-      const theme = input.motif && (THEME_OF_MOTIF[input.motif] ?? input.motif);
-      puzzles = listed({ theme, ratingAround, limit });
-      // A motif no theme row names yet, such as the library's unrated ones, stays reachable.
-      if (puzzles.length === 0 && input.motif !== undefined) {
-        puzzles = listed({ motif: input.motif, limit });
+      const openingNames = openingNamesOfStart(deps.db, input);
+      return drawFixedSet(deps, { motif: `opening-${input.color}`, openingNames });
+    }
+    if (input.motif !== undefined && !isFixedPracticeMotif(input.motif)) {
+      if (!hasStoredMotifOrTheme(deps.db, input.motif)) {
+        throw new ActivityError("empty_queue", "no puzzle matches");
       }
     }
-    return puzzles.map((p) => ({
-      kind: "puzzle",
-      id: p.id,
-      motif: p.motif,
-      difficulty: p.difficulty,
-    }));
+    const rated = drawRatedBatch(deps, input.motif, new Set());
+    // A motif no theme row names yet, such as the library's unrated ones, stays reachable as a set.
+    if (rated.length === 0 && input.motif !== undefined) {
+      return drawFixedSet(deps, { motif: input.motif });
+    }
+    return { entries: rated, endless: true };
   }
 
   state(activityId: number): TrainingActivity {
@@ -499,7 +529,7 @@ export class TrainingRun implements PracticeRunPort {
       wrong_tries: s.tries
         .filter((attempt) => !attempt.correct)
         .map(({ ply, uci, san }): WrongTry => ({ ply, uci, san })),
-      queue_outcomes: this.queue.map(
+      queue_outcomes: this.itemsShown().map(
         (_entry, index): QueueOutcome =>
           this.outcomes[index] ?? (index === this.position ? "current" : "pending"),
       ),
@@ -507,6 +537,12 @@ export class TrainingRun implements PracticeRunPort {
       rating_change: s.ratingChange,
       coach_comment: s.coachAsk === "none" ? null : s.coachAsk,
     };
+  }
+
+  // The items the progress draws: a queue with a length shows all of it, one without shows only
+  // what has been served, so it never draws an item that is not there yet.
+  private itemsShown(): QueueEntry[] {
+    return this.endless ? this.queue.slice(0, this.position + 1) : this.queue;
   }
 
   private playedLine(s: Served): PlayedMove[] {
@@ -660,7 +696,8 @@ export class TrainingRun implements PracticeRunPort {
     });
   }
 
-  // The last item's next ends the queue: the summary is written once, here.
+  // The last item's next ends a queue with a length: the summary is written once, here. A queue
+  // without one draws its next batch there instead, and ends only when nothing new is left to draw.
   next(): void {
     const s = this.served;
     if (this.summary !== null) {
@@ -674,13 +711,27 @@ export class TrainingRun implements PracticeRunPort {
       throw new ActivityError("item_unfinished", "answer this item before moving on");
     }
     this.transition(() => {
-      if (this.position === this.queue.length - 1) {
+      if (this.position === this.queue.length - 1 && !this.refill()) {
         this.finish();
         return;
       }
       this.position += 1;
       this.served = this.serve(this.position);
     });
+  }
+
+  // Appends the next batch to the queue and to the run's stored items; false when there is none.
+  private refill(): boolean {
+    if (!this.endless) return false;
+    const taken = new Set(
+      this.queue.flatMap((entry) => (entry.kind === "puzzle" ? [entry.id] : [])),
+    );
+    const added = drawRatedBatch(this.deps, this.runMotif ?? undefined, taken);
+    if (added.length === 0) return false;
+    if (this.runId !== null)
+      appendTrainingRunItems(this.deps.db, this.runId, added.map(storedItemOf));
+    this.queue.push(...added);
+    return true;
   }
 
   /** The student left the queue; a finished queue keeps the reason it already has. */
@@ -1020,7 +1071,8 @@ export class TrainingRun implements PracticeRunPort {
 
   private serve(index: number): Served {
     const entry = this.queue[index] as QueueEntry;
-    const position = { position_in_queue: index + 1, queue_length: this.queue.length };
+    const position = { position_in_queue: index + 1 };
+    const length = { queue_length: this.queue.length };
     const servedAt = this.clock.now();
     const ledger = (
       item: Omit<Parameters<typeof openTrainingItem>[1], "servedAt">,
@@ -1057,6 +1109,7 @@ export class TrainingRun implements PracticeRunPort {
           student_color: card.studentColor,
           rating_preview: this.deps.desk.previewRatings(card.cardId),
           ...position,
+          ...length,
         },
         status: "prompt",
         fen: card.promptFen,
@@ -1089,6 +1142,7 @@ export class TrainingRun implements PracticeRunPort {
         rating: puzzle.rating,
         opening_name: puzzle.openingName,
         ...position,
+        ...(this.endless ? {} : length),
       },
       status: "prompt",
       fen: puzzle.fen,

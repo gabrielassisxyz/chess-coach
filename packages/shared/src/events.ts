@@ -315,15 +315,16 @@ export const UndoCommandSchema = z.object({
 // no name; without one it drills every position of the colour. The other modes ignore `opening`.
 // A drill of the positions from the student's games (`found`) cannot start without a scope, and
 // `color`, `phase` and `position`, the id the From my games list gives, narrow it; the other modes
-// ignore `phase` and `position`.
-const StartTrainingFieldsSchema = z.object({
+// ignore `phase` and `position`. A queue has no size to choose: the object is strict so that a
+// client still sending the retired `size` is refused instead of being served a queue it did not ask
+// for.
+const StartTrainingFieldsSchema = z.strictObject({
   type: z.literal("start_training"),
   command_id: commandId,
   mode: TrainingModeSchema,
   motif: z.string().min(1).max(64).optional(),
   color: z.enum(["white", "black"]).optional(),
   opening: z.string().min(1).max(MAX_OPENING_FAMILY_LENGTH).optional(),
-  size: z.union([z.literal(5), z.literal(10), z.literal(20)]).optional(),
   repertoire_id: z.number().int().positive().optional(),
   scope: RepertoireScopeSchema.optional(),
   level: RepertoireLevelSchema.optional(),

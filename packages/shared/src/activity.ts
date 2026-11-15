@@ -80,6 +80,13 @@ const queuePosition = {
   queue_length: z.number().int().positive(),
 };
 
+// A puzzle queue drawn around the student's rating has no length: it is topped up when the student
+// reaches its last item, so its items carry the position alone.
+const openQueuePosition = {
+  position_in_queue: z.number().int().positive(),
+  queue_length: z.number().int().positive().optional(),
+};
+
 // Hours until the card is due again, for each quality the student could give it.
 export const RatingPreviewSchema = z.object({
   "0": z.number(),
@@ -113,7 +120,7 @@ export const PuzzleItemSchema = z.object({
   reply_uci: z.string().nullable(),
   rating: z.number().int().nullable().optional(),
   opening_name: z.string().nullable().optional(),
-  ...queuePosition,
+  ...openQueuePosition,
 });
 
 // One pass over a repertoire line: `fen` is the position it starts from, move 1. The queue
@@ -267,7 +274,8 @@ export const TrainingActivitySchema = z.object({
   hint_square: SquareSchema.nullable(),
   summary: TrainingSummarySchema.nullable(),
   // The line played so far and the wrong tries beside it, so the move list needs no replay of
-  // the solution on the client; `queue_outcomes` has one entry per queue position.
+  // the solution on the client; `queue_outcomes` has one entry per queue position, or per item
+  // served so far in a queue that has no length.
   // `student_rating` is the student's puzzle rating and `rating_change` how this item moved it,
   // set once a rated puzzle ended. The server always sends these; a fixture need not carry them.
   moves: z.array(PlayedMoveSchema).optional(),

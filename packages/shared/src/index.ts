@@ -18,4 +18,5 @@ export * from "./openings.js";
 export * from "./openings-played.js";
 export * from "./progress.js";
 export * from "./puzzle-rating.js";
+export * from "./puzzle-themes.js";
 export * from "./repertoires.js";

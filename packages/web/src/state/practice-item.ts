@@ -38,7 +38,8 @@ export interface ItemHeading {
 // opening drill, or, on an Any-motif run, the pattern once the item has ended.
 export function headingOf(training: TrainingActivity, runMotif: string | null): ItemHeading {
   const { item, mode } = training;
-  const title = `${KIND_WORD[mode]} ${item.position_in_queue} of ${item.queue_length}`;
+  const total = item.queue_length === undefined ? "" : ` of ${item.queue_length}`;
+  const title = `${KIND_WORD[mode]} ${item.position_in_queue}${total}`;
   if (item.kind !== "puzzle") return { title, tag: null, openingName: null };
   const openingName = item.opening_name ?? null;
   if (mode === "openings") {
@@ -93,9 +94,12 @@ export const coachCommentOffered = (training: TrainingActivity): boolean =>
 export const movesOf = (training: TrainingActivity): PlayedMove[] => training.moves ?? [];
 export const wrongTriesOf = (training: TrainingActivity): WrongTry[] => training.wrong_tries ?? [];
 
+// One segment per item of the queue. A queue without a length has no items to come, so with no
+// outcomes from the server it draws the item on the board alone and never a pending one.
 export function outcomesOf(training: TrainingActivity): QueueOutcome[] {
   if (training.queue_outcomes) return training.queue_outcomes;
   const { position_in_queue: at, queue_length: length } = training.item;
+  if (length === undefined) return ["current"];
   return Array.from({ length }, (_, index) => (index + 1 === at ? "current" : "pending"));
 }
 

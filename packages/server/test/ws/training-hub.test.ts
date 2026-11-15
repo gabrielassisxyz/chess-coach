@@ -95,8 +95,7 @@ describe("training over the socket", () => {
     const ok = [
       { type: "start_training", mode: "puzzles", motif: "fork" },
       { type: "start_training", mode: "srs" },
-      { type: "start_training", mode: "puzzles", size: 5 },
-      { type: "start_training", mode: "openings", color: "white", size: 20 },
+      { type: "start_training", mode: "puzzles" },
       { type: "start_training", mode: "openings", color: "white", opening: "Italian Game" },
       { type: "rate_card", exposure_id: "x", quality: 5 },
       { type: "next_training_item" },
@@ -116,8 +115,12 @@ describe("training over the socket", () => {
     }
     const bad = [
       { type: "start_training", mode: "nope" },
+      { type: "start_training", mode: "puzzles", size: 5 },
+      { type: "start_training", mode: "puzzles", motif: "fork", size: 10 },
+      { type: "start_training", mode: "openings", color: "white", size: 20 },
       { type: "start_training", mode: "puzzles", size: 7 },
       { type: "start_training", mode: "puzzles", size: "5" },
+      { type: "start_training", mode: "puzzles", sizes: 10 },
       { type: "start_training", mode: "openings", color: "white", opening: "" },
       { type: "start_training", mode: "openings", color: "white", opening: "x".repeat(101) },
       { type: "start_training", mode: "openings", color: "white", opening: 7 },
@@ -201,27 +204,84 @@ describe("training over the socket", () => {
     socket.close();
   });
 
-  it("routes size to the queue and refuses an unlisted one with invalid_command", async () => {
+  it("refuses a start that carries a size with invalid_command and serves one that does not", async () => {
     const server = await start();
     const { socket, next } = await connect(server);
     await next("bootstrap");
-    socket.send(
-      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", size: 7 }),
-    );
-    expect(await next("error")).toMatchObject({ code: "invalid_command" });
+    for (const [commandId, size] of [
+      ["c1", 5],
+      ["c2", 10],
+      ["c3", 7],
+    ] as const) {
+      socket.send(
+        JSON.stringify({
+          type: "start_training",
+          command_id: commandId,
+          mode: "puzzles",
+          motif: "drill",
+          size,
+        }),
+      );
+      expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: commandId });
+    }
     socket.send(
       JSON.stringify({
         type: "start_training",
-        command_id: "c2",
+        command_id: "c4",
         mode: "puzzles",
         motif: "drill",
-        size: 5,
       }),
     );
     expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
       status: "prompt",
-      item: { queue_length: 5 },
+      item: { queue_length: 10 },
     });
+    socket.close();
+  });
+
+  it("serves a puzzle queue with no length and adds puzzles past the tenth", async () => {
+    const db = seededDatabase();
+    for (let i = 0; i < 12; i++) {
+      db.prepare(
+        `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation, difficulty_rating)
+         VALUES (?, 'test', 'tactics', 'easy', ?, '["a1a8"]', '["Ra8#"]', 'why', 1200)`,
+      ).run(`rated${String(i).padStart(2, "0")}`, BACK_RANK);
+    }
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles" }));
+    let state = ServerEventSchema.parse(await next("training"));
+    if (state.type !== "training") throw new Error("no training state");
+    expect(state.item).toMatchObject({ position_in_queue: 1 });
+    expect(state.item).not.toHaveProperty("queue_length");
+    for (let position = 1; position <= 10; position++) {
+      socket.send(
+        JSON.stringify({
+          type: "try_move",
+          command_id: `t${position}`,
+          uci: "a1a8",
+          activity_id: state.activity_id,
+        }),
+      );
+      await next("training");
+      socket.send(
+        JSON.stringify({
+          type: "next_training_item",
+          command_id: `n${position}`,
+          activity_id: state.activity_id,
+        }),
+      );
+      const advanced = ServerEventSchema.parse(await next("training"));
+      if (advanced.type !== "training") throw new Error("no training state");
+      state = advanced;
+    }
+    expect(state).toMatchObject({
+      status: "prompt",
+      summary: null,
+      item: { position_in_queue: 11 },
+    });
+    expect(state.item).not.toHaveProperty("queue_length");
     socket.close();
   });
 
@@ -247,12 +307,14 @@ describe("training over the socket", () => {
         motif: "mateIn2",
       }),
     );
-    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+    const started = ServerEventSchema.parse(await next("training"));
+    expect(started).toMatchObject({
       type: "training",
       mode: "puzzles",
       status: "prompt",
-      item: { kind: "puzzle", puzzle_id: "lichess-db:m2", motif: "tactics", queue_length: 1 },
+      item: { kind: "puzzle", puzzle_id: "lichess-db:m2", motif: "tactics" },
     });
+    expect(started).not.toHaveProperty("item.queue_length");
     expect(ServerEventSchema.parse(await next("activity"))).toMatchObject({
       type: "activity",
       state: {
@@ -459,7 +521,6 @@ describe("a practice run that leaves the board, over the socket", () => {
       command_id: "c1",
       mode: "puzzles",
       motif: "drill",
-      size: 5,
     });
     const served = ServerEventSchema.parse(await first.next("activity"));
     if (served.type !== "activity" || served.state?.kind !== "training") throw new Error("no item");

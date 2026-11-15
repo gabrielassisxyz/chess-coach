@@ -100,7 +100,6 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
       cursor: 0,
       reply_uci: null,
       position_in_queue: 2,
-      queue_length: 10,
     },
     status: "prompt",
     served_at: "2026-03-01T00:00:00.000Z",
@@ -348,18 +347,17 @@ describe("the hub", () => {
     expect(within(card).queryByRole("radio", { name: /italian/i })).toBeNull();
   });
 
-  it("starts the chosen motif at the chosen size", async () => {
+  it("starts the chosen motif with no size to choose or to send", async () => {
     const server = api(null);
     render(<Practice server={server} {...hubProps} />);
     await screen.findByRole("radio", { name: /fork/i });
+    expect(screen.queryByRole("group", { name: "Drill size" })).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: /fork/i }));
-    fireEvent.click(screen.getByRole("button", { name: "20" }));
     fireEvent.click(screen.getByRole("button", { name: "Start Fork" }));
     expect(server.send).toHaveBeenCalledWith({
       type: "start_training",
       mode: "puzzles",
       motif: "fork",
-      size: 20,
     });
   });
 
@@ -381,7 +379,6 @@ describe("the hub", () => {
       type: "start_training",
       mode: "puzzles",
       motif: "opening-italian",
-      size: 10,
     });
   });
 
@@ -394,11 +391,11 @@ describe("the hub", () => {
     expect(within(card).getByText("Generate the Italian drill first")).toBeTruthy();
   });
 
-  it("starts the due-card review with the default size", async () => {
+  it("starts the due-card review with no size", async () => {
     const server = api(null);
     render(<Practice server={server} {...hubProps} />);
     fireEvent.click(await screen.findByRole("button", { name: "Review 4 cards" }));
-    expect(server.send).toHaveBeenCalledWith({ type: "start_training", mode: "srs", size: 10 });
+    expect(server.send).toHaveBeenCalledWith({ type: "start_training", mode: "srs" });
   });
 
   it("says the student is caught up, with the next batch, when nothing is due", async () => {
@@ -612,10 +609,17 @@ describe("a puzzle on the board", () => {
       const { unmount } = render(
         <Practice server={api(puzzle({ status }))} createBoard={spyBoard} fetchMotifs={noMotifs} />,
       );
-      expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
       expect(screen.queryByRole("group", { name: "Rate your recall" })).toBeNull();
       unmount();
     }
+  });
+
+  it("heads an item of a queue with a length with its total", () => {
+    const fixed = puzzle();
+    if (fixed.item.kind === "puzzle") fixed.item.queue_length = 10;
+    render(<Practice server={api(fixed)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
   });
 
   it("hides the motif for an Any-motif run while open and names it after the item ends", () => {
@@ -623,14 +627,14 @@ describe("a puzzle on the board", () => {
     const { unmount } = render(
       <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
     );
-    const heading = screen.getByRole("heading", { name: "Puzzle 2 of 10" });
+    const heading = screen.getByRole("heading", { name: "Puzzle 2" });
     expect(heading.textContent).not.toContain("fork");
     expect(heading.textContent).not.toContain("Fork");
     expect(screen.queryByText("Fork")).toBeNull();
     unmount();
     const ended = puzzle({ status: "solved" });
     render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
     expect(screen.getByText("Fork")).toBeTruthy();
   });
 
@@ -639,12 +643,12 @@ describe("a puzzle on the board", () => {
     const { unmount } = render(
       <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
     );
-    expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
     expect(screen.getByText("Fork")).toBeTruthy();
     unmount();
     const ended = puzzle({ status: "solved", run_motif: "fork" });
     render(<Practice server={api(ended)} createBoard={spyBoard} fetchMotifs={noMotifs} />);
-    expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
     expect(screen.getAllByText("Fork")).toHaveLength(1);
   });
 
@@ -653,7 +657,7 @@ describe("a puzzle on the board", () => {
     const { unmount } = render(
       <Practice server={api(open)} createBoard={spyBoard} fetchMotifs={noMotifs} />,
     );
-    expect(screen.getByRole("heading", { name: "Puzzle 2 of 10" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Puzzle 2" })).toBeTruthy();
     expect(screen.getByText("Italian Opening")).toBeTruthy();
     unmount();
     const ended = puzzle({ status: "solved", run_motif: "opening-italian" });
@@ -693,7 +697,10 @@ describe("a puzzle on the board", () => {
 describe("the end of the queue", () => {
   it("offers Finish training on the last item and shows the summary afterwards", () => {
     const last = puzzle({ status: "solved" });
-    if (last.item.kind === "puzzle") last.item.position_in_queue = 10;
+    if (last.item.kind === "puzzle") {
+      last.item.position_in_queue = 10;
+      last.item.queue_length = 10;
+    }
     const server = api(last);
     const { rerender } = render(
       <Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />,
@@ -708,6 +715,42 @@ describe("the end of the queue", () => {
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(ended.send).toHaveBeenCalledWith({ type: "end_training", activity_id: 4 });
   });
+
+  it("never offers Finish training on a queue without a length, at any position", () => {
+    for (const position of [10, 11, 25]) {
+      const answered = puzzle({ status: "solved" });
+      if (answered.item.kind === "puzzle") answered.item.position_in_queue = position;
+      const server = api(answered);
+      const { unmount } = render(
+        <Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />,
+      );
+      expect(screen.queryByRole("button", { name: "Finish training" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Continue training" }));
+      expect(server.send).toHaveBeenCalledWith({ type: "next_training_item", activity_id: 4 });
+      unmount();
+    }
+  });
+
+  it("draws one segment per item served, none pending, and names the place without a total", () => {
+    const served = puzzle({ queue_outcomes: ["solved", "failed", "current"] });
+    if (served.item.kind === "puzzle") served.item.position_in_queue = 3;
+    render(<Practice server={api(served)} fetchMotifs={noMotifs} createBoard={spyBoard} />);
+    const bar = screen.getByRole("list", { name: "Session progress: 1 solved, 1 missed, item 3" });
+    const outcomes = within(bar)
+      .getAllByRole("listitem")
+      .map((segment) => segment.getAttribute("data-outcome"));
+    expect(outcomes).toEqual(["solved", "failed", "current"]);
+  });
+
+  it("keeps a segment pending, and the total in words, on a queue with a length", () => {
+    const fixed = puzzle({ queue_outcomes: ["solved", "current", "pending"] });
+    if (fixed.item.kind === "puzzle") fixed.item.queue_length = 3;
+    render(<Practice server={api(fixed)} fetchMotifs={noMotifs} createBoard={spyBoard} />);
+    const bar = screen.getByRole("list", {
+      name: "Session progress: 1 solved, 0 missed, item 2 of 3",
+    });
+    expect(within(bar).getAllByRole("listitem")).toHaveLength(3);
+  });
 });
 
 const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
@@ -716,6 +759,7 @@ const AFTER_NC6 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 
 const AFTER_BC4 = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3";
 const AFTER_BC5 = "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
 const AFTER_D4 = "r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3";
+const AFTER_BB5 = "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3";
 
 const playedE4E5: NonNullable<TrainingActivity["moves"]> = [
   { ply: 0, uci: "e2e4", san: "e4", by: "student" },
@@ -1080,8 +1124,8 @@ describe("starting a session from the hub", () => {
   }
 
   it.each([
-    ["Review 4 cards", "Overview", { type: "start_training", mode: "srs", size: 10 }],
-    ["Start any motif", "Overview", { type: "start_training", mode: "puzzles", size: 10 }],
+    ["Review 4 cards", "Overview", { type: "start_training", mode: "srs" }],
+    ["Start any motif", "Overview", { type: "start_training", mode: "puzzles" }],
     [
       "Recommended 10",
       "Openings",
@@ -1095,6 +1139,7 @@ describe("starting a session from the hub", () => {
     // The socket stamps each frame with a command id of its own.
     expect(socket.sent).toHaveLength(1);
     expect(socket.sent[0]).toMatchObject(command);
+    expect(socket.sent[0]).not.toHaveProperty("size");
   });
 });
 
@@ -1167,6 +1212,7 @@ describe("what the hub no longer carries", () => {
     ["the stored tally of the last session", /last-?session/i],
     ["the card that offered a paused run", /resumeLabelOf|ResumeCard|resume-actions/],
     ["the three-column grid the hub was before its pages", /practice__(hub|chooser)\b/],
+    ["the choice of a drill size", /DRILL_SIZES|DrillSize|practice__sizes?\b|Drill size/],
   ])("leaves %s out of every source file", (_what, pattern) => {
     const offenders = sourceFiles.filter((file) =>
       pattern.test(readFileSync(join(sourceDir, file), "utf8")),
@@ -1186,6 +1232,15 @@ describe("ending a session", () => {
     expect(server.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "end_training" }));
     expect(screen.getByRole("heading", { name: "Card 1 of 3" })).toBeTruthy();
 
+    fireEvent.click(screen.getByRole("button", { name: "End" }));
+    const confirm = screen.getByRole("dialog", { name: "End training" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "End" }));
+    expect(server.send).toHaveBeenCalledWith({ type: "end_training", activity_id: 4 });
+  });
+
+  it("ends a session of a queue without a length the same way", () => {
+    const server = api(puzzle());
+    render(<Practice server={server} fetchMotifs={noMotifs} createBoard={spyBoard} />);
     fireEvent.click(screen.getByRole("button", { name: "End" }));
     const confirm = screen.getByRole("dialog", { name: "End training" });
     fireEvent.click(within(confirm).getByRole("button", { name: "End" }));
@@ -1355,6 +1410,32 @@ describe("explore mode", () => {
     dropOnPracticeBoard("e2", "e4");
     expect(server.send).not.toHaveBeenCalled();
     expect(screen.getByText("Nf3 Nc6 d4")).toBeTruthy();
+  });
+
+  it("checks a drop at a stepped-back point of an ended line against that point", () => {
+    boards.length = 0;
+    const server = api(puzzleAfterE5({ status: "solved", input_enabled: false, legal_moves: [] }));
+    render(<Practice server={server} createBoard={spyBoard} fetchMotifs={noMotifs} />);
+    fireEvent.click(stepButton("Explore"));
+    for (const [from, to] of [
+      ["g1", "f3"],
+      ["b8", "c6"],
+      ["f1", "c4"],
+      ["f8", "c5"],
+    ] as const) {
+      dropOnPracticeBoard(from, to);
+    }
+    expect(screen.getByText("Nf3 Nc6 Bc4 Bc5")).toBeTruthy();
+    fireEvent.click(stepButton("Previous move"));
+    fireEvent.click(stepButton("Previous move"));
+    expect(boards.at(-1)?.fen).toBe(AFTER_NC6);
+
+    vi.mocked(server.send).mockClear();
+    dropOnPracticeBoard("f1", "b5");
+    expect(server.send).not.toHaveBeenCalled();
+    expect(screen.getByText("Nf3 Nc6 Bb5")).toBeTruthy();
+    expect(boards.at(-1)?.fen).toBe(AFTER_BB5);
+    expect(stepButton("Next move").disabled).toBe(true);
   });
 
   it("keeps the item's earlier positions read-only in Explore", () => {
@@ -1575,8 +1656,6 @@ function renderHub(props: Partial<PracticeHubProps> = {}) {
       engineMissing={false}
       starting={null}
       failure={null}
-      size={10}
-      onSize={noop}
       onStart={noop}
       onStartRepertoire={noop}
       {...props}
@@ -2718,6 +2797,33 @@ describe("the opening drills from your games", () => {
     expect(await plainRows(white)).toHaveLength(2);
   });
 
+  it("joins a met opening to its drill by family, not by its full name", async () => {
+    const damiano: MetOpening = {
+      root: ["e4", "e5", "Nf3", "f6"],
+      opening_name: "King's Pawn Game: Damiano Defense",
+      games: 2,
+      repertoire_id: null,
+    };
+    renderDrills({
+      openingDrills: readyDrills({
+        white: [drill("King's Pawn Game", 6)],
+        black: [],
+      }),
+      fetchRepertoireList: async () => listing([damiano]),
+    });
+    const white = await whiteOpenings();
+    const met = within(white).getByRole("list", { name: "Openings met in your games" });
+    const rows = within(met).getAllByRole("listitem");
+    expect(rows).toHaveLength(1);
+    expect(
+      within(rows[0] as HTMLElement).getByText("King's Pawn Game: Damiano Defense"),
+    ).toBeTruthy();
+    expect(within(rows[0] as HTMLElement).getByText("Positions from your games (6)")).toBeTruthy();
+    expect(
+      within(white).queryByRole("list", { name: "Positions from your games as White" }),
+    ).toBeNull();
+  });
+
   it("lists Black's families under a Black openings heading, apart from White's", async () => {
     renderDrills();
     const black = await blackOpenings();
@@ -2930,7 +3036,7 @@ describe("the opening drills from your games", () => {
 describe("starting an opening drill from the screen", () => {
   const readDrills = async () => gameDrills;
 
-  it("sends the colour, the family and the drill size", async () => {
+  it("sends the colour and the family, and no size", async () => {
     const server = api(null);
     render(
       <Practice
@@ -2941,7 +3047,6 @@ describe("starting an opening drill from the screen", () => {
         fetchOpeningDrills={readDrills}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "20" }));
     openPracticePage("Openings");
     // The loading card is replaced once the list has loaded, so the menu is found by what it holds.
     await screen.findByRole("heading", { name: "Italian Game" });
@@ -2953,11 +3058,10 @@ describe("starting an opening drill from the screen", () => {
       mode: "openings",
       color: "white",
       opening: "Sicilian Defense",
-      size: 20,
     });
   });
 
-  it("sends the unnamed entry of a colour as UNNAMED_OPENING, at the default size", async () => {
+  it("sends the unnamed entry of a colour as UNNAMED_OPENING, with no size", async () => {
     const server = api(null);
     render(
       <Practice
@@ -2979,7 +3083,6 @@ describe("starting an opening drill from the screen", () => {
       mode: "openings",
       color: "black",
       opening: UNNAMED_OPENING,
-      size: 10,
     });
   });
 
@@ -3035,13 +3138,7 @@ describe("the hub's frame", () => {
   const pageTitle = (): string => screen.getByRole("heading", { level: 2 }).textContent ?? "";
   const openingsEntry = (): HTMLElement =>
     within(practiceNav()).getByRole("button", { name: /^Openings(,|$)/ });
-  const UNBUILT = [
-    "From my games",
-    "Dashboard",
-    "Improvement areas",
-    "Strengths",
-    "Openings played",
-  ];
+  const UNBUILT = ["From my games", "Dashboard", "Openings played"];
 
   // An answer that counts the moves due on each side apart from the variations under it.
   const withSides = (
@@ -3187,9 +3284,10 @@ describe("the hub's frame", () => {
     for (const [index, node] of order.slice(1).entries()) {
       expect(follows(order[index] as Element, node)).toBe(true);
     }
-    // The motif card keeps its rows, its size choice and its start.
+    // The motif card keeps its rows and its start, and offers no size to choose.
     expect(within(motifs).getByRole("radio", { name: /^Fork,/ })).toBeTruthy();
-    expect(within(motifs).getByRole("group", { name: "Drill size" })).toBeTruthy();
+    expect(within(motifs).queryByRole("group", { name: "Drill size" })).toBeNull();
+    expect(within(motifs).queryByRole("button", { name: /^(5|10|20)$/ })).toBeNull();
     expect(within(motifs).getByRole("button", { name: "Start any motif" })).toBeTruthy();
   });
 

@@ -187,6 +187,40 @@ describe("GET /api/repertoires", () => {
       branches: [],
     });
   });
+
+  it("reports side black for a Black repertoire", async () => {
+    const { id } = createRepertoireVariation(db, {
+      side: "black",
+      groupName: "Caro-Kann Defense",
+      variationName: "Main Line",
+    });
+    const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
+    expect(body.repertoires.find((entry) => entry.id === id)).toMatchObject({
+      side: "black",
+      group_name: "Caro-Kann Defense",
+    });
+  });
+
+  it("holds every new move back once six cards were introduced with two sibling groups new", async () => {
+    const classical = addVariation("Classical Variation (4.c3)", [
+      ["Bc5", "c3", "Nf6", "d4"],
+      ["Nf6", "d3"],
+    ]);
+    const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+    const stableRecent = { introducedAt: hourAgo, intervalHours: 72 };
+    for (const [line, san] of [...SETUP_CARDS, [[...SETUP, "Bc5"], "c3"] as [string[], string]]) {
+      addCard(line, san, LONG_AGO, stableRecent);
+    }
+    addCard(["d4", "d5"], "c4", LONG_AGO, stableRecent);
+    addCard(["d4", "d5", "c4", "e6"], "Nc3", LONG_AGO, stableRecent);
+
+    const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
+    expect(body.repertoires.find((entry) => entry.id === classical)?.moves).toEqual({
+      recommended: 4,
+      due: 4,
+      all: 4,
+    });
+  });
 });
 
 describe("GET /api/repertoires: what each unit was built with and from", () => {
