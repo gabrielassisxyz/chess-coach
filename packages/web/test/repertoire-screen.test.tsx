@@ -13,6 +13,7 @@ import {
   openPracticePage,
   progressOf,
   repertoireActivity,
+  repertoireAnswer,
   repertoireList,
 } from "./practice-fixtures.js";
 import { serverApi } from "./server-api.js";
@@ -28,8 +29,7 @@ const hubProps = {
   fetchProgress: async () => progressOf(),
   fetchMotifs: async () => motifCounts,
   fetchRepertoires: listed,
-  fetchRepertoireList: async () => ({ repertoires: repertoireList, met: [] }),
-  fetchOpeningDrills: async () => ({ white: [], black: [] }),
+  fetchRepertoireList: async () => repertoireAnswer(),
 };
 
 const seen: { fen?: string; drawable?: { autoShapes?: unknown[] } }[] = [];
@@ -48,10 +48,10 @@ function renderDrill(activity: TrainingActivity, fetchRepertoires = listed) {
   return { server, ...view };
 }
 
-// The card is replaced once the list has loaded, so it is found by what the list holds.
+// The page draws its sections once the list has loaded, so it is found by what the list holds.
 async function whiteOpenings(): Promise<HTMLElement> {
-  await screen.findByRole("heading", { name: "Italian Game" });
-  return screen.getByRole("region", { name: "White openings" });
+  await screen.findByRole("article", { name: "Italian Game" });
+  return screen.getByRole("region", { name: "White" });
 }
 
 const stateCard = (): HTMLElement => document.querySelector(".state-card") as HTMLElement;
@@ -60,32 +60,52 @@ const fact = (key: string): string | undefined =>
   screen.getByTestId(`fact-${key}`).querySelector("dd")?.textContent ?? undefined;
 const arrows = (): unknown[] => seen.at(-1)?.drawable?.autoShapes ?? [];
 
-describe("the openings menu on the hub", () => {
-  // The menu is on the hub's Openings page, which each hub here opens on as the page stored last.
+describe("the openings page on the hub", () => {
+  // The page is the hub's Openings page, which each hub here opens on as the page stored last.
   beforeEach(() => window.localStorage.setItem(PRACTICE_PAGE_STORAGE_KEY, "openings"));
 
-  it("shows a White openings group with Italian Game, its variation and three starts with counts", async () => {
+  const italianCard = (): HTMLElement => screen.getByRole("article", { name: "Italian Game" });
+
+  it("shows the Italian Game card with its variation's train button, counts and menu", async () => {
     render(<Practice server={serverApi(null)} {...hubProps} />);
     const group = await whiteOpenings();
-    expect(within(group).getByText("14 due")).toBeTruthy();
+    expect(within(group).getByText("1 variation")).toBeTruthy();
+    const trainCard = within(group).getByRole("button", { name: "Train 10, Italian Game" });
+    expect((trainCard as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(within(group).getByRole("button", { name: "Italian Game" }));
     expect(within(group).getByText(CLASSICAL_VARIATION)).toBeTruthy();
-    for (const name of ["Recommended 10", "Everything due 14", "All moves 38"]) {
-      expect((within(group).getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(
-        false,
-      );
-    }
+    expect(
+      (
+        within(group).getByRole("button", {
+          name: `Train 10, ${CLASSICAL_VARIATION}`,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    fireEvent.click(
+      within(group).getByRole("button", { name: "More ways to train, Italian Game" }),
+    );
+    expect(
+      within(group)
+        .getAllByRole("button", { name: /^(Everything due|All moves)/ })
+        .map((entry) => entry.textContent),
+    ).toEqual(["Everything due 14", "All moves 38"]);
   });
 
   it.each([
-    ["Recommended 10", "recommended"],
+    ["Train 10, Italian Game", "recommended"],
     ["Everything due 14", "due"],
     ["All moves 38", "all"],
   ] as const)(
-    "starts the line drill of the scope %s and sends no drill size",
+    "starts the line drill of the scope %s from the card and sends no drill size",
     async (name, scope) => {
       const server = serverApi(null);
       render(<Practice server={server} {...hubProps} />);
       const group = await whiteOpenings();
+      if (scope !== "recommended") {
+        fireEvent.click(
+          within(group).getByRole("button", { name: "More ways to train, Italian Game" }),
+        );
+      }
       fireEvent.click(within(group).getByRole("button", { name }));
       expect(server.send).toHaveBeenCalledTimes(1);
       expect(server.send).toHaveBeenCalledWith({
@@ -93,17 +113,41 @@ describe("the openings menu on the hub", () => {
         mode: "repertoire",
         repertoire_id: 3,
         scope,
+        level: "group",
       });
     },
   );
 
+  it("starts the line drill of one variation with no level from its row", async () => {
+    const server = serverApi(null);
+    render(<Practice server={server} {...hubProps} />);
+    const group = await whiteOpenings();
+    fireEvent.click(within(group).getByRole("button", { name: "Italian Game" }));
+    fireEvent.click(
+      within(group).getByRole("button", { name: `Train 10, ${CLASSICAL_VARIATION}` }),
+    );
+    expect(server.send).toHaveBeenCalledWith({
+      type: "start_training",
+      mode: "repertoire",
+      repertoire_id: 3,
+      scope: "recommended",
+    });
+  });
+
   it("marks the pressed start as starting and holds every other start until the board answers", async () => {
     render(<Practice server={serverApi(null)} {...hubProps} />);
     const group = await whiteOpenings();
+    fireEvent.click(
+      within(group).getByRole("button", { name: "More ways to train, Italian Game" }),
+    );
     fireEvent.click(within(group).getByRole("button", { name: "Everything due 14" }));
-    expect(within(group).getByRole("button", { name: "Starting" })).toBeTruthy();
+    expect(within(group).getByRole("button", { name: "Starting, Italian Game" })).toBeTruthy();
     expect(
-      (within(group).getByRole("button", { name: "Recommended 10" }) as HTMLButtonElement).disabled,
+      (
+        within(group).getByRole("button", {
+          name: "More ways to train, Italian Game",
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(true);
     openPracticePage("Overview");
     const motifStart = screen.getByRole("button", { name: "Start any motif" });
@@ -117,23 +161,35 @@ describe("the openings menu on the hub", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Start any motif" }));
     openPracticePage("Openings");
     expect(
-      (within(group).getByRole("button", { name: "Recommended 10" }) as HTMLButtonElement).disabled,
+      (within(group).getByRole("button", { name: "Train 10, Italian Game" }) as HTMLButtonElement)
+        .disabled,
     ).toBe(true);
   });
 
-  it("disables a start with nothing to serve and says why", async () => {
-    const none = async () => [{ ...italianRepertoire, moves: { recommended: 0, due: 0, all: 38 } }];
-    render(<Practice server={serverApi(null)} {...hubProps} fetchRepertoires={none} />);
+  it("offers a button that trains all moves, with no menu, when nothing is due", async () => {
+    const none = [{ ...italianRepertoire, moves: { recommended: 0, due: 0, all: 38 } }];
+    const server = serverApi(null);
+    render(
+      <Practice
+        server={server}
+        {...hubProps}
+        fetchRepertoireList={async () => repertoireAnswer(none)}
+      />,
+    );
     const group = await whiteOpenings();
-    for (const name of ["Recommended 0", "Everything due 0"]) {
-      expect((within(group).getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(
-        true,
-      );
-    }
+    const button = within(group).getByRole("button", { name: "Train all moves, Italian Game" });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
     expect(
-      (within(group).getByRole("button", { name: "All moves 38" }) as HTMLButtonElement).disabled,
-    ).toBe(false);
-    expect(group.textContent).toContain("Nothing is due");
+      within(group).queryByRole("button", { name: "More ways to train, Italian Game" }),
+    ).toBeNull();
+    fireEvent.click(button);
+    expect(server.send).toHaveBeenCalledWith({
+      type: "start_training",
+      mode: "repertoire",
+      repertoire_id: 3,
+      scope: "all",
+      level: "group",
+    });
   });
 
   it("keeps the starts open when the engine is missing, since a line is graded against stored moves", async () => {
@@ -148,129 +204,141 @@ describe("the openings menu on the hub", () => {
     await screen.findByRole("alert", { name: "Engine missing" });
     openPracticePage("Openings");
     const group = await whiteOpenings();
-    const start = within(group).getByRole("button", { name: "Recommended 10" });
+    const start = within(group).getByRole("button", { name: "Train 10, Italian Game" });
     expect((start as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("words a refused start and goes back to the menu", async () => {
+  it("words a refused start and goes back to the page", async () => {
     const server = serverApi(null);
     const { rerender } = render(<Practice server={server} {...hubProps} />);
     const group = await whiteOpenings();
+    fireEvent.click(
+      within(group).getByRole("button", { name: "More ways to train, Italian Game" }),
+    );
     fireEvent.click(within(group).getByRole("button", { name: "Everything due 14" }));
     const refused = serverApi(null, { errorCount: 1, lastErrorCode: "empty_queue" });
     rerender(<Practice server={refused} {...hubProps} />);
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("No move of this opening is due right now");
     expect(alert.textContent).toContain("Choose All moves");
-    expect(within(group).getByRole("button", { name: "Everything due 14" })).toBeTruthy();
+    expect(within(group).getByRole("button", { name: "Train 10, Italian Game" })).toBeTruthy();
   });
 
   it("says when the openings are loading, failed or not stored yet", async () => {
     const waiting = new Promise<never>(() => undefined);
     const { unmount } = render(
-      <Practice server={serverApi(null)} {...hubProps} fetchRepertoires={() => waiting} />,
+      <Practice server={serverApi(null)} {...hubProps} fetchRepertoireList={() => waiting} />,
     );
-    expect((await screen.findByRole("region", { name: "White openings" })).textContent).toContain(
-      "Loading openings.",
-    );
+    expect((await screen.findByRole("status")).textContent).toBe("Loading your openings.");
     unmount();
 
     const failing = () => Promise.reject(new Error("down"));
     const second = render(
-      <Practice server={serverApi(null)} {...hubProps} fetchRepertoires={failing} />,
+      <Practice server={serverApi(null)} {...hubProps} fetchRepertoireList={failing} />,
     );
-    const failedCard = await screen.findByRole("region", { name: "White openings" });
-    const alert = await within(failedCard).findByRole("alert");
+    const alert = await screen.findByRole("alert");
     expect(alert.className).toContain("practice__failure");
-    expect(alert.textContent).toBe("The openings could not be loaded.");
-    expect(within(failedCard).getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(alert.textContent).toBe("Your openings could not be loaded.");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     second.unmount();
 
-    render(<Practice server={serverApi(null)} {...hubProps} fetchRepertoires={async () => []} />);
-    await screen.findByText("No opening is stored yet. Generate the Italian repertoire first.");
+    render(
+      <Practice
+        server={serverApi(null)}
+        {...hubProps}
+        fetchRepertoireList={async () => repertoireAnswer([])}
+      />,
+    );
+    await screen.findByText("No opening is stored yet.");
   });
 
-  it("offers no Try again in the openings note while it loads or after it loaded", async () => {
+  it("offers no Try again while it loads or after it loaded", async () => {
     const waiting = new Promise<never>(() => undefined);
     const { unmount } = render(
-      <Practice server={serverApi(null)} {...hubProps} fetchRepertoires={() => waiting} />,
+      <Practice server={serverApi(null)} {...hubProps} fetchRepertoireList={() => waiting} />,
     );
-    const loading = await screen.findByRole("region", { name: "White openings" });
-    expect(loading.textContent).toContain("Loading openings.");
-    expect(within(loading).queryByRole("button", { name: "Try again" })).toBeNull();
+    await screen.findByRole("status");
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     unmount();
 
     render(<Practice server={serverApi(null)} {...hubProps} />);
-    const loaded = await whiteOpenings();
-    expect(within(loaded).getByRole("heading", { name: "Italian Game" })).toBeTruthy();
-    expect(within(loaded).queryByRole("button", { name: "Try again" })).toBeNull();
+    await whiteOpenings();
+    expect(italianCard()).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 
     cleanup();
-    render(<Practice server={serverApi(null)} {...hubProps} fetchRepertoires={async () => []} />);
-    const empty = await screen.findByRole("region", { name: "White openings" });
-    await screen.findByText("No opening is stored yet. Generate the Italian repertoire first.");
-    expect(within(empty).queryByRole("button", { name: "Try again" })).toBeNull();
+    render(
+      <Practice
+        server={serverApi(null)}
+        {...hubProps}
+        fetchRepertoireList={async () => repertoireAnswer([])}
+      />,
+    );
+    await screen.findByText("No opening is stored yet.");
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 
-  it("retries only repertoires when Try again is pressed on White openings", async () => {
-    let resolveSecond: (value: typeof repertoireList) => void = () => undefined;
-    const secondCall = new Promise<typeof repertoireList>((resolve) => {
+  it("retries only the list when Try again is pressed", async () => {
+    let resolveSecond: (value: ReturnType<typeof repertoireAnswer>) => void = () => undefined;
+    const secondCall = new Promise<ReturnType<typeof repertoireAnswer>>((resolve) => {
       resolveSecond = resolve;
     });
-    const fetchRepertoires = vi
+    const fetchRepertoireList = vi
       .fn()
       .mockRejectedValueOnce(new Error("down"))
       .mockReturnValueOnce(secondCall);
     const fetchProgress = vi.fn(hubProps.fetchProgress);
     const fetchMotifs = vi.fn(hubProps.fetchMotifs);
-    const fetchOpeningDrills = vi.fn(hubProps.fetchOpeningDrills);
 
     render(
       <Practice
         server={serverApi(null)}
         fetchProgress={fetchProgress}
         fetchMotifs={fetchMotifs}
-        fetchRepertoires={fetchRepertoires}
-        fetchRepertoireList={hubProps.fetchRepertoireList}
-        fetchOpeningDrills={fetchOpeningDrills}
+        fetchRepertoireList={fetchRepertoireList}
       />,
     );
 
-    const card = await screen.findByRole("region", { name: "White openings" });
-    const alert = await within(card).findByRole("alert");
-    expect(alert.textContent).toBe("The openings could not be loaded.");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Your openings could not be loaded.");
 
-    fireEvent.click(within(card).getByRole("button", { name: "Try again" }));
-    expect(within(card).getByRole("status").textContent).toBe("Loading openings.");
-    expect(fetchRepertoires).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(screen.getByRole("status").textContent).toBe("Loading your openings.");
+    expect(fetchRepertoireList).toHaveBeenCalledTimes(2);
     expect(fetchProgress).toHaveBeenCalledTimes(1);
     expect(fetchMotifs).toHaveBeenCalledTimes(1);
-    expect(fetchOpeningDrills).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      resolveSecond(repertoireList);
+      resolveSecond(repertoireAnswer());
       await secondCall;
     });
     const loadedCard = await whiteOpenings();
-    expect(within(loadedCard).getByRole("heading", { name: "Italian Game" })).toBeTruthy();
-    expect(within(loadedCard).queryByRole("alert")).toBeNull();
+    expect(within(loadedCard).getByRole("article", { name: "Italian Game" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("groups each side under its own heading", async () => {
-    const both = async () => [
+    const both = [
       ...repertoireList,
       { ...italianRepertoire, id: 4, side: "black" as const, group_name: "Sicilian Defense" },
     ];
-    render(<Practice server={serverApi(null)} {...hubProps} fetchRepertoires={both} />);
-    await screen.findByRole("region", { name: "White openings" });
-    const black = await screen.findByRole("region", { name: "Black openings" });
-    expect(within(black).getByRole("heading", { name: "Sicilian Defense" })).toBeTruthy();
+    render(
+      <Practice
+        server={serverApi(null)}
+        {...hubProps}
+        fetchRepertoireList={async () => repertoireAnswer(both)}
+      />,
+    );
+    await screen.findByRole("region", { name: "White" });
+    const black = await screen.findByRole("region", { name: "Black" });
+    expect(within(black).getByRole("article", { name: "Sicilian Defense" })).toBeTruthy();
   });
 
-  it("leaves the older Italian puzzle row where it was", async () => {
+  it("draws no older Italian puzzle row beside the sections", async () => {
     render(<Practice server={serverApi(null)} {...hubProps} />);
-    const openings = await screen.findByRole("region", { name: "Openings" });
-    expect(within(openings).getByText("Italian Opening")).toBeTruthy();
+    await whiteOpenings();
+    expect(screen.queryByText("Italian Opening")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Openings" })).toBeNull();
   });
 });
 

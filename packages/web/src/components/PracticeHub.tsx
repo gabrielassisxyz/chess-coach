@@ -1,21 +1,12 @@
 import type {
-  OpeningDrillColor,
-  OpeningDrillsResponse,
   ProgressResponse,
   RepertoireLevel,
   RepertoireScope,
-  RepertoireSummary,
   TrainingMode,
 } from "@chess-coach/shared";
 import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type { Loaded } from "../hooks/useLoaded.js";
-import type { OpeningDrillControls } from "../state/openings-api.js";
-import {
-  italianOpeningCount,
-  type MotifCount,
-  NEEDS_ENGINE_TEXT,
-  NONE,
-} from "../state/practice.js";
+import type { MotifCount } from "../state/practice.js";
 import {
   openingsDueOf,
   PRACTICE_ENTRY_LABEL,
@@ -34,33 +25,28 @@ import {
 } from "../state/repertoires-api.js";
 import type { FetchThemeStats } from "../state/theme-stats-api.js";
 import { PracticeNav } from "./PracticeNav.js";
+import { PracticeOpenings } from "./PracticeOpenings.js";
 import { type HubStartButton, PracticeOverview, PracticePageHead } from "./PracticeOverview.js";
 import { PracticeThemeStats } from "./PracticeThemeStats.js";
-import { RepertoireMenu } from "./RepertoireMenu.js";
 
 export interface PracticeHubProps {
   progress: Loaded<ProgressResponse>;
   motifs: Loaded<MotifCount[]>;
-  repertoires: Loaded<RepertoireSummary[]>;
   engineMissing: boolean;
   // A repertoire start carries its scope in `motif`, names its repertoire and, above one
-  // variation, its level. An opening drill carries its colour in `motif` and the family it drills.
+  // variation, its level.
   starting: {
     mode: TrainingMode;
     motif: string;
     repertoireId?: number;
     level?: RepertoireLevel | undefined;
-    opening?: string | undefined;
   } | null;
   failure: string | null;
   onStart(mode: TrainingMode, motif: string): void;
   onStartRepertoire(repertoireId: number, scope: RepertoireScope, level?: RepertoireLevel): void;
-  // The drills from the student's games, grouped by opening, and what starts one of them. Without
-  // them, or until they are read, the hub lists none.
-  openingDrills?: Loaded<OpeningDrillsResponse> | undefined;
-  onStartOpening?: ((color: OpeningDrillColor, opening: string) => void) | undefined;
   now?: Date;
-  // The openings met in games and the call that builds a drill for one; the server's by default.
+  // The answer the Openings page and the count beside its entry read, and the call that builds a
+  // drill for an opening met in games; the server's by default.
   fetchRepertoireList?: FetchRepertoireList | undefined;
   addOpening?: AddOpening | undefined;
   // What builds a variation at a branch point; the server's by default.
@@ -73,51 +59,8 @@ export interface PracticeHubProps {
   problems?: ReactNode;
 }
 
-function ItalianRow({
-  counts,
-  known,
-  startButton,
-}: {
-  counts: MotifCount[];
-  known: boolean;
-  startButton: HubStartButton;
-}): ReactNode {
-  const count = italianOpeningCount(counts);
-  const empty = known && count === 0;
-  return (
-    <div className="practice__opening" key="italian">
-      <span className="practice__opening-side">As White</span>
-      <span className="practice__opening-count">
-        {known ? (count === 0 ? NONE : `${count} positions`) : ""}
-      </span>
-      {startButton({
-        mode: "puzzles",
-        motif: "opening-italian",
-        idle: "Drill",
-        disabled: empty,
-      })}
-      {empty ? <span className="practice__card-note">Generate the Italian drill first</span> : null}
-    </div>
-  );
-}
-
-// The controls of the drills from the student's games, once they are read and something can start them.
-function drillControlsOf(props: PracticeHubProps): OpeningDrillControls | undefined {
-  const { openingDrills, onStartOpening, starting, engineMissing } = props;
-  if (openingDrills?.status !== "ready" || !onStartOpening) return undefined;
-  const mine = starting?.mode === "openings" && starting.opening !== undefined;
-  return {
-    drills: openingDrills.value,
-    engineMissing,
-    starting: mine
-      ? { color: starting.motif as OpeningDrillColor, opening: starting.opening as string }
-      : null,
-    onStart: onStartOpening,
-  };
-}
-
-// The Openings entry counts from the answers the openings menu reads, so the number follows the
-// menu's retries and the drills it adds, and the count asks the server nothing of its own.
+// The Openings entry counts from the answers the Openings page reads, so the number follows the
+// page's retries and the drills it adds, and the count asks the server nothing of its own.
 function useOpeningsDue(fetchList: FetchRepertoireList) {
   const [due, setDue] = useState<number | null>(null);
   const counted = useCallback<FetchRepertoireList>(async () => {
@@ -159,76 +102,36 @@ function PageSlot({ shown, children }: { shown: boolean; children: ReactNode }) 
   );
 }
 
-// The older Italian drill row, in the card the hub has always called Openings.
-function ItalianCard({ hub, startButton }: { hub: PracticeHubProps; startButton: HubStartButton }) {
-  const { motifs, openingDrills, engineMissing } = hub;
-  return (
-    <section className="practice__card" aria-label="Openings">
-      <h3 className="practice__card-title">Openings</h3>
-      {openingDrills?.status === "loading" ? (
-        <p className="practice__card-note" role="status">
-          Loading positions from your games.
-        </p>
-      ) : null}
-      {openingDrills?.status === "failed" ? (
-        <>
-          <p className="practice__failure" role="alert">
-            The positions from your games could not be loaded.
-          </p>
-          <button type="button" className="button" onClick={openingDrills.retry}>
-            Try again
-          </button>
-        </>
-      ) : null}
-      <p className="practice__card-note">Italian Opening</p>
-      <ItalianRow
-        counts={motifs.status === "ready" ? motifs.value : []}
-        known={motifs.status === "ready"}
-        startButton={startButton}
-      />
-      {engineMissing ? <p className="practice__card-note">{NEEDS_ENGINE_TEXT}</p> : null}
-    </section>
-  );
-}
-
-// Today's openings menu on a page of its own; the hub's starts arrive already marked with this page.
+// The student's stored lines on a page of their own; the hub's starts arrive already marked with this page.
 function OpeningsPage({
   hub,
-  startButton,
   fetchList,
   failure,
 }: {
   hub: PracticeHubProps;
-  startButton: HubStartButton;
   fetchList: FetchRepertoireList;
   failure: ReactNode;
 }) {
   const { starting } = hub;
   return (
     <>
-      <PracticePageHead title="Openings" />
-      <div className="practice-page__cards">
-        <RepertoireMenu
-          repertoires={hub.repertoires}
-          busy={starting !== null}
-          starting={
-            starting?.mode === "repertoire" && starting.repertoireId !== undefined
-              ? {
-                  repertoireId: starting.repertoireId,
-                  scope: starting.motif as RepertoireScope,
-                  level: starting.level,
-                }
-              : null
-          }
-          onStart={hub.onStartRepertoire}
-          fetchList={fetchList}
-          addOpening={hub.addOpening}
-          addVariation={hub.addVariation}
-          fetchCoverage={hub.fetchCoverage}
-          openingDrills={drillControlsOf(hub)}
-        />
-        <ItalianCard hub={hub} startButton={startButton} />
-      </div>
+      <PracticeOpenings
+        busy={starting !== null}
+        starting={
+          starting?.mode === "repertoire" && starting.repertoireId !== undefined
+            ? {
+                repertoireId: starting.repertoireId,
+                scope: starting.motif as RepertoireScope,
+                level: starting.level,
+              }
+            : null
+        }
+        onStart={hub.onStartRepertoire}
+        fetchList={fetchList}
+        addOpening={hub.addOpening}
+        addVariation={hub.addVariation}
+        fetchCoverage={hub.fetchCoverage}
+      />
       {failure}
     </>
   );
@@ -252,12 +155,11 @@ function useStartsByPage(props: PracticeHubProps, page: PracticePage) {
       start(...args);
     };
   };
-  const { onStartOpening, failure } = props;
+  const { failure } = props;
   const marked: PracticeHubProps = {
     ...props,
     onStart: pressedHere(props.onStart),
     onStartRepertoire: pressedHere(props.onStartRepertoire),
-    onStartOpening: onStartOpening ? pressedHere(onStartOpening) : undefined,
   };
   const failureOn = (target: PracticePage): ReactNode =>
     failure && startedOn === target ? (
@@ -319,7 +221,6 @@ export function PracticeHub(props: PracticeHubProps) {
         <PageSlot shown={page === "openings"}>
           <OpeningsPage
             hub={marked}
-            startButton={startButton}
             fetchList={openingsDue.fetchList}
             failure={failureOn("openings")}
           />

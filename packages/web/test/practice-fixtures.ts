@@ -2,7 +2,10 @@ import type {
   PlayedMove,
   ProgressResponse,
   RepertoireDrill,
+  RepertoireGroupSummary,
+  RepertoireScopeCounts,
   RepertoireSummary,
+  RepertoiresResponse,
   TrainingActivity,
 } from "@chess-coach/shared";
 import { fireEvent, screen, within } from "@testing-library/react";
@@ -83,6 +86,38 @@ export const italianRepertoire: RepertoireSummary = {
 };
 
 export const repertoireList: RepertoireSummary[] = [italianRepertoire];
+
+const sumOf = (counts: readonly RepertoireScopeCounts[]): RepertoireScopeCounts => ({
+  recommended: counts.reduce((sum, entry) => sum + entry.recommended, 0),
+  due: counts.reduce((sum, entry) => sum + entry.due, 0),
+  all: counts.reduce((sum, entry) => sum + entry.all, 0),
+});
+
+// An answer of GET /api/repertoires for these variations, with an entry for each opening and each
+// colour that holds one. Their counts are the sums of the variations under them, where the server
+// counts a move two variations share once; a test that cares about the difference sets them itself.
+export function repertoireAnswer(
+  repertoires: RepertoireSummary[] = repertoireList,
+  overrides: Partial<RepertoiresResponse> = {},
+): RepertoiresResponse {
+  const groups = new Map<string, RepertoireGroupSummary>();
+  for (const entry of repertoires) {
+    const key = `${entry.side} ${entry.group_name}`;
+    const under = repertoires.filter(
+      (other) => other.side === entry.side && other.group_name === entry.group_name,
+    );
+    groups.set(key, {
+      side: entry.side,
+      group_name: entry.group_name,
+      moves: sumOf(under.map((other) => other.moves)),
+    });
+  }
+  const sides = (["white", "black"] as const).flatMap((side) => {
+    const own = repertoires.filter((entry) => entry.side === side);
+    return own.length === 0 ? [] : [{ side, moves: sumOf(own.map((entry) => entry.moves)) }];
+  });
+  return { repertoires, groups: [...groups.values()], sides, met: [], branches: [], ...overrides };
+}
 
 // The moves the server plays on the student's behalf before the first move it asks for.
 export const ITALIAN_APPROACH = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"];
