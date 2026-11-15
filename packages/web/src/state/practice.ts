@@ -12,6 +12,7 @@ import {
   LIBRARY_PRACTICE_MOTIFS,
   LICHESS_OTHER_PRACTICE_MOTIFS,
   LICHESS_PRACTICE_MOTIFS,
+  puzzleThemeInfo,
 } from "@chess-coach/shared";
 
 export interface MotifCount {
@@ -53,7 +54,7 @@ const PRACTICE_DESCRIPTION_OF: ReadonlyMap<string, string> = new Map(
 );
 
 export function motifLabel(motif: string): string {
-  const fixed = PRACTICE_LABEL_OF.get(motif);
+  const fixed = PRACTICE_LABEL_OF.get(motif) ?? puzzleThemeInfo(motif)?.name;
   if (fixed) return fixed;
   const spaced = motif
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")

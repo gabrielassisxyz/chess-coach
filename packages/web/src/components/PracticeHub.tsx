@@ -33,8 +33,10 @@ import {
   type FetchRepertoireList,
   fetchRepertoireListFromServer,
 } from "../state/repertoires-api.js";
+import type { FetchThemeStats } from "../state/theme-stats-api.js";
 import { PracticeNav } from "./PracticeNav.js";
 import { type HubStartButton, PracticeOverview, PracticePageHead } from "./PracticeOverview.js";
+import { PracticeThemeStats } from "./PracticeThemeStats.js";
 import { RepertoireMenu } from "./RepertoireMenu.js";
 
 export interface PracticeHubProps {
@@ -68,6 +70,8 @@ export interface PracticeHubProps {
   addVariation?: AddVariation | undefined;
   // Where a variation's coverage comes from when it is opened; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
+  // Where ranked puzzle theme stats come from when a Stats theme page opens; the server's by default.
+  fetchThemeStats?: FetchThemeStats | undefined;
   // The engine and coach problem cards, which the Overview draws under its title.
   problems?: ReactNode;
 }
@@ -325,6 +329,19 @@ export function PracticeHub(props: PracticeHubProps) {
             failure={failureOn("openings")}
           />
         </PageSlot>
+        {(["improvement-areas", "strengths"] as const).map((kind) => (
+          <PageSlot key={kind} shown={page === kind}>
+            <PracticeThemeStats
+              kind={kind}
+              shown={page === kind}
+              fetchThemeStats={marked.fetchThemeStats}
+              starting={marked.starting}
+              engineMissing={marked.engineMissing}
+              onStart={marked.onStart}
+              failure={failureOn(kind)}
+            />
+          </PageSlot>
+        ))}
         <UnbuiltPages page={page} />
       </div>
     </div>

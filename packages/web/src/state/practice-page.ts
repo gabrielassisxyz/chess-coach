@@ -28,8 +28,6 @@ export const PRACTICE_ENTRY_LABEL: Record<PracticeEntry, string> = {
 export const UNBUILT_PRACTICE_PAGES: readonly PracticePage[] = [
   "from-my-games",
   "dashboard",
-  "improvement-areas",
-  "strengths",
   "openings-played",
 ];
 
