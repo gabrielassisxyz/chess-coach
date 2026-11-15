@@ -1102,6 +1102,7 @@ describe("what the hub no longer carries", () => {
     ["the commands that resume or discard a paused run", /(resume|discard)_training/],
     ["the stored tally of the last session", /last-?session/i],
     ["the card that offered a paused run", /resumeLabelOf|ResumeCard|resume-actions/],
+    ["the three-column grid the hub was before its pages", /practice__(hub|chooser)\b/],
   ])("leaves %s out of every source file", (_what, pattern) => {
     const offenders = sourceFiles.filter((file) =>
       pattern.test(readFileSync(join(sourceDir, file), "utf8")),
@@ -3374,6 +3375,11 @@ describe("the hub's frame styles", () => {
       color: "var(--text-3)",
     });
     expect(token("--text-xs")).toBe("0.75rem");
+  });
+
+  it("is imported by the entry point, or the frame would have no styling", () => {
+    const entry = readFileSync(join(import.meta.dirname, "../src/main.tsx"), "utf8");
+    expect(entry).toContain('import "./styles/practice-hub.css";');
   });
 
   it("lets only the navigation scroll by itself, never a card", () => {
