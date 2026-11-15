@@ -2,7 +2,10 @@ import type {
   FoundPositionCounts,
   FoundPositionsResponse,
   FoundPositionView,
+  PlayedColour,
   PlayedMove,
+  PlayedOpening,
+  PlayedVariation,
   ProgressResponse,
   RepertoireDrill,
   RepertoireGroupSummary,
@@ -241,3 +244,47 @@ export function foundResponse(
 }
 
 export const noFoundPositions: FoundPositionsResponse = foundResponse([]);
+
+type Outcomes = readonly [wins: number, draws: number, losses: number];
+
+// A variation as GET /api/openings/played counts it, its name being what follows the family's colon
+// and a full name with no colon the family's main line.
+export function playedVariation(fullName: string, outcomes: Outcomes, line = ""): PlayedVariation {
+  const [wins, draws, losses] = outcomes;
+  const colon = fullName.indexOf(":");
+  return {
+    name: colon === -1 ? "Main line" : fullName.slice(colon + 1).trim(),
+    full_name: fullName,
+    line,
+    games: wins + draws + losses,
+    wins,
+    draws,
+    losses,
+  };
+}
+
+// An opening whose figures are the sums of its variations, as the server counts them.
+export function playedOpening(
+  opening: string,
+  line: string,
+  variations: PlayedVariation[],
+): PlayedOpening {
+  const total = (pick: (variation: PlayedVariation) => number): number =>
+    variations.reduce((sum, variation) => sum + pick(variation), 0);
+  return {
+    opening,
+    line,
+    games: total((variation) => variation.games),
+    wins: total((variation) => variation.wins),
+    draws: total((variation) => variation.draws),
+    losses: total((variation) => variation.losses),
+    variations,
+  };
+}
+
+// A colour whose games are the ones its own openings hold, since every game has one.
+export function playedColour(mine: PlayedOpening[], against: PlayedOpening[] = []): PlayedColour {
+  return { games: mine.reduce((sum, opening) => sum + opening.games, 0), mine, against };
+}
+
+export const noPlayedColour: PlayedColour = { games: 0, mine: [], against: [] };

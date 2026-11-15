@@ -1,5 +1,6 @@
 import type {
   FoundPositionsResponse,
+  FoundPositionView,
   ProgressResponse,
   PuzzleRatingHistoryResponse,
   RepertoireLevel,
@@ -22,13 +23,13 @@ import {
   type FoundStartRequest,
   fetchFoundPositionsFromServer,
 } from "../state/found-api.js";
+import type { FetchOpeningsPlayed } from "../state/openings-played-api.js";
 import {
   openingsDueOf,
   PRACTICE_ENTRY_LABEL,
   type PracticeEntry,
   type PracticePage,
   practicePageOf,
-  UNBUILT_PRACTICE_PAGES,
   usePracticeEntry,
 } from "../state/practice-page.js";
 import type { FetchPuzzleRatingHistory } from "../state/puzzle-rating-api.js";
@@ -47,6 +48,7 @@ import { PracticeDashboard } from "./PracticeDashboard.js";
 import { type FoundStarting, PracticeFound } from "./PracticeFound.js";
 import { PracticeNav } from "./PracticeNav.js";
 import { PracticeOpenings } from "./PracticeOpenings.js";
+import { PracticeOpeningsPlayed } from "./PracticeOpeningsPlayed.js";
 import { type HubStartButton, PracticeOverview, PracticePageHead } from "./PracticeOverview.js";
 import { PracticeThemeStats } from "./PracticeThemeStats.js";
 
@@ -73,6 +75,8 @@ export interface PracticeHubProps {
     repertoireId?: number;
     level?: RepertoireLevel | undefined;
     position?: string | undefined;
+    // The opening a drill from the Openings played page names.
+    opening?: string | undefined;
   } | null;
   failure: string | null;
   onStart(mode: TrainingMode, motif: string): void;
@@ -93,6 +97,9 @@ export interface PracticeHubProps {
   fetchThemeStats?: FetchThemeStats | undefined;
   // Where windowed puzzle rating history comes from when Dashboard opens; the server's by default.
   fetchRatingHistory?: FetchPuzzleRatingHistory | undefined;
+  // Where the student's games counted by opening come from, for the Dashboard's card and the
+  // Openings played page; the server's by default.
+  fetchOpeningsPlayed?: FetchOpeningsPlayed | undefined;
   // Optional 7-day rating history and 30-day theme statistics displayed on the Overview tiles.
   ratingHistory?: Loaded<PuzzleRatingHistoryResponse> | undefined;
   overviewThemeStats?: Loaded<ThemeStatsResponse> | undefined;
@@ -179,15 +186,6 @@ function OpeningsPage({
   );
 }
 
-// The pages whose content is still to come, each saying so under its title.
-function UnbuiltPages({ page }: { page: PracticePage }) {
-  return UNBUILT_PRACTICE_PAGES.map((unbuilt) => (
-    <PageSlot key={unbuilt} shown={page === unbuilt}>
-      <PracticePageHead title={PRACTICE_ENTRY_LABEL[unbuilt]} note="This page is not built yet." />
-    </PageSlot>
-  ));
-}
-
 // Each start remembers the page it was pressed on, where its refusal is then shown.
 function useStartsByPage(props: PracticeHubProps, page: PracticePage) {
   const [startedOn, setStartedOn] = useState<PracticePage>(page);
@@ -232,11 +230,21 @@ function startButtonOf({ starting, engineMissing, onStart }: PracticeHubProps): 
 }
 
 // A drill of the positions from the student's games names its scope where a puzzle start names its
-// motif, and a card's start names its position.
+// motif, and a card's start names its position. A start that names an opening is the Openings
+// played page's, which says Starting on its own button and leaves these pages' alone.
 function foundStartingOf(starting: PracticeHubProps["starting"]): FoundStarting | null {
-  if (starting?.mode !== "found") return null;
+  if (starting?.mode !== "found" || starting.opening !== undefined) return null;
   return { scope: starting.motif as RepertoireScope, position: starting.position };
 }
+
+const playedStartingOf = (starting: PracticeHubProps["starting"]): string | null =>
+  starting?.mode === "found" ? (starting.opening ?? null) : null;
+
+const NO_FOUND_POSITIONS: readonly FoundPositionView[] = [];
+
+// A variation can be drilled only where the hub has read the positions, so until then none can.
+const foundListOf = (found: FoundPositionsProps | undefined): readonly FoundPositionView[] =>
+  found?.positions.status === "ready" ? found.positions.value.positions : NO_FOUND_POSITIONS;
 
 // The number beside From my games is the positions due in the whole list, whatever the page filters.
 const foundDueOf = (found: FoundPositionsProps | undefined): number | null =>
@@ -330,6 +338,7 @@ export function PracticeHub(props: PracticeHubProps) {
             progress={marked.progress}
             fetchThemeStats={marked.fetchThemeStats}
             fetchRatingHistory={marked.fetchRatingHistory}
+            fetchOpeningsPlayed={marked.fetchOpeningsPlayed}
             starting={marked.starting}
             engineMissing={marked.engineMissing}
             onStart={marked.onStart}
@@ -350,7 +359,17 @@ export function PracticeHub(props: PracticeHubProps) {
             />
           </PageSlot>
         ))}
-        <UnbuiltPages page={page} />
+        <PageSlot shown={page === "openings-played"}>
+          <PracticeOpeningsPlayed
+            shown={page === "openings-played"}
+            fetchPlayed={marked.fetchOpeningsPlayed}
+            positions={foundListOf(found)}
+            startingOpening={playedStartingOf(marked.starting)}
+            busy={busy}
+            onDrill={found?.onStart}
+            failure={failureOn("openings-played")}
+          />
+        </PageSlot>
       </div>
     </div>
   );

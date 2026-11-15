@@ -276,13 +276,14 @@
 - **Practice hub:** with no item on the board, Practice is a frame: a navigation of eight entries in
   two groups (Train: Overview, Puzzle themes, From my games, Openings; Stats: Dashboard, Improvement
   areas, Strengths, Openings played) beside a column that shows one page at a time
-  (`components/PracticeHub.tsx`, `state/practice-page.ts`). Five pages are built: the Overview (the
+  (`components/PracticeHub.tsx`, `state/practice-page.ts`). Seven pages are built: the Overview (the
   day streak, puzzle rating and cards remembered from `GET /api/progress` as three tiles, the Due
   cards card with the Puzzles by weakness card beside it, and a Puzzle themes section, see Overview
-  themes), which Puzzle themes shows scrolled to that section, Openings (below), Improvement areas
-  and Strengths, and From my games (its own bullet below). Dashboard and Openings played only say
-  they are not built yet. The Overview also holds a panel of the positions from the student's games
-  in the row of cards. The Openings entry shows the repertoire moves due now, the sum of
+  themes), which Puzzle themes shows scrolled to that section, Openings (below), the Dashboard (the
+  puzzle tiles, the rating chart, the Improvement areas and Strengths cards and a card of the four
+  most played openings), Improvement areas and Strengths, From my games and Openings played (each
+  with its own bullet below). The Overview also holds a panel of the positions from the student's
+  games in the row of cards. The Openings entry shows the repertoire moves due now, the sum of
   `sides[].moves.due` in the `GET /api/repertoires` answer the Openings page last read, and the From
   my games entry the positions due in the whole list (`counts.due`), each with no number at 0. Every
   page stays mounted while another is shown, and a refused start
@@ -386,6 +387,27 @@
   failed says so with Try again. A start in flight anywhere in the hub, a found one or not, disables
   every one of these buttons. A found start the server refuses is explained under the header of the
   page it was pressed on.
+- **Openings played page:** the Stats group's last entry (`components/PracticeOpeningsPlayed.tsx`,
+  the read and the wording in `state/openings-played-api.ts`) draws `GET /api/openings/played?days=`
+  for one side at a time. It reads nothing until it is first shown, opens on As White and 30 days
+  and reads again for a period chosen; both colours come in one answer, so the side control reads
+  nothing. A side with no game says `No game as White in this period. Import games in Games to see
+  your openings here.` (or Black) once, in place of both sections; a section with no opening says
+  `No game in this period yet.` in place of its table; a row or a variation with no game is not
+  drawn. Each section, Your openings and Played against, lists openings that are buttons opening
+  their variations. The first of Your openings is open until the student chooses, and a choice
+  survives a change of side or period. A row shows the name, the line, the games, a bar of the wins,
+  draws and losses, the score, `round((wins + draws / 2) / games * 100)`, and `w / d / l`; the score
+  takes the colour of its band by the rounded figure (green from 70, amber from 55, red under it),
+  and a bar draws only the outcomes that happened. A variation shows a Drill when a stored position
+  of that colour carries its `full_name`, read from the list the hub already reads for From my
+  games, and it starts `start_training {mode: "found", scope: "all", color, opening: <full_name>}`.
+  Its button reads Starting while that start is in flight, every start of the hub waits for it, and
+  the Overview's panel and From my games do not say Starting for a start they did not make. Under
+  900 px a row keeps its name, games and score and a variation keeps its Drill. The Dashboard's card
+  lists the four openings with the most games across both colours and both lists in the Dashboard's
+  own period, a tie keeping White's lists before Black's and a chosen line before one played
+  against, each with its side, and See all opens the page.
 - **Coach conversations:** one per tab (`play`, `games`, `practice`), each its own `coach_sessions`
   row (`tab` column) resumed by its own Claude session id. The live game and the student's chat on
   Play write to `play`, training to `practice`, a question about a stored game to `games`. A tab's
