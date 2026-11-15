@@ -3212,7 +3212,7 @@ describe("GET /api/repertoires and a rebuild posted with what it says", () => {
     buildApp({
       db,
       log: new RecordingLog(),
-      generateOpenings: async () => ({ positions: 0, created: 0, updated: 0 }),
+      generateOpenings: async () => noPositionsFound(),
       generateRepertoireOpenings: (root, branch, rebuilding, points) =>
         generateRepertoire(db, engine, explorer, cacheDir, clock, names, {
           root,
