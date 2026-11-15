@@ -25,6 +25,8 @@ export interface SearchResult {
   depth?: number | undefined;
   /** True when `capMs` passed before the engine finished, so the search was stopped at what it had. */
   cutByTime?: boolean;
+  /** Set by the analysis lane, which can answer from a stored evaluation; a plain search leaves it unset. */
+  source?: "cache" | "engine";
 }
 
 export interface Searcher {

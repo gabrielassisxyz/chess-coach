@@ -173,7 +173,8 @@ function sanLineOf(fen: string, moves: readonly string[]): string[] {
 }
 
 // UCI scores are from the side to move; the event carries White's view, which the page flips.
-// The depth is the one the lines reached, the one asked for only when the searcher does not say.
+// The depth is the one the lines reached, the one asked for only when the searcher does not say,
+// and a result that names no source came from a search.
 function analysisEventOf(
   command: AnalyseCommand,
   depth: number,
@@ -186,6 +187,7 @@ function analysisEventOf(
     command_id: command.command_id,
     fen: command.fen,
     depth: result.depth ?? depth,
+    source: result.source ?? "engine",
     requested_lines: lines,
     ...(result.cutByTime ? { cutByTime: true } : {}),
     lines: result.lines.map((line) => ({
@@ -218,6 +220,10 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
   const numbering = new ChatEventNumbering();
   // A number per connection ties every command and refusal to the browser tab that sent it.
   let connections = 0;
+  // The newest `analyse` of each connection. A stored evaluation answers at once, so it can answer
+  // a newer command before the search for an older one ends; that older answer is then stale and
+  // would replace the newer one on the page.
+  const newestAnalyse = new WeakMap<WebSocket, string>();
   const reviewDeps = { db, coach, ...(options.clock ? { clock: options.clock } : {}) };
 
   const broadcast = (payload: string): void => {
@@ -410,6 +416,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         }
         const depth = command.depth ?? DEFAULT_ANALYSIS_DEPTH;
         const lines = command.lines ?? 1;
+        newestAnalyse.set(socket, command.command_id);
         let result: SearchResult;
         try {
           result = await options.analyse({
@@ -423,6 +430,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
           if (error instanceof AnalyzeSuperseded) return;
           throw error;
         }
+        if (newestAnalyse.get(socket) !== command.command_id) return;
         socket.send(frame(analysisEventOf(command, depth, lines, result)));
         return;
       }

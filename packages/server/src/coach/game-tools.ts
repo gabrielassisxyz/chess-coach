@@ -165,6 +165,9 @@ async function analyze(world: CoachWorld, fen: string | undefined): Promise<Tool
     fen: target,
     side_to_move: position.turn() === "w" ? "white" : "black",
     scores: "centipawns from the side to move",
+    // A stored evaluation can be deeper than the depth asked for, so the answer says which it is.
+    ...(result.depth === undefined ? {} : { depth: result.depth }),
+    ...(result.source === undefined ? {} : { source: result.source }),
     lines: result.lines.map((line) => lineView(position, line)),
   });
 }
@@ -208,7 +211,7 @@ export function buildGameTools(world: CoachWorld): SdkMcpToolDefinition<any>[] {
     ),
     tool(
       "analyze",
-      "Top three engine lines at depth 18 for a FEN, or for the position on the board when none is given. Scores are in centipawns from the side to move.",
+      "Top three engine lines for a FEN, or for the position on the board when none is given: searched at depth 18, or read from the stored Lichess evaluations, deeper, when the position is in them. The answer names its depth and source. Scores are in centipawns from the side to move.",
       { fen: fenSchema.optional() },
       async ({ fen }) => guarded(() => analyze(world, fen)),
     ),

@@ -31,8 +31,8 @@
   `CHESS_COACH_DATA_DIR` moves it, `CHESS_COACH_CONTENT_DIR` moves the teaching content
   (`content/`). Puzzles are seeded from `content/puzzles` at every server start.
 - **Test:** `pnpm test` (vitest, per package). Opt-in flags, off by default and never in
-  `bin/ci`: `CHESS_COACH_STOCKFISH=1` runs the real-engine grading suite
-  (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
+  `bin/ci`: `CHESS_COACH_STOCKFISH=1` runs the real-engine grading suite and the evaluation cache's
+  score-sign check (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
   Claude session probe (`test:sdk`, stdin closed); `CHESS_COACH_RECORD=<file>` records the SDK
   stream to that file. `CHESS_COACH_CHESSCOM=1` makes one real call to the public Chess.com API
   (`chesscom.real.test.ts`, shape only). `CHESS_COACH_EXPLORER=1` does the same for one Lichess explorer
@@ -48,7 +48,8 @@
   path: `test/temp-root.test.ts` fails if one does.
 - **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
   proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
-  Stockfish missing, engine fault, dropped socket, restart per game phase, undelivered
+  Stockfish missing, engine fault, evaluation cache unset or missing, dropped socket, restart per
+  game phase, undelivered
   notifications, refresh per activity kind, restart during training) and reads the files from disk. Renaming or
   deleting one of those tests means updating the inventory in the same change.
 - **Design:** `packages/web/src/styles/tokens.css` is the only file allowed a colour literal;
@@ -462,13 +463,38 @@
 - **Stockfish:** the server expects a `stockfish` binary on `PATH` (`STOCKFISH_PATH`
   overrides). The engine is a runtime dependency, never vendored.
 - **Evaluation cache:** `tools/build_eval_cache.py` turns the Lichess evaluation file into `evals.db`, a SQLite file keyed by a packed position; the binary format and the one pipeline command are in `tools/README.md`, and its tests run with `uv run --no-project --with orjson --with pytest pytest tools/test_build_eval_cache.py`. It is not in `bin/ci`.
+- **Evaluation cache, on the server:** `packages/server/src/engine/eval-cache.ts` reads that file,
+  read-only, from the path in `CHESS_COACH_EVAL_CACHE`; it stays a file of its own because the app's
+  database would otherwise grow by tens of gigabytes. Unset, missing or unreadable, the boot logs one
+  `eval_cache.unavailable` and every lookup misses, so the app works as it did without one. Only the
+  engine's analysis lane looks a position up, for the strip's `analyse` and the coach's `analyze`;
+  grading, the drill generators and the repertoire review never do, so a `cp_loss` stays comparable
+  within a game at one depth, and `test/grading-wiring.test.ts` fails when a module besides the pool and
+  the entry point imports the reader. The position is the first four fields of the FEN as chess.js writes
+  them, an en passant square only where a capture is possible, as the file does. A request for N lines at
+  depth D hits only on a stored set with at least N lines and a depth of at least D: the deepest such set
+  answers with its first N lines at the depth it holds, so a row of one line never answers a request for
+  three, and anything else is searched as before. The file scores every line from White's side, a mate as
+  moves to mate with that sign; the reader gives the side-to-move score of a search (a mate as 10000), and
+  `eval-cache.stockfish.real.test.ts` checks that sign against the engine under
+  `CHESS_COACH_STOCKFISH=1`. Castling is stored as the king taking its rook (`e1h1`) and is replayed on the
+  board into `e1g1`, while a rook on e1 playing to h1 stays a rook move; a line ends at the first move
+  that does not replay. `eval_cache.hit` and `eval_cache.miss` log each lookup with `fen`, `lines`,
+  `depth` and `duration_ms`, a hit adding `stored_depth` and `stored_lines` and a miss its `reason`
+  (`not_stored` or `insufficient`); `eval_cache.failed` logs a lookup that threw, which answers as a miss.
 - **Engine on Practice:** `analyse {fen, lines 1-5, depth 8-24}` runs the evaluation engine's
   analysis lane on a position and answers that connection with an `analysis` event (lines with
   SAN and a centipawn score from White's side, a mate as 10000). The search stops at the depth or
   after 4 s, whichever first: the request carries `depth` and `capMs` and never `movetime`, which
   would spend the whole 4 s on every position. The event's `depth` is the depth the lines reached,
   and `cutByTime: true` says the cap stopped the search first; the strip takes such an answer for
-  the answer to its request, since asking again meets the same cap. It is refused with
+  the answer to its request, since asking again meets the same cap. The event's `source` is `cache`
+  when a stored evaluation answered (see Evaluation cache, on the server), at once and at its own
+  depth, which is the asked one or deeper, and the strip takes that answer for the answer to its
+  request too; `engine` says a search ran. A connection's older `analyse` answers nothing once a
+  newer one was sent, since a cached answer can come back before the search for the older one ends.
+  The coach's `analyze` reads the cache the same way, for 3 lines at depth 18, and its answer names
+  the `depth` and `source`. It is refused with
   `training_item_open` while an item is open, so the
   engine never helps with the answer, with `not_in_training` or `stale_activity` off the item, and
   with `engine_unavailable` when Stockfish is missing or dead; a request a newer one replaced
@@ -501,7 +527,8 @@
   `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
   `coach.permission_resolved`, `training.item_served`, `training.answer`, `training.runs_left` (the runs a server start ended), `srs.rated`,
   `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `import_lichess.progress`, `import_lichess.done`,
-  `explorer.failed`, `*.listener_failed`, and `client.*` for what
+  `explorer.failed`, `eval_cache.hit`, `eval_cache.miss`, `eval_cache.unavailable`,
+  `eval_cache.failed`, `*.listener_failed`, and `client.*` for what
   the browser reports through `POST /api/client-log` (uncaught errors, socket drops and
   reconnects, every error frame it received).
 - **Reading:** with `L=data/logs/$(date -u +%F).jsonl`:
