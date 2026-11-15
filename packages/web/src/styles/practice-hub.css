@@ -147,8 +147,9 @@
 
 .practice-tile__value {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-2);
+  gap: var(--space-1) var(--space-2);
 }
 
 .practice-tile__figure {
@@ -162,6 +163,128 @@
 
 .practice-tile__note {
   margin-top: auto;
+}
+
+.practice-tile__delta {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.practice-tile__delta[data-direction="up"] {
+  color: var(--quality-best);
+}
+
+.practice-tile__delta[data-direction="down"] {
+  color: var(--quality-blunder);
+}
+
+.practice-tile__streak {
+  margin-top: auto;
+}
+
+.practice-tile__streak-bars {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.practice-tile__streak-day {
+  flex: 1;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.practice-tile__streak-day[data-active="true"] {
+  background: var(--status-ready);
+}
+
+.practice-tile__streak-day[data-today="true"] {
+  background: var(--accent);
+}
+
+.practice-tile__visual {
+  margin-top: auto;
+}
+
+.practice-tile__spark {
+  display: block;
+  width: 100%;
+  height: 16px;
+}
+
+.practice-tile__split {
+  display: flex;
+  height: 6px;
+  border-radius: 2px;
+  clip-path: inset(0 round 2px);
+  margin-top: auto;
+}
+
+.practice-tile__split-solved {
+  background: var(--status-ready);
+}
+
+.practice-tile__split-rest {
+  flex: 1;
+  background: var(--status-error);
+}
+
+.practice-forecast {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--surface-2);
+}
+
+.practice-forecast__title {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.practice-forecast__bars {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  align-items: end;
+}
+
+.practice-forecast__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.practice-forecast__count {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.practice-forecast__day[data-today="true"] .practice-forecast__count {
+  color: var(--text-1);
+}
+
+.practice-forecast__bar {
+  width: 100%;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.practice-forecast__day[data-today="true"] .practice-forecast__bar {
+  background: var(--accent);
+}
+
+.practice-forecast__label {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1;
 }
 
 /* Improvement areas and Strengths: period bar over one bordered panel of ranked theme rows. */
@@ -430,7 +553,10 @@
     min-height: 44px;
   }
 
-  .practice-tiles,
+  .practice-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .practice-page__cards {
     grid-template-columns: minmax(0, 1fr);
   }

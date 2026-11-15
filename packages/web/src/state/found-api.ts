@@ -23,6 +23,7 @@ export const foundPositionsUrlOf = (query: FoundPositionsQuery): string => {
   const params = new URLSearchParams();
   if (query.color !== undefined) params.set("color", query.color);
   if (query.phase !== undefined) params.set("phase", query.phase);
+  if (query.opening !== undefined) params.set("opening", query.opening);
   const filters = params.toString();
   return filters === "" ? "/api/found-positions" : `/api/found-positions?${filters}`;
 };

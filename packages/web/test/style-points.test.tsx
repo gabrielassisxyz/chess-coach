@@ -1,7 +1,7 @@
 import type { MetOpening, RepertoireBranch, RepertoiresResponse } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RepertoireMenu } from "../src/components/RepertoireMenu.js";
+import { PracticeOpenings } from "../src/components/PracticeOpenings.js";
 import {
   type AddedOpening,
   addOpeningToServer,
@@ -12,7 +12,7 @@ import {
   type StylePoints,
   stylePointsLeft,
 } from "../src/state/repertoires-api.js";
-import { repertoireList } from "./practice-fixtures.js";
+import { repertoireAnswer, repertoireList } from "./practice-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -39,14 +39,10 @@ const branchAtBc5: RepertoireBranch = {
   ],
 };
 
-const listing = (overrides: Partial<RepertoiresResponse> = {}): RepertoiresResponse => ({
-  repertoires: repertoireList,
-  met: [],
-  branches: [],
-  ...overrides,
-});
+const listing = (overrides: Partial<RepertoiresResponse> = {}): RepertoiresResponse =>
+  repertoireAnswer(repertoireList, overrides);
 
-function renderMenu(
+function renderPage(
   answer: RepertoiresResponse,
   adds: {
     addOpening?: (root: readonly string[], points?: StylePoints) => Promise<AddedOpening>;
@@ -54,20 +50,19 @@ function renderMenu(
   } = {},
 ) {
   return render(
-    <RepertoireMenu
-      repertoires={{ status: "ready", value: repertoireList }}
+    <PracticeOpenings
       busy={false}
       starting={null}
       onStart={vi.fn()}
       fetchList={async () => answer}
+      fetchAddable={async () => []}
       addOpening={adds.addOpening ?? (async () => ({ truncated: false }))}
       addVariation={adds.addVariation ?? (async () => ({ truncated: false }))}
     />,
   );
 }
 
-const whiteOpenings = (): Promise<HTMLElement> =>
-  screen.findByRole("region", { name: "White openings" });
+const whiteOpenings = (): Promise<HTMLElement> => screen.findByRole("region", { name: "White" });
 
 const press = (within_: HTMLElement, name: string) =>
   fireEvent.click(within(within_).getByRole("button", { name }));
@@ -75,105 +70,133 @@ const press = (within_: HTMLElement, name: string) =>
 const isDisabled = (element: HTMLElement): boolean => (element as HTMLButtonElement).disabled;
 
 // The row of a measure, found by the name it shows.
-const rowOf = (white: HTMLElement, label: string): HTMLElement =>
-  within(white).getByText(label).closest(".repertoire-menu__points-row") as HTMLElement;
+const rowOf = (scope: HTMLElement, label: string): HTMLElement =>
+  within(scope).getByText(label).closest(".repertoire-menu__points-row") as HTMLElement;
 
-async function openPoints(white: HTMLElement): Promise<void> {
-  fireEvent.click(await within(white).findByRole("button", { name: "Style points" }));
+// The panel Add an opening… opens in the button's place, and the positions + Add a variation opens
+// under the card's head: the two places the control sits. The panel is read on its second tab, the
+// openings met in games.
+async function openAddPanel(white: HTMLElement): Promise<HTMLElement> {
+  fireEvent.click(await within(white).findByRole("button", { name: "Add an opening…" }));
+  const panel = within(white).getByRole("region", { name: "Add an opening" });
+  fireEvent.click(within(panel).getByRole("tab", { name: /^From my games/ }));
+  return panel;
 }
 
-describe("the style points of the openings menu", () => {
-  it("is offered where an opening or a variation can be added, and nowhere else", async () => {
-    const { unmount } = renderMenu(listing());
+async function openVariationPanel(white: HTMLElement): Promise<HTMLElement> {
+  const italian = await within(white).findByRole("article", { name: "Italian Game" });
+  fireEvent.click(within(italian).getByRole("button", { name: "+ Add a variation" }));
+  return italian;
+}
+
+async function openPoints(scope: HTMLElement): Promise<void> {
+  fireEvent.click(await within(scope).findByRole("button", { name: "Style points" }));
+}
+
+describe("the style points of the openings page", () => {
+  it("is offered in the panel of an opening to add and in the positions of a variation, and nowhere else", async () => {
+    const { unmount } = renderPage(listing());
     const white = await whiteOpenings();
-    await act(async () => {});
+    await within(white).findByRole("article", { name: "Italian Game" });
     expect(within(white).queryByRole("button", { name: "Style points" })).toBeNull();
     unmount();
 
-    renderMenu(listing({ met: [scandinavian] }));
-    expect(
-      await within(await whiteOpenings()).findByRole("button", { name: "Style points" }),
-    ).toBeTruthy();
+    renderPage(listing({ met: [scandinavian] }));
+    const withMet = await whiteOpenings();
+    // The control waits behind the button that opens the panel it sits in.
+    await within(withMet).findByRole("button", { name: "Add an opening…" });
+    expect(within(withMet).queryByRole("button", { name: "Style points" })).toBeNull();
+    const panel = await openAddPanel(withMet);
+    expect(within(panel).getByRole("button", { name: "Style points" })).toBeTruthy();
     cleanup();
 
-    renderMenu(listing({ branches: [branchAtBc5] }));
-    expect(
-      await within(await whiteOpenings()).findByRole("button", { name: "Style points" }),
-    ).toBeTruthy();
+    renderPage(listing({ branches: [branchAtBc5] }));
+    const withBranch = await whiteOpenings();
+    const italian = await openVariationPanel(withBranch);
+    expect(within(italian).getByRole("button", { name: "Style points" })).toBeTruthy();
   });
 
   it("opens on 2 points for each measure, none left to place", async () => {
-    renderMenu(listing({ met: [scandinavian] }));
+    renderPage(listing({ met: [scandinavian] }));
     const white = await whiteOpenings();
-    const toggle = await within(white).findByRole("button", { name: "Style points" });
+    const panel = await openAddPanel(white);
+    const toggle = within(panel).getByRole("button", { name: "Style points" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     for (const label of ["More wins", "Less risk", "More intuitive moves"]) {
-      expect(rowOf(white, label).textContent).toContain("2");
+      expect(rowOf(panel, label).textContent).toContain("2");
     }
     expect(
-      isDisabled(within(white).getByRole("button", { name: "More points for more wins" })),
+      isDisabled(within(panel).getByRole("button", { name: "More points for more wins" })),
     ).toBe(true);
     expect(white.textContent).not.toContain("left to place");
   });
 
   it("sends an add made with the untouched split exactly as it was sent before", async () => {
     const addOpening = vi.fn(async (_root: readonly string[]) => ({ truncated: false }));
-    renderMenu(listing({ met: [scandinavian] }), { addOpening });
+    renderPage(listing({ met: [scandinavian] }), { addOpening });
     const white = await whiteOpenings();
+    const panel = await openAddPanel(white);
     fireEvent.click(
-      await within(white).findByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
+      within(panel).getByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
     );
     expect(addOpening).toHaveBeenCalledTimes(1);
     expect(addOpening).toHaveBeenCalledWith(["e4", "d5"]);
   });
 
   it("holds every add until all 6 points are placed, and says how many are left", async () => {
-    renderMenu(listing({ met: [scandinavian], branches: [branchAtBc5] }));
+    renderPage(listing({ met: [scandinavian], branches: [branchAtBc5] }));
     const white = await whiteOpenings();
-    await openPoints(white);
-    const addOpening = within(white).getByRole("button", {
+    const panel = await openAddPanel(white);
+    await openPoints(panel);
+    const addOpening = within(panel).getByRole("button", {
       name: "Add Scandinavian Defense, 1.e4 d5",
     });
-    fireEvent.click(within(white).getByRole("button", { name: "Add a variation" }));
-    const addVariation = within(white).getByRole("button", { name: `Add ${D3}` });
+    const italian = await openVariationPanel(white);
+    const addVariation = within(italian).getByRole("button", { name: `Add ${D3}` });
     expect(isDisabled(addOpening)).toBe(false);
     expect(isDisabled(addVariation)).toBe(false);
 
-    press(white, "Fewer points for more wins");
+    press(panel, "Fewer points for more wins");
     expect(isDisabled(addOpening)).toBe(true);
     expect(isDisabled(addVariation)).toBe(true);
-    expect(white.textContent).toContain("1 point left to place");
-    press(white, "Fewer points for less risk");
-    expect(white.textContent).toContain("2 points left to place");
+    // The split is one for the page, so the control of each panel reads it.
+    expect(panel.textContent).toContain("1 point left to place");
+    expect(italian.textContent).toContain("1 point left to place");
+    press(panel, "Fewer points for less risk");
+    expect(panel.textContent).toContain("2 points left to place");
 
-    press(white, "More points for more intuitive moves");
-    press(white, "More points for more intuitive moves");
+    press(panel, "More points for more intuitive moves");
+    press(panel, "More points for more intuitive moves");
     expect(isDisabled(addOpening)).toBe(false);
     expect(isDisabled(addVariation)).toBe(false);
     expect(white.textContent).not.toContain("left to place");
   });
 
   it("holds the points off the other drill starts while they are not all placed", async () => {
-    renderMenu(listing({ met: [scandinavian] }));
+    renderPage(listing({ met: [scandinavian] }));
     const white = await whiteOpenings();
-    await openPoints(white);
-    press(white, "Fewer points for more wins");
-    expect(isDisabled(within(white).getByRole("button", { name: "Recommended 10" }))).toBe(false);
+    const panel = await openAddPanel(white);
+    await openPoints(panel);
+    press(panel, "Fewer points for more wins");
+    expect(isDisabled(within(white).getByRole("button", { name: "Train 10, Italian Game" }))).toBe(
+      false,
+    );
   });
 
   it("sends the split with an opening that is added, once it is not the default", async () => {
     const addOpening = vi.fn(async (_root: readonly string[], _points?: StylePoints) => ({
       truncated: false,
     }));
-    renderMenu(listing({ met: [scandinavian] }), { addOpening });
+    renderPage(listing({ met: [scandinavian] }), { addOpening });
     const white = await whiteOpenings();
-    await openPoints(white);
-    press(white, "Fewer points for more wins");
-    press(white, "More points for less risk");
+    const panel = await openAddPanel(white);
+    await openPoints(panel);
+    press(panel, "Fewer points for more wins");
+    press(panel, "More points for less risk");
     fireEvent.click(
-      within(white).getByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
+      within(panel).getByRole("button", { name: "Add Scandinavian Defense, 1.e4 d5" }),
     );
     expect(addOpening).toHaveBeenCalledWith(["e4", "d5"], {
       effectiveness: 1,
@@ -186,14 +209,14 @@ describe("the style points of the openings menu", () => {
     const addVariation = vi.fn(async (_branch: readonly string[], _points?: StylePoints) => ({
       truncated: false,
     }));
-    renderMenu(listing({ branches: [branchAtBc5] }), { addVariation });
+    renderPage(listing({ branches: [branchAtBc5] }), { addVariation });
     const white = await whiteOpenings();
-    await openPoints(white);
-    press(white, "Fewer points for less risk");
-    press(white, "More points for more intuitive moves");
-    fireEvent.click(within(white).getByRole("button", { name: "Add a variation" }));
+    const italian = await openVariationPanel(white);
+    await openPoints(italian);
+    press(italian, "Fewer points for less risk");
+    press(italian, "More points for more intuitive moves");
     await act(async () => {
-      fireEvent.click(within(white).getByRole("button", { name: `Add ${D3}` }));
+      fireEvent.click(within(italian).getByRole("button", { name: `Add ${D3}` }));
     });
     expect(addVariation).toHaveBeenCalledWith([...ITALIAN_LINE, "Bc5", "d3"], {
       effectiveness: 2,
@@ -203,30 +226,32 @@ describe("the style points of the openings menu", () => {
   });
 
   it("says in the collapsed control that the split is not the default", async () => {
-    renderMenu(listing({ met: [scandinavian] }));
+    renderPage(listing({ met: [scandinavian] }));
     const white = await whiteOpenings();
-    await openPoints(white);
-    press(white, "Fewer points for more wins");
-    press(white, "More points for less risk");
-    fireEvent.click(within(white).getByRole("button", { name: "Style points" }));
-    expect(within(white).queryByText("Moves that score best for White at your level")).toBeNull();
-    expect(white.textContent).toContain("More wins 1, Less risk 3, More intuitive moves 2");
+    const panel = await openAddPanel(white);
+    await openPoints(panel);
+    press(panel, "Fewer points for more wins");
+    press(panel, "More points for less risk");
+    fireEvent.click(within(panel).getByRole("button", { name: "Style points" }));
+    expect(within(panel).queryByText("Moves that score best for White at your level")).toBeNull();
+    expect(panel.textContent).toContain("More wins 1, Less risk 3, More intuitive moves 2");
   });
 
   it("never takes a measure under 0 or the split over 6", async () => {
-    renderMenu(listing({ met: [scandinavian] }));
+    renderPage(listing({ met: [scandinavian] }));
     const white = await whiteOpenings();
-    await openPoints(white);
-    press(white, "Fewer points for more wins");
-    press(white, "Fewer points for more wins");
-    const fewer = within(white).getByRole("button", { name: "Fewer points for more wins" });
+    const panel = await openAddPanel(white);
+    await openPoints(panel);
+    press(panel, "Fewer points for more wins");
+    press(panel, "Fewer points for more wins");
+    const fewer = within(panel).getByRole("button", { name: "Fewer points for more wins" });
     expect(isDisabled(fewer)).toBe(true);
-    const more = within(white).getByRole("button", { name: "More points for less risk" });
+    const more = within(panel).getByRole("button", { name: "More points for less risk" });
     expect(isDisabled(more)).toBe(false);
-    press(white, "More points for less risk");
-    press(white, "More points for less risk");
+    press(panel, "More points for less risk");
+    press(panel, "More points for less risk");
     expect(isDisabled(more)).toBe(true);
-    expect(rowOf(white, "Less risk").textContent).toContain("4");
+    expect(rowOf(panel, "Less risk").textContent).toContain("4");
   });
 });
 

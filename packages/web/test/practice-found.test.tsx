@@ -159,13 +159,13 @@ function hubElement(options: HubOptions) {
     <PracticeHub
       progress={ready(progressOf())}
       motifs={ready(motifCounts)}
-      repertoires={ready([])}
       engineMissing={false}
       starting={options.starting ?? null}
       failure={options.failure ?? null}
       onStart={noop}
       onStartRepertoire={noop}
       fetchRepertoireList={async () => ({ repertoires: [], met: [] })}
+      fetchAddableOpenings={async () => []}
       {...(options.now === "real" ? {} : { now: options.now ?? NOW })}
       foundPositions={{
         positions: options.positions ?? ready(WHOLE),
@@ -220,11 +220,13 @@ describe("the read of the positions from your games", () => {
     await fetchFoundPositionsFromServer({ color: "white" });
     await fetchFoundPositionsFromServer({ phase: "endgame" });
     await fetchFoundPositionsFromServer({ color: "black", phase: "opening" });
+    await fetchFoundPositionsFromServer({ opening: "Italian Game: Giuoco Piano" });
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/found-positions",
       "/api/found-positions?color=white",
       "/api/found-positions?phase=endgame",
       "/api/found-positions?color=black&phase=opening",
+      "/api/found-positions?opening=Italian+Game%3A+Giuoco+Piano",
     ]);
   });
 

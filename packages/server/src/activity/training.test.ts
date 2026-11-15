@@ -1,7 +1,14 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ActivityState, type TrainingActivity, UNNAMED_OPENING } from "@chess-coach/shared";
+import {
+  type ActivityState,
+  isFixedPracticeMotif,
+  LICHESS_PRACTICE_MOTIFS,
+  MIX_PRACTICE_MOTIF,
+  type TrainingActivity,
+  UNNAMED_OPENING,
+} from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
@@ -2596,6 +2603,326 @@ describe("a puzzle solved first try", () => {
   });
 });
 
+describe("a quiet coach ask after a miss or a give-up stays refused", () => {
+  it("refuses an ask on a puzzle solved after a wrong try, writing nothing and not waking the coach", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, flushed, notes } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("a1a2");
+    const missed = training(await activity.trainingTry("a1a8"));
+    expect(missed.coach_comment).toBeNull();
+    expect(notes()).toHaveLength(1);
+    expect(notes()[0]).toMatchObject({ type: "puzzle_result", first_try: false });
+    const wakes = flushed.mock.calls.length;
+    expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
+    expect(notes()).toHaveLength(1);
+    expect(flushed.mock.calls.length).toBe(wakes);
+  });
+
+  it("refuses an ask on a given-up puzzle, writing nothing and not waking the coach", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, flushed, notes } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const failed = training(await activity.trainingShowSolution());
+    expect(failed.status).toBe("failed");
+    expect(notes()).toHaveLength(1);
+    const wakes = flushed.mock.calls.length;
+    expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
+    expect(notes()).toHaveLength(1);
+    expect(flushed.mock.calls.length).toBe(wakes);
+  });
+});
+
+describe("a mix practice queue drawn equally from the improvement areas", () => {
+  const daysBeforeT0 = (days: number): string =>
+    new Date(T0.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+  let mixHistoryCount = 0;
+
+  function mixAddThemed(id: string, themes: readonly string[]): void {
+    addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+    db.prepare("UPDATE puzzles SET themes = ? WHERE id = ?").run(themes.join(" "), id);
+    const insertTheme = db.prepare(
+      "INSERT INTO puzzle_themes (theme, rating, puzzle_id) VALUES (?, ?, ?)",
+    );
+    for (const theme of themes) insertTheme.run(theme, 1200, id);
+  }
+
+  function mixAddPool(pool: string, count: number, themes: readonly string[] = []): void {
+    for (let i = 0; i < count; i++) {
+      const id = `${pool}-${String(i).padStart(2, "0")}`;
+      if (themes.length > 0) mixAddThemed(id, themes);
+      else addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+    }
+  }
+
+  function mixAddHistory(theme: string, played: number, firstTry: number, daysAgo = 1): void {
+    for (let i = 0; i < played; i++) {
+      const id = `mix-history-${mixHistoryCount++}`;
+      const right = i < firstTry;
+      addPuzzle(id, "tactics", BACK_RANK, ["a1a8"], 1200);
+      db.prepare("UPDATE puzzles SET themes = ?, popularity = 0 WHERE id = ?").run(theme, id);
+      recordPuzzleAttempt(db, {
+        puzzleId: id,
+        attemptedAt: daysBeforeT0(daysAgo),
+        solved: right,
+        answered: [],
+        failedPly: right ? null : 0,
+        firstTry: right,
+        tries: right ? 0 : 1,
+        gaveUp: !right,
+      });
+    }
+  }
+
+  function mixListAsWeakDaysAgo(daysAgo: number, ...themes: string[]): void {
+    for (const theme of themes) mixAddHistory(theme, 8, 0, daysAgo);
+    mixAddHistory("hangingPiece", 16, 16, daysAgo);
+  }
+
+  const mixListAsWeak = (...themes: string[]): void => mixListAsWeakDaysAgo(1, ...themes);
+
+  const mixImprovementAreas = (): string[] =>
+    [...computeThemeStats(db, "30", fixedClock).improvement_areas].sort();
+
+  const mixStoredIds = (): string[] =>
+    (openRun()?.items ?? []).map((item) => (item as { id: string }).id);
+
+  const mixInPool = (ids: readonly string[], pool: string): string[] =>
+    ids.filter((id) => id.startsWith(`${pool}-`));
+
+  const withMixSeed = (seed: number) => setup(fixedClock, silentLog, seededRandom(seed));
+
+  async function mixPassTheTenth(
+    activity: ActivityService,
+    start: TrainingActivity,
+  ): Promise<TrainingActivity> {
+    let state = start;
+    for (let served = 0; served < 10; served++) {
+      const solved = training(await activity.trainingTry("a1a8", state.activity_id));
+      state = training(await activity.nextTrainingItem(solved.activity_id));
+    }
+    return state;
+  }
+
+  it("exports the reserved mix motif outside the fixed choices", () => {
+    expect(MIX_PRACTICE_MOTIF).toBe("mix-practice");
+    expect(isFixedPracticeMotif(MIX_PRACTICE_MOTIF)).toBe(false);
+    expect(isFixedPracticeMotif("fork")).toBe(true);
+  });
+
+  it("builds a first batch of 10 with 4, 3 and 3, and the same shares without repeats in the second", async () => {
+    for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+    mixAddHistory("deflection", 12, 0);
+    mixAddHistory("pin", 8, 0);
+    mixAddHistory("skewer", 8, 0);
+    mixAddHistory("hangingPiece", 16, 16);
+    expect(mixImprovementAreas()).toEqual(["deflection", "pin", "skewer"]);
+    const { activity } = withMixSeed(1);
+    const start = training(
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+    );
+    expect(start.run_motif).toBe("mix-practice");
+    expect(start.item).not.toHaveProperty("queue_length");
+    const first = mixStoredIds();
+    expect(first).toHaveLength(10);
+    expect(mixInPool(first, "deflection")).toHaveLength(4);
+    expect(mixInPool(first, "pin")).toHaveLength(3);
+    expect(mixInPool(first, "skewer")).toHaveLength(3);
+    expect(db.prepare("SELECT motif FROM training_runs").all()).toEqual([
+      { motif: "mix-practice" },
+    ]);
+    const secondState = await mixPassTheTenth(activity, start);
+    expect(secondState.run_motif).toBe("mix-practice");
+    const stored = mixStoredIds();
+    expect(stored).toHaveLength(20);
+    const second = stored.slice(10);
+    expect(mixInPool(second, "deflection")).toHaveLength(4);
+    expect(mixInPool(second, "pin")).toHaveLength(3);
+    expect(mixInPool(second, "skewer")).toHaveLength(3);
+    expect(new Set(stored).size).toBe(20);
+    expect(second.every((id) => !first.includes(id))).toBe(true);
+  });
+
+  it("completes one listed theme with the two least played motif themes, list order on ties", async () => {
+    for (const theme of ["deflection", "advancedPawn", "attackingF2F7"])
+      mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection");
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(ids).toHaveLength(10);
+    expect(mixInPool(ids, "deflection")).toHaveLength(4);
+    expect(mixInPool(ids, "advancedPawn")).toHaveLength(3);
+    expect(mixInPool(ids, "attackingF2F7")).toHaveLength(3);
+  });
+
+  it("skips the most played motif theme when completing a short list", async () => {
+    for (const theme of ["deflection", "attackingF2F7", "capturingDefender", "advancedPawn"])
+      mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection");
+    mixAddHistory("advancedPawn", 10, 10);
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(mixInPool(ids, "advancedPawn")).toHaveLength(0);
+    expect(mixInPool(ids, "deflection")).toHaveLength(4);
+    expect(mixInPool(ids, "attackingF2F7")).toHaveLength(3);
+    expect(mixInPool(ids, "capturingDefender")).toHaveLength(3);
+  });
+
+  it("draws from the first three motif themes with no improvement area and no attempt", async () => {
+    const firstThree = LICHESS_PRACTICE_MOTIFS.slice(0, 3).map((entry) => entry.theme);
+    for (const theme of firstThree) mixAddPool(theme, 12, [theme]);
+    expect(mixImprovementAreas()).toEqual([]);
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(ids).toHaveLength(10);
+    expect(mixInPool(ids, firstThree[0] as string)).toHaveLength(4);
+    expect(mixInPool(ids, firstThree[1] as string)).toHaveLength(3);
+    expect(mixInPool(ids, firstThree[2] as string)).toHaveLength(3);
+  });
+
+  it("gives two puzzles to each of the two weakest with eight improvement areas", async () => {
+    const eight = [
+      "deflection",
+      "fork",
+      "kingsideAttack",
+      "pin",
+      "queensideAttack",
+      "sacrifice",
+      "skewer",
+      "trappedPiece",
+    ];
+    for (const theme of eight) mixAddPool(theme, 12, [theme]);
+    mixListAsWeak(...eight);
+    expect(mixImprovementAreas()).toEqual([...eight].sort());
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(ids).toHaveLength(10);
+    const ordered = [...eight].sort();
+    expect(mixInPool(ids, ordered[0] as string)).toHaveLength(2);
+    expect(mixInPool(ids, ordered[1] as string)).toHaveLength(2);
+    for (const theme of ordered.slice(2)) expect(mixInPool(ids, theme)).toHaveLength(1);
+  });
+
+  it.each([1, 2, 3, 4, 5, 6])(
+    "serves no puzzle twice when one puzzle carries two themes (seed %i)",
+    async (seed) => {
+      mixAddThemed("both-00", ["deflection", "pin"]);
+      for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+      mixListAsWeak("deflection", "pin", "skewer");
+      const { activity } = withMixSeed(seed);
+      const start = training(
+        await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+      );
+      await mixPassTheTenth(activity, start);
+      const ids = mixStoredIds();
+      expect(ids).toHaveLength(20);
+      expect(new Set(ids).size).toBe(20);
+    },
+  );
+
+  it.each([1, 2, 3, 4])(
+    "never serves a puzzle of the first batch again when each pool holds only its share (seed %i)",
+    async (seed) => {
+      mixAddPool("deflection", 4, ["deflection"]);
+      mixAddPool("pin", 3, ["pin"]);
+      mixAddPool("skewer", 3, ["skewer"]);
+      mixListAsWeak("deflection", "pin", "skewer");
+      const { activity } = withMixSeed(seed);
+      const start = training(
+        await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+      );
+      expect(mixStoredIds()).toHaveLength(10);
+      const last = await mixPassTheTenth(activity, start);
+      expect(last.summary).toEqual({ solved: 10, failed: 0 });
+      expect(last.input_enabled).toBe(false);
+    },
+  );
+
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])(
+    "leaves a batch in no theme-by-theme order (seed %i)",
+    async (seed) => {
+      for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+      mixListAsWeak("deflection", "pin", "skewer");
+      const { activity } = withMixSeed(seed);
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+      const themes = mixStoredIds().map((id) => id.split("-")[0]);
+      expect(themes).toHaveLength(10);
+      const runs = themes.filter((theme, index) => index === 0 || theme !== themes[index - 1]);
+      expect(runs.length).toBeGreaterThan(3);
+    },
+  );
+
+  it("keeps the batch at 10 when a theme has no puzzle, passing its share on", async () => {
+    mixAddPool("deflection", 12, ["deflection"]);
+    mixAddPool("pin", 12, ["pin"]);
+    mixListAsWeak("deflection", "pin", "skewer");
+    expect(mixImprovementAreas()).toEqual(["deflection", "pin", "skewer"]);
+    const { activity } = withMixSeed(1);
+    await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+    const ids = mixStoredIds();
+    expect(ids).toHaveLength(10);
+    expect(mixInPool(ids, "skewer")).toHaveLength(0);
+    expect(mixInPool(ids, "deflection").length + mixInPool(ids, "pin").length).toBe(10);
+  });
+
+  it("refuses an empty mix queue with empty_queue and writes no run", async () => {
+    mixListAsWeak("deflection", "pin", "skewer");
+    const { activity } = setup();
+    expect(await code(activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }))).toBe(
+      "empty_queue",
+    );
+    expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 0 });
+  });
+
+  it("starts without a stored puzzle carrying the reserved motif", async () => {
+    for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection", "pin", "skewer");
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM puzzles WHERE motif = ?").get(MIX_PRACTICE_MOTIF),
+    ).toEqual({ n: 0 });
+    const { activity } = setup();
+    const state = training(
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+    );
+    expect(state.run_motif).toBe("mix-practice");
+    expect(mixStoredIds()).toHaveLength(10);
+  });
+
+  it("moves the puzzle rating on a first-try solve like any rated queue", async () => {
+    for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection", "pin", "skewer");
+    const { activity } = withMixSeed(1);
+    const start = training(
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF }),
+    );
+    expect(start).toMatchObject({ student_rating: 1200, rating_change: null });
+    const solved = training(await activity.trainingTry("a1a8", start.activity_id));
+    expect(solved).toMatchObject({ student_rating: 1216, rating_change: 16 });
+  });
+
+  it("orders the queue differently with differently seeded shuffles", async () => {
+    for (const theme of ["deflection", "pin", "skewer"]) mixAddPool(theme, 12, [theme]);
+    mixListAsWeak("deflection", "pin", "skewer");
+    const orderOf = async (seed: number): Promise<string[]> => {
+      const { activity } = withMixSeed(seed);
+      await activity.startTraining({ mode: "puzzles", motif: MIX_PRACTICE_MOTIF });
+      const ids = mixStoredIds();
+      await activity.endTraining();
+      return ids;
+    };
+    const first = await orderOf(1);
+    const second = await orderOf(2);
+    expect(first).toHaveLength(10);
+    expect(second).toHaveLength(10);
+    expect(first).not.toEqual(second);
+    expect(await orderOf(1)).toEqual(first);
+  });
+});
+
 describe("a drill of the positions from the student's games", () => {
   const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
   const AFTER_C5 = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
@@ -3014,5 +3341,165 @@ describe("a drill of the positions from the student's games", () => {
     });
     expect(foundCard("a")).toMatchObject({ reviews: 1 });
     expect(foundCard("b")).toBeUndefined();
+  });
+});
+
+describe("a drill of the positions from games narrowed to one opening", () => {
+  const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+
+  function addFoundWithOpening(
+    id: string,
+    openingName: string,
+    fixture: { color?: "white" | "black"; phase?: "opening" | "middlegame" | "endgame" } = {},
+  ): void {
+    const color = fixture.color ?? "black";
+    const phase = fixture.phase ?? "opening";
+    const fen = color === "black" ? AFTER_E4 : START_FEN;
+    const accepted = [color === "black" ? "e7e5" : "e2e4"];
+    insertFoundPosition(db, {
+      id,
+      fen,
+      color,
+      phase,
+      fromMistake: true,
+      fromRepeat: false,
+      fromDeparture: false,
+      listed: true,
+      acceptedUci: accepted,
+      reachedGames: 1,
+      bestGames: 0,
+      lastReachedAt: T0.toISOString(),
+      gameId: 1,
+      ply: 2,
+      firstFoundAt: T0.toISOString(),
+    });
+    addPuzzle(id, `${phase}-${color}`, fen, accepted);
+    db.prepare("UPDATE puzzles SET opening_name = ? WHERE id = ?").run(openingName, id);
+  }
+
+  function fillThree(): void {
+    addFoundWithOpening("a-two-knights", "Italian Game: Two Knights Defense", {
+      color: "black",
+      phase: "opening",
+    });
+    addFoundWithOpening("b-giuoco", "Italian Game: Giuoco Pianissimo", {
+      color: "black",
+      phase: "middlegame",
+    });
+    addFoundWithOpening("c-scandi", "Scandinavian Defense", { color: "black", phase: "opening" });
+  }
+
+  const servedIds = (): string[] => (openRun()?.items ?? []).map((item) => String(item.id));
+
+  const runCount = (): number =>
+    (db.prepare("SELECT COUNT(*) AS n FROM training_runs").get() as { n: number }).n;
+
+  it("serves a family under its name and one variation under its full name", async () => {
+    fillThree();
+    const { activity } = setup();
+    await activity.startTraining({ mode: "found", scope: "all", opening: "Italian Game" });
+    expect(servedIds().sort()).toEqual(["a-two-knights", "b-giuoco"]);
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Italian Game: Two Knights Defense",
+    });
+    expect(servedIds()).toEqual(["a-two-knights"]);
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Scandinavian Defense",
+    });
+    expect(servedIds()).toEqual(["c-scandi"]);
+  });
+
+  it("serves every scope through the same opening filter", async () => {
+    fillThree();
+    for (const id of ["a-two-knights", "b-giuoco"]) {
+      db.prepare(
+        `INSERT INTO found_cards (position_id, interval_hours, ease_factor, repetitions,
+           next_review_at, introduced_at, reviews, last_reviewed_at)
+         VALUES (?, 24, 2.5, 2, ?, ?, 2, ?)`,
+      ).run(
+        id,
+        new Date(T0.getTime() - 3_600_000).toISOString(),
+        T0.toISOString(),
+        T0.toISOString(),
+      );
+    }
+    const { activity } = setup();
+    for (const scope of ["recommended", "due", "all"] as const) {
+      await activity.startTraining({ mode: "found", scope, opening: "Italian Game" });
+      expect(servedIds().sort()).toEqual(["a-two-knights", "b-giuoco"]);
+    }
+  });
+
+  it("combines the opening with the colour and the phase, each narrowing further", async () => {
+    fillThree();
+    const { activity } = setup();
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Italian Game",
+      color: "black",
+    });
+    expect(servedIds().sort()).toEqual(["a-two-knights", "b-giuoco"]);
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Italian Game",
+      phase: "opening",
+    });
+    expect(servedIds()).toEqual(["a-two-knights"]);
+    await activity.startTraining({
+      mode: "found",
+      scope: "all",
+      opening: "Italian Game",
+      color: "black",
+      phase: "middlegame",
+    });
+    expect(servedIds()).toEqual(["b-giuoco"]);
+  });
+
+  it("refuses an opening nothing carries with empty_queue and writes no run", async () => {
+    fillThree();
+    const { activity } = setup();
+    expect(
+      await code(
+        activity.startTraining({ mode: "found", scope: "all", opening: "French Defense" }),
+      ),
+    ).toBe("empty_queue");
+    expect(activity.current()).toBeNull();
+    expect(runCount()).toBe(0);
+    expect(
+      await code(
+        activity.startTraining({
+          mode: "found",
+          scope: "all",
+          opening: "Italian Game",
+          color: "white",
+        }),
+      ),
+    ).toBe("empty_queue");
+    expect(runCount()).toBe(0);
+  });
+
+  it("refuses a prefix of a family that is not the family, and writes no run", async () => {
+    fillThree();
+    const { activity } = setup();
+    expect(
+      await code(activity.startTraining({ mode: "found", scope: "all", opening: "Italian" })),
+    ).toBe("empty_queue");
+    expect(activity.current()).toBeNull();
+    expect(runCount()).toBe(0);
+  });
+
+  it("treats an opening with a quote as a literal value, not as SQL", async () => {
+    fillThree();
+    const { activity } = setup();
+    expect(
+      await code(activity.startTraining({ mode: "found", scope: "all", opening: "' OR '1'='1" })),
+    ).toBe("empty_queue");
+    expect(runCount()).toBe(0);
   });
 });

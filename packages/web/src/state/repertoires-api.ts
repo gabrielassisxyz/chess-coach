@@ -1,18 +1,17 @@
 import {
+  type AddableOpening,
+  AddableOpeningsResponseSchema,
   type CoverageReply,
   type CoverageStatus,
   type MetOpening,
   type RepertoireBranch,
   type RepertoireCoverage,
   RepertoireCoverageSchema,
-  type RepertoireFoundSummary,
-  type RepertoireGroupSummary,
   type RepertoireScope,
-  type RepertoireScopeCounts,
-  type RepertoireSideSummary,
   type RepertoireSummary,
   type RepertoiresResponse,
   RepertoiresResponseSchema,
+  repertoireMovesText,
   repertoireRootText,
 } from "@chess-coach/shared";
 
@@ -155,112 +154,10 @@ export const SCOPE_LABEL: Record<RepertoireScope, string> = {
   all: "All moves",
 };
 
-export interface OpeningMenu {
-  name: string;
-  due: number;
-  variations: RepertoireSummary[];
-  // What a drill of the whole opening would serve, a move its variations share counted once; null
-  // until the server has said.
-  moves: RepertoireScopeCounts | null;
-}
-
-export interface SideMenu {
-  side: RepertoireSummary["side"];
-  heading: string;
-  // The openings the student chose to build.
-  openings: OpeningMenu[];
-  // The openings of the units built from an opening the student's games met, kept apart from the
-  // chosen ones under Found in your games.
-  found: OpeningMenu[];
-  // The same for every opening of the side, the found ones included.
-  moves: RepertoireScopeCounts | null;
-  // What a drill of the found openings together would serve; null until the server has said.
-  foundMoves: RepertoireScopeCounts | null;
-}
-
-// The counts the server gives the levels above a variation; absent until the list has been read.
-export interface LevelCounts {
-  groups?: readonly RepertoireGroupSummary[] | undefined;
-  sides?: readonly RepertoireSideSummary[] | undefined;
-  found?: RepertoireFoundSummary | undefined;
-}
-
-const SIDES: readonly RepertoireSummary["side"][] = ["white", "black"];
-const NO_FOUND_IDS: ReadonlySet<number> = new Set();
-
-// The units found in games are the ones a met opening names, and nothing else marks them: the
-// Italian, which the student chose, is never one. None is known until the met openings are read.
-export const foundIdsOf = (met: readonly MetOpening[] | null): ReadonlySet<number> =>
-  new Set(
-    (met ?? []).flatMap((entry) => (entry.repertoire_id === null ? [] : [entry.repertoire_id])),
-  );
-
-// An opening lists its variations in the order the server gave them, and its due count adds theirs up.
-function openingsOfSide(
-  entries: readonly RepertoireSummary[],
-  side: RepertoireSummary["side"],
-  levels: LevelCounts,
-): OpeningMenu[] {
-  const openings = new Map<string, OpeningMenu>();
-  for (const entry of entries) {
-    const opening = openings.get(entry.group_name) ?? {
-      name: entry.group_name,
-      due: 0,
-      variations: [],
-      moves:
-        levels.groups?.find((group) => group.side === side && group.group_name === entry.group_name)
-          ?.moves ?? null,
-    };
-    opening.due += entry.moves.due;
-    opening.variations.push(entry);
-    openings.set(entry.group_name, opening);
-  }
-  return [...openings.values()];
-}
-
-// The hub groups openings under the side the student plays, White first. The units built from an
-// opening the games met are set apart from the ones the student chose.
-export function menuOf(
-  list: readonly RepertoireSummary[],
-  levels: LevelCounts = {},
-  foundIds: ReadonlySet<number> = NO_FOUND_IDS,
-): SideMenu[] {
-  return SIDES.flatMap((side): SideMenu[] => {
-    const entries = list.filter((candidate) => candidate.side === side);
-    const openings = openingsOfSide(
-      entries.filter((entry) => !foundIds.has(entry.id)),
-      side,
-      levels,
-    );
-    const found = openingsOfSide(
-      entries.filter((entry) => foundIds.has(entry.id)),
-      side,
-      levels,
-    );
-    if (openings.length + found.length === 0) return [];
-    const word = side === "white" ? "White" : "Black";
-    const moves = levels.sides?.find((entry) => entry.side === side)?.moves ?? null;
-    const foundMoves = levels.found?.moves ?? null;
-    return [{ side, heading: `${word} openings`, openings, found, moves, foundMoves }];
-  });
-}
-
-// A drill of a group or a side is started from one of its variations, the first the menu lists;
+// A drill of a group or a side is started from one of its variations, the first the page lists;
 // the server widens it from there.
 export const levelAnchorOf = (variations: readonly RepertoireSummary[]): number | null =>
   variations[0]?.id ?? null;
-
-// A level that holds one thing below it serves exactly what that one serves, so it gets no starts.
-export const offersGroupStarts = (opening: OpeningMenu): boolean =>
-  opening.moves !== null && opening.variations.length > 1;
-
-export const offersSideStarts = (side: SideMenu): boolean =>
-  side.moves !== null && side.openings.length + side.found.length > 1;
-
-// Mixing is what the found openings have over the rest, so one added opening already gets a start
-// of its own. None is offered before there is one, or before the server has counted what it serves.
-export const offersFoundStarts = (side: SideMenu): boolean =>
-  side.foundMoves !== null && side.found.length > 0;
 
 export const branchKey = (line: readonly string[], san: string): string => [...line, san].join(" ");
 
@@ -275,7 +172,7 @@ export const branchesOf = (
 
 export const metRootKey = (root: readonly string[]): string => root.join(" ");
 
-// A root that has a unit is already in the menu above, so only the others are offered, and with
+// A root that has a unit is already an opening on the page, so only the others are offered, and with
 // them the roots whose last run stopped short: their unit is partial, and adding the root again
 // carries on from what is stored.
 export const metToAdd = (met: readonly MetOpening[], unfinished: ReadonlySet<string>) =>
@@ -293,6 +190,77 @@ export const metLabelOf = (entry: MetOpening): string =>
     : `${entry.opening_name}, ${repertoireRootText(entry.root)}`;
 
 export const metGamesText = (games: number): string => `${games} ${games === 1 ? "game" : "games"}`;
+
+// The openings of the student's games that the panel offers, the most met first. The sort is stable,
+// so the server's order settles a tie.
+export const metToAddMostMetFirst = (
+  met: readonly MetOpening[],
+  unfinished: ReadonlySet<string>,
+): MetOpening[] => metToAdd(met, unfinished).sort((a, b) => b.games - a.games);
+
+// Every opening Black can leave the student's 1.e4 path with, met in a game or not, most played at
+// the student's level first. The server asks the explorer for the shares, so the page reads this
+// when the panel opens and never with the page.
+export type FetchAddableOpenings = () => Promise<AddableOpening[]>;
+
+export const fetchAddableOpeningsFromServer: FetchAddableOpenings = async () => {
+  const response = await fetch("/api/openings/addable");
+  if (!response.ok) throw new Error(`addable openings: ${response.status}`);
+  return AddableOpeningsResponseSchema.parse(await response.json()).entries;
+};
+
+// The openings of one position Black leaves the path from, in the order the server gave them.
+export interface AddableGroup {
+  // The position's line as the book writes it: "1.e4", "1.e4 e5 2.Nf3".
+  path: string;
+  entries: AddableOpening[];
+}
+
+// Grouped by where Black leaves the path, the shorter path first. The group is read off the root
+// itself, so no entry is ever left out of the list for a root of an unexpected length.
+export function addableGroupsOf(entries: readonly AddableOpening[]): AddableGroup[] {
+  const groups = new Map<string, AddableGroup & { plies: number }>();
+  for (const entry of entries) {
+    const path = entry.root.slice(0, -1);
+    const key = path.join(" ");
+    const group = groups.get(key) ?? {
+      path: repertoireRootText(path),
+      plies: path.length,
+      entries: [],
+    };
+    group.entries.push(entry);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => a.plies - b.plies);
+}
+
+// Beside a name: the whole line for Black's first move, and for a later one only that move, since
+// the heading over the group already says the path that leads to it.
+export const addableMovesText = (entry: AddableOpening): string =>
+  entry.root.length <= 2
+    ? repertoireRootText(entry.root)
+    : repertoireMovesText(entry.root.slice(-1), entry.root.length - 1);
+
+// The line is named with the opening so a screen reader tells two rows apart by it.
+export const addableLabelOf = (entry: AddableOpening): string =>
+  `${entry.opening_name}, ${repertoireRootText(entry.root)}`;
+
+export const addableGamesText = (games: number): string => `${metGamesText(games)} of yours`;
+
+// What a search compares: lower case, without the dots of the move numbers and with one space
+// between words, so "1.e4 c5", "e4 c5" and "1e4  C5" read alike.
+const searchableText = (text: string): string =>
+  text.toLowerCase().replaceAll(".", "").replace(/\s+/g, " ").trim();
+
+// A row is kept when the text is in its name or in its moves, written in full or as the row shows
+// them: what the student types is what the row says, or what the book writes.
+export function addableMatches(entry: AddableOpening, query: string): boolean {
+  const wanted = searchableText(query);
+  if (wanted === "") return true;
+  return [entry.opening_name, repertoireRootText(entry.root), addableMovesText(entry)].some(
+    (text) => searchableText(text).includes(wanted),
+  );
+}
 
 // What one variation covers, read from its stored moves when the student opens it.
 export type FetchCoverage = (repertoireId: number) => Promise<RepertoireCoverage>;

@@ -550,6 +550,35 @@ describe("a coach line offered in Practice", () => {
   });
 });
 
+describe("a held line is never offered over an open puzzle or a review", () => {
+  it("refuses an offered show_position while a puzzle is in progress with training_item_open", async () => {
+    addPuzzleRow("f1", "fork", FORK_FEN, ["b5c7", "e8f8", "a1c1"]);
+    const { activity } = setupTraining();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const mid = asTraining(await activity.trainingTry("b5c7"));
+    expect(mid.status).toBe("in_progress");
+    const before = activity.current();
+    await expect(activity.offerOrStartDemo(DEMO_FEN)).rejects.toMatchObject({
+      code: "training_item_open",
+    });
+    expect(activity.current()).toEqual(before);
+  });
+
+  it("opens a demo directly over a Games review, not a held line", async () => {
+    const { activity, game } = setupTraining();
+    await activity.newGame({ color: "white", elo: 1200 });
+    await activity.playerMove({ from: "e2", to: "e4" });
+    await activity.resign();
+    const finishedId = game.current()?.id as number;
+    await activity.newGame({ color: "white", elo: 1200 });
+    const review = await activity.openGame(finishedId);
+    expect(review.kind).toBe("review");
+    const offer = await activity.offerOrStartDemo(DEMO_FEN);
+    expect(offer).toMatchObject({ offered: false, state: { kind: "demo" } });
+    expect(activity.current()).toMatchObject({ kind: "demo", returns_to: "review" });
+  });
+});
+
 describe("show_line", () => {
   it("opens the line as a demo with the moves played and returns to the run", async () => {
     addTrainingCard();
