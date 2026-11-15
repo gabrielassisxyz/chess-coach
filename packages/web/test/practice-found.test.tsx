@@ -148,6 +148,7 @@ interface HubOptions {
   positions?: Loaded<FoundPositionsResponse>;
   fetchPositions?: FetchFoundPositions;
   onStart?: (request: FoundStartRequest) => void;
+  onOpenGameReview?: ((gameId: number, ply: number) => void) | undefined;
   starting?: PracticeHubProps["starting"];
   failure?: string | null;
   // "real" leaves the clock to the hub, which is what the app does.
@@ -170,6 +171,9 @@ function hubElement(options: HubOptions) {
         positions: options.positions ?? ready(WHOLE),
         fetchPositions: options.fetchPositions ?? (async () => WHOLE),
         onStart: options.onStart ?? noop,
+        ...(options.onOpenGameReview === undefined
+          ? {}
+          : { onOpenGameReview: options.onOpenGameReview }),
         createBoard: recordingBoard,
       }}
     />
@@ -486,6 +490,65 @@ describe("the From my games page", () => {
     const titleId = card.querySelector(".found-card__title")?.id;
     expect(titleId).toBeTruthy();
     expect(drill.getAttribute("aria-describedby")).toBe(titleId);
+  });
+});
+
+describe("the opponent that opens the game's review", () => {
+  it("renders the opponent as a button on a mistake, and calls back with its game and ply", () => {
+    const onOpenGameReview = vi.fn();
+    renderPage({ onOpenGameReview });
+    // The past-opening title splits around the button, so the card is read from the button up.
+    const past = within(pageOf()).getByRole("button", { name: "vs Whambalee" });
+    expect(past.closest("li")?.querySelector(".found-card__title")?.getAttribute("title")).toBe(
+      "Move 25 · vs Whambalee",
+    );
+    fireEvent.click(past);
+    expect(onOpenGameReview).toHaveBeenLastCalledWith(5, 49);
+    const opening = within(cardOf("King's Pawn Game: MacLeod Attack")).getByRole("button", {
+      name: "vs sam75tn",
+    });
+    fireEvent.click(opening);
+    expect(onOpenGameReview).toHaveBeenLastCalledWith(6, 10);
+    expect(onOpenGameReview).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows no link where there is no single game to open", () => {
+    const onOpenGameReview = vi.fn();
+    renderPage({ onOpenGameReview });
+    expect(within(cardOf("Move 51")).queryByRole("button", { name: /vs / })).toBeNull();
+    expect(within(cardOf("King's Pawn Game")).queryByRole("button", { name: /vs / })).toBeNull();
+    // Reached more than once, even with a mistake among the games, stays plain text.
+    expect(
+      within(cardOf("Scandinavian Defense")).queryByRole("button", { name: /vs / }),
+    ).toBeNull();
+    expect(onOpenGameReview).not.toHaveBeenCalled();
+  });
+
+  it("shows no link for a mistakes position with no mistake of the student's", () => {
+    const departure = foundPosition({
+      id: "own:departure-only",
+      section: "mistakes",
+      phase: "middlegame",
+      from_mistake: false,
+      from_departure: true,
+      opening_name: "Departure Opening",
+      game: { id: 11, ply: 21, opponent: "Rival", played_at: "2026-02-27T12:00:00.000Z" },
+    });
+    const onOpenGameReview = vi.fn();
+    renderPage({ onOpenGameReview, positions: ready(foundResponse([departure])) });
+    expect(within(pageOf()).queryByRole("button", { name: /vs / })).toBeNull();
+    expect(onOpenGameReview).not.toHaveBeenCalled();
+  });
+
+  it("keeps the title and the foot readable with no callback", () => {
+    renderPage();
+    expect(within(pageOf()).queryByRole("button", { name: /vs / })).toBeNull();
+    expect(textOf(cardOf("Move 25 · vs Whambalee"), ".found-card__foot > span")).toBe(
+      "Fri · King's Pawn Game: McConnell Defense",
+    );
+    expect(textOf(cardOf("King's Pawn Game: MacLeod Attack"), ".found-card__foot > span")).toBe(
+      "Fri · vs sam75tn",
+    );
   });
 });
 

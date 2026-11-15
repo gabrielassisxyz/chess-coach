@@ -1,5 +1,5 @@
 import type { CoachTab, LiveGameActivity } from "@chess-coach/shared";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Chat } from "./components/Chat.js";
 import { CoachActions } from "./components/CoachActions.js";
 import { NoticeBanner } from "./components/NoticeBanner.js";
@@ -33,6 +33,13 @@ export interface AppProps {
 
 export function App({ fetchHealth }: AppProps = {}) {
   const [screen, setScreen] = useState<Screen>("Play");
+  // A review opened from a From my games position: the game to open once at its wrong move.
+  const [gameTarget, setGameTarget] = useState<{ gameId: number; ply: number } | null>(null);
+  const openGameReview = useCallback((gameId: number, ply: number): void => {
+    setGameTarget({ gameId, ply });
+    setScreen("Games");
+  }, []);
+  const clearGameTarget = useCallback((): void => setGameTarget(null), []);
   const server = useServer({ tab: SCREEN_TAB[screen] });
   const notice = serviceNotice(useHealth(server.errorCount, fetchHealth ? { fetchHealth } : {}));
   const { theme, toggle: toggleTheme } = useTheme();
@@ -110,9 +117,17 @@ export function App({ fetchHealth }: AppProps = {}) {
           />
         ) : null}
         {screen === "Games" ? (
-          <Games server={server} onOpenPlay={() => setScreen("Play")} onCoachIdle={setCoachIdle} />
+          <Games
+            server={server}
+            onOpenPlay={() => setScreen("Play")}
+            onCoachIdle={setCoachIdle}
+            target={gameTarget}
+            onTargetOpened={clearGameTarget}
+          />
         ) : null}
-        {screen === "Practice" ? <Practice server={server} /> : null}
+        {screen === "Practice" ? (
+          <Practice server={server} onOpenGameReview={openGameReview} />
+        ) : null}
         <Chat
           server={server}
           open={coach.open}
