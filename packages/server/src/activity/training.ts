@@ -282,7 +282,7 @@ function isLegalUci(fen: string, uci: string): boolean {
  * service owns ids and staleness, and asks this for the state to publish.
  */
 // Library motifs whose Lichess theme has another name; the others share theirs.
-const THEME_OF_MOTIF: Readonly<Record<string, string>> = {
+export const THEME_OF_MOTIF: Readonly<Record<string, string>> = {
   back_rank_mate: "backRankMate",
   checkmate: "mate",
 };

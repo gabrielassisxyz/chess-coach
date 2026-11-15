@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProgressResponseSchema } from "@chess-coach/shared";
+import { ProgressResponseSchema, ThemeStatsResponseSchema } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
@@ -70,5 +70,71 @@ describe("GET /api/progress", () => {
     expect(ProgressResponseSchema.safeParse({ ...answer, puzzle_rating: 1200.5 }).success).toBe(
       false,
     );
+  });
+});
+
+describe("GET /api/puzzles/themes/stats", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  // The route reads the system clock, so the attempts are placed against the real now.
+  function addRatedAttempt(id: string, daysAgo: number): void {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation,
+         difficulty_rating, themes)
+       VALUES (?, 'test', 'fork', 'easy', 'fen', 'e2e4', 'e4', 'why', 1500, 'fork short')`,
+    ).run(id);
+    db.prepare(
+      `INSERT INTO puzzle_attempts (puzzle_id, attempted_at, solved, answered_uci, first_try)
+       VALUES (?, ?, 1, '[]', 1)`,
+    ).run(id, new Date(Date.now() - daysAgo * DAY_MS).toISOString());
+  }
+
+  it("answers the shared schema over the last 30 days when no window is asked", async () => {
+    addRatedAttempt("recent", 1);
+    addRatedAttempt("older", 31);
+    const app = buildApp({ db });
+    const answers = new Map<string, { status: number; body: unknown }>();
+    for (const url of ["", "?days=30", "?days=90", "?days=all"]) {
+      const response = await app.inject({ method: "GET", url: `/api/puzzles/themes/stats${url}` });
+      answers.set(url, { status: response.statusCode, body: response.json() });
+    }
+    await app.close();
+    const byDefault = answers.get("");
+    expect(byDefault?.status).toBe(200);
+    expect(Object.keys(byDefault?.body as object).sort()).toEqual([
+      "days",
+      "improvement_areas",
+      "overall",
+      "overall_previous",
+      "strengths",
+      "themes",
+      "unranked",
+    ]);
+    const parsed = (url: string) => ThemeStatsResponseSchema.parse(answers.get(url)?.body);
+    expect(parsed("")).toEqual(parsed("?days=30"));
+    expect(parsed("")).toMatchObject({ days: "30", overall: { played: 1 }, unranked: 2 });
+    expect(parsed("?days=90")).toMatchObject({ days: "90", overall: { played: 2 } });
+    expect(parsed("?days=all")).toMatchObject({
+      days: "all",
+      overall: { played: 2 },
+      overall_previous: null,
+    });
+  });
+
+  it("refuses a window it does not offer with bad_query", async () => {
+    const app = buildApp({ db });
+    const answers: { status: number; body: unknown }[] = [];
+    for (const days of ["14", "abc"]) {
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/puzzles/themes/stats?days=${days}`,
+      });
+      answers.push({ status: response.statusCode, body: response.json() });
+    }
+    await app.close();
+    for (const answer of answers) {
+      expect(answer.status).toBe(400);
+      expect(answer.body).toMatchObject({ error: "bad_query" });
+    }
   });
 });
