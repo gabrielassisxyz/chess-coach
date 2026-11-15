@@ -7,6 +7,7 @@ import {
   RepertoiresResponseSchema,
 } from "@chess-coach/shared";
 import { Chess, type Move } from "chess.js";
+import Fastify from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
@@ -14,6 +15,7 @@ import { insertRepertoireFirstAttempt } from "../db/repertoire-cards.js";
 import {
   createRepertoireVariation,
   insertRepertoireOwnMove,
+  REPERTOIRE_REBUILD_GROUP_SUFFIX,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { UciEngine } from "../engine/uci.js";
@@ -22,6 +24,7 @@ import { CachedExplorer } from "../openings/explorer-client.js";
 import { positionKey } from "../openings/from-games.js";
 import { parseRepertoireBranchBook } from "../openings/from-repertoire.js";
 import { parseOpeningTable } from "../openings/names.js";
+import { type RepertoireRebuildState, registerRepertoireRoutes } from "./repertoires.js";
 
 // The route reads the system clock, so a card is due or not by a wide margin either way.
 const LONG_AGO = "2000-01-01T00:00:00.000Z";
@@ -51,10 +54,10 @@ function placeOf(line: string[], san: string): { positionKey: string; uci: strin
 }
 
 // Every line starts with the setup; a White move sits where the line before it has an even length.
-function addVariation(name: string, branches: string[][]): number {
+function addVariation(name: string, branches: string[][], groupName = "Italian Game"): number {
   const { id } = createRepertoireVariation(db, {
     side: "white",
-    groupName: "Italian Game",
+    groupName,
     variationName: name,
   });
   for (const branch of branches) {
@@ -185,6 +188,7 @@ describe("GET /api/repertoires", () => {
       found: { moves: { recommended: 0, due: 0, all: 0 } },
       met: [],
       branches: [],
+      rebuilding_id: null,
     });
   });
 
@@ -330,6 +334,43 @@ describe("GET /api/repertoires at the group and side levels", () => {
       scandinavian: { recommended: 2, due: 2, all: 2 },
       side: { recommended: 5, due: 5, all: 5 },
     });
+  });
+});
+
+describe("GET /api/repertoires and a rebuild's copy", () => {
+  const COPY_GROUP = `Italian Game${REPERTOIRE_REBUILD_GROUP_SUFFIX}`;
+
+  it("lists no repertoire, group or side count of the copy, which answers 3...Bc5 with a move of its own", async () => {
+    addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+    addCardsForEveryMove();
+    // A stable sibling holds no new move back, so the copy's 4.d3 would count wherever it was read.
+    setCardInterval([...SETUP, "Bc5"], "c3", 72);
+    const before = RepertoiresResponseSchema.parse((await getRepertoires()).json());
+    // A rebuild halfway through: 4.d3 is a move the unit does not play, so it would add to any count.
+    addVariation("Giuoco Pianissimo (4.d3)", [["Bc5", "d3"]], COPY_GROUP);
+
+    const during = RepertoiresResponseSchema.parse((await getRepertoires()).json());
+
+    expect(during).toEqual(before);
+    expect(during.repertoires.map((entry) => entry.group_name)).toEqual(["Italian Game"]);
+    expect(during.groups?.map((group) => group.group_name)).toEqual(["Italian Game"]);
+    expect(during.rebuilding_id).toBeNull();
+  });
+
+  it("names the unit the rebuild state holds, and none once it is cleared", async () => {
+    const unit = addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+    const rebuilding: RepertoireRebuildState = { unitId: unit };
+    const app = Fastify();
+    registerRepertoireRoutes(app, db, { rebuilding });
+    const read = async () =>
+      RepertoiresResponseSchema.parse(
+        (await app.inject({ method: "GET", url: "/api/repertoires" })).json(),
+      ).rebuilding_id;
+
+    expect(await read()).toBe(unit);
+    rebuilding.unitId = null;
+    expect(await read()).toBeNull();
+    await app.close();
   });
 });
 
@@ -658,6 +699,15 @@ describe("GET /api/repertoires met openings", () => {
     const shorter = addRootedUnit(["e4", "e5", "Nf3", "Nf6"], "Russian Game", "Nxe5");
     expect(shorter).not.toBe(longer);
     expect((await getMet()).map((entry) => entry.repertoire_id)).toEqual([shorter]);
+  });
+
+  it("names no rebuild's copy as the unit of the root it is built from", async () => {
+    addReviewedGame(["e4", "d5", "exd5"], { leftPly: 2 }, italian);
+    // No unit ends on 1...d5, as when its first run stopped short of it: only a rebuild's copy does.
+    addRootedUnit(["e4", "d5"], `Scandinavian Defense${REPERTOIRE_REBUILD_GROUP_SUFFIX}`, "exd5");
+    expect(await getMet()).toEqual([
+      { root: ["e4", "d5"], opening_name: null, games: 1, repertoire_id: null },
+    ]);
   });
 
   it("lists a root again when its unit is deleted", async () => {

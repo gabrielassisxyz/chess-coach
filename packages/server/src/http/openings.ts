@@ -36,6 +36,7 @@ import {
   type RepertoireRootCheck,
   RepertoireRootConflictError,
 } from "../openings/repertoire-root.js";
+import type { RepertoireRebuildState } from "./repertoires.js";
 
 const generateBody = z
   .object({
@@ -181,6 +182,7 @@ export function registerAddableOpeningsRoute(
   });
 }
 
+// `rebuilding` is shared with the repertoires route: it names the unit while a rebuild walks it.
 export function registerOpeningRoutes(
   app: FastifyInstance,
   generate: () => Promise<GenerationResult>,
@@ -191,10 +193,12 @@ export function registerOpeningRoutes(
     branch?: readonly string[],
     rebuild?: boolean,
     points?: RepertoirePoints,
+    onRebuildStart?: (unitId: number) => void,
   ) => Promise<RepertoireResult>,
   generateRepertoireIdeas?: () => Promise<RepertoireIdeasResult>,
   generateFoundNotes?: () => Promise<FoundNotesResult>,
   log: Log = silentLog,
+  rebuilding: RepertoireRebuildState = { unitId: null },
 ): void {
   // The explorer halves run for minutes at one request a second; a second run would only queue behind it.
   let explorerRunning = false;
@@ -313,8 +317,12 @@ export function registerOpeningRoutes(
           branchLine,
           rebuild.rebuild,
           weights,
+          (unitId) => {
+            rebuilding.unitId = unitId;
+          },
         ).finally(() => {
           explorerRunning = false;
+          rebuilding.unitId = null;
         });
       }
       if (writesIdeas && generateRepertoireIdeas)

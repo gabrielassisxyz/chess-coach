@@ -413,6 +413,55 @@ describe("a variation's row", () => {
   });
 });
 
+describe("a variation being rebuilt", () => {
+  // Every row of every card, opened, with the tag beside its name or null where it has none.
+  async function tagsByRow(): Promise<Array<[string, string | null]>> {
+    const tags: Array<[string, string | null]> = [];
+    for (const name of ["Italian Game", "King's Pawn Game"]) {
+      const opening = await card(name);
+      fireEvent.click(within(opening).getByRole("button", { name }));
+      for (const row of opening.querySelectorAll(".opening-row")) {
+        const heading = row.querySelector(".opening-row__heading");
+        tags.push([
+          heading?.querySelector(".opening-row__name")?.textContent ?? "",
+          heading?.querySelector(".opening-row__rebuilding")?.textContent ?? null,
+        ]);
+      }
+    }
+    return tags;
+  }
+
+  it("says Being rebuilt beside the name of the variation the answer names, and on no other row", async () => {
+    renderPage(answer({ rebuilding_id: pianissimo.id }));
+    expect(await tagsByRow()).toEqual([
+      ["Giuoco Pianissimo (4.d3)", "Being rebuilt"],
+      ["Two Knights Defense (4.Ng5)", null],
+      ["Ponziani Opening (3.c3)", null],
+    ]);
+  });
+
+  it("still sends the start of that row's Train, since its moves serve until the rebuild ends", async () => {
+    const { onStart } = renderPage(answer({ rebuilding_id: pianissimo.id }));
+    const italian = await card("Italian Game");
+    fireEvent.click(within(italian).getByRole("button", { name: "Italian Game" }));
+    const train = within(italian).getByRole("button", {
+      name: "Train 2, Giuoco Pianissimo (4.d3)",
+    });
+    expect(isDisabled(train)).toBe(false);
+    fireEvent.click(train);
+    expect(onStart).toHaveBeenLastCalledWith(4, "recommended");
+  });
+
+  it.each([
+    { why: "an answer without the field", listed: answer() },
+    { why: "an answer that names no rebuild", listed: answer({ rebuilding_id: null }) },
+  ])("says it on no row for $why", async ({ listed }) => {
+    renderPage(listed);
+    expect((await tagsByRow()).map(([, tag]) => tag)).toEqual([null, null, null]);
+    expect(screen.queryByText("Being rebuilt")).toBeNull();
+  });
+});
+
 describe("the train buttons", () => {
   it("reads Train N with the recommended count of its level and sends it with the level of its place", async () => {
     const { onStart } = renderPage();
@@ -749,6 +798,19 @@ describe("its stylesheet", () => {
     expect(declared(desktop, ".openings-add__open")).toMatchObject({
       height: "32px",
       "border-style": "dashed",
+    });
+  });
+
+  it("draws Being rebuilt beside the name as a quiet tag in a hairline box", () => {
+    expect(declared(desktop, ".opening-row__heading")).toMatchObject({
+      display: "flex",
+      "align-items": "center",
+    });
+    expect(declared(desktop, ".opening-row__rebuilding")).toMatchObject({
+      border: "1px solid var(--border)",
+      "border-radius": "var(--radius-sm)",
+      color: "var(--text-2)",
+      "font-size": "var(--text-xs)",
     });
   });
 

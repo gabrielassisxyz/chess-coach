@@ -162,6 +162,37 @@ function forwardMove(fen: string): Move | undefined {
   return moves.find((move) => move.piece === "p") ?? moves[0];
 }
 
+/** A search a test keeps waiting: `reached` settles once the walk is inside it. */
+class RepertoireSearchHold {
+  readonly reached: Promise<void>;
+  private arrive: () => void = () => undefined;
+  private resume: (failure: Error | null) => void = () => undefined;
+  private readonly outcome: Promise<Error | null>;
+
+  constructor() {
+    this.reached = new Promise((resolve) => {
+      this.arrive = resolve;
+    });
+    this.outcome = new Promise((resolve) => {
+      this.resume = resolve;
+    });
+  }
+
+  async wait(): Promise<void> {
+    this.arrive();
+    const failure = await this.outcome;
+    if (failure) throw failure;
+  }
+
+  release(): void {
+    this.resume(null);
+  }
+
+  fail(failure: Error): void {
+    this.resume(failure);
+  }
+}
+
 /** Scores the moves a test writes out; an unwritten position has one forward move alone. */
 class RepertoireFakeEngine implements Searcher {
   readonly requests: SearchRequest[] = [];
@@ -171,6 +202,14 @@ class RepertoireFakeEngine implements Searcher {
   silentAboutDepth = false;
   private readonly scripted = new Map<string, Array<{ moves: string[]; score: number }>>();
   private readonly cutDepths = new Map<string, number>();
+  private readonly holds = new Map<string, RepertoireSearchHold>();
+
+  /** The next search of this position waits until the test releases it or fails it. */
+  holdAt(line: string[]): RepertoireSearchHold {
+    const hold = new RepertoireSearchHold();
+    this.holds.set(keyOf(line), hold);
+    return hold;
+  }
 
   /** The search of this position runs into the cap: it answers with the lines written, at this depth. */
   cutAt(line: string[], depthReached: number): this {
@@ -194,10 +233,15 @@ class RepertoireFakeEngine implements Searcher {
 
   async search(request: SearchRequest): Promise<SearchResult> {
     this.requests.push(request);
+    const key = positionKey(request.fen);
+    const hold = this.holds.get(key);
+    if (hold) {
+      this.holds.delete(key);
+      await hold.wait();
+    }
     if (this.blindToBlack && request.fen.split(" ")[1] === "b") {
       return { fen: request.fen, bestmove: null, lines: [] };
     }
-    const key = positionKey(request.fen);
     // Stockfish answers as many lines as MultiPV asks for, and too few would change White's pick.
     const lines = (this.scripted.get(key) ?? forwardMoveLines(request.fen)).slice(
       0,
@@ -2263,6 +2307,21 @@ describe("the documentation of the repertoire source", () => {
     expect(openings).not.toContain("They are not stored with the unit");
   });
 
+  it("says under Openings that nothing but the rebuild reads its copy, which goes at boot, and that the list names the unit", () => {
+    const agents = readFileSync(join(repositoryRoot, "AGENTS.md"), "utf8");
+    const openings = /- \*\*Openings:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "";
+    for (const documented of [
+      "which no part of the app reads but the rebuild",
+      "`REPERTOIRE_REBUILD_GROUP_SUFFIX`",
+      "`GET /api/repertoires` carries the unit's id as `rebuilding_id`",
+      "is removed at boot, before the server listens",
+      "`openings.rebuild_copy_removed`",
+    ]) {
+      expect(openings).toContain(documented);
+    }
+    expect(openings).not.toContain("lists as a card while it runs");
+  });
+
   it("never names a rating group the explorer does not have", () => {
     const filesUnder = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -3326,6 +3385,115 @@ describe("GET /api/repertoires and a rebuild posted with what it says", () => {
     expect(variationsOf(db)).toHaveLength(3);
     await app.close();
   });
+});
+
+describe("GET /api/repertoires while a rebuild walks its copy", () => {
+  let maxRequests: number | undefined;
+  beforeEach(() => {
+    maxRequests = undefined;
+  });
+
+  const appWithRebuild = () =>
+    buildApp({
+      db,
+      log: new RecordingLog(),
+      generateOpenings: async () => noPositionsFound(),
+      generateRepertoireOpenings: (root, branch, rebuilding, points, onRebuildStart) =>
+        generateRepertoire(db, engine, explorer, cacheDir, clock, BRANCH_FIXTURE_NAMES, {
+          root,
+          branch,
+          rebuild: rebuilding,
+          points,
+          onRebuildStart,
+          ...(maxRequests === undefined ? {} : { maxRequests }),
+        }),
+    });
+  type AppWithRebuild = ReturnType<typeof appWithRebuild>;
+
+  const listing = async (app: AppWithRebuild) => {
+    const response = await app.inject({ method: "GET", url: "/api/repertoires" });
+    expect(response.statusCode).toBe(200);
+    return RepertoiresResponseSchema.parse(response.json());
+  };
+  type Listing = Awaited<ReturnType<typeof listing>>;
+  const withoutRebuildingId = ({ rebuilding_id: _rebuilding, ...rest }: Listing) => rest;
+
+  const copyOf = (): RepertoireRow | undefined =>
+    db.prepare("SELECT * FROM repertoires WHERE group_name = ?").get("Italian Game (rebuilding)") as
+      | RepertoireRow
+      | undefined;
+
+  // The unit answers 3...Bc5 with 4.c3. Its rebuild stores 4.d3 there, the one network request its
+  // cache lacks, and then waits on the engine for Black's reply to it: the copy holds a White move
+  // the unit does not play while the test reads the list.
+  async function heldRebuild(app: AppWithRebuild, budget: number | undefined) {
+    writeItalianTree();
+    expect((await app.inject(postOf({ sources: ["repertoire"] }))).statusCode).toBe(200);
+    const unit = firstItalianVariation();
+    const before = await listing(app);
+    writePlanWithinMargin();
+    maxRequests = budget;
+    const hold = engine.holdAt(D3_BRANCH);
+    const running = app.inject(postOf({ sources: ["repertoire"], rebuild: true }));
+    const first = await Promise.race([
+      hold.reached.then(() => "held"),
+      running.then(() => "ended"),
+    ]);
+    expect(first).toBe("held");
+    return { unit, before, hold, running };
+  }
+
+  const postOf = (payload: object) =>
+    ({ method: "POST", url: "/api/openings/generate", payload }) as const;
+
+  it.each([
+    {
+      ending: "a swap",
+      budget: undefined,
+      end: (hold: RepertoireSearchHold) => hold.release(),
+      status: 200,
+      replaced: true,
+    },
+    {
+      ending: "the request limit",
+      budget: 1,
+      end: (hold: RepertoireSearchHold) => hold.release(),
+      status: 200,
+      replaced: false,
+    },
+    {
+      ending: "a failure",
+      budget: undefined,
+      end: (hold: RepertoireSearchHold) => hold.fail(new Error("the engine stopped answering")),
+      status: 502,
+      replaced: false,
+    },
+  ])(
+    "lists nothing of the copy and names the unit until the run ends by $ending",
+    async ({ budget, end, status, replaced }) => {
+      const app = appWithRebuild();
+      const { unit, before, hold, running } = await heldRebuild(app, budget);
+      const copy = copyOf() as RepertoireRow;
+      expect(ownOf(copy.id, AFTER_BC5)?.move_san).toBe("d3");
+
+      const during = await listing(app);
+      expect(during.rebuilding_id).toBe(unit.id);
+      expect(withoutRebuildingId(during)).toEqual(withoutRebuildingId(before));
+
+      end(hold);
+      const response = await running;
+      expect(response.statusCode).toBe(status);
+      if (status === 200) expect(response.json().repertoire.truncated).toBe(!replaced);
+      const after = await listing(app);
+      expect(after.rebuilding_id).toBeNull();
+      expect(copyOf()).toBeUndefined();
+      expect(after.repertoires.map((entry) => entry.id)).toEqual([unit.id]);
+      expect(after.repertoires[0]?.variation_name).toBe(
+        replaced ? "Giuoco Pianissimo (4.d3)" : "Classical Variation (4.c3)",
+      );
+      await app.close();
+    },
+  );
 });
 
 const POINTS_ON = {

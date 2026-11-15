@@ -1,6 +1,6 @@
 import { dueAt, type Quality, review as reviewSchedule, type Schedule } from "../srs/sm2.js";
 import type { Database } from "./open.js";
-import type { RepertoireRow } from "./repertoires.js";
+import { type RepertoireRow, repertoireRebuildCopySql } from "./repertoires.js";
 
 /** The review schedule of one move in one position, shared by every variation that plays it. */
 export interface RepertoireCardSchedule extends Schedule {
@@ -97,13 +97,19 @@ export function listRepertoireDrillMoves(
 
 export function findDrillRepertoire(db: Database, repertoireId: number): RepertoireRow | undefined {
   return db
-    .prepare("SELECT id, side, group_name, variation_name FROM repertoires WHERE id = ?")
+    .prepare(
+      `SELECT id, side, group_name, variation_name FROM repertoires
+       WHERE id = ? AND NOT ${repertoireRebuildCopySql("group_name")}`,
+    )
     .get(repertoireId) as RepertoireRow | undefined;
 }
 
 export function listDrillRepertoires(db: Database): RepertoireRow[] {
   return db
-    .prepare("SELECT id, side, group_name, variation_name FROM repertoires ORDER BY id")
+    .prepare(
+      `SELECT id, side, group_name, variation_name FROM repertoires
+       WHERE NOT ${repertoireRebuildCopySql("group_name")} ORDER BY id`,
+    )
     .all() as RepertoireRow[];
 }
 

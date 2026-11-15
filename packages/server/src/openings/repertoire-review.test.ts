@@ -26,9 +26,11 @@ import {
 } from "../db/repertoire-cards.js";
 import {
   createRepertoireVariation,
+  deleteRepertoireGroupVariations,
   findRepertoireOwnMove,
   insertRepertoireOwnMove,
   listMetOpenings,
+  REPERTOIRE_REBUILD_GROUP_SUFFIX,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { classifyCpLoss, type PlayerMoveEvaluation } from "../engine/evaluate.js";
@@ -1056,6 +1058,33 @@ describe("two variations that share a root", () => {
     const id = addGame(MAIN_LINE);
     await reviewRepertoireGame(deps(), id);
     expect(reviewOf(id)).toMatchObject({ repertoire_id: repertoireId, outcome: "in_book" });
+  });
+});
+
+describe("a game graded while a rebuild's copy exists", () => {
+  const COPY_GROUP = `Italian Game${REPERTOIRE_REBUILD_GROUP_SUFFIX}`;
+
+  it("gets one review row, against the unit, which the copy's removal leaves in place", async () => {
+    seedRepertoire();
+    // The rebuild already answers 3...Bc5 with the game's 4.d3, so the copy follows the game furthest.
+    const copy = createUnit(COPY_GROUP, "Giuoco Pianissimo (4.d3)");
+    seedLine(PIANISSIMO_LINE, 0.3, PIANISSIMO_LINE.length, { id: copy, rootPlies: 5 });
+    const id = addGame(PIANISSIMO_LINE, { cpLoss: { 7: 25 } });
+
+    expect((await reviewRepertoireGames(deps())).reviewed).toBe(1);
+    expect(reviewsOf()).toEqual([
+      expect.objectContaining({ game_id: id, repertoire_id: repertoireId, outcome: "departed" }),
+    ]);
+    // No card is made from a move only the copy stores.
+    expect(cardAt(AFTER_BC5, "d3")).toBeUndefined();
+
+    // The rebuild ends and its copy goes: the game was never the copy's, so it is not reviewed again.
+    deleteRepertoireGroupVariations(db, "white", COPY_GROUP);
+    expect((await reviewRepertoireGames(deps())).reviewed).toBe(0);
+    expect(reviewsOf()).toEqual([
+      expect.objectContaining({ game_id: id, repertoire_id: repertoireId }),
+    ]);
+    expect(logs.named("repertoire.game_reviewed")).toHaveLength(1);
   });
 });
 

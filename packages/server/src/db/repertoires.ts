@@ -95,6 +95,18 @@ export interface RepertoireCounts {
   total: number;
 }
 
+/**
+ * A rebuild walks its new rows into a copy of the unit, kept under the unit's group with this suffix
+ * until one transaction moves them onto the unit. Only the rebuild reads the copy: every query that
+ * lists or finds units for the rest of the app leaves it out with `repertoireRebuildCopySql`.
+ */
+export const REPERTOIRE_REBUILD_GROUP_SUFFIX = " (rebuilding)";
+
+/** The SQL condition that the group named in `groupColumn` is a rebuild's copy. */
+export function repertoireRebuildCopySql(groupColumn: string): string {
+  return `(${groupColumn} LIKE '%${REPERTOIRE_REBUILD_GROUP_SUFFIX}')`;
+}
+
 /** A White move with no idea yet, carrying what its text is written from. */
 export interface RepertoireIdeaTarget {
   id: number;
@@ -197,6 +209,37 @@ export function deleteRepertoireGroupVariations(
   groupName: string,
 ): void {
   db.prepare("DELETE FROM repertoires WHERE side = ? AND group_name = ?").run(side, groupName);
+}
+
+/** A rebuild's copy found in the database: its group and the rows it held. */
+export interface RepertoireRebuildCopy {
+  side: RepertoireSide;
+  groupName: string;
+  rows: number;
+}
+
+/**
+ * Removes every rebuild's copy with its rows, oldest first. No rebuild outlives the process that
+ * ran it, so at boot a copy is what a rebuild left when its process died; the unit it was rebuilding
+ * is another group, which this never touches.
+ */
+export function removeRepertoireRebuildCopies(db: Database): RepertoireRebuildCopy[] {
+  return db.transaction((): RepertoireRebuildCopy[] => {
+    const copies = db
+      .prepare(
+        `SELECT r.side, r.group_name, COUNT(p.id) AS position_rows
+         FROM repertoires r LEFT JOIN repertoire_positions p ON p.repertoire_id = r.id
+         WHERE ${repertoireRebuildCopySql("r.group_name")}
+         GROUP BY r.side, r.group_name ORDER BY MIN(r.id)`,
+      )
+      .all() as Array<{ side: RepertoireSide; group_name: string; position_rows: number }>;
+    for (const copy of copies) deleteRepertoireGroupVariations(db, copy.side, copy.group_name);
+    return copies.map((copy) => ({
+      side: copy.side,
+      groupName: copy.group_name,
+      rows: copy.position_rows,
+    }));
+  })();
 }
 
 export function renameRepertoireVariation(
@@ -478,6 +521,7 @@ export function listWhiteMovesLackingIdea(db: Database): RepertoireIdeaTarget[] 
       `SELECT p.id, r.variation_name, p.ply, p.line_san, p.move_san, p.move_uci, p.eval_cp
        FROM repertoire_positions p JOIN repertoires r ON r.id = p.repertoire_id
        WHERE r.side = 'white' AND p.kind = 'own' AND p.idea IS NULL
+         AND NOT ${repertoireRebuildCopySql("r.group_name")}
        ORDER BY p.repertoire_id, p.ply, p.id`,
     )
     .all() as Array<{
@@ -557,6 +601,7 @@ function unitsByLastRootMove(db: Database): Map<string, number> {
       `SELECT p.repertoire_id, p.position_key, p.move_uci
        FROM repertoire_positions p JOIN repertoires r ON r.id = p.repertoire_id
        WHERE r.side = 'white' AND p.kind = 'reply' AND p.source = 'setup'
+         AND NOT ${repertoireRebuildCopySql("r.group_name")}
          AND p.ply = (SELECT MAX(q.ply) FROM repertoire_positions q
                       WHERE q.repertoire_id = p.repertoire_id AND q.source = 'setup')
        ORDER BY p.repertoire_id`,
@@ -724,7 +769,8 @@ export interface RepertoireUnitRoot {
 export function listRepertoireUnitRoots(db: Database, side: RepertoireSide): RepertoireUnitRoot[] {
   const units = db
     .prepare(
-      "SELECT id, side, group_name, variation_name FROM repertoires WHERE side = ? ORDER BY id",
+      `SELECT id, side, group_name, variation_name FROM repertoires
+       WHERE side = ? AND NOT ${repertoireRebuildCopySql("group_name")} ORDER BY id`,
     )
     .all(side) as RepertoireRow[];
   const setup = db.prepare(

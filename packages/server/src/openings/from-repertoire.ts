@@ -22,6 +22,7 @@ import {
   insertRepertoireOwnMove,
   listRepertoireOwnMoveKeys,
   moveRepertoirePositionsOnto,
+  REPERTOIRE_REBUILD_GROUP_SUFFIX,
   type RepertoireCounts,
   type RepertoireMoveSource,
   type RepertoireResultCounts,
@@ -79,8 +80,6 @@ const ITALIAN_NAMING_REPLY_SAN = "Bc5";
 // rule is the most played move within the margin. The value names no turn, so the setup preference
 // stays off.
 const NO_SETUP_PREFERENCE_TURN = 0;
-// A rebuild stores its rows under this group until its walk ends, apart from the unit it replaces.
-const REPERTOIRE_REBUILD_GROUP_SUFFIX = " (rebuilding)";
 
 /**
  * How the student weighs White's candidate moves, in whole points that add up to
@@ -175,6 +174,8 @@ export interface RepertoireOptions {
    * cuts short leaves it as it was.
    */
   rebuild?: boolean | undefined;
+  /** Told the id of the stored unit when a rebuild of it starts, before its copy is walked. */
+  onRebuildStart?: ((unitId: number) => void) | undefined;
   /**
    * What decides White's move among the candidates the plan rule leaves; left out, the default of
    * 2, 2 and 2. A stored move never changes under other points, only a rebuild walks the unit again.
@@ -1162,6 +1163,7 @@ async function rebuildRepertoireUnit(
 ): Promise<RepertoireResult> {
   const apart = { ...unit, groupName: `${unit.groupName}${REPERTOIRE_REBUILD_GROUP_SUFFIX}` };
   const discard = () => deleteRepertoireGroupVariations(deps.db, "white", apart.groupName);
+  deps.options.onRebuildStart?.(stored.id);
   // What a rebuild that died with the process left behind.
   discard();
   try {
