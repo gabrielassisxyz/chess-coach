@@ -2972,7 +2972,7 @@ describe("the hub's frame", () => {
   const pageTitle = (): string => screen.getByRole("heading", { level: 2 }).textContent ?? "";
   const openingsEntry = (): HTMLElement =>
     within(practiceNav()).getByRole("button", { name: /^Openings(,|$)/ });
-  const UNBUILT = ["Dashboard", "Openings played"];
+  const UNBUILT = ["Openings played"];
 
   // An answer that counts the moves due on each side apart from the variations under it.
   const withSides = (
@@ -3388,8 +3388,11 @@ describe("the hub's frame styles", () => {
   });
 
   it("lets only the navigation scroll by itself, never a card", () => {
+    // A clipped theme description also names overflow, for its ellipsis, without scrolling.
     const scrolling = [...desktop.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-      .filter(([, , body = ""]) => /overflow|max-height/.test(body))
+      .filter(([, , body = ""]) =>
+        /overflow-(x|y)\s*:\s*(auto|scroll)|overflow\s*:\s*(auto|scroll)|max-height/.test(body),
+      )
       .map(([, selectors = ""]) => selectors.trim());
     expect(scrolling).toEqual([".practice-nav"]);
   });
