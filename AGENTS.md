@@ -130,6 +130,11 @@
   (opening drills) moves nothing. It lives in `settings.puzzle_rating`, is replayed once from
   the stored attempts at boot when absent (`puzzles.rating` log event), and the activity carries it
   as `student_rating` with `rating_change` once a rated puzzle ends; the item carries `rating`. A
+  puzzles queue (`start_training {mode: "puzzles", motif}`) accepts any fixed choice
+  (`isFixedPracticeMotif`), any stored `puzzles.motif`, or any `puzzle_themes.theme` with stored
+  rows, and refuses any other with `empty_queue`; rated library puzzles of `fork`, `pin`, `skewer`,
+  `back_rank_mate` (`backRankMate`), `checkmate` (`mate`), `endgame` and `promotion` are indexed
+  in `puzzle_themes` on seed. A
   puzzles queue is sampled by index seek (`listPuzzles` with `ratingAround`, never a count) from
   puzzles within 200 points of that number, widening by 200 per side until full and repeating a
   puzzle only when its window has too few new ones, skipping popularity under 50; Any also skips
