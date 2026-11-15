@@ -210,7 +210,12 @@
   theme that yields no puzzle gives its place to the unthemed sample so that the batch keeps its
   length, and the batch is shuffled before it joins the run. With no improvement area the batch is
   the unthemed sample alone. The run keeps `training_runs.motif` NULL and `run_motif` null, and a
-  queue with a motif has no boost. The plain
+  queue with a motif has no boost. The reserved motif `mix-practice` (`MIX_PRACTICE_MOTIF`)
+  starts a queue drawn equally from the improvement areas of the last 30 days, completed to
+  three themes from the fourteen motif themes with the fewest attempts, list order on ties.
+  Each batch of 10 is split as evenly as it goes, the extra to the weakest first, each share a
+  themed draw around the rating, shuffled, with shortfalls passed to the other themes in order;
+  the run stores `mix-practice` as its motif and `run_motif`. The plain
   listing, used by the coach's puzzle tool and `GET /api/puzzles`, and the motif counts cover only the
   library, never `lichess-db` rows, since they read every matching row. Elo stays over Glicko-2 on
   purpose: against puzzles whose rating does not move and whose deviation is low, simulated runs

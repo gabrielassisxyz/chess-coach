@@ -36,13 +36,21 @@ import {
 } from "../state/practice.js";
 import { stateCardOf } from "../state/practice-item.js";
 import { type FetchProgress, fetchProgressFromServer } from "../state/progress-api.js";
+import {
+  type FetchPuzzleRatingHistory,
+  fetchPuzzleRatingHistoryFromServer,
+} from "../state/puzzle-rating-api.js";
 import { repertoireCardOf } from "../state/repertoire-drill.js";
 import {
   type FetchRepertoireList,
   type FetchRepertoires,
   fetchRepertoiresFromServer,
 } from "../state/repertoires-api.js";
-import { type FetchThemeStats, fetchThemeStatsFromServer } from "../state/theme-stats-api.js";
+import {
+  DEFAULT_THEME_WINDOW,
+  type FetchThemeStats,
+  fetchThemeStatsFromServer,
+} from "../state/theme-stats-api.js";
 
 export interface PracticeProps {
   server: ServerApi;
@@ -52,7 +60,9 @@ export interface PracticeProps {
   fetchRepertoires?: FetchRepertoires;
   // The whole repertoire answer the Openings page draws its cards from; the server's by default.
   fetchRepertoireList?: FetchRepertoireList | undefined;
-  // Ranked puzzle theme stats for Improvement areas and Strengths; the server's by default.
+  // 7-day puzzle rating history for the Overview tile; the server's by default.
+  fetchRatingHistory?: FetchPuzzleRatingHistory | undefined;
+  // Ranked puzzle theme stats for Overview, Improvement areas and Strengths; the server's by default.
   fetchThemeStats?: FetchThemeStats | undefined;
   fetchHealth?: FetchHealth | undefined;
 }
@@ -148,12 +158,23 @@ function Hub({
   fetchMotifs,
   fetchProgress,
   fetchRepertoireList,
+  fetchRatingHistory,
   fetchThemeStats,
   fetchHealth,
 }: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress">> &
-  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList" | "fetchThemeStats">) {
+  Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList"> & {
+    fetchRatingHistory: FetchPuzzleRatingHistory;
+    fetchThemeStats: FetchThemeStats;
+  }) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
+  const loadRatingHistory = useCallback(() => fetchRatingHistory("7"), [fetchRatingHistory]);
+  const loadOverviewThemeStats = useCallback(
+    () => fetchThemeStats(DEFAULT_THEME_WINDOW),
+    [fetchThemeStats],
+  );
+  const ratingHistory = useLoaded(loadRatingHistory);
+  const overviewThemeStats = useLoaded(loadOverviewThemeStats);
   const [retries, setRetries] = useState(0);
   const notice = serviceNotice(useHealth(retries, fetchHealth ? { fetchHealth } : {}));
   const login = useCoachLogin(server);
@@ -172,6 +193,8 @@ function Hub({
       }
       progress={progress}
       motifs={motifs}
+      ratingHistory={ratingHistory}
+      overviewThemeStats={overviewThemeStats}
       engineMissing={engineMissing}
       starting={starting}
       failure={failure}
@@ -372,6 +395,7 @@ export function Practice({
   fetchProgress = fetchProgressFromServer,
   fetchRepertoires = fetchRepertoiresFromServer,
   fetchRepertoireList,
+  fetchRatingHistory = fetchPuzzleRatingHistoryFromServer,
   fetchThemeStats = fetchThemeStatsFromServer,
   fetchHealth,
 }: PracticeProps) {
@@ -431,6 +455,7 @@ export function Practice({
           fetchMotifs={fetchMotifs}
           fetchProgress={fetchProgress}
           fetchRepertoireList={fetchRepertoireList}
+          fetchRatingHistory={fetchRatingHistory}
           fetchThemeStats={fetchThemeStats}
           fetchHealth={fetchHealth}
         />
