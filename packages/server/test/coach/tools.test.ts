@@ -47,12 +47,14 @@ describe("get_progress", () => {
     });
     expect(Object.keys(progress).sort()).toEqual(
       [
+        "activity_7d",
         "cards",
         "difficulty",
         "games_played",
         "puzzle_rating",
         "puzzles_by_motif",
         "rating_history",
+        "streak_best",
         "streak_days",
       ].sort(),
     );

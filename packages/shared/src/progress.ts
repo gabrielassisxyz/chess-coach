@@ -44,6 +44,10 @@ export const CardProgressSchema = z.object({
   next_due_at: z.string().nullable(),
   next_due_count: z.number().int().nonnegative(),
   correct_rate_30d: z.number().min(0).max(1).nullable(),
+  // Cards due on each of the next seven local days, the first counting everything due by the end of today.
+  due_next_7d: z.array(z.number().int().nonnegative()).length(7),
+  // Share answered right between 60 and 30 days ago, null when that window has no review.
+  correct_rate_prev_30d: z.number().min(0).max(1).nullable(),
 });
 
 export const DifficultyProgressSchema = z.object({
@@ -59,6 +63,8 @@ export const ProgressResponseSchema = z.object({
   puzzles_by_motif: z.array(MotifProgressSchema),
   cards: CardProgressSchema,
   streak_days: z.number().int().nonnegative(),
+  streak_best: z.number().int().nonnegative(),
+  activity_7d: z.array(z.boolean()).length(7),
   difficulty: DifficultyProgressSchema,
   puzzle_rating: z.number().int(),
 });
