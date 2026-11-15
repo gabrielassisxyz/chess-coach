@@ -33,6 +33,7 @@ export interface ComposeAppExtras {
   connections?: AppOptions["connections"];
   importer?: Omit<NonNullable<AppOptions["importer"]>, "grader">;
   generateRepertoireIdeas?: AppOptions["generateRepertoireIdeas"];
+  generateFoundNotes?: AppOptions["generateFoundNotes"];
   listAddableOpenings?: AppOptions["listAddableOpenings"];
 }
 
@@ -165,6 +166,7 @@ export function composeServer(options: ComposeOptions): ComposedServer {
     ...(extras.generateRepertoireIdeas
       ? { generateRepertoireIdeas: extras.generateRepertoireIdeas }
       : {}),
+    ...(extras.generateFoundNotes ? { generateFoundNotes: extras.generateFoundNotes } : {}),
     ...(extras.listAddableOpenings ? { listAddableOpenings: extras.listAddableOpenings } : {}),
     ...(extras.importer ? { importer: { ...extras.importer, grader } } : {}),
   });

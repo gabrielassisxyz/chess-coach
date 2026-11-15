@@ -400,6 +400,34 @@
   keeps its schedule. A miss writes no `srs_cards` card, `puzzle_attempts` is written as for any
   puzzle, and the puzzle rating does not move, since these puzzles have no rating. The run's divider
   reads "From my games". `DELETE FROM found_cards` makes every position new again.
+- **Found notes:** a listed position can hold a note, `found_positions.note` (nullable), a sentence or two on why
+  its best accepted move is played there. `POST /api/openings/generate {sources: ["found-notes"]}`
+  (`openings/found-notes.ts`) writes one for every listed position whose `note` is null, the newest
+  `first_found_at` first, so a run cut short has covered what the drill serves first. It is the
+  `repertoire-ideas` batch applied to these positions and shares its pieces: the `IdeaSession`
+  interface, `sdkIdeaSession` (the coach's model, no tools, one turn, `strictMcpConfig: true`, no stored
+  session, 180 s a note, with its own system prompt passed in), the 200 character limit and two
+  attempts a position. It never runs after an import and is refused 409 `already_running` while it or
+  the ideas run runs, the two sharing one guard; a missing generator answers 404
+  `found_notes_unavailable`. It logs `openings.generate` with `considered`, `generated`, `rejected`
+  and `empty`, and each refused text as `openings.found_note_rejected`. A stored note is never
+  rewritten, so `UPDATE found_positions SET note = NULL` is how a note is written again, and a
+  position whose two texts were refused stays empty for the next run. The prompt of a position
+  gives its FEN, the side to move, the phase, the moves of the shown game that led to it (`game_id`
+  and `ply`, nothing after the position), the best accepted move numbered as the game would write it,
+  the engine's evaluation with best play read from that game's grading (`eval_before_cp`, left out
+  when the game has none or is gone) and, only for a position found from a mistake, the move the student
+  played there in that game with its classification; a repeat's prompt does not carry it. The check
+  (`foundNoteRejection`) refuses an empty text, one over 200 characters, one that names the written
+  form of any accepted move (SAN, with or without its check sign, castling with zeros too) and one
+  that names the destination square of any accepted move; the refusal is told to the second attempt.
+  The check cannot prove the chess right. A drill of mode `found` carries `note` in its state once an
+  item ended solved or with the solution shown: `{san, text}` with the stored note and the best
+  accepted move's SAN, since an item solved with another accepted move has no `expected` move to
+  name it by, or null when the position has none. It is null while the item is open, a hint included, and
+  the field is absent in every other mode, whose puzzles may share the id. The Practice column draws it
+  in the item's card under the verdict, as "Why <SAN>" and the text, and draws nothing when it is null
+  or before the end.
 - **From my games list:** `GET /api/found-positions` (optional `color`, `phase` and `opening`) answers
   `{positions, counts}` (`http/found-positions.ts`, schemas in shared `found-positions.ts`). `opening` takes a full name or a family, as the drill does. A listed
   position carries `id`, `fen`, `color`, `phase`, `section` (`reached` when `from_repeat`, else

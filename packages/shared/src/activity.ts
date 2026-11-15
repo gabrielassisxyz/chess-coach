@@ -208,6 +208,12 @@ export type WrongTry = z.infer<typeof WrongTrySchema>;
 export const QueueOutcomeSchema = z.enum(["solved", "failed", "current", "pending"]);
 export type QueueOutcome = z.infer<typeof QueueOutcomeSchema>;
 
+// The note a position from the student's games holds on why its best accepted move is played there.
+// `san` is that move, which is not always the one the student played: any accepted move is right,
+// and an item solved with one of them has no `expected` move to name it by.
+export const FoundNoteSchema = z.object({ san: z.string(), text: z.string() });
+export type FoundNote = z.infer<typeof FoundNoteSchema>;
+
 // What the hints have shown on the current move: the first gives the idea stored on its position,
 // or a fixed sentence saying none is stored, and the second gives the move.
 export const RepertoireHintSchema = z.discriminatedUnion("kind", [
@@ -296,6 +302,9 @@ export const TrainingActivitySchema = z.object({
   // Set on a puzzle solved first try without a hint, which the coach does not comment on unprompted:
   // `offered` until the student asks for the comment, `requested` after.
   coach_comment: z.enum(["offered", "requested"]).nullable().optional(),
+  // Present on a drill of the positions from the student's games only: the stored note once the item
+  // has ended, null while it is open and when the position has none.
+  note: FoundNoteSchema.nullable().optional(),
   // Present on a repertoire drill only.
   repertoire: RepertoireDrillSchema.optional(),
 });
