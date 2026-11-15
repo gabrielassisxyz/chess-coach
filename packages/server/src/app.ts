@@ -11,6 +11,7 @@ import {
   registerAddableOpeningsRoute,
   registerOpeningDrillRoutes,
   registerOpeningRoutes,
+  registerPlayedOpeningsRoute,
 } from "./http/openings.js";
 import { registerProgressRoutes } from "./http/progress.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
@@ -110,6 +111,9 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     registerCardRoutes(app, options.db);
     registerGameRoutes(app, options.db, options.openingNames ?? NO_OPENING_NAMES);
     registerOpeningDrillRoutes(app, options.db);
+    registerPlayedOpeningsRoute(app, options.db, {
+      names: options.openingNames ?? NO_OPENING_NAMES,
+    });
     registerProgressRoutes(app, options.db);
     registerPuzzleRoutes(app, options.db);
     registerRepertoireRoutes(app, options.db, {
