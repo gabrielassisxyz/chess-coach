@@ -67,6 +67,8 @@ interface FoundFixture {
   fromRepeat?: boolean;
   fromDeparture?: boolean;
   listed?: boolean;
+  // Left out after a run had listed it, so its puzzle row stays.
+  keptPuzzle?: boolean;
   accepted?: string[];
   foundAt?: string;
   openingName?: string | null;
@@ -98,7 +100,7 @@ function addFound(id: string, fixture: FoundFixture = {}): void {
     ply,
     firstFoundAt: fixture.foundAt ?? hoursFromT0(-100),
   });
-  if (fixture.listed !== false) {
+  if (fixture.listed !== false || fixture.keptPuzzle) {
     insertGeneratedPuzzle(db, {
       id,
       source: "own-games",
@@ -201,6 +203,11 @@ describe("GET /api/found-positions", () => {
   it("names the game and ply stored on the row, with that game's opponent and date", async () => {
     addFound("own:long");
     addFound("own:early", { gameId: shortGame, ply: 3, phase: "opening", accepted: ["g1f3"] });
+    // The date the game was played wins over when it ended.
+    db.prepare("UPDATE games SET finished_at = ? WHERE id = ?").run(
+      "2026-10-25T10:45:00.000Z",
+      shortGame,
+    );
     const games = new Map((await list()).positions.map((p) => [p.id, p.game]));
     expect(games.get("own:long")).toEqual({
       id: longGame,
@@ -269,7 +276,7 @@ describe("GET /api/found-positions", () => {
 
   it("keeps a position with listed = 0 out of the list and counts it in left_out", async () => {
     addFound("listed");
-    addFound("left-out-white", { listed: false });
+    addFound("left-out-white", { listed: false, keptPuzzle: true });
     addFound("left-out-black", { listed: false, color: "black", phase: "endgame" });
     const answer = await list();
     expect(ids(answer)).toEqual(["listed"]);
@@ -300,7 +307,7 @@ describe("GET /api/found-positions", () => {
       addFound("bm-due", { color: "black", card: hoursFromT0(-2) });
       addFound("bm-later", { color: "black", card: hoursFromT0(48) });
       addFound("bo-later", { color: "black", phase: "opening", card: hoursFromT0(12) });
-      addFound("bo-out-0", { color: "black", phase: "opening", listed: false });
+      addFound("bo-out-0", { color: "black", phase: "opening", listed: false, keptPuzzle: true });
       addFound("bo-out-1", { color: "black", phase: "opening", listed: false });
     }
 

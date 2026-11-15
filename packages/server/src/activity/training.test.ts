@@ -2088,6 +2088,8 @@ describe("a drill of the positions from the student's games", () => {
     phase?: "opening" | "middlegame" | "endgame";
     fromRepeat?: boolean;
     listed?: boolean;
+    // Left out after a run had listed it, so its puzzle row stays.
+    keptPuzzle?: boolean;
     accepted?: string[];
     foundAt?: string;
   }
@@ -2115,7 +2117,7 @@ describe("a drill of the positions from the student's games", () => {
       ply: 2,
       firstFoundAt: fixture.foundAt ?? hoursFromT0(-100),
     });
-    if (fixture.listed === false) return;
+    if (fixture.listed === false && !fixture.keptPuzzle) return;
     addPuzzle(id, `${phase}-${color}`, fen, [accepted[0] as string]);
   }
 
@@ -2259,7 +2261,7 @@ describe("a drill of the positions from the student's games", () => {
     ["the id of a position left out of the list", "left-out"],
   ])("refuses %s with empty_queue and writes no run", async (_name, position) => {
     addFound("listed");
-    addFound("left-out", { listed: false });
+    addFound("left-out", { listed: false, keptPuzzle: true });
     const { activity } = setup();
     expect(await code(activity.startTraining({ mode: "found", scope: "all", position }))).toBe(
       "empty_queue",
@@ -2270,7 +2272,8 @@ describe("a drill of the positions from the student's games", () => {
 
   it("never serves a position left out of the list, in any scope", async () => {
     addFound("listed");
-    addFound("left-out", { listed: false, foundAt: hoursFromT0(-1) });
+    addFound("left-out", { listed: false, keptPuzzle: true, foundAt: hoursFromT0(-1) });
+    addFound("never-listed", { listed: false, foundAt: hoursFromT0(-2) });
     const { activity } = setup();
     for (const scope of ["recommended", "all"] as const) {
       await activity.startTraining({ mode: "found", scope });
@@ -2281,7 +2284,7 @@ describe("a drill of the positions from the student's games", () => {
   it("refuses recommended and due with no due card and no new position, and writes no run", async () => {
     addFound("later");
     addFoundCard("later", hoursFromT0(24));
-    addFound("left-out", { listed: false });
+    addFound("left-out", { listed: false, keptPuzzle: true });
     const { activity } = setup();
     for (const scope of ["recommended", "due"] as const) {
       expect(await code(activity.startTraining({ mode: "found", scope }))).toBe("empty_queue");
@@ -2365,7 +2368,7 @@ describe("a drill of the positions from the student's games", () => {
     });
   });
 
-  it("rates a wrong first try with quality 2, back in 4 hours, and the later right try not at all", async () => {
+  it("rates a wrong first try with quality 2, back in 4 hours, and no later try at all", async () => {
     addFound("due");
     addFoundCard("due", hoursFromT0(-1));
     const { activity } = setup();
@@ -2378,6 +2381,8 @@ describe("a drill of the positions from the student's games", () => {
       next_review_at: hoursFromT0(4),
       reviews: 3,
     });
+    // A second wrong try would lower the ease again and count a review if it rated the card.
+    await activity.trainingTry("g8f6");
     expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
     expect(foundCard("due")).toEqual(missed);
   });
@@ -2399,6 +2404,7 @@ describe("a drill of the positions from the student's games", () => {
       reviews: 1,
     });
     if (how === "hint") {
+      await activity.trainingTry("d7d5");
       expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
       expect(db.prepare("SELECT first_try FROM puzzle_attempts").get()).toEqual({ first_try: 0 });
     }
