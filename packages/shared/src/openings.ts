@@ -40,3 +40,26 @@ export const OpeningDrillsResponseSchema = z.object({
   black: z.array(OpeningDrillSchema),
 });
 export type OpeningDrillsResponse = z.infer<typeof OpeningDrillsResponseSchema>;
+
+// One opening Black can leave the student's 1.e4 path with, as GET /api/openings/addable
+// answers it. `root` is the line from move 1 through the Black move that leaves the path, in SAN,
+// and passes the repertoire root check. `opening_name` is the book name of the position the root
+// reaches, `family` its family. `games` counts the student's games that met this root, 0 when
+// none did. `share_0_1199` is the share of Lichess explorer games at 0-1199 that choose the
+// root's last move from its parent position, null when the explorer was not asked or failed.
+// `repertoire_id` names the White unit already built from this root, if any.
+export const AddableOpeningSchema = z.object({
+  root: z.array(z.string().min(1)).min(1),
+  opening_name: z.string().min(1),
+  family: z.string().min(1),
+  games: z.number().int().nonnegative(),
+  share_0_1199: z.number().min(0).max(1).nullable(),
+  repertoire_id: z.number().int().positive().nullable(),
+});
+export type AddableOpening = z.infer<typeof AddableOpeningSchema>;
+
+// The body of GET /api/openings/addable: every addable opening, most played first.
+export const AddableOpeningsResponseSchema = z.object({
+  entries: z.array(AddableOpeningSchema),
+});
+export type AddableOpeningsResponse = z.infer<typeof AddableOpeningsResponseSchema>;

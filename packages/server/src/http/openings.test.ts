@@ -1,7 +1,11 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OpeningDrillsResponseSchema, UNNAMED_OPENING } from "@chess-coach/shared";
+import {
+  AddableOpeningsResponseSchema,
+  OpeningDrillsResponseSchema,
+  UNNAMED_OPENING,
+} from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
@@ -14,8 +18,9 @@ import { createRepertoireVariation } from "../db/repertoires.js";
 import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
 import { importFinishedGame } from "../import/pgn.js";
 import { RecordingLog } from "../log.js";
-import { ExplorerError } from "../openings/explorer-client.js";
-import { generateOpeningPuzzles } from "../openings/from-games.js";
+import { type AddableExplorer, listAddableOpenings } from "../openings/addable-openings.js";
+import { ExplorerError, type ExplorerPosition } from "../openings/explorer-client.js";
+import { generateOpeningPuzzles, positionKey } from "../openings/from-games.js";
 import { RepertoireBranchError, type RepertoirePoints } from "../openings/from-repertoire.js";
 import { parseOpeningTable } from "../openings/names.js";
 import { IdeaSessionError } from "../openings/repertoire-ideas.js";
@@ -1261,5 +1266,96 @@ describe("GET /api/openings/drills", () => {
     await app.close();
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ white: [], black: [] });
+  });
+});
+
+describe("GET /api/openings/addable", () => {
+  const keyAfter = (...sans: string[]): string => {
+    const board = new Chess();
+    for (const san of sans) board.move(san);
+    return positionKey(board.fen());
+  };
+  const ADDABLE_NAMES = parseOpeningTable(
+    [
+      "eco\tname\tpgn\tuci\tepd",
+      `C20\tKing's Pawn Game\t-\t-\t${keyAfter("e4", "e5")}`,
+      `B20\tSicilian Defense\t-\t-\t${keyAfter("e4", "c5")}`,
+      `C44\tKing's Knight Opening: Normal Variation\t-\t-\t${keyAfter("e4", "e5", "Nf3", "Nc6")}`,
+      `C42\tPetrov's Defense\t-\t-\t${keyAfter("e4", "e5", "Nf3", "Nf6")}`,
+      "",
+    ].join("\n"),
+  );
+
+  /** Answers the position after 1.e4 with 300 of 1000 games on c5; anything else has no games. */
+  class AddableRouteExplorer implements AddableExplorer {
+    async position(fen: string, _ratings?: string): Promise<ExplorerPosition> {
+      const moves =
+        positionKey(fen) === keyAfter("e4") ? [{ san: "c5", white: 300, draws: 0, black: 0 }] : [];
+      return { white: 500, draws: 40, black: 460, moves };
+    }
+  }
+
+  class AddableRefusingExplorer implements AddableExplorer {
+    async position(_fen: string, _ratings?: string): Promise<ExplorerPosition> {
+      throw new ExplorerError("unauthorized", "the explorer wants a Lichess API token");
+    }
+  }
+
+  const get = async (app: ReturnType<typeof buildApp>) => {
+    const response = await app.inject({ method: "GET", url: "/api/openings/addable" });
+    await app.close();
+    expect(response.statusCode).toBe(200);
+    return AddableOpeningsResponseSchema.parse(response.json());
+  };
+
+  it("answers the entries with their shares, most played first", async () => {
+    const store = db();
+    const app = buildApp({
+      db: store,
+      openingNames: ADDABLE_NAMES,
+      listAddableOpenings: () =>
+        listAddableOpenings(store, ADDABLE_NAMES, new AddableRouteExplorer()),
+    });
+    expect(await get(app)).toEqual({
+      entries: [
+        {
+          root: ["e4", "c5"],
+          opening_name: "Sicilian Defense",
+          family: "Sicilian Defense",
+          games: 0,
+          share_0_1199: 0.3,
+          repertoire_id: null,
+        },
+        {
+          root: ["e4", "e5", "Nf3", "Nf6"],
+          opening_name: "Petrov's Defense",
+          family: "Petrov's Defense",
+          games: 0,
+          share_0_1199: null,
+          repertoire_id: null,
+        },
+      ],
+    });
+  });
+
+  it("answers null shares when the explorer refuses", async () => {
+    const store = db();
+    const app = buildApp({
+      db: store,
+      openingNames: ADDABLE_NAMES,
+      listAddableOpenings: () =>
+        listAddableOpenings(store, ADDABLE_NAMES, new AddableRefusingExplorer()),
+    });
+    const { entries } = await get(app);
+    expect(entries.map((entry) => entry.share_0_1199)).toEqual([null, null]);
+    expect(entries.map((entry) => entry.opening_name)).toEqual([
+      "Petrov's Defense",
+      "Sicilian Defense",
+    ]);
+  });
+
+  it("is mounted with the database, whether or not a provider is configured", async () => {
+    const app = buildApp({ db: db() });
+    expect(await get(app)).toEqual({ entries: [] });
   });
 });
