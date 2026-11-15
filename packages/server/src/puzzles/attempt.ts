@@ -5,10 +5,13 @@ export type AttemptStatus = "in_progress" | "solved" | "failed";
 
 /**
  * `answered` is every graded try in order, wrong ones included. `failed` means the student gave
- * up; `failedPly` is then the step they gave up at. A wrong try never ends the attempt.
+ * up; `failedPly` is then the step they gave up at. A wrong try never ends the attempt. `accepted`
+ * lists the moves a one-move solution takes besides its own, for a position where several moves
+ * are about as good; without it only the solution's move is right.
  */
 export interface AttemptState {
   solution: readonly string[];
+  accepted?: readonly string[];
   cursor: number;
   fen: string;
   answered: readonly string[];
@@ -21,9 +24,14 @@ export type TryOutcome =
   | { accepted: true; correct: boolean; state: AttemptState; reply: string | null }
   | { accepted: false; state: AttemptState; reason: "illegal" | "finished" };
 
-export function startAttempt(fen: string, solution: readonly string[]): AttemptState {
+export function startAttempt(
+  fen: string,
+  solution: readonly string[],
+  accepted?: readonly string[],
+): AttemptState {
   return {
     solution,
+    ...(accepted ? { accepted } : {}),
     cursor: 0,
     fen,
     answered: [],
@@ -55,7 +63,9 @@ export function tryMove(state: AttemptState, uci: string): TryOutcome {
   const answered = [...state.answered, uci];
   const isLastStep = state.cursor + 1 >= state.solution.length;
   const alternativeMate = isLastStep && deliversMate(state.fen, uci);
-  if (uci !== state.solution[state.cursor] && !alternativeMate) {
+  const alternativeAccepted =
+    state.solution.length === 1 && (state.accepted?.includes(uci) ?? false);
+  if (uci !== state.solution[state.cursor] && !alternativeMate && !alternativeAccepted) {
     const missed = { ...state, answered, wrongTries: state.wrongTries + 1 };
     return { accepted: true, correct: false, state: missed, reply: null };
   }
