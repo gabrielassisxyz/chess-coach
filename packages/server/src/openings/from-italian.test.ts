@@ -29,6 +29,17 @@ const italianNames = parseOpeningTable(
   `eco\tname\tpgn\tuci\tepd\nC50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${positionKey(AFTER_ITALIAN)}\n`,
 );
 
+// A name above the Italian on the same line, as the real table has: the first name a line meets
+// and the deepest one differ here, which a table with one entry cannot tell apart.
+const kingsPawnThenItalianNames = parseOpeningTable(
+  [
+    "eco\tname\tpgn\tuci\tepd",
+    `C20\tKing's Pawn Game\t1. e4 e5\te2e4\t${positionKey(fenAfter("e4", "e5"))}`,
+    `C50\tItalian Game\t1. e4 e5 2. Nf3 Nc6 3. Bc4\te2e4\t${positionKey(AFTER_ITALIAN)}`,
+    "",
+  ].join("\n"),
+);
+
 /** Returns the same five lines every time, so each move-choice case controls the scores. */
 class ScriptedItalianSearcher implements Searcher {
   constructor(private readonly lines: Array<{ moves: string[]; score: number }>) {}
@@ -210,6 +221,18 @@ describe("generateItalianPuzzles", () => {
         ?.opening_name,
     ).toBe("Italian Game");
     expect(rows().find((row) => row.fen === START_FEN)?.opening_name).toBeNull();
+  });
+
+  it("names a White drill after the deepest named position on its line, not the first", async () => {
+    const explorer = new ItalianFixtureExplorer(
+      clock,
+      new Map([[positionKey(AFTER_ITALIAN), "Bc5"]]),
+    );
+    await run(explorer, new ItalianWalkEngine(), { maxPly: 7 }, kingsPawnThenItalianNames);
+    const nameAt = (...sans: string[]): string | null | undefined =>
+      rows().find((row) => row.fen === fenAfter(...sans))?.opening_name;
+    expect(nameAt("e4", "e5")).toBe("King's Pawn Game");
+    expect(nameAt("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5")).toBe("Italian Game");
   });
 
   it("stores every White node as an italian puzzle with the expected shape", async () => {
