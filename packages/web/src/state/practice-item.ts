@@ -23,6 +23,7 @@ const KIND_WORD: Record<TrainingMode, string> = {
   puzzles: "Puzzle",
   openings: "Opening",
   repertoire: "Line",
+  found: "Position",
 };
 
 const sideWord = (side: "white" | "black"): string => (side === "white" ? "White" : "Black");

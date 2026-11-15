@@ -241,7 +241,7 @@ export interface PuzzleResultNotification {
 /** Row content written once when a training queue ends. */
 export interface TrainingSummaryNotification {
   type: "training_summary";
-  mode: "srs" | "puzzles" | "openings" | "repertoire";
+  mode: "srs" | "puzzles" | "openings" | "repertoire" | "found";
   solved: number;
   failed: number;
 }
@@ -333,7 +333,9 @@ export function renderTrainingSummary(summary: TrainingSummaryNotification): str
         ? "opening positions"
         : summary.mode === "repertoire"
           ? "repertoire moves"
-          : "puzzles";
+          : summary.mode === "found"
+            ? "positions from their games"
+            : "puzzles";
   const total = summary.solved + summary.failed;
   return [
     `The training queue is finished: ${summary.solved} of ${total} ${what} solved, ${summary.failed} failed.`,
