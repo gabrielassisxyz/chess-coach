@@ -25,7 +25,6 @@ const baseHubProps = {
   fetchMotifs: async () => [],
   fetchProgress: async () => progressOf(),
   fetchRepertoires: async () => [],
-  fetchOpeningDrills: async () => ({ white: [], black: [] }),
 };
 
 function statsFixture(overrides: Partial<ThemeStatsResponse> = {}): ThemeStatsResponse {

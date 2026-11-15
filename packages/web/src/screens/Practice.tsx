@@ -1,5 +1,4 @@
 import type {
-  OpeningDrillColor,
   RepertoireLevel,
   RepertoireScope,
   TrainingActivity,
@@ -24,7 +23,6 @@ import { useBoardPrefs } from "../state/board-prefs.js";
 import { useBoardTheme } from "../state/board-theme.js";
 import { coachErrorHint, isCoachAuthError } from "../state/coach-hint.js";
 import { serviceNotice } from "../state/health.js";
-import { type FetchOpeningDrills, fetchOpeningDrillsFromServer } from "../state/openings-api.js";
 import {
   demoOverTraining,
   type FetchMotifs,
@@ -60,32 +58,23 @@ export interface PracticeProps {
   fetchMotifs?: FetchMotifs;
   fetchProgress?: FetchProgress;
   fetchRepertoires?: FetchRepertoires;
-  // The whole repertoire answer the openings menu reads its levels and branch points from; the
-  // server's by default.
+  // The whole repertoire answer the Openings page draws its cards from; the server's by default.
   fetchRepertoireList?: FetchRepertoireList | undefined;
-  // The drills from the student's games, grouped by opening family; the server's by default.
-  fetchOpeningDrills?: FetchOpeningDrills;
   // 7-day puzzle rating history for the Overview tile; the server's by default.
   fetchRatingHistory?: FetchPuzzleRatingHistory | undefined;
-  // Ranked puzzle theme stats for Overview and Improvement areas / Strengths; the server's by default.
+  // Ranked puzzle theme stats for Overview, Improvement areas and Strengths; the server's by default.
   fetchThemeStats?: FetchThemeStats | undefined;
   fetchHealth?: FetchHealth | undefined;
 }
 
 const ANY_MOTIF = "";
 
-// The opening a drill named is gone from the list the page holds, which only a reload refreshes.
-const UNKNOWN_OPENING_TEXT =
-  "That opening has no positions to drill any more. Reload the page to see the current list.";
-
 interface Starting {
   mode: TrainingMode;
-  // A repertoire start puts its scope here, where a puzzle start puts its motif, and an opening
-  // drill its colour.
+  // A repertoire start puts its scope here, where a puzzle start puts its motif.
   motif: string;
   repertoireId?: number;
   level?: RepertoireLevel;
-  opening?: string;
   errorsBefore: number;
 }
 
@@ -103,9 +92,7 @@ function useStartOutcome(server: ServerApi) {
     } else if (server.errorCount > starting.errorsBefore) {
       setStarting(null);
       setFailure(
-        server.lastErrorCode === "unknown_opening"
-          ? UNKNOWN_OPENING_TEXT
-          : startFailureText(starting.mode, starting.motif, server.lastErrorCode, server.lastError),
+        startFailureText(starting.mode, starting.motif, server.lastErrorCode, server.lastError),
       );
     }
   }, [starting, server.connection, server.errorCount, server.lastErrorCode, server.lastError]);
@@ -120,14 +107,6 @@ function useStartOutcome(server: ServerApi) {
           : { mode, ...(motif === ANY_MOTIF ? {} : { motif }) };
     if (server.send({ type: "start_training", ...command })) {
       setStarting({ mode, motif, errorsBefore: server.errorCount });
-    } else {
-      setFailure(OFFLINE_START_TEXT);
-    }
-  };
-  const beginOpening = (color: OpeningDrillColor, opening: string): void => {
-    setFailure(null);
-    if (server.send({ type: "start_training", mode: "openings", color, opening })) {
-      setStarting({ mode: "openings", motif: color, opening, errorsBefore: server.errorCount });
     } else {
       setFailure(OFFLINE_START_TEXT);
     }
@@ -160,7 +139,7 @@ function useStartOutcome(server: ServerApi) {
       setFailure(OFFLINE_START_TEXT);
     }
   };
-  return { starting, failure, begin, beginRepertoire, beginOpening };
+  return { starting, failure, begin, beginRepertoire };
 }
 
 // The login card clears once the student has checked again, and returns on the next auth failure.
@@ -178,22 +157,17 @@ function Hub({
   server,
   fetchMotifs,
   fetchProgress,
-  fetchRepertoires,
   fetchRepertoireList,
-  fetchOpeningDrills,
   fetchRatingHistory,
   fetchThemeStats,
   fetchHealth,
-}: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress" | "fetchRepertoires">> &
-  Required<Pick<PracticeProps, "fetchOpeningDrills">> &
+}: Required<Pick<PracticeProps, "server" | "fetchMotifs" | "fetchProgress">> &
   Pick<PracticeProps, "fetchHealth" | "fetchRepertoireList"> & {
     fetchRatingHistory: FetchPuzzleRatingHistory;
     fetchThemeStats: FetchThemeStats;
   }) {
   const motifs = useLoaded(fetchMotifs);
   const progress = useLoaded(fetchProgress);
-  const repertoires = useLoaded(fetchRepertoires);
-  const openingDrills = useLoaded(fetchOpeningDrills);
   const loadRatingHistory = useCallback(() => fetchRatingHistory("7"), [fetchRatingHistory]);
   const loadOverviewThemeStats = useCallback(
     () => fetchThemeStats(DEFAULT_THEME_WINDOW),
@@ -204,7 +178,7 @@ function Hub({
   const [retries, setRetries] = useState(0);
   const notice = serviceNotice(useHealth(retries, fetchHealth ? { fetchHealth } : {}));
   const login = useCoachLogin(server);
-  const { starting, failure, begin, beginRepertoire, beginOpening } = useStartOutcome(server);
+  const { starting, failure, begin, beginRepertoire } = useStartOutcome(server);
   const engineMissing = notice?.reason === "stockfish_missing";
 
   return (
@@ -219,7 +193,6 @@ function Hub({
       }
       progress={progress}
       motifs={motifs}
-      repertoires={repertoires}
       ratingHistory={ratingHistory}
       overviewThemeStats={overviewThemeStats}
       engineMissing={engineMissing}
@@ -227,8 +200,6 @@ function Hub({
       failure={failure}
       onStart={begin}
       onStartRepertoire={beginRepertoire}
-      openingDrills={openingDrills}
-      onStartOpening={beginOpening}
       fetchRepertoireList={fetchRepertoireList}
       fetchThemeStats={fetchThemeStats}
     />
@@ -424,7 +395,6 @@ export function Practice({
   fetchProgress = fetchProgressFromServer,
   fetchRepertoires = fetchRepertoiresFromServer,
   fetchRepertoireList,
-  fetchOpeningDrills = fetchOpeningDrillsFromServer,
   fetchRatingHistory = fetchPuzzleRatingHistoryFromServer,
   fetchThemeStats = fetchThemeStatsFromServer,
   fetchHealth,
@@ -484,9 +454,7 @@ export function Practice({
           server={server}
           fetchMotifs={fetchMotifs}
           fetchProgress={fetchProgress}
-          fetchRepertoires={fetchRepertoires}
           fetchRepertoireList={fetchRepertoireList}
-          fetchOpeningDrills={fetchOpeningDrills}
           fetchRatingHistory={fetchRatingHistory}
           fetchThemeStats={fetchThemeStats}
           fetchHealth={fetchHealth}
