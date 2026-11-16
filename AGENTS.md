@@ -31,8 +31,8 @@
   `CHESS_COACH_DATA_DIR` moves it, `CHESS_COACH_CONTENT_DIR` moves the teaching content
   (`content/`). Puzzles are seeded from `content/puzzles` at every server start.
 - **Test:** `pnpm test` (vitest, per package). Opt-in flags, off by default and never in
-  `bin/ci`: `CHESS_COACH_STOCKFISH=1` runs the real-engine grading suite and the evaluation cache's
-  score-sign check (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
+  `bin/ci`: `CHESS_COACH_STOCKFISH=1` runs the real-engine grading suite, the evaluation cache's
+  score-sign check and the evaluation queue's niced search (`pnpm --filter @chess-coach/server test:stockfish`); `CHESS_COACH_SDK=1` runs the live
   Claude session probe (`test:sdk`, stdin closed); `CHESS_COACH_RECORD=<file>` records the SDK
   stream to that file. `CHESS_COACH_CHESSCOM=1` makes one real call to the public Chess.com API
   (`chesscom.real.test.ts`, shape only). `CHESS_COACH_EXPLORER=1` does the same for one Lichess explorer
@@ -48,7 +48,8 @@
   path: `test/temp-root.test.ts` fails if one does.
 - **Failure inventory:** `packages/server/test/failure-inventory.test.ts` names the test that
   proves each failure and restart path (not logged in, API key present, SDK exit mid-turn,
-  Stockfish missing, engine fault, evaluation cache unset or missing, dropped socket, restart per
+  Stockfish missing, engine fault, evaluation cache unset or missing, evaluation queue engine fault or
+  restart, dropped socket, restart per
   game phase, undelivered
   notifications, refresh per activity kind, restart during training, restart during a rebuild) and reads the files from disk. Renaming or
   deleting one of those tests means updating the inventory in the same change.
@@ -511,6 +512,37 @@
   that does not replay. `eval_cache.hit` and `eval_cache.miss` log each lookup with `fen`, `lines`,
   `depth` and `duration_ms`, a hit adding `stored_depth` and `stored_lines` and a miss its `reason`
   (`not_stored` or `insufficient`); `eval_cache.failed` logs a lookup that threw, which answers as a miss.
+- **Evaluation queue:** a position the cache could not answer for the analysis lane (the strip's
+  `analyse` and the coach's `analyze`, never grading) is queued to be searched deeper in the background,
+  so the next visit is answered from the cache. `eval_queue (key, fen, enqueued_at)` in the app's own
+  database holds it (migration 032), so a restart keeps it: `key` is the cache's packed key and unique,
+  so a position is queued once. The table is ordered by rowid: a position looked at again is moved to
+  the front, the position looked at last is searched first, and a 5001st position drops the oldest
+  (`EVAL_QUEUE_LIMIT`). Nothing is queued when the cache is unset, missing or unreadable, when the app
+  cannot write to the file or the directory beside it (`eval_cache.unavailable` with `reason:
+  not_writable`), or when the position's stored row is already as deep as the search goes (depth 30),
+  since the cache never replaces a deeper row.
+  `EvalQueueWorker` (`engine/eval-queue.ts`) searches one position at a time with 3 lines, to depth 30
+  or 60 s, whichever comes first (`QUEUE_SEARCH`), on a Stockfish process of its own with 1 thread
+  under `nice -n 19` (`QUEUE_NICENESS`), so it never takes a turn of the pool's engines. It starts no
+  search while a game move (`GameService.isBusy`), a grading run (`ImportGrader.isRunning`) or a coach
+  turn (`CoachSession.isTurnRunning`) is running, and looks again every 2 s; a search that has started is
+  not interrupted. `EvalCacheWriter` (`engine/eval-cache.ts`) opens the file read-write only when the
+  first search is about to start, switches it to WAL with `synchronous = NORMAL` (the file is built with
+  no journal; the reader keeps its own read-only connection and sees every commit) and writes with
+  `INSERT ... ON CONFLICT(key) DO UPDATE ... WHERE excluded.depth > evals.depth`, so a result no deeper
+  than the stored row changes nothing. The result is a set labelled source 1, at the depth every line
+  reached, with the search's `knodes`; scores go in from White's side, a mate as the 10000 centipawns the
+  search maps it to, and castling as the king taking its rook. A set of the row with more lines than the
+  result is carried over as the row's second set, the one with the most lines and then the deepest. A
+  failed search is logged and its position dropped, with no retry, and the worker waits 30 s before the
+  next one; a shutdown kills the search in flight and leaves its position queued. `eval_queue.added`
+  logs a position newly queued (`fen`, `queued`, `dropped`), `eval_queue.done` a search finished
+  (`outcome` is `stored`, `unchanged` or `empty`, the last for a position with no move to search, with
+  `depth`, `lines`, `knodes`, `cut_by_time`, `duration_ms` and `waited_ms`) and `eval_queue.failed` a
+  failure (`stage` is `add`, `search` or `loop`). Once the app has written to it the file is in WAL mode,
+  with `-wal` and `-shm` beside it while the server runs. `DELETE FROM evals WHERE source = 1` removes
+  the rows the app wrote; a row that replaced a Lichess one comes back only with a rebuild.
 - **Engine on Practice:** `analyse {fen, lines 1-5, depth 8-24}` runs the evaluation engine's
   analysis lane on a position and answers that connection with an `analysis` event (lines with
   SAN and a centipawn score from White's side, a mate as 10000). The search stops at the depth or
@@ -557,7 +589,7 @@
   `coach.permission_resolved`, `training.item_served`, `training.answer`, `training.runs_left` (the runs a server start ended), `srs.rated`,
   `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `openings.rebuild_copy_removed`, `import_lichess.progress`, `import_lichess.done`,
   `explorer.failed`, `eval_cache.hit`, `eval_cache.miss`, `eval_cache.unavailable`,
-  `eval_cache.failed`, `*.listener_failed`, and `client.*` for what
+  `eval_cache.failed`, `eval_queue.added`, `eval_queue.done`, `eval_queue.failed`, `*.listener_failed`, and `client.*` for what
   the browser reports through `POST /api/client-log` (uncaught errors, socket drops and
   reconnects, every error frame it received).
 - **Reading:** with `L=data/logs/$(date -u +%F).jsonl`:

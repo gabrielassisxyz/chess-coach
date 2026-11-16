@@ -41,10 +41,36 @@ describe("the evaluation cache wired in main.ts", () => {
   const source = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
 
   it("is opened with the log, so the boot says when it is unavailable", () => {
-    expect(source).toContain("openEvalCache(evalCachePath(), log)");
+    expect(source).toContain("openEvalCache(\n  evalCachePath(),\n  log,");
   });
 
   it("is handed to the engine pool, which gives it to the analysis lane only", () => {
     expect(source).toContain("new EnginePool(() => spawnStockfish(), {}, evalCache)");
+  });
+});
+
+// The queue is what turns a miss into a deeper search later. These are the lines that make it the
+// student's game, grading and coach it waits for, and a file that can be written to it needs.
+describe("the evaluation queue wired in main.ts", () => {
+  const source = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+
+  it("hears the cache's misses only when the file can be written to", () => {
+    expect(source).toContain("evalWriter ? (miss) => evalQueue.offer(miss) : undefined");
+  });
+
+  it("waits for a game move, a grading search and a coach turn", () => {
+    expect(source).toContain(
+      "busy: () => game.isBusy() || importGrader.isRunning() || coach.isTurnRunning()",
+    );
+  });
+
+  it("runs its engine niced and starts with the engines", () => {
+    expect(source).toContain("spawnStockfish(undefined, QUEUE_NICENESS)");
+    expect(source).toContain("evalWorker?.start()");
+  });
+
+  it("stops with the server and closes the file's writer after its reader", () => {
+    expect(source).toContain("evalWorker?.stop()");
+    expect(source.indexOf("evalCache.close()")).toBeLessThan(source.indexOf("evalWriter?.close()"));
   });
 });
