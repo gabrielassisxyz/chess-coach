@@ -244,12 +244,10 @@ Create a habit:
 
 ### Using Spaced Repetition for Error Learning
 
-After an error is identified, it becomes an SRS card. The system will resurface it:
-- After 4 hours (consolidate initial memory)
-- After 1 day (strengthen memory)
-- After 3 days (deepen understanding)
-- After 1 week (test long-term retention)
-- After 2 weeks, 1 month, etc.
+After an error is identified, it becomes an SRS card. The system schedules it with FSRS, the scheduler Anki uses, and the student's rating of each review (Again, Hard, Good or Easy) decides when it resurfaces:
+- A card answered Again comes back in about a minute, inside the same training
+- A card answered Good keeps stretching out: 10 minutes, then 2 days, 11 days, 46 days, and on
+- A card forgotten after a long gap comes back within minutes and then grows again
 
 Each review reinforces the lesson and prevents regression.
 
