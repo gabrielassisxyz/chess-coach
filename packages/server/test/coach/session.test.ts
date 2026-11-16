@@ -631,6 +631,23 @@ describe("per-tab conversations", () => {
     await session.stop();
   });
 
+  it("reports a turn as running from the moment a message is handed over until it is answered", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "coach-running-"));
+    const db = openDatabase(dataDir);
+    const gated = new GatedSdk();
+    const { session, events } = openSession(db, dataDir, { query: gated.query });
+    await session.start();
+    expect(session.isTurnRunning()).toBe(false);
+    await session.send("a", "practice");
+    expect(session.isTurnRunning()).toBe(true);
+    await vi.waitFor(() => expect(gated.userTexts).toEqual(["a"]));
+    expect(session.isTurnRunning()).toBe(true);
+    gated.release();
+    await vi.waitFor(() => expect(ended(events)).toBe(1));
+    await vi.waitFor(() => expect(session.isTurnRunning()).toBe(false));
+    await session.stop();
+  });
+
   it("closes an idle tab stream after 10 minutes and resumes it by its stored id", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {

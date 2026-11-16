@@ -50,6 +50,11 @@ export class ImportGrader {
     });
   }
 
+  /** True while games are being graded, so background work can stay out of the engine's way. */
+  isRunning(): boolean {
+    return this.working !== null;
+  }
+
   /** Resolves once the queue is empty; tests and shutdown wait on it. */
   async idle(): Promise<void> {
     while (this.working) await this.working;

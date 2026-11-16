@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Chess } from "chess.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listMoves } from "../db/games.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { EngineFault } from "../engine/errors.js";
@@ -160,6 +160,38 @@ describe("player turn", () => {
     await expect(second).rejects.toMatchObject({ code: "not_player_turn" });
     await first;
     expect(plies(gameId).map((m) => m.uci)).toEqual(["e2e4", "e7e5"]);
+  });
+
+  it("is busy from the moment a move is accepted until its reply is saved", async () => {
+    const engine = new ScriptedEngine(["e7e5"]);
+    const service = serviceWith(engine);
+    await service.newGame({ color: "white", elo: 1200 });
+    expect(service.isBusy()).toBe(false);
+    let release = () => {};
+    engine.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = service.playerMove(move("e2", "e4"));
+    expect(service.isBusy()).toBe(true);
+    release();
+    await pending;
+    await vi.waitFor(() => expect(service.isBusy()).toBe(false));
+  });
+
+  it("is busy while an engine opening move is played and not busy after a failed command", async () => {
+    const engine = new ScriptedEngine(["e2e4"]);
+    const service = serviceWith(engine);
+    let release = () => {};
+    engine.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const opening = service.newGame({ color: "black", elo: 1200 });
+    expect(service.isBusy()).toBe(true);
+    release();
+    await opening;
+    await vi.waitFor(() => expect(service.isBusy()).toBe(false));
+    await expect(service.undo()).rejects.toBeInstanceOf(Error);
+    await vi.waitFor(() => expect(service.isBusy()).toBe(false));
   });
 
   it("rejects a move after the game is over", async () => {

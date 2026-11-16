@@ -108,6 +108,7 @@ export class GameService {
   private readonly log: Log;
   private state: LiveState | null = null;
   private tail: Promise<unknown> = Promise.resolve();
+  private commandsOpen = 0;
   private turnInFlight = false;
   private readonly snapshotListeners = new Set<(snapshot: GameSnapshot) => void>();
   private readonly turnListeners = new Set<(report: TurnReport) => void>();
@@ -126,6 +127,14 @@ export class GameService {
 
   current(): GameRecord | null {
     return this.state?.game ?? null;
+  }
+
+  /**
+   * True while a command is waiting or running: a move being graded, the engine's reply, a new
+   * game's opening move. Background work reads it to stay out of the way of the student's game.
+   */
+  isBusy(): boolean {
+    return this.commandsOpen > 0;
   }
 
   snapshot(): GameSnapshot | null {
@@ -274,7 +283,11 @@ export class GameService {
 
   // A rejected command must not stall the ones queued behind it.
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.tail.then(task);
+    this.commandsOpen += 1;
+    // The count drops inside the promise the caller awaits, so it is already down when they resume.
+    const run = this.tail.then(task).finally(() => {
+      this.commandsOpen -= 1;
+    });
     this.tail = run.catch(() => undefined);
     return run;
   }

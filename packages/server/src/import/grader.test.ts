@@ -71,6 +71,20 @@ describe("ImportGrader", () => {
     expect(getGame(db, id)?.grading).toBe("done");
   });
 
+  it("says it is running from the kick until the queue is empty", async () => {
+    importOne();
+    const grader = new ImportGrader({
+      db,
+      evaluate: new FakeEvaluator().evaluate,
+      log: silentLog,
+    });
+    expect(grader.isRunning()).toBe(false);
+    grader.kick();
+    expect(grader.isRunning()).toBe(true);
+    await grader.idle();
+    expect(grader.isRunning()).toBe(false);
+  });
+
   it("runs the after-grading hook once per graded game and never for a failed one", async () => {
     importOne('[Result "0-1"]\n\n1. f3 e5 2. g4 Qh4# 0-1', "bad");
     importOne(FIXTURE, "good");
