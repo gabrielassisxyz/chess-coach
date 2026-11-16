@@ -60,6 +60,7 @@ import {
   listItemMessageTexts,
   openTrainingItem,
   type RunEndReason,
+  replaceTrainingRunItems,
   type StoredRunItem,
   saveTrainingRun,
   setTrainingItemHinted,
@@ -80,7 +81,7 @@ import { currentPuzzleRating, ratingAfter, setPuzzleRating } from "../puzzles/ra
 import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
 import { GRADE, type Grade } from "../srs/fsrs.js";
-import type { AnswerResult, ReviewDesk } from "../srs/review.js";
+import type { AnswerResult, RatedCard, ReviewDesk } from "../srs/review.js";
 import { ActivityError } from "./errors.js";
 import { Exploration } from "./exploration.js";
 import { selectFoundDrillPositions } from "./found-drill.js";
@@ -92,6 +93,9 @@ export type DeskPort = Pick<
 >;
 
 export const DUE_QUEUE_SIZE = 20;
+// A card whose next step falls this soon after its rating is served again before its training ends:
+// Anki's learn-ahead limit.
+export const LEARN_AHEAD_MS = 20 * 60_000;
 // The puzzles drawn at a time: a queue without an end gets this many when it starts and again each
 // time the student reaches its last item, and a drill over a fixed set holds this many.
 export const PUZZLE_BATCH_SIZE = 10;
@@ -570,6 +574,9 @@ export class TrainingRun implements PracticeRunPort {
   private readonly clock: Clock;
   // Set while a transition writes, so the coach is woken once the rows are committed.
   private wake = false;
+  // The cards rated inside the learn-ahead limit, each with the instant its next step falls due. They
+  // sit at the end of the queue until the student moves on; a run that ends first leaves them due.
+  private readonly pending = new Map<QueueEntry, number>();
 
   /**
    * `runId` is the `training_runs` row this queue keeps current; a single item the coach served
@@ -906,10 +913,33 @@ export class TrainingRun implements PracticeRunPort {
     if (s.item.kind !== "card" || s.item.exposure_id !== exposureId) {
       throw new SrsError("exposure_unknown", "that card is not the one on the board");
     }
+    const cardId = s.item.card_id;
     this.transition(() => {
-      this.deps.desk.rate(exposureId, grade);
+      const rated = this.deps.desk.rate(exposureId, grade);
       s.status = "rated";
+      this.holdIfDueSoon(cardId, rated);
     });
+  }
+
+  // A card of a Due cards training that comes due within the learn-ahead limit is held by the run:
+  // it joins the queue at once, so the run's length grows, and is served again before the run ends.
+  // A single card the coach serves has no run to hold it in.
+  private holdIfDueSoon(cardId: number, rated: RatedCard): void {
+    if (this.mode !== "srs" || this.runId === null) return;
+    const dueMs = Date.parse(rated.nextReviewAt);
+    if (dueMs - Date.parse(rated.reviewedAt) > LEARN_AHEAD_MS) return;
+    const entry: QueueEntry = { kind: "card", cardId };
+    this.queue.push(entry);
+    this.pending.set(entry, dueMs);
+    this.storeQueue();
+    const { item } = this.served;
+    if (item.kind === "card") this.served.item = { ...item, queue_length: this.queue.length };
+  }
+
+  // The queue is the order the items are served in, so a card moved ahead rewrites the stored items.
+  private storeQueue(): void {
+    if (this.runId === null) return;
+    replaceTrainingRunItems(this.deps.db, this.runId, this.queue.map(storedItemOf));
   }
 
   // The last item's next ends a queue with a length: the summary is written once, here. A queue
@@ -931,9 +961,34 @@ export class TrainingRun implements PracticeRunPort {
         this.finish();
         return;
       }
+      this.arrangeNext();
       this.position += 1;
       this.served = this.serve(this.position);
     });
+  }
+
+  // A held card whose time has come is served before the next queued card. With no queued card left
+  // the held card due first is served though its time has not come, so the run ends only when
+  // nothing is queued and nothing is held. The chosen entry is moved to the slot after the one on
+  // the board, which is where `next` serves from.
+  private arrangeNext(): void {
+    if (this.pending.size === 0) return;
+    const waiting = this.queue.slice(this.position + 1);
+    const nowMs = this.clock.now().getTime();
+    const dueOf = (entry: QueueEntry): number => this.pending.get(entry) as number;
+    const byDue = (a: QueueEntry, b: QueueEntry): number => dueOf(a) - dueOf(b);
+    const held = waiting.filter((entry) => this.pending.has(entry));
+    const ready = held.filter((entry) => dueOf(entry) <= nowMs).sort(byDue);
+    const queued = waiting.filter((entry) => !this.pending.has(entry));
+    const chosen = ready[0] ?? queued[0] ?? held.sort(byDue)[0];
+    if (chosen === undefined) return;
+    this.pending.delete(chosen);
+    const from = this.queue.indexOf(chosen);
+    const to = this.position + 1;
+    if (from === to) return;
+    this.queue.splice(from, 1);
+    this.queue.splice(to, 0, chosen);
+    this.storeQueue();
   }
 
   // Appends the next batch to the queue and to the run's stored items; false when there is none.

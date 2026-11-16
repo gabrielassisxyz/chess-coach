@@ -1536,6 +1536,282 @@ describe("the training state a client renders", () => {
   });
 });
 
+// A card whose next step falls within 20 minutes of its rating comes back inside the same training:
+// a new card answered Again is due in a minute, Hard in six and Good in ten, and only an interval of
+// days (Easy on a new card, Good on its last learning step) leaves the run.
+describe("a card that comes back inside the training", () => {
+  const GRADE = { again: 1, hard: 2, good: 3, easy: 4 } as const;
+  const cardOfItem = (state: TrainingActivity): number =>
+    (state.item as { card_id: number }).card_id;
+  const exposureOfItem = (state: TrainingActivity): string =>
+    (state.item as { exposure_id: string }).exposure_id;
+  const storedRun = (): { size: number; cards: number[] } => {
+    const row = db
+      .prepare("SELECT size, items_json FROM training_runs ORDER BY id DESC LIMIT 1")
+      .get() as { size: number; items_json: string };
+    return {
+      size: row.size,
+      cards: (JSON.parse(row.items_json) as { id: number }[]).map((item) => item.id),
+    };
+  };
+
+  // Answers the card on the board right and rates it.
+  async function rate(
+    activity: ActivityService,
+    state: TrainingActivity,
+    grade: number,
+  ): Promise<TrainingActivity> {
+    await activity.trainingTry("d2d4");
+    return training(await activity.rateCard(exposureOfItem(state), grade));
+  }
+
+  const next = async (activity: ActivityService): Promise<TrainingActivity> =>
+    training(await activity.nextTrainingItem());
+
+  it("serves a card rated Again again, though it was the only one, and does not finish while it is held", async () => {
+    const id = addCard();
+    const { activity } = setup(steppingClock());
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    expect(first.item).toMatchObject({ position_in_queue: 1, queue_length: 1 });
+
+    const rated = await rate(activity, first, GRADE.again);
+    expect(rated.status).toBe("rated");
+
+    const again = await next(activity);
+    expect(again.summary).toBeNull();
+    expect(again.item).toMatchObject({
+      kind: "card",
+      card_id: id,
+      position_in_queue: 2,
+      queue_length: 2,
+    });
+    expect(again.status).toBe("prompt");
+    expect(again.input_enabled).toBe(true);
+  });
+
+  it("grows the length of the run by one as soon as a card is held", async () => {
+    addCard();
+    addCard();
+    const { activity } = setup(steppingClock());
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    expect(first.item).toMatchObject({ queue_length: 2 });
+    expect(first.queue_outcomes).toEqual(["current", "pending"]);
+
+    const rated = await rate(activity, first, GRADE.again);
+
+    expect(rated.item).toMatchObject({ position_in_queue: 1, queue_length: 3 });
+    expect(rated.queue_outcomes).toEqual(["solved", "pending", "pending"]);
+    expect(storedRun().size).toBe(3);
+  });
+
+  it("does not hold a card rated Good on its last learning step, which is due in 2 days", async () => {
+    const id = addCard();
+    const { activity } = setup(steppingClock());
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    const heldOnce = await rate(activity, first, GRADE.good);
+    expect(heldOnce.item).toMatchObject({ queue_length: 2 });
+
+    const second = await next(activity);
+    expect(second.item).toMatchObject({ card_id: id, position_in_queue: 2, queue_length: 2 });
+    const graduated = await rate(activity, second, GRADE.good);
+
+    expect(getCard(db, id)?.intervalHours).toBeCloseTo(48, 9);
+    expect(graduated.item).toMatchObject({ position_in_queue: 2, queue_length: 2 });
+    const ended = await next(activity);
+    expect(ended.summary).toEqual({ solved: 2, failed: 0 });
+  });
+
+  it.each([
+    { grade: GRADE.again, held: true, minutes: 1 },
+    { grade: GRADE.hard, held: true, minutes: 6 },
+    { grade: GRADE.good, held: true, minutes: 10 },
+    { grade: GRADE.easy, held: false, minutes: 8 * 24 * 60 },
+  ])(
+    "holds a new card rated $grade only if it is due soon: held $held, due in $minutes min",
+    async ({ grade, held, minutes }) => {
+      const id = addCard();
+      const { activity } = setup(steppingClock());
+      const first = training(await activity.startTraining({ mode: "srs" }));
+
+      const rated = await rate(activity, first, grade);
+
+      expect(getCard(db, id)?.intervalHours).toBeCloseTo(minutes / 60, 9);
+      expect((rated.item as { queue_length: number }).queue_length).toBe(held ? 2 : 1);
+      expect((await next(activity)).summary === null).toBe(held);
+    },
+  );
+
+  it("holds a learned card that lapses, and not one that is remembered", async () => {
+    const lapsing = addCard();
+    const kept = addCard();
+    for (const id of [lapsing, kept]) {
+      updateSchedule(db, id, {
+        fsrs_state: 2,
+        stability: 3,
+        difficulty: 5,
+        learning_step: 0,
+        lapses: 0,
+        interval_hours: 72,
+        last_reviewed_at: new Date(T0.getTime() - 72 * 3_600_000).toISOString(),
+        next_review_at: T0.toISOString(),
+      });
+    }
+    const { activity } = setup(steppingClock());
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    expect(cardOfItem(first)).toBe(lapsing);
+
+    const afterAgain = await rate(activity, first, GRADE.again);
+    expect(afterAgain.item).toMatchObject({ queue_length: 3 });
+    const second = await next(activity);
+    expect(cardOfItem(second)).toBe(kept);
+    const afterGood = await rate(activity, second, GRADE.good);
+    expect(afterGood.item).toMatchObject({ queue_length: 3 });
+  });
+
+  it("serves a held card whose time has come before the next queued card", async () => {
+    const [first, second, third] = [addCard(), addCard(), addCard()] as [number, number, number];
+    const clock = steppingClock();
+    const { activity } = setup(clock);
+    const onFirst = training(await activity.startTraining({ mode: "srs" }));
+    expect(cardOfItem(onFirst)).toBe(first);
+    await rate(activity, onFirst, GRADE.again);
+
+    // Its minute has not passed, so the next queued card comes first.
+    const onSecond = await next(activity);
+    expect(cardOfItem(onSecond)).toBe(second);
+    await rate(activity, onSecond, GRADE.easy);
+
+    // A minute has now passed since the rating: the held card goes ahead of the third.
+    clock.advance(61);
+    const back = await next(activity);
+    expect(back.item).toMatchObject({ card_id: first, position_in_queue: 3, queue_length: 4 });
+    await rate(activity, back, GRADE.easy);
+
+    const last = await next(activity);
+    expect(last.item).toMatchObject({ card_id: third, position_in_queue: 4 });
+    // The stored items are in the order they were served in.
+    expect(storedRun().cards).toEqual([first, second, first, third]);
+    await rate(activity, last, GRADE.easy);
+    expect((await next(activity)).summary).toEqual({ solved: 4, failed: 0 });
+  });
+
+  it("serves the held card due first at the end of the queue, though its time has not come", async () => {
+    const [first, second] = [addCard(), addCard()] as [number, number];
+    const clock = steppingClock();
+    const { activity } = setup(clock);
+    const onFirst = training(await activity.startTraining({ mode: "srs" }));
+    await rate(activity, onFirst, GRADE.again);
+    clock.advance(10);
+    const onSecond = await next(activity);
+    expect(cardOfItem(onSecond)).toBe(second);
+    await rate(activity, onSecond, GRADE.again);
+
+    // Nothing is queued, and neither held card is due yet: the first one held is served.
+    const backFirst = await next(activity);
+    expect(backFirst.item).toMatchObject({ card_id: first, position_in_queue: 3 });
+    await rate(activity, backFirst, GRADE.easy);
+
+    const backSecond = await next(activity);
+    expect(backSecond.item).toMatchObject({ card_id: second, position_in_queue: 4 });
+    expect(backSecond.summary).toBeNull();
+    await rate(activity, backSecond, GRADE.easy);
+
+    expect((await next(activity)).summary).toEqual({ solved: 4, failed: 0 });
+  });
+
+  it("finishes only when nothing is queued and nothing is held", async () => {
+    addCard();
+    const { activity, rows } = setup(steppingClock());
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    await rate(activity, first, GRADE.again);
+    expect(rows().filter((row) => row.type === "training_summary")).toEqual([]);
+
+    const second = await next(activity);
+    await rate(activity, second, GRADE.again);
+    expect(rows().filter((row) => row.type === "training_summary")).toEqual([]);
+
+    const third = await next(activity);
+    expect(third.summary).toBeNull();
+    await rate(activity, third, GRADE.easy);
+    expect((await next(activity)).summary).toEqual({ solved: 3, failed: 0 });
+    expect(rows().filter((row) => row.type === "training_summary")).toHaveLength(1);
+  });
+
+  it("gives a card served again a fresh exposure, and refuses to rate the one it had", async () => {
+    addCard();
+    const { activity } = setup(steppingClock());
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    const oldExposure = exposureOfItem(first);
+    await rate(activity, first, GRADE.again);
+
+    const again = await next(activity);
+
+    expect(exposureOfItem(again)).not.toBe(oldExposure);
+    await activity.trainingTry("d2d4");
+    expect(await code(activity.rateCard(oldExposure, GRADE.good))).toBe("exposure_unknown");
+    const rated = training(await activity.rateCard(exposureOfItem(again), GRADE.easy));
+    expect(rated.status).toBe("rated");
+  });
+
+  it("opens an item of the ledger for each serving of the card", async () => {
+    const id = addCard();
+    const { activity } = setup(steppingClock());
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    await rate(activity, first, GRADE.again);
+    await next(activity);
+
+    expect(
+      db.prepare("SELECT card_id, answered_at IS NOT NULL AS answered FROM training_items").all(),
+    ).toEqual([
+      { card_id: id, answered: 1 },
+      { card_id: id, answered: 0 },
+    ]);
+  });
+
+  it("leaves a held card due when the training ends, for the next one to pick up", async () => {
+    const id = addCard();
+    const clock = steppingClock();
+    const { activity } = setup(clock);
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    await rate(activity, first, GRADE.again);
+    await activity.endTraining();
+    expect(db.prepare("SELECT ended_reason FROM training_runs").get()).toEqual({
+      ended_reason: "ended",
+    });
+
+    clock.advance(61);
+    const second = training(await activity.startTraining({ mode: "srs" }));
+
+    expect(second.item).toMatchObject({ card_id: id, position_in_queue: 1, queue_length: 1 });
+  });
+
+  it("leaves a held card due when the server restarts over the training", async () => {
+    const id = addCard();
+    const clock = steppingClock();
+    const { activity } = setup(clock);
+    const first = training(await activity.startTraining({ mode: "srs" }));
+    await rate(activity, first, GRADE.again);
+    clock.advance(61);
+    endRunsLeftOpenAtStart(db, clock.now().toISOString());
+
+    const { activity: restarted } = setup(clock);
+    const second = training(await restarted.startTraining({ mode: "srs" }));
+
+    expect(second.item).toMatchObject({ card_id: id, position_in_queue: 1, queue_length: 1 });
+  });
+
+  it("holds nothing for a single card the coach serves", async () => {
+    const id = addCard();
+    const { activity } = setup(steppingClock());
+    const only = training(await activity.startTrainingItem({ kind: "card", id }));
+
+    const rated = await rate(activity, only, GRADE.again);
+
+    expect(rated.item).toMatchObject({ queue_length: 1 });
+    expect((await next(activity)).summary).toEqual({ solved: 1, failed: 0 });
+  });
+});
+
 describe("an item served by the coach", () => {
   const cardCount = (): number =>
     (db.prepare("SELECT COUNT(*) AS n FROM srs_cards").get() as { n: number }).n;
