@@ -52,13 +52,32 @@ function storePracticeEntry(entry: PracticeEntry): void {
   }
 }
 
-export function usePracticeEntry(): { entry: PracticeEntry; choose(entry: PracticeEntry): void } {
+export interface PracticeEntryState {
+  entry: PracticeEntry;
+  // Choosing an entry shows its list, so a line's page left open on Openings closes.
+  choose(entry: PracticeEntry): void;
+  // The variation whose page the Openings entry shows, or null for the list. It is the first page
+  // to take a parameter, and it is kept in memory only: a reload shows the list.
+  line: number | null;
+  openLine(id: number): void;
+  closeLine(): void;
+}
+
+export function usePracticeEntry(): PracticeEntryState {
   const [entry, setEntry] = useState<PracticeEntry>(readPracticeEntry);
+  const [line, setLine] = useState<number | null>(null);
   const choose = useCallback((next: PracticeEntry): void => {
     storePracticeEntry(next);
     setEntry(next);
+    setLine(null);
   }, []);
-  return { entry, choose };
+  const openLine = useCallback((id: number): void => {
+    storePracticeEntry("openings");
+    setEntry("openings");
+    setLine(id);
+  }, []);
+  const closeLine = useCallback((): void => setLine(null), []);
+  return { entry, choose, line, openLine, closeLine };
 }
 
 // What the Openings entry counts: the moves due now on each side, as the server counts a side, so a

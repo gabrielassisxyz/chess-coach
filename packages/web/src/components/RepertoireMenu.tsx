@@ -19,6 +19,7 @@ import {
   STYLE_POINTS_TOTAL,
   type StylePoints,
   stylePointsLeft,
+  stylePointsLeftText,
 } from "../state/repertoires-api.js";
 
 // What the Openings page does when the student asks for another opening or another variation: the
@@ -64,6 +65,9 @@ export interface OpeningAdds {
   refreshFailure: RefreshFailure | null;
   // Retries a failed post-add list refresh.
   retryRefresh(): Promise<void>;
+  // Reads the list again after something other than an add changed a line, such as a rebuild.
+  // Answers whether it could; a read that fails leaves the answer as it was.
+  refresh(): Promise<boolean>;
   // The adds whose last run stopped short: their drill is partial, and adding again resumes it.
   unfinished: ReadonlySet<string>;
   adding: { key: string; origin: AddOrigin } | null;
@@ -152,6 +156,15 @@ export function useOpeningAdds(fetchList: FetchRepertoireList): OpeningAdds {
     }
   };
 
+  const refresh = async (): Promise<boolean> => {
+    try {
+      setListing(await fetchList());
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const current = listing ?? (opened.status === "ready" ? opened.value : null);
   return {
     listing: current,
@@ -162,6 +175,7 @@ export function useOpeningAdds(fetchList: FetchRepertoireList): OpeningAdds {
     refreshing,
     refreshFailure,
     retryRefresh,
+    refresh,
     unfinished,
     adding,
     outcome,
@@ -312,10 +326,55 @@ export function BranchChoices({
 
 // What a collapsed control says of a split that is not the default, or not complete yet.
 function stylePointsSummary(points: StylePoints): string | null {
-  const left = stylePointsLeft(points);
-  if (left !== 0) return `${left} ${left === 1 ? "point" : "points"} left to place`;
+  const incomplete = stylePointsLeftText(points);
+  if (incomplete !== null) return incomplete;
   if (isDefaultStylePoints(points)) return null;
   return STYLE_MEASURES.map(({ key, label }) => `${label} ${points[key]}`).join(", ");
+}
+
+// One row for each measure: its name and what it favours, and a stepper that moves a point on or
+// off it. The same rows set the points of an add and of a rebuild, so both read alike.
+export function StylePointRows({
+  points,
+  onChange,
+}: {
+  points: StylePoints;
+  onChange(points: StylePoints): void;
+}) {
+  const left = stylePointsLeft(points);
+  return (
+    <>
+      {STYLE_MEASURES.map(({ key, label, hint }) => (
+        <div key={key} className="repertoire-menu__points-row">
+          <span className="repertoire-menu__points-name">
+            <span>{label}</span>
+            <span className="repertoire-menu__points-hint">{hint}</span>
+          </span>
+          <span className="repertoire-menu__points-stepper">
+            <button
+              type="button"
+              className="button"
+              aria-label={`Fewer points for ${label.toLowerCase()}`}
+              disabled={points[key] === 0}
+              onClick={() => onChange(moveStylePoint(points, key, -1))}
+            >
+              −
+            </button>
+            <span className="repertoire-menu__points-value">{points[key]}</span>
+            <button
+              type="button"
+              className="button"
+              aria-label={`More points for ${label.toLowerCase()}`}
+              disabled={left === 0}
+              onClick={() => onChange(moveStylePoint(points, key, 1))}
+            >
+              +
+            </button>
+          </span>
+        </div>
+      ))}
+    </>
+  );
 }
 
 // Where White has more than one good move, an opening or a variation added from the page chooses
@@ -329,7 +388,6 @@ export function StylePointsControl({
 }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
-  const left = stylePointsLeft(points);
   const summary = stylePointsSummary(points);
   return (
     <div className="repertoire-menu__points">
@@ -353,35 +411,7 @@ export function StylePointsControl({
             Place {STYLE_POINTS_TOTAL} points. Where White has more than one good move, the openings
             and variations you add choose by them. Each gets 2 until you change it.
           </p>
-          {STYLE_MEASURES.map(({ key, label, hint }) => (
-            <div key={key} className="repertoire-menu__points-row">
-              <span className="repertoire-menu__points-name">
-                <span>{label}</span>
-                <span className="repertoire-menu__points-hint">{hint}</span>
-              </span>
-              <span className="repertoire-menu__points-stepper">
-                <button
-                  type="button"
-                  className="button"
-                  aria-label={`Fewer points for ${label.toLowerCase()}`}
-                  disabled={points[key] === 0}
-                  onClick={() => onChange(moveStylePoint(points, key, -1))}
-                >
-                  −
-                </button>
-                <span className="repertoire-menu__points-value">{points[key]}</span>
-                <button
-                  type="button"
-                  className="button"
-                  aria-label={`More points for ${label.toLowerCase()}`}
-                  disabled={left === 0}
-                  onClick={() => onChange(moveStylePoint(points, key, 1))}
-                >
-                  +
-                </button>
-              </span>
-            </div>
-          ))}
+          <StylePointRows points={points} onChange={onChange} />
         </div>
       ) : null}
     </div>

@@ -259,6 +259,29 @@ since nothing failed and nothing waits on the student. It is plain text and not 
 takes no focus, and the row's Train stays as it was. Under 900 px the tag wraps under the name when
 the line is too short, and nothing scrolls sideways. M1 and M2 still find no matches.
 
+The Practice column was re-checked on rows 3, 5, 6, 7, 8, 9, 10, 14, 15, 17 and 19, and the Phone
+column on row 19, for the page of one line that a variation's name opens on the Openings page,
+against its markup, `practice-openings.css` and `test/practice-line.test.tsx`; the cells were not
+measured in a browser. The page takes the list's place under the Openings entry, which stays
+chosen. It opens with a breadcrumb of 12 px text in the secondary colour whose Openings is a
+button that underlines on hover, then the name as the page's 28/600 title with the tracking of the
+other titles, the Train button at its right and the line in the mono face at 12 px under it. Five
+tiles share a row in equal columns 12 px apart, each an 8 px panel with a hairline border, a 12 px
+label over a 16 px mono value; the moves due take the accent above 0 and a figure nothing was
+measured for holds the no-value dash. The Coverage card and the style card are the page's other two
+8 px panels, each with a 16 px title at 500 and 12 px notes, and nothing inside either is a card.
+A reply is a row of 13 px in the grid `70px 70px 1fr`, whose middle column grows to fit a sentence
+such as Too few games: the move in the mono face, the chance in the secondary colour, and the status
+in `--quality-best` for a covered reply and in the accent, with its word, for a gap, never the error
+tone. A reply with a position behind it is a button across the whole row, on `--surface-2` at hover.
+The steppers are the rows of the style points control, so the two places that set points read
+alike. A rebuild that ended well is a quiet note; one that stopped, was refused or failed is one
+sentence in the error tone, with Try again beside the last. Loading is one quiet sentence in the
+card, and a coverage that cannot be read is one sentence in the error tone with Try again inside
+its card while the rest of the page stays. Every control takes the one focus ring. Under 900 px the
+tiles wrap two by two, the replies go to one column with move, chance and status on one line, and
+every button, the breadcrumb's included, is a 44 px target. M1 and M2 still find no matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph
@@ -360,8 +383,10 @@ the line is too short, and nothing scrolls sideways. M1 and M2 still find no mat
   read failures in the error tone, a read failure paired with Try again in the same block. The row
   under a line drill's head names the opening beside the variation, each a label and a name in the
   two text tokens that wrap together as a pair.
-- **The coverage view** opens under a variation's row on the Openings page when its name is
-  pressed, and has a column of its own in the checklist. Its cells were read against the markup,
+- **The coverage view** was the block that opened under a variation's row on the Openings page,
+  and has a column of its own in the checklist. The row no longer opens it: a variation's name
+  opens the page of that line, whose Coverage card is checked in the Practice column, and no
+  screen draws the view now. Its cells were read against the markup,
   `repertoire.css` and the 899 px block: a hairline above it, no card of its own; four facts in a
   grid that wraps, notes capped at the measure, rows that wrap with their lines breaking anywhere,
   buttons that are 44 px under 900 px, and the accent
