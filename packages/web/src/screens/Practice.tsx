@@ -371,12 +371,12 @@ function Item({
       : stateCardOf(training, view, board.scratchLine, elapsedMs);
   const actions: PracticeColumnActions = {
     showSolution: () => server.send({ type: "show_solution", activity_id: activityId }),
-    rate: (quality) => {
+    rate: (grade) => {
       if (exposureId) {
         server.send({
           type: "rate_card",
           exposure_id: exposureId,
-          quality,
+          grade,
           activity_id: activityId,
         });
       }

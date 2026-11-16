@@ -41,10 +41,18 @@ an unparseable move (each is reported with its upstream `id`). A card whose `pro
 | `best_move` (SAN) | `expected_uci` |
 | `cp_loss`, `classification`, `explanation`, `created_at` | same columns |
 | `next_review` | `next_review_at` |
-| `interval_hours`, `ease_factor`, `repetitions` | same columns |
+| `interval_hours` | `interval_hours` |
+| `interval_hours`, `repetitions` | `fsrs_state`, `stability`, `difficulty` (below) |
 | `id`, `motif`, `quality_history` | dropped |
 
 Moves are converted from SAN to UCI with chess.js on the card's own FEN.
+
+The earlier tutor schedules with SM-2 and this app with FSRS, so the schedule is mapped by the
+rule migration 033 applied to the app's own cards. A card with an `interval_hours` of 0 is New,
+with no stability or difficulty. Any other card is a Review card whose `stability` is its interval
+in days, and whose `difficulty` is 2.1181 when its last review passed (`repetitions` over 0) and
+6.4133 when it failed, the values FSRS gives a new card answered Good and Again. `next_review`
+is kept as it is, so no imported card changes its due date.
 
 ## Importing the earlier tutor's routine
 

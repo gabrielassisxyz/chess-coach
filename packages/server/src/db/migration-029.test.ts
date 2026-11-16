@@ -91,12 +91,15 @@ describe("029_found_cards", () => {
     runMigrations(db, defaultMigrationsDir);
     const schedule = [
       "interval_hours",
-      "ease_factor",
-      "repetitions",
       "next_review_at",
       "introduced_at",
       "reviews",
       "last_reviewed_at",
+      "fsrs_state",
+      "stability",
+      "difficulty",
+      "learning_step",
+      "lapses",
     ];
     const repertoire = new Map(columns("repertoire_cards").map((column) => [column.name, column]));
     expect(columns("found_cards")).toEqual([
@@ -144,8 +147,12 @@ describe("029_found_cards", () => {
     insertPosition("own:a");
     insertCard("own:a");
     expect(
-      db.prepare("SELECT interval_hours, ease_factor, repetitions, reviews FROM found_cards").get(),
-    ).toEqual({ interval_hours: 0, ease_factor: 2.5, repetitions: 0, reviews: 0 });
+      db
+        .prepare(
+          "SELECT interval_hours, fsrs_state, learning_step, lapses, reviews FROM found_cards",
+        )
+        .get(),
+    ).toEqual({ interval_hours: 0, fsrs_state: 0, learning_step: 0, lapses: 0, reviews: 0 });
     expect(() => insertCard("own:a")).toThrow(/UNIQUE|PRIMARY KEY/);
     expect(() => insertCard("own:missing")).toThrow(/FOREIGN KEY/);
   });

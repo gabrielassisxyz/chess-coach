@@ -107,9 +107,11 @@ describe("021_repertoire_drill", () => {
     insertCard();
     expect(
       db
-        .prepare("SELECT interval_hours, ease_factor, repetitions, reviews FROM repertoire_cards")
+        .prepare(
+          "SELECT interval_hours, fsrs_state, learning_step, lapses, reviews FROM repertoire_cards",
+        )
         .get(),
-    ).toEqual({ interval_hours: 0, ease_factor: 2.5, repetitions: 0, reviews: 0 });
+    ).toEqual({ interval_hours: 0, fsrs_state: 0, learning_step: 0, lapses: 0, reviews: 0 });
     expect(insertCard).toThrow(/UNIQUE/);
   });
 });

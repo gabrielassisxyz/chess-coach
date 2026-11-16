@@ -372,18 +372,14 @@ export class ActivityService {
     this.run?.linkMessage(messageId);
   }
 
-  rateCard(
-    exposureId: string,
-    quality: number,
-    expectedActivityId?: number,
-  ): Promise<ActivityState> {
+  rateCard(exposureId: string, grade: number, expectedActivityId?: number): Promise<ActivityState> {
     return this.stepTraining(expectedActivityId, "rateCard", (run) =>
-      run.rate(exposureId, quality),
+      run.rate(exposureId, grade),
     ).then((state) => {
       this.log.info("srs.rated", {
         activity_id: state.activity_id,
         exposure_id: exposureId,
-        quality,
+        grade,
       });
       return state;
     });

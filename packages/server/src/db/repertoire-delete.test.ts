@@ -170,10 +170,20 @@ function reviewedCard(before: string[], san: string): void {
   const card = findRepertoireCard(db, move);
   if (!card) throw new Error(`no card for ${san}`);
   for (const reviewedAt of ["2026-11-11T10:00:00.000Z", "2026-11-12T10:00:00.000Z"]) {
-    saveRepertoireCardReview(db, card.id, {
-      schedule: { interval_hours: 72, ease_factor: 2.6, repetitions: 2 },
-      nextReviewAt: "2026-11-15T10:00:00.000Z",
-      reviewedAt,
+    saveRepertoireCardReview(db, {
+      cardId: card.id,
+      move,
+      grade: 3,
+      schedule: {
+        fsrs_state: 2,
+        stability: 3,
+        difficulty: 2.1181,
+        learning_step: 0,
+        lapses: 0,
+        interval_hours: 72,
+        last_reviewed_at: reviewedAt,
+        next_review_at: "2026-11-15T10:00:00.000Z",
+      },
     });
   }
 }

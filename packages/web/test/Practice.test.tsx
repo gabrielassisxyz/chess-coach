@@ -73,7 +73,7 @@ function card(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
       exposure_id: "ex-1",
       prompt_fen: START_FEN,
       student_color: "white",
-      rating_preview: { "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 72 },
+      rating_preview: { "1": 1 / 60, "2": 0.1, "3": 10 / 60, "4": 192 },
       position_in_queue: 1,
       queue_length: 3,
     },
@@ -86,7 +86,7 @@ function card(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
     last_try: null,
     gave_up: false,
     solution_line: null,
-    suggested_quality: null,
+    suggested_grade: null,
     hint_square: null,
     summary: null,
     ...overrides,
@@ -116,7 +116,7 @@ function puzzle(overrides: Partial<TrainingActivity> = {}): TrainingActivity {
     last_try: null,
     gave_up: false,
     solution_line: null,
-    suggested_quality: null,
+    suggested_grade: null,
     hint_square: null,
     summary: null,
     ...overrides,
@@ -146,7 +146,7 @@ const answeredCard = card({
   last_try: { uci: "c2c4", san: "c4", correct: false },
   gave_up: true,
   solution_line: ["d2d4"],
-  suggested_quality: 0,
+  suggested_grade: 1,
 });
 
 function api(activity: TrainingActivity | null): ServerApi {
@@ -852,7 +852,7 @@ describe("a card on the board", () => {
       exploring: { fen: AFTER_NF3, line_san: [], trail: [] },
       last_try: { uci: "g1f3", san: "Nf3", correct: true },
       moves: [...playedE4E5, { ply: 2, uci: "g1f3", san: "Nf3", by: "student" }],
-      suggested_quality: 4,
+      suggested_grade: 3,
     });
     rerender(<Practice server={api(solved)} createBoard={spyBoard} />);
     expect(screen.getByRole("heading", { name: "Card 1 of 3" })).toBeTruthy();
@@ -1232,19 +1232,16 @@ describe("the exploration trail and the timer", () => {
 
 describe("rating a card", () => {
   const rate = () => render(<Practice server={api(answeredCard)} createBoard={spyBoard} />);
+  const buttonsOfRating = () =>
+    within(screen.getByRole("group", { name: "Rate your recall" })).getAllByRole("button");
 
-  it("says in words and days what each grade means, from the rating preview", () => {
+  it("offers four buttons, Again, Hard, Good and Easy, each with the interval its grade gives", () => {
     rate();
-    const buttons = within(screen.getByRole("group", { name: "Rate your recall" })).getAllByRole(
-      "button",
-    );
-    expect(buttons.map((button) => button.textContent)).toEqual([
-      "0Blank \u2014 no idea4 h",
-      "1Wrong, recognised it4 h",
-      "2Wrong, nearly there4 h",
-      "3Right, with effort1 d",
-      "4Right, hesitated1 d",
-      "5Easy3 d",
+    expect(buttonsOfRating().map((button) => button.textContent)).toEqual([
+      "1Again1 min",
+      "2Hard6 min",
+      "3Good10 min",
+      "4Easy8 d",
     ]);
   });
 
@@ -1256,29 +1253,50 @@ describe("rating a card", () => {
     expect(formatInterval(36)).toBe("2 d");
   });
 
-  it("rates by clicking a button", () => {
+  it("tells the student the keys, and which grade Enter takes", () => {
+    rate();
+    expect(screen.getByText(/Keys 1 to 4 rate; Enter takes the suggested Again\./)).toBeTruthy();
+    cleanup();
+    render(
+      <Practice server={api(card({ ...failed, suggested_grade: null }))} createBoard={spyBoard} />,
+    );
+    expect(screen.getByText(/Keys 1 to 4 rate\./)).toBeTruthy();
+  });
+
+  it("rates by clicking a button, sending the grade", () => {
     const server = api(answeredCard);
     render(<Practice server={server} createBoard={spyBoard} />);
-    fireEvent.click(screen.getByRole("button", { name: /^4 Right, hesitated/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^3 Good/ }));
     expect(server.send).toHaveBeenCalledWith({
       type: "rate_card",
       exposure_id: "ex-1",
-      quality: 4,
+      grade: 3,
       activity_id: 4,
     });
   });
 
-  it("rates with the keys 0 to 5, except while typing", () => {
+  it("sends no quality with a grade", () => {
     const server = api(answeredCard);
     render(<Practice server={server} createBoard={spyBoard} />);
-    fireEvent.keyDown(document.body, { key: "2" });
-    expect(server.send).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "rate_card", quality: 2 }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /^2 Hard/ }));
+    const sent = vi.mocked(server.send).mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(Object.keys(sent).sort()).toEqual(["activity_id", "exposure_id", "grade", "type"]);
+  });
+
+  it("rates with the keys 1 to 4, except while typing", () => {
+    const server = api(answeredCard);
+    render(<Practice server={server} createBoard={spyBoard} />);
+    for (const grade of [1, 2, 3, 4]) {
+      fireEvent.keyDown(document.body, { key: String(grade) });
+      expect(server.send).toHaveBeenLastCalledWith(
+        expect.objectContaining({ type: "rate_card", grade }),
+      );
+    }
     vi.mocked(server.send).mockClear();
     const field = document.body.appendChild(document.createElement("textarea"));
     fireEvent.keyDown(field, { key: "3" });
-    fireEvent.keyDown(document.body, { key: "6" });
+    fireEvent.keyDown(document.body, { key: "0" });
+    fireEvent.keyDown(document.body, { key: "5" });
     fireEvent.keyDown(document.body, { key: "1", ctrlKey: true });
     expect(server.send).not.toHaveBeenCalled();
     field.remove();
@@ -1292,33 +1310,31 @@ describe("rating a card", () => {
     expect(screen.getByText("Rated")).toBeTruthy();
   });
 
-  it("pre-selects the suggested rating and still rates any other", () => {
-    const server = api(card({ ...failed, suggested_quality: 2 }));
+  it("pre-selects the suggested grade, takes focus there for Enter, and still rates any other", () => {
+    const server = api(card({ ...failed, suggested_grade: 1 }));
     render(<Practice server={server} createBoard={spyBoard} />);
-    const group = screen.getByRole("group", { name: "Rate your recall" });
-    const pressed = within(group)
-      .getAllByRole("button")
-      .filter((button) => button.getAttribute("aria-pressed") === "true");
-    expect(pressed.map((button) => button.textContent?.charAt(0))).toEqual(["2"]);
+    const pressed = buttonsOfRating().filter(
+      (button) => button.getAttribute("aria-pressed") === "true",
+    );
+    expect(pressed.map((button) => button.textContent?.charAt(0))).toEqual(["1"]);
     expect(document.activeElement).toBe(pressed[0]);
-    fireEvent.click(screen.getByRole("button", { name: /^5 Easy/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^4 Easy/ }));
     expect(server.send).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "rate_card", quality: 5 }),
+      expect.objectContaining({ type: "rate_card", grade: 4 }),
     );
   });
 
-  it("pre-selects 4 for a first-try right card and 0 for a given-up one", () => {
+  it("pre-selects Good for a first-try right card and Again for a given-up one", () => {
     const pressedOf = () =>
-      within(screen.getByRole("group", { name: "Rate your recall" }))
-        .getAllByRole("button")
+      buttonsOfRating()
         .filter((button) => button.getAttribute("aria-pressed") === "true")
         .map((button) => button.textContent?.charAt(0));
-    const right = card({ status: "solved", input_enabled: false, suggested_quality: 4 });
+    const right = card({ status: "solved", input_enabled: false, suggested_grade: 3 });
     const { unmount } = render(<Practice server={api(right)} createBoard={spyBoard} />);
-    expect(pressedOf()).toEqual(["4"]);
+    expect(pressedOf()).toEqual(["3"]);
     unmount();
     render(<Practice server={api(answeredCard)} createBoard={spyBoard} />);
-    expect(pressedOf()).toEqual(["0"]);
+    expect(pressedOf()).toEqual(["1"]);
   });
 
   it("reads Solved for a solved puzzle, and offers no rating", () => {

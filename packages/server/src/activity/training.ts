@@ -79,6 +79,7 @@ import {
 import { currentPuzzleRating, ratingAfter, setPuzzleRating } from "../puzzles/rating.js";
 import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
+import { GRADE, type Grade } from "../srs/fsrs.js";
 import type { AnswerResult, ReviewDesk } from "../srs/review.js";
 import { ActivityError } from "./errors.js";
 import { Exploration } from "./exploration.js";
@@ -121,7 +122,7 @@ export interface PracticeRunPort {
   showSolution(): void;
   hint(): void;
   askCoach(): void;
-  rate(exposureId: string, quality: number): void;
+  rate(exposureId: string, grade: number): void;
   next(): void;
   end(): void;
   /** The run stopped being on the board without the student ending it. */
@@ -187,7 +188,7 @@ interface Served {
   tries: (TriedMove & { ply: number })[];
   gaveUp: boolean;
   solutionLine: string[] | null;
-  suggestedQuality: number | null;
+  suggestedGrade: number | null;
   hintSquare: string | null;
   hinted: boolean;
   // Offset of the first hint from when the item was served; null when no hint was given.
@@ -207,12 +208,10 @@ interface Served {
 // UCI's null move: a card given up before any try has no move of the student's to record.
 const NO_MOVE_UCI = "0000";
 
-// The rating a finished card pre-selects: the first try decides it, a hint means the student did
-// not know it, and giving up means blank.
-function suggestedQualityOf(gaveUp: boolean, firstTryRight: boolean, hinted: boolean): number {
-  if (gaveUp) return 0;
-  if (hinted) return 2;
-  return firstTryRight ? 4 : 2;
+// The grade a finished card pre-selects: Good when every step was right first time without a hint,
+// Again after a wrong try, a hint or the solution shown.
+function suggestedGradeOf(gaveUp: boolean, firstTryRight: boolean, hinted: boolean): Grade {
+  return !gaveUp && !hinted && firstTryRight ? GRADE.Good : GRADE.Again;
 }
 
 // The served item as `training_runs.current_json` keeps it: where the run stood at its last step.
@@ -712,7 +711,7 @@ export class TrainingRun implements PracticeRunPort {
       last_try: lastTry ? { uci: lastTry.uci, san: lastTry.san, correct: lastTry.correct } : null,
       gave_up: s.gaveUp,
       solution_line: s.solutionLine,
-      suggested_quality: s.suggestedQuality,
+      suggested_grade: s.suggestedGrade,
       hint_square: open ? s.hintSquare : null,
       summary: this.summary,
       moves: this.playedLine(s),
@@ -898,7 +897,7 @@ export class TrainingRun implements PracticeRunPort {
     });
   }
 
-  rate(exposureId: string, quality: number): void {
+  rate(exposureId: string, grade: number): void {
     const s = this.served;
     if (this.summary !== null) {
       throw new ActivityError("item_finished", "the queue has ended");
@@ -908,7 +907,7 @@ export class TrainingRun implements PracticeRunPort {
       throw new SrsError("exposure_unknown", "that card is not the one on the board");
     }
     this.transition(() => {
-      this.deps.desk.rate(exposureId, quality);
+      this.deps.desk.rate(exposureId, grade);
       s.status = "rated";
     });
   }
@@ -1098,7 +1097,7 @@ export class TrainingRun implements PracticeRunPort {
     if (line) this.placeLineEnding(s, line, gaveUp);
     else this.placeMoveEnding(s, result, gaveUp);
     s.status = gaveUp ? "failed" : "solved";
-    s.suggestedQuality = suggestedQualityOf(gaveUp, result.correct, s.hinted);
+    s.suggestedGrade = suggestedGradeOf(gaveUp, result.correct, s.hinted);
     this.tally(!gaveUp);
     this.wake = true;
   }
@@ -1326,7 +1325,7 @@ export class TrainingRun implements PracticeRunPort {
       coachAsk: "none" as const,
       note: null,
       solutionLine: null,
-      suggestedQuality: null,
+      suggestedGrade: null,
       hintSquare: null,
       hinted: false,
       hintAtMs: null,

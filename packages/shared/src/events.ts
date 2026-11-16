@@ -139,7 +139,7 @@ export const ErrorCodeSchema = z.enum([
   "exposure_stale",
   "exposure_answered",
   "exposure_unanswered",
-  "invalid_quality",
+  "invalid_grade",
   "game_not_finished",
   "use_try_move",
   "not_exploring",
@@ -474,11 +474,13 @@ export const AnalyseCommandSchema = z.object({
 });
 export type AnalyseCommand = z.infer<typeof AnalyseCommandSchema>;
 
-export const RateCardCommandSchema = z.object({
+// A card is rated on FSRS's four grades: 1 Again, 2 Hard, 3 Good, 4 Easy. The schema is strict so
+// that a client still sending the old 0 to 5 `quality` is refused, not silently read as ungraded.
+export const RateCardCommandSchema = z.strictObject({
   type: z.literal("rate_card"),
   command_id: commandId,
   exposure_id: z.string().min(1).max(64),
-  quality: z.number().int().min(0).max(5),
+  grade: z.number().int().min(1).max(4),
   activity_id: activityId,
 });
 

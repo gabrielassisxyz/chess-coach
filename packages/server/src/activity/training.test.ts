@@ -665,7 +665,7 @@ describe("a card item", () => {
       expected: { uci: "d2d4", san: "d4" },
       gave_up: true,
       solution_line: ["d2d4"],
-      suggested_quality: 0,
+      suggested_grade: 1,
     });
     expect(rows().map((r) => r.type)).toEqual(["srs_answer"]);
     expect(flushed).toHaveBeenCalled();
@@ -710,7 +710,7 @@ describe("a card item", () => {
       exploring: { fen: FEN_AFTER_D4_FROM_START },
     });
     const rated = training(
-      await activity.rateCard((served.item as { exposure_id: string }).exposure_id, 4),
+      await activity.rateCard((served.item as { exposure_id: string }).exposure_id, 3),
     );
     expect(rated).toMatchObject({
       status: "rated",
@@ -746,7 +746,7 @@ describe("a card item", () => {
     const start = training(await activity.startTraining({ mode: "srs" }));
     await activity.trainingTry("d2d4");
     const exposure = (start.item as { exposure_id: string }).exposure_id;
-    await activity.rateCard(exposure, 4);
+    await activity.rateCard(exposure, 3);
     expect(log.named("training.item_served")[0]?.fields).toMatchObject({ mode: "srs" });
     expect(log.named("training.answer")[0]?.fields).toMatchObject({
       try: true,
@@ -755,7 +755,7 @@ describe("a card item", () => {
       tries: 0,
       expected: null,
     });
-    expect(log.named("srs.rated")[0]?.fields).toMatchObject({ exposure_id: exposure, quality: 4 });
+    expect(log.named("srs.rated")[0]?.fields).toMatchObject({ exposure_id: exposure, grade: 3 });
   });
 
   it("rates the card and moves its schedule", async () => {
@@ -765,7 +765,7 @@ describe("a card item", () => {
     const start = training(await activity.startTraining({ mode: "srs" }));
     await activity.trainingTry("d2d4");
     const rated = training(
-      await activity.rateCard((start.item as { exposure_id: string }).exposure_id, 4),
+      await activity.rateCard((start.item as { exposure_id: string }).exposure_id, 3),
     );
     expect(rated.status).toBe("rated");
     expect(getCard(db, id)?.nextReviewAt).not.toBe(before);
@@ -792,9 +792,9 @@ describe("a card item", () => {
       input_enabled: true,
       fen: LICHESS_FORK_AFTER_FIRST_REPLY,
       last_move: { from: "f4", to: "d6" },
-      suggested_quality: null,
+      suggested_grade: null,
     });
-    expect(await code(activity.rateCard(exposure, 4))).toBe("exposure_unanswered");
+    expect(await code(activity.rateCard(exposure, 3))).toBe("exposure_unanswered");
     expect(await code(activity.nextTrainingItem())).toBe("item_unfinished");
 
     const second = training(await activity.trainingTry("f6e4"));
@@ -810,11 +810,11 @@ describe("a card item", () => {
       input_enabled: false,
       fen: LICHESS_FORK_SOLVED,
       last_move: { from: "e4", to: "d6" },
-      suggested_quality: 4,
+      suggested_grade: 3,
     });
     expect(done.moves?.map((move) => move.uci)).toEqual(LICHESS_FORK_LINE);
     expect(rows().map((row) => row.type)).toEqual(["srs_answer"]);
-    expect(training(await activity.rateCard(exposure, 4)).status).toBe("rated");
+    expect(training(await activity.rateCard(exposure, 3)).status).toBe("rated");
   });
 
   it("asks the whole line of the card a missed puzzle leaves", async () => {
@@ -933,7 +933,7 @@ describe("a card item", () => {
       last_move: null,
       expected: { uci: "f6e4", san: "Ne4+" },
       solution_line: ["f6e4", "d2e1", "e4d6"],
-      suggested_quality: 0,
+      suggested_grade: 1,
     });
     expect(given.moves?.map((move) => move.uci)).toEqual(["f8d6", "f4d6"]);
     const board = new Chess(given.fen);
@@ -1100,7 +1100,7 @@ describe("a puzzle item", () => {
       expected: { uci: "a1c1" },
       gave_up: true,
       solution_line: ["a1c1"],
-      suggested_quality: null,
+      suggested_grade: null,
     });
     expect(rows()).toMatchObject([{ type: "puzzle_result", solved: false, gave_up: true }]);
     expect(db.prepare("SELECT solved, failed_ply FROM puzzle_attempts").all()).toEqual([
@@ -1125,7 +1125,7 @@ describe("command routing and refusals", () => {
     await activity.trainingTry("d2d4");
     expect(await code(activity.rateCard("not-the-serving", 3))).toBe("exposure_unknown");
     const exposure = (first.item as { exposure_id: string }).exposure_id;
-    expect(await code(activity.rateCard(exposure, 9))).toBe("invalid_quality");
+    expect(await code(activity.rateCard(exposure, 9))).toBe("invalid_grade");
     await activity.rateCard(exposure, 3);
     expect(await code(activity.rateCard(exposure, 3))).toBe("exposure_used");
   });
@@ -1484,21 +1484,29 @@ describe("the training state a client renders", () => {
     expect(next.exploring.trail.map((e) => e.line_san)).toEqual([["Rc1"]]);
   });
 
-  it("previews the interval each quality would set, and rating applies the previewed one", async () => {
+  it("previews the interval each grade would set, and rating applies the previewed one", async () => {
     const id = addCard("d2d4");
     updateSchedule(db, id, {
-      nextReviewAt: T0.toISOString(),
-      intervalHours: 24,
-      easeFactor: 2.5,
-      repetitions: 1,
+      fsrs_state: 2,
+      stability: 1,
+      difficulty: 2.1181,
+      learning_step: 0,
+      lapses: 0,
+      interval_hours: 24,
+      last_reviewed_at: new Date(T0.getTime() - 24 * 3_600_000).toISOString(),
+      next_review_at: T0.toISOString(),
     });
     const { activity } = setup();
     const start = training(await activity.startTraining({ mode: "srs" }));
     const item = start.item as Extract<typeof start.item, { kind: "card" }>;
-    expect(item.rating_preview).toEqual({ "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 24 });
+    const preview = item.rating_preview;
+    expect(Object.keys(preview)).toEqual(["1", "2", "3", "4"]);
+    expect(preview["1"]).toBeCloseTo(10 / 60, 9);
+    expect(preview["2"]).toBeLessThan(preview["3"]);
+    expect(preview["3"]).toBeLessThan(preview["4"]);
     await activity.trainingTry("d2d4");
     await activity.rateCard(item.exposure_id, 3);
-    expect(getCard(db, id)?.intervalHours).toBe(item.rating_preview["3"]);
+    expect(getCard(db, id)?.intervalHours).toBe(preview["3"]);
   });
 
   it("holds ten positions of a set fixed at the start, whatever the inventory", async () => {
@@ -1688,40 +1696,40 @@ describe("graded tries", () => {
     ]);
   });
 
-  it("suggests 4 for a card right first try, and its review counts as correct", async () => {
+  it("suggests Good for a card right first try, and its review counts as correct", async () => {
     addCard("d2d4");
     const { activity } = setup();
     const start = training(await activity.startTraining({ mode: "srs" }));
     const done = training(await activity.trainingTry("d2d4"));
-    expect(done.suggested_quality).toBe(4);
-    await activity.rateCard(exposureOf(start), 4);
+    expect(done.suggested_grade).toBe(3);
+    await activity.rateCard(exposureOf(start), 3);
     expect(db.prepare("SELECT answered_uci, correct FROM srs_reviews").get()).toEqual({
       answered_uci: "d2d4",
       correct: 1,
     });
   });
 
-  it("suggests 2 for a card solved after a wrong try, and its review counts the first try", async () => {
+  it("suggests Again for a card solved after a wrong try, and its review counts the first try", async () => {
     addCard("d2d4");
     const { activity } = setup();
     const start = training(await activity.startTraining({ mode: "srs" }));
     await activity.trainingTry("e2e4");
     const done = training(await activity.trainingTry("d2d4"));
-    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, tries: 1 });
-    await activity.rateCard(exposureOf(start), 2);
+    expect(done).toMatchObject({ status: "solved", suggested_grade: 1, tries: 1 });
+    await activity.rateCard(exposureOf(start), 1);
     expect(db.prepare("SELECT answered_uci, correct FROM srs_reviews").get()).toEqual({
       answered_uci: "e2e4",
       correct: 0,
     });
   });
 
-  it("suggests 0 for a card whose solution was shown, even before any try", async () => {
+  it("suggests Again for a card whose solution was shown, even before any try", async () => {
     addCard("d2d4");
     const { activity } = setup();
     const start = training(await activity.startTraining({ mode: "srs" }));
     const done = training(await activity.trainingShowSolution());
-    expect(done).toMatchObject({ status: "failed", suggested_quality: 0, gave_up: true });
-    await activity.rateCard(exposureOf(start), 0);
+    expect(done).toMatchObject({ status: "failed", suggested_grade: 1, gave_up: true });
+    await activity.rateCard(exposureOf(start), 1);
     expect(db.prepare("SELECT correct FROM srs_reviews").get()).toEqual({ correct: 0 });
   });
 
@@ -1735,22 +1743,22 @@ describe("graded tries", () => {
   }
   const reviewRow = () => db.prepare("SELECT answered_uci, correct FROM srs_reviews").get();
 
-  it("suggests 4 for a card of several moves right at every step, and its review counts as correct", async () => {
+  it("suggests Good for a card of several moves right at every step, and its review counts as correct", async () => {
     const { activity, exposure } = await reviewLineCard();
     await activity.trainingTry("b5c7");
     const done = training(await activity.trainingTry("a1c1"));
-    expect(done).toMatchObject({ status: "solved", suggested_quality: 4, tries: 0 });
-    await activity.rateCard(exposure, 4);
+    expect(done).toMatchObject({ status: "solved", suggested_grade: 3, tries: 0 });
+    await activity.rateCard(exposure, 3);
     expect(reviewRow()).toEqual({ answered_uci: "b5c7", correct: 1 });
   });
 
-  it("suggests 2 and counts the review wrong when a later step had a wrong try after a right first move", async () => {
+  it("suggests Again and counts the review wrong when a later step had a wrong try after a right first move", async () => {
     const { activity, exposure } = await reviewLineCard();
     await activity.trainingTry("b5c7");
     await activity.trainingTry("a1b1");
     const done = training(await activity.trainingTry("a1c1"));
-    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, tries: 1 });
-    await activity.rateCard(exposure, 2);
+    expect(done).toMatchObject({ status: "solved", suggested_grade: 1, tries: 1 });
+    await activity.rateCard(exposure, 1);
     expect(reviewRow()).toEqual({ answered_uci: "b5c7", correct: 0 });
   });
 
@@ -1759,24 +1767,24 @@ describe("graded tries", () => {
     await activity.trainingTry("f4e5");
     await activity.trainingTry("b5c7");
     const done = training(await activity.trainingTry("a1c1"));
-    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, tries: 1 });
-    await activity.rateCard(exposure, 2);
+    expect(done).toMatchObject({ status: "solved", suggested_grade: 1, tries: 1 });
+    await activity.rateCard(exposure, 1);
     expect(reviewRow()).toEqual({ answered_uci: "f4e5", correct: 0 });
   });
 
-  it("suggests 0 and counts the review wrong when the solution was shown at a later step", async () => {
+  it("suggests Again and counts the review wrong when the solution was shown at a later step", async () => {
     const { activity, exposure } = await reviewLineCard();
     await activity.trainingTry("b5c7");
     const done = training(await activity.trainingShowSolution());
-    expect(done).toMatchObject({ status: "failed", suggested_quality: 0, gave_up: true });
-    await activity.rateCard(exposure, 0);
+    expect(done).toMatchObject({ status: "failed", suggested_grade: 1, gave_up: true });
+    await activity.rateCard(exposure, 1);
     expect(reviewRow()).toEqual({ answered_uci: "b5c7", correct: 0 });
   });
 
   it("answers a card of several moves shown before any try with the null move", async () => {
     const { activity, exposure } = await reviewLineCard();
     await activity.trainingShowSolution();
-    await activity.rateCard(exposure, 0);
+    await activity.rateCard(exposure, 1);
     expect(reviewRow()).toEqual({ answered_uci: "0000", correct: 0 });
   });
 
@@ -1953,13 +1961,13 @@ describe("hint", () => {
     });
   });
 
-  it("suggests quality 2 for a card solved after a hint", async () => {
+  it("suggests Again for a card solved after a hint", async () => {
     addCard("d2d4");
     const { activity } = setup();
     await activity.startTraining({ mode: "srs" });
     await activity.trainingHint();
     const done = training(await activity.trainingTry("d2d4"));
-    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, hint_square: null });
+    expect(done).toMatchObject({ status: "solved", suggested_grade: 1, hint_square: null });
     expect(db.prepare("SELECT hinted FROM training_items").get()).toEqual({ hinted: 1 });
   });
 
@@ -1972,7 +1980,7 @@ describe("hint", () => {
     expect(training(await activity.trainingTry("b5c7")).hint_square).toBeNull();
     expect(training(await activity.trainingHint()).hint_square).toBe("a1");
     const done = training(await activity.trainingTry("a1c1"));
-    expect(done).toMatchObject({ status: "solved", suggested_quality: 2, hint_square: null });
+    expect(done).toMatchObject({ status: "solved", suggested_grade: 1, hint_square: null });
     expect(await code(activity.trainingHint())).toBe("item_finished");
   });
 
@@ -3224,19 +3232,32 @@ describe("a drill of the positions from the student's games", () => {
     addPuzzle(id, `${phase}-${color}`, fen, [accepted[0] as string]);
   }
 
-  // A card two right first tries left, due again at `next`.
+  // The grades the drill logged for the cards, one for each rating that moved a card.
+  const loggedGrades = (): { key: string; grade: number }[] =>
+    (
+      db.prepare("SELECT card_key, grade FROM drill_reviews ORDER BY id").all() as {
+        card_key: string;
+        grade: number;
+      }[]
+    ).map((row) => ({ key: row.card_key, grade: row.grade }));
+
+  const minutesFromT0 = (minutes: number): string =>
+    new Date(T0.getTime() + minutes * 60_000).toISOString();
+
+  // A learned card, two right first tries behind it, due again at `next`.
   function addFoundCard(id: string, next: string): void {
     db.prepare(
-      `INSERT INTO found_cards (position_id, interval_hours, ease_factor, repetitions,
+      `INSERT INTO found_cards (position_id, interval_hours, fsrs_state, stability, difficulty,
          next_review_at, introduced_at, reviews, last_reviewed_at)
-       VALUES (?, 24, 2.5, 2, ?, ?, 2, ?)`,
+       VALUES (?, 24, 2, 1, 2.1181, ?, ?, 2, ?)`,
     ).run(id, next, hoursFromT0(-48), hoursFromT0(-24));
   }
 
   const foundCard = (id: string): unknown =>
     db
       .prepare(
-        `SELECT interval_hours, ease_factor, repetitions, next_review_at, reviews, last_reviewed_at
+        `SELECT interval_hours, fsrs_state, learning_step, lapses, next_review_at, reviews,
+           last_reviewed_at
          FROM found_cards WHERE position_id = ?`,
       )
       .get(id);
@@ -3341,9 +3362,10 @@ describe("a drill of the positions from the student's games", () => {
     expect(servedIds()).toEqual(["one"]);
     await activity.trainingTry("d7d5");
     expect(foundCard("one")).toMatchObject({
-      interval_hours: 4,
-      repetitions: 0,
-      next_review_at: hoursFromT0(4),
+      interval_hours: 10 / 60,
+      fsrs_state: 3,
+      lapses: 1,
+      next_review_at: minutesFromT0(10),
       reviews: 3,
     });
   });
@@ -3446,7 +3468,7 @@ describe("a drill of the positions from the student's games", () => {
     expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
   });
 
-  it("rates a first-try solve with quality 4: a new position gets its card, a due one moves up", async () => {
+  it("rates a first-try solve Good: a new position gets its card, a due one moves up", async () => {
     addFound("fresh");
     addFound("due");
     addFoundCard("due", hoursFromT0(-1));
@@ -3454,24 +3476,25 @@ describe("a drill of the positions from the student's games", () => {
     await activity.startTraining({ mode: "found", scope: "all", position: "fresh" });
     await activity.trainingTry("e7e5");
     expect(foundCard("fresh")).toEqual({
-      interval_hours: 4,
-      ease_factor: 2.5,
-      repetitions: 1,
-      next_review_at: hoursFromT0(4),
+      interval_hours: 10 / 60,
+      fsrs_state: 1,
+      learning_step: 1,
+      lapses: 0,
+      next_review_at: minutesFromT0(10),
       reviews: 1,
       last_reviewed_at: T0.toISOString(),
     });
     await activity.startTraining({ mode: "found", scope: "all", position: "due" });
     await activity.trainingTry("e7e5");
-    expect(foundCard("due")).toMatchObject({
-      interval_hours: 72,
-      repetitions: 3,
-      next_review_at: hoursFromT0(72),
-      reviews: 3,
-    });
+    expect(foundCard("due")).toMatchObject({ fsrs_state: 2, lapses: 0, reviews: 3 });
+    expect((foundCard("due") as { interval_hours: number }).interval_hours).toBeGreaterThan(24);
+    expect(loggedGrades()).toEqual([
+      { key: "fresh", grade: 3 },
+      { key: "due", grade: 3 },
+    ]);
   });
 
-  it("rates a wrong first try with quality 2, back in 4 hours, and no later try at all", async () => {
+  it("rates a wrong first try Again, back in 10 minutes, and no later try at all", async () => {
     addFound("due");
     addFoundCard("due", hoursFromT0(-1));
     const { activity } = setup();
@@ -3479,21 +3502,23 @@ describe("a drill of the positions from the student's games", () => {
     await activity.trainingTry("d7d5");
     const missed = foundCard("due");
     expect(missed).toMatchObject({
-      interval_hours: 4,
-      repetitions: 0,
-      next_review_at: hoursFromT0(4),
+      interval_hours: 10 / 60,
+      fsrs_state: 3,
+      lapses: 1,
+      next_review_at: minutesFromT0(10),
       reviews: 3,
     });
-    // A second wrong try would lower the ease again and count a review if it rated the card.
+    // A second wrong try would count another review and lapse again if it rated the card.
     await activity.trainingTry("g8f6");
     expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
     expect(foundCard("due")).toEqual(missed);
+    expect(loggedGrades()).toEqual([{ key: "due", grade: 1 }]);
   });
 
   it.each([
     ["a hint", "hint"],
     ["a shown solution", "give_up"],
-  ] as const)("rates %s before any try with quality 2, and nothing after it", async (_n, how) => {
+  ] as const)("rates %s before any try Again, and nothing after it", async (_n, how) => {
     addFound("fresh");
     const { activity } = setup();
     await activity.startTraining({ mode: "found", scope: "all" });
@@ -3501,9 +3526,10 @@ describe("a drill of the positions from the student's games", () => {
     else await activity.trainingShowSolution();
     const rated = foundCard("fresh");
     expect(rated).toMatchObject({
-      interval_hours: 4,
-      repetitions: 0,
-      next_review_at: hoursFromT0(4),
+      interval_hours: 1 / 60,
+      fsrs_state: 1,
+      learning_step: 0,
+      next_review_at: minutesFromT0(1),
       reviews: 1,
     });
     if (how === "hint") {
@@ -3523,6 +3549,7 @@ describe("a drill of the positions from the student's games", () => {
     expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
     expect(foundCard("early")).toEqual(before);
     expect(foundCard("early")).toMatchObject({ next_review_at: hoursFromT0(24) });
+    expect(loggedGrades()).toEqual([]);
   });
 
   it("writes the attempt of a miss as for any puzzle, with no review card and no rating move", async () => {
@@ -3758,9 +3785,9 @@ describe("a drill of the positions from games narrowed to one opening", () => {
     fillThree();
     for (const id of ["a-two-knights", "b-giuoco"]) {
       db.prepare(
-        `INSERT INTO found_cards (position_id, interval_hours, ease_factor, repetitions,
+        `INSERT INTO found_cards (position_id, interval_hours, fsrs_state, stability, difficulty,
            next_review_at, introduced_at, reviews, last_reviewed_at)
-         VALUES (?, 24, 2.5, 2, ?, ?, 2, ?)`,
+         VALUES (?, 24, 2, 1, 2.1181, ?, ?, 2, ?)`,
       ).run(
         id,
         new Date(T0.getTime() - 3_600_000).toISOString(),

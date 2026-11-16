@@ -90,7 +90,7 @@ const variants: ActivityState[] = [
     last_try: { uci: "a1b1", san: "Kb1", correct: false },
     gave_up: false,
     solution_line: null,
-    suggested_quality: null,
+    suggested_grade: null,
     hint_square: null,
     summary: null,
     moves: [{ ply: 0, uci: "a1a2", san: "Ka2", by: "student" }],
@@ -109,7 +109,7 @@ const variants: ActivityState[] = [
       exposure_id: "x1",
       prompt_fen: "8/8/8/8/8/8/8/K6k w - - 0 1",
       student_color: "white",
-      rating_preview: { "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 72 },
+      rating_preview: { "1": 0.01666, "2": 0.1, "3": 0.1666, "4": 192 },
       position_in_queue: 2,
       queue_length: 2,
     },
@@ -122,7 +122,7 @@ const variants: ActivityState[] = [
     last_try: null,
     gave_up: true,
     solution_line: ["a1a2"],
-    suggested_quality: 0,
+    suggested_grade: 1,
     hint_square: null,
     summary: { solved: 0, failed: 1 },
   },
@@ -140,6 +140,52 @@ describe("ActivityState schemas", () => {
   it("rejects a kind with another kind's fields missing", () => {
     expect(ActivityStateSchema.safeParse({ kind: "demo", ...board }).success).toBe(false);
     expect(ActivityStateSchema.safeParse({ ...variants[0], kind: "nope" }).success).toBe(false);
+  });
+
+  describe("the four grades of a card", () => {
+    const cardState = variants.find(
+      (variant) => variant.kind === "training" && variant.item.kind === "card",
+    ) as Extract<ActivityState, { kind: "training" }>;
+    const cardItem = cardState.item as Extract<typeof cardState.item, { kind: "card" }>;
+    const parsedWith = (change: Record<string, unknown>) =>
+      ActivityStateSchema.safeParse({ ...cardState, ...change });
+
+    it("previews the hours to the next review for Again, Hard, Good and Easy, and nothing else", () => {
+      const parsed = ActivityStateSchema.parse(
+        JSON.parse(JSON.stringify(cardState)),
+      ) as typeof cardState;
+
+      expect((parsed.item as typeof cardItem).rating_preview).toEqual({
+        "1": 0.01666,
+        "2": 0.1,
+        "3": 0.1666,
+        "4": 192,
+      });
+      expect(
+        parsedWith({ item: { ...cardItem, rating_preview: { "1": 1, "2": 2, "3": 3 } } }).success,
+      ).toBe(false);
+      expect(
+        parsedWith({ item: { ...cardItem, rating_preview: { "1": 1, "2": 2, "3": 3, "4": "4" } } })
+          .success,
+      ).toBe(false);
+    });
+
+    it("suggests a grade from 1 to 4, or none while the card is open", () => {
+      for (const grade of [1, 2, 3, 4, null]) {
+        expect(parsedWith({ suggested_grade: grade }).success, String(grade)).toBe(true);
+      }
+      for (const grade of [0, 5, 2.5, "3", undefined]) {
+        expect(parsedWith({ suggested_grade: grade }).success, String(grade)).toBe(false);
+      }
+    });
+
+    it("no longer carries the old quality", () => {
+      const { suggested_grade: _grade, ...withoutGrade } = cardState;
+
+      expect(ActivityStateSchema.safeParse({ ...withoutGrade, suggested_quality: 4 }).success).toBe(
+        false,
+      );
+    });
   });
 
   it("validates the board commands", () => {

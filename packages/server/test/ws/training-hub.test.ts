@@ -105,7 +105,10 @@ describe("training over the socket", () => {
       { type: "start_training", mode: "srs" },
       { type: "start_training", mode: "puzzles" },
       { type: "start_training", mode: "openings", color: "white", opening: "Italian Game" },
-      { type: "rate_card", exposure_id: "x", quality: 5 },
+      { type: "rate_card", exposure_id: "x", grade: 1 },
+      { type: "rate_card", exposure_id: "x", grade: 2 },
+      { type: "rate_card", exposure_id: "x", grade: 3 },
+      { type: "rate_card", exposure_id: "x", grade: 4 },
       { type: "next_training_item" },
       { type: "end_training", activity_id: 3 },
       { type: "explore", kind: "move", uci: "e2e4", activity_id: 3 },
@@ -141,8 +144,13 @@ describe("training over the socket", () => {
       { type: "start_training", mode: "openings", color: "white", opening: "" },
       { type: "start_training", mode: "openings", color: "white", opening: "x".repeat(101) },
       { type: "start_training", mode: "openings", color: "white", opening: 7 },
-      { type: "rate_card", exposure_id: "x", quality: 6 },
-      { type: "rate_card", quality: 3 },
+      { type: "rate_card", exposure_id: "x", grade: 0 },
+      { type: "rate_card", exposure_id: "x", grade: 5 },
+      { type: "rate_card", exposure_id: "x", grade: 2.5 },
+      { type: "rate_card", exposure_id: "x", grade: "3" },
+      { type: "rate_card", exposure_id: "x", quality: 3 },
+      { type: "rate_card", exposure_id: "x", quality: 3, grade: 3 },
+      { type: "rate_card", grade: 3 },
       { type: "explore", kind: "jump" },
       { type: "explore", kind: "move", uci: "e2" },
       { type: "answer", uci: "a1a8" },
@@ -184,7 +192,7 @@ describe("training over the socket", () => {
     const solved = await next("training");
     expect(solved).toMatchObject({ status: "solved" });
     socket.send(
-      JSON.stringify({ type: "rate_card", command_id: "c3", exposure_id: "x", quality: 3 }),
+      JSON.stringify({ type: "rate_card", command_id: "c3", exposure_id: "x", grade: 3 }),
     );
     expect(await next("error")).toMatchObject({ code: "exposure_unknown", command_id: "c3" });
     socket.send(JSON.stringify({ type: "next_training_item", command_id: "c4" }));

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   CARD_STATE,
@@ -235,5 +235,10 @@ describe("the scheduler dependency", () => {
     };
 
     expect(manifest.dependencies["ts-fsrs"]).toBe("5.4.2");
+  });
+
+  it("has replaced the ladder: sm2.ts and its test are gone", () => {
+    expect(existsSync(new URL("src/srs/sm2.ts", serverDir))).toBe(false);
+    expect(existsSync(new URL("src/srs/sm2.test.ts", serverDir))).toBe(false);
   });
 });

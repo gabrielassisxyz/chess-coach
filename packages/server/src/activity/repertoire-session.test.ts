@@ -35,8 +35,8 @@ import { GameService } from "../game/service.js";
 import { importFinishedGame } from "../import/pgn.js";
 import { positionKey } from "../openings/from-games.js";
 import { NO_OPENING_NAMES, parseOpeningTable } from "../openings/names.js";
+import { review } from "../srs/fsrs.js";
 import { ReviewDesk } from "../srs/review.js";
-import { review } from "../srs/sm2.js";
 import {
   foundRepertoireIdsOf,
   mergeRepertoireUnitMoves,
@@ -170,25 +170,34 @@ interface CardOptions {
   introducedAt?: string;
 }
 
+// A move the student has learned: in the Review state, its stability the interval in days, and the
+// difficulty a card gets from a first rating of Good, or of Again when `lastRight` is false. It was
+// last reviewed one interval before it is due. An interval of 0 is a move shown and never rated,
+// which is a New card.
 function addCard(
   lineText: string,
   san: string,
   nextReviewAt: string,
-  repetitions = 2,
+  lastRight = true,
   options: CardOptions = {},
 ): void {
   const place = placeOf(lineText, san);
+  const intervalHours = options.intervalHours ?? 24;
+  const rated = intervalHours > 0;
   db.prepare(
     `INSERT INTO repertoire_cards (position_key, move_uci, introduced_at, next_review_at,
-       interval_hours, ease_factor, repetitions, reviews)
-     VALUES (?, ?, ?, ?, ?, 2.5, ?, 2)`,
+       interval_hours, fsrs_state, stability, difficulty, reviews, last_reviewed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, ?)`,
   ).run(
     place.positionKey,
     place.uci,
     options.introducedAt ?? PAST,
     nextReviewAt,
-    options.intervalHours ?? 24,
-    repetitions,
+    intervalHours,
+    rated ? 2 : 0,
+    rated ? intervalHours / 24 : null,
+    rated ? (lastRight ? 2.1181 : 6.4133) : null,
+    rated ? new Date(Date.parse(nextReviewAt) - intervalHours * HOUR_MS).toISOString() : null,
   );
 }
 
@@ -203,31 +212,42 @@ function setCardInterval(lineText: string, san: string, intervalHours: number): 
 function addCards(
   rows: FixtureRow[],
   due: (lineText: string, san: string) => boolean = () => true,
-  repetitions = 2,
+  lastRight = true,
 ): void {
   for (const [lineText, san] of rows) {
     if (lineOf(lineText).length % 2 === 1) continue;
-    addCard(lineText, san, due(lineText, san) ? PAST : FUTURE, repetitions);
+    addCard(lineText, san, due(lineText, san) ? PAST : FUTURE, lastRight);
   }
 }
 
 interface CardRow {
   next_review_at: string;
   interval_hours: number;
-  ease_factor: number;
-  repetitions: number;
+  fsrs_state: number;
+  stability: number | null;
+  difficulty: number | null;
+  learning_step: number;
+  lapses: number;
   reviews: number;
+  last_reviewed_at: string | null;
 }
 
 function cardOf(lineText: string, san: string): CardRow | undefined {
   const place = placeOf(lineText, san);
   return db
     .prepare(
-      `SELECT next_review_at, interval_hours, ease_factor, repetitions, reviews
+      `SELECT next_review_at, interval_hours, fsrs_state, stability, difficulty, learning_step, lapses,
+         reviews, last_reviewed_at
        FROM repertoire_cards WHERE position_key = ? AND move_uci = ?`,
     )
     .get(place.positionKey, place.uci) as CardRow | undefined;
 }
+
+// The grades the drill logged, one for each rating that moved a card, in the order they were made.
+const loggedDrillGrades = (): number[] =>
+  (db.prepare("SELECT grade FROM drill_reviews ORDER BY id").all() as { grade: number }[]).map(
+    (row) => row.grade,
+  );
 
 interface FirstAttemptRow {
   position_key: string;
@@ -609,11 +629,42 @@ describe("pacing the new moves of a repertoire", () => {
     "with the sibling's card at $hours hours, serves 4.c3 in every scope: $enters",
     ({ hours, enters }) => {
       const id = addPacedUnit();
-      addCard(`${BC4_LINE} Nf6`, "d3", PAST, 2, { intervalHours: hours });
+      addCard(`${BC4_LINE} Nf6`, "d3", PAST, true, { intervalHours: hours });
       const due = enters ? ["Bc5 c3", "Nf6 d3"] : ["Nf6 d3"];
       expectServed(id, due, [...SETUP_LABELS, ...due]);
     },
   );
+
+  // Under FSRS a move answered Good each time falls due after 10 minutes, then 2 days, then 11: it
+  // crosses the 72 hours that hold its siblings back at its third review, as the ladder's 4, 24 and
+  // 72 hours did.
+  it("lets a new sibling in at the third Good review of the move before it, not before", async () => {
+    const id = addPacedUnit();
+    // 4.d3 is shown and never rated, so it is a New card due now.
+    addCard(`${BC4_LINE} Nf6`, "d3", PAST, true, { intervalHours: 0 });
+    const service = boot();
+    const sibling = "Bc5 c3";
+    const d3Hours = (): number | undefined => cardOf(`${BC4_LINE} Nf6`, "d3")?.interval_hours;
+    const rateD3Good = async (): Promise<void> => {
+      await play(service, await start(service, id, "due"), "d3");
+    };
+    expect(servedBy(id, "all")).not.toContain(sibling);
+
+    await rateD3Good();
+    expect(d3Hours()).toBeCloseTo(10 / 60, 9);
+    expect(servedBy(id, "all")).not.toContain(sibling);
+
+    now = new Date(now.getTime() + 10 * 60_000);
+    await rateD3Good();
+    expect(d3Hours()).toBeCloseTo(48, 9);
+    expect(servedBy(id, "all")).not.toContain(sibling);
+
+    now = new Date(now.getTime() + 48 * HOUR_MS);
+    await rateD3Good();
+    expect(d3Hours()).toBeCloseTo(264, 9);
+    expect(servedBy(id, "all")).toContain(sibling);
+    expect(loggedDrillGrades()).toEqual([3, 3, 3]);
+  });
 
   it("serves only the likeliest of three new siblings, whatever order they were stored in", () => {
     const id = addVariation("Three", THREE_SIBLING_ROWS);
@@ -625,11 +676,11 @@ describe("pacing the new moves of a repertoire", () => {
     const id = addVariation("Three", THREE_SIBLING_ROWS);
     addCards(SETUP_ROWS, () => false);
     const stable = { intervalHours: STABLE_HOURS };
-    addCard(`${BC4_LINE} Bc5`, "c3", PAST, 2, stable);
+    addCard(`${BC4_LINE} Bc5`, "c3", PAST, true, stable);
     expectServed(id, ["Bc5 c3", "Nf6 d3"], [...SETUP_LABELS, "Bc5 c3", "Nf6 d3"]);
 
     // 4.d3 is shown, but short of stable, so 3...h6's answer still waits behind it.
-    addCard(`${BC4_LINE} Nf6`, "d3", PAST, 2, { intervalHours: 24 });
+    addCard(`${BC4_LINE} Nf6`, "d3", PAST, true, { intervalHours: 24 });
     expectServed(id, ["Bc5 c3", "Nf6 d3"], [...SETUP_LABELS, "Bc5 c3", "Nf6 d3"]);
 
     setCardInterval(`${BC4_LINE} Nf6`, "d3", STABLE_HOURS);
@@ -644,7 +695,7 @@ describe("pacing the new moves of a repertoire", () => {
 
     // Shown once, 4.c3 only has to be known: the moves under it enter, the likelier first, while
     // the new 4.d3 beside it waits for it to be stable and holds nothing back.
-    addCard(`${BC4_LINE} Bc5`, "c3", PAST, 0, { intervalHours: 0 });
+    addCard(`${BC4_LINE} Bc5`, "c3", PAST, false, { intervalHours: 0 });
     expectServed(id, ["Bc5 c3", "Nf6 d4"], [...SETUP_LABELS, "Bc5 c3", "Nf6 d4"]);
   });
 
@@ -658,7 +709,7 @@ describe("pacing the new moves of a repertoire", () => {
 
   it("starts a drill on exactly the moves the counts offered for its scope", async () => {
     const id = addPacedUnit();
-    addCard(`${BC4_LINE} Nf6`, "d3", PAST, 2, { intervalHours: 24 });
+    addCard(`${BC4_LINE} Nf6`, "d3", PAST, true, { intervalHours: 24 });
     const service = boot();
     // The setup and 4.d3 are served; the waiting 4.c3 and both 5.d4 are in no scope.
     const offered = { recommended: 1, due: 1, all: 4 };
@@ -709,7 +760,7 @@ describe("pacing the new moves of a repertoire", () => {
       const known = KNOWN_MOVES.slice(0, hoursAgo.length);
       for (const [index, move] of known.entries()) {
         const hours = hoursAgo[index] as number;
-        addCard(move.line, move.san, FUTURE, 2, {
+        addCard(move.line, move.san, FUTURE, true, {
           intervalHours: STABLE_HOURS,
           introducedAt: new Date(T0.getTime() - hours * HOUR_MS).toISOString(),
         });
@@ -823,7 +874,7 @@ describe("a repertoire drill", () => {
 
   it("rates the first attempt only: right passes, a wrong try or a hint fails, retries add no review", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
-    addCards(ITALIAN_ROWS, () => true, 0);
+    addCards(ITALIAN_ROWS, () => true, false);
     const service = boot();
     let state = await start(service, id, "due");
     state = await play(service, state, "e4");
@@ -838,18 +889,31 @@ describe("a repertoire drill", () => {
     state = await next(service, state);
     for (const san of ["Nf3", "Bc4"]) state = await play(service, state, san);
 
-    // One review each: the schedule they had, moved once by a pass (4) or a fail (2).
-    const stored = { interval_hours: 24, ease_factor: 2.5, repetitions: 0 };
-    const reviewed = (quality: 2 | 4) => {
-      const schedule = review(stored, quality);
-      const due = new Date(T0.getTime() + schedule.interval_hours * HOUR_MS).toISOString();
-      return { ...schedule, next_review_at: due, reviews: 3 };
+    // One review each: the schedule they had, moved once by Good for a pass or Again for a miss.
+    const stored = {
+      fsrs_state: 2 as const,
+      stability: 1,
+      difficulty: 6.4133,
+      learning_step: 0,
+      lapses: 0,
+      interval_hours: 24,
+      last_reviewed_at: new Date(Date.parse(PAST) - 24 * HOUR_MS).toISOString(),
+      next_review_at: PAST,
     };
-    expect(cardOf("", "e4")).toEqual(reviewed(4));
-    expect(cardOf("e4 e5", "Nf3")).toEqual(reviewed(2));
-    expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toEqual(reviewed(2));
-    expect(reviewed(4).repetitions).toBe(1);
-    expect(reviewed(2).repetitions).toBe(0);
+    const reviewed = (grade: 1 | 3) => {
+      const schedule = review(stored, grade, T0);
+      return { ...schedule, reviews: 3 };
+    };
+    expect(cardOf("", "e4")).toEqual(reviewed(3));
+    expect(cardOf("e4 e5", "Nf3")).toEqual(reviewed(1));
+    expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toEqual(reviewed(1));
+    // A pass stretches the interval and a miss brings the card back in ten minutes.
+    expect(reviewed(3)).toMatchObject({ fsrs_state: 2, lapses: 0 });
+    expect(reviewed(3).interval_hours).toBeGreaterThan(24);
+    expect(reviewed(1)).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
+    // One row for each first attempt: e4 right, Nf3 wrong, Bc4 hinted, then c3, d4 and d3 right.
+    // The retries of Nf3 and Bc4 and the second pass add none.
+    expect(loggedDrillGrades()).toEqual([3, 1, 1, 3, 3, 3]);
   });
 
   it("keeps the schedule of a move not due that an all drill gets right, and fails one missed or hinted", async () => {
@@ -864,9 +928,11 @@ describe("a repertoire drill", () => {
     training(await service.trainingHint(state.activity_id));
 
     expect(cardOf("", "e4")).toEqual(before);
-    const failed = { interval_hours: 4, repetitions: 0, reviews: 3 };
+    const failed = { interval_hours: 10 / 60, fsrs_state: 3, lapses: 1, reviews: 3 };
     expect(cardOf("e4 e5", "Nf3")).toMatchObject(failed);
     expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject(failed);
+    // The right move whose card was not due kept its schedule and left no row; the two misses did.
+    expect(loggedDrillGrades()).toEqual([1, 1]);
   });
 
   it("reschedules a move that fell due while the drill was open, once it is right", async () => {
@@ -879,7 +945,13 @@ describe("a repertoire drill", () => {
     const state = await start(service, id, "all");
     now = new Date(T0.getTime() + 2 * HOUR_MS);
     await play(service, state, "e4");
-    expect(cardOf("", "e4")).toMatchObject({ repetitions: 3, reviews: 3 });
+    expect(cardOf("", "e4")).toMatchObject({
+      fsrs_state: 2,
+      reviews: 3,
+      last_reviewed_at: now.toISOString(),
+    });
+    expect(cardOf("", "e4")?.interval_hours).toBeGreaterThan(24);
+    expect(loggedDrillGrades()).toEqual([3]);
   });
 
   it("shows a new move with its answer on its first pass and rates it only on a later one", async () => {
@@ -894,19 +966,21 @@ describe("a repertoire drill", () => {
       answer: { uci: "c2c3", san: "c3" },
     });
     expect(cardOf(afterBc5, "c3")).toMatchObject({
-      repetitions: 0,
+      fsrs_state: 0,
       reviews: 0,
       next_review_at: T0.toISOString(),
     });
 
     state = await play(service, state, "c3");
-    expect(cardOf(afterBc5, "c3")).toMatchObject({ repetitions: 0, reviews: 0 });
+    expect(cardOf(afterBc5, "c3")).toMatchObject({ fsrs_state: 0, reviews: 0 });
+    expect(loggedDrillGrades()).toEqual([]);
 
     state = await next(service, state);
     expect(state.item).toMatchObject({ position_in_queue: 2 });
     expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null, moves_left: 1 });
     state = await play(service, state, "c3");
-    expect(cardOf(afterBc5, "c3")).toMatchObject({ repetitions: 1, reviews: 1 });
+    expect(cardOf(afterBc5, "c3")).toMatchObject({ fsrs_state: 1, learning_step: 1, reviews: 1 });
+    expect(loggedDrillGrades()).toEqual([3]);
   });
 
   it("leaves the position open after a wrong try, with no text and no limit, and keeps every try", async () => {
@@ -952,8 +1026,12 @@ describe("a repertoire drill", () => {
     state = await play(service, state, "e4");
     state = training(await service.trainingHint(state.activity_id));
     expect(drillOf(state).hint).toEqual({ kind: "idea", text: REPERTOIRE_NO_IDEA });
-    expect(cardOf("", "e4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
-    expect(cardOf("e4 e5", "Nf3")).toMatchObject({ repetitions: 0, interval_hours: 4 });
+    expect(cardOf("", "e4")).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
+    expect(cardOf("e4 e5", "Nf3")).toMatchObject({
+      fsrs_state: 3,
+      lapses: 1,
+      interval_hours: 10 / 60,
+    });
   });
 
   it("warns on any sound try, naming another opening when known, and leaves a blunder plain", async () => {
@@ -1023,7 +1101,11 @@ describe("a repertoire drill", () => {
     expect(db.prepare("SELECT uci, correct FROM training_tries").all()).toEqual([
       { uci: "f1b5", correct: 0 },
     ]);
-    expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
+    expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({
+      fsrs_state: 3,
+      lapses: 1,
+      interval_hours: 10 / 60,
+    });
   });
 
   it("leaves a board opened in the same tick as a move on the board, with the drill ended as left", async () => {
@@ -1176,9 +1258,9 @@ describe("a repertoire drill", () => {
     expect(second.current()).toBeNull();
     expect(runEnds()).toEqual([{ ended_reason: "left", ended_at: now.toISOString() }]);
     // What was answered stays rated, and the moves not reached stay due.
-    expect(cardOf("", "e4")).toMatchObject({ repetitions: 3 });
+    expect(cardOf("", "e4")).toMatchObject({ reviews: 3, last_reviewed_at: T0.toISOString() });
     expect(cardOf("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3")).toMatchObject({
-      repetitions: 2,
+      reviews: 2,
       next_review_at: PAST,
     });
 
@@ -1287,7 +1369,7 @@ describe("rating a repertoire move", () => {
     state = await play(service, state, "h3");
     state = await play(service, state, "e4");
     const failed = cardOf("", "e4");
-    expect(failed).toMatchObject({ interval_hours: 4, repetitions: 0, reviews: 3 });
+    expect(failed).toMatchObject({ interval_hours: 10 / 60, fsrs_state: 3, lapses: 1, reviews: 3 });
 
     state = await next(service, state);
     state = await play(service, state, "a3");
@@ -1310,7 +1392,12 @@ describe("rating a repertoire move", () => {
     state = training(await service.trainingShowSolution(state.activity_id));
     expect(drillOf(state).hint).toEqual({ kind: "move", uci: "e2e4", san: "e4" });
     expect(state.input_enabled).toBe(true);
-    expect(cardOf("", "e4")).toMatchObject({ interval_hours: 4, repetitions: 0, reviews: 3 });
+    expect(cardOf("", "e4")).toMatchObject({
+      interval_hours: 10 / 60,
+      fsrs_state: 3,
+      lapses: 1,
+      reviews: 3,
+    });
 
     state = await play(service, state, "e4");
     expect(state.status).toBe("failed");
@@ -1425,7 +1512,7 @@ describe("recording the first attempts of a repertoire drill", () => {
 
   it("returns the count of the moves a drill rated and how many were right first time", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
-    addCards(ITALIAN_ROWS, () => true, 0);
+    addCards(ITALIAN_ROWS, () => true, false);
     const service = boot();
     let state = await start(service, id, "due");
     state = await play(service, state, "e4");
@@ -1643,15 +1730,17 @@ describe("flagging a repertoire try", () => {
       moves_left: 1,
     });
     expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({
-      repetitions: 0,
-      interval_hours: 4,
+      fsrs_state: 3,
+      lapses: 1,
+      interval_hours: 10 / 60,
     });
     expect(firstAttempts()).toEqual([attemptOf("e4 e5 Nf3 Nc6", "Bc4", id, 0)]);
 
     state = await play(service, state, "Bc4");
     expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({
-      repetitions: 0,
-      interval_hours: 4,
+      fsrs_state: 3,
+      lapses: 1,
+      interval_hours: 10 / 60,
     });
 
     state = await next(service, state);
@@ -1660,7 +1749,8 @@ describe("flagging a repertoire try", () => {
     state = await play(service, state, "Bc4");
     expect(drillOf(state)).toMatchObject({ moves_left: 0 });
     expect(cardOf("e4 e5 Nf3 Nc6", "Bc4")).toMatchObject({
-      repetitions: 0,
+      fsrs_state: 3,
+      lapses: 1,
       reviews: 3,
     });
     state = await next(service, state);
@@ -1951,7 +2041,7 @@ describe("merging the moves of several variations", () => {
     expect(servedBy(pianissimo, "due")).toEqual(["Bc5 d3"]);
 
     // 4.c3 shown but not stable: 4.d3 waits in the group, while its own variation still serves it.
-    addCard("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3", PAST, 2, { intervalHours: 24 });
+    addCard("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3", PAST, true, { intervalHours: 24 });
     for (const unit of units) unit.moves = listRepertoireDrillMoves(db, unit.variation.id);
     expect(dueInGroup()).toEqual([["Bc5 c3", CLASSICAL]]);
     expect(servedBy(pianissimo, "due")).toEqual(["Bc5 d3"]);
@@ -2226,8 +2316,8 @@ describe("a drill over the units found in games", () => {
     addMetGame(["e4", "Nf6", "e5"], 2, italian);
     // 1.e4 and 2.exd5 are known and stable, 2.e5 is new: its sibling 2.exd5 has a card that no
     // longer holds it back.
-    addCard("", "e4", PAST, 2, { intervalHours: STABLE_HOURS });
-    addCard("e4 d5", "exd5", PAST, 2, { intervalHours: STABLE_HOURS });
+    addCard("", "e4", PAST, true, { intervalHours: STABLE_HOURS });
+    addCard("e4 d5", "exd5", PAST, true, { intervalHours: STABLE_HOURS });
   });
 
   const foundLeft = async (service: ActivityService, scope: RepertoireScope): Promise<number> =>
@@ -2290,7 +2380,7 @@ describe("a drill over the units found in games", () => {
   });
 
   it("serves exactly the moves the counts offered for its scope, whichever unit it starts from", async () => {
-    addCard("e4 Nf6", "e5", FUTURE, 2, { intervalHours: STABLE_HOURS });
+    addCard("e4 Nf6", "e5", FUTURE, true, { intervalHours: STABLE_HOURS });
     const service = boot();
     const units = [scandinavian, alekhine].map((id) => ({
       variation: findDrillRepertoire(db, id) as NonNullable<ReturnType<typeof findDrillRepertoire>>,
@@ -2328,8 +2418,8 @@ describe("a drill over the units found in games", () => {
 
     // Shown but not stable, 2.e5 holds back every other new sibling, though 2.exd5 has its card.
     db.prepare("DELETE FROM repertoire_cards").run();
-    addCard("", "e4", PAST, 2, { intervalHours: STABLE_HOURS });
-    addCard("e4 Nf6", "e5", PAST, 2, { intervalHours: 24 });
+    addCard("", "e4", PAST, true, { intervalHours: STABLE_HOURS });
+    addCard("e4 Nf6", "e5", PAST, true, { intervalHours: 24 });
     expect(await foundLeft(service, "all")).toBe(2);
     // 2.exd5 is new and waits for 2.e5: the likeliest sibling is the one with the card.
     expect(await foundLeft(service, "due")).toBe(2);
@@ -2353,7 +2443,7 @@ describe("a drill over the units found in games", () => {
         placeOf(line, san).positionKey,
         placeOf(line, san).uci,
       );
-      addCard(line, san, PAST, 2, { intervalHours: STABLE_HOURS, introducedAt: hourAgo });
+      addCard(line, san, PAST, true, { intervalHours: STABLE_HOURS, introducedAt: hourAgo });
     }
     const service = boot();
     expect(introducedToday()).toBe(5);
@@ -2469,9 +2559,9 @@ describe("pinning the line drill rules that stayed green under mutation", () => 
       ["e4 e5 Nf3 Nc6 Bc4 Bc5", "c3"],
       ["e4 e5 Nf3 Nc6 Bc4 Bc5 c3 d6", "d4"],
     ] as [string, string][]) {
-      addCard(lineText, san, FUTURE, 2, stableRecent);
+      addCard(lineText, san, FUTURE, true, stableRecent);
     }
-    addCard("d4 d5", "c4", FUTURE, 2, stableRecent);
+    addCard("d4 d5", "c4", FUTURE, true, stableRecent);
     expect(introducedToday()).toBe(6);
 
     expect(servedBy(id, "all")).not.toContain("Nf6 d3");
@@ -2505,7 +2595,7 @@ describe("pinning the line drill rules that stayed green under mutation", () => 
     const classical = addVariation("ClassicalD4", d4Rows);
     addVariation("PianissimoD3", d3Rows);
     addCards(SETUP_ROWS, () => false);
-    addCard(`${BC4_LINE} Bc5`, "c3", FUTURE, 2, { intervalHours: STABLE_HOURS });
+    addCard(`${BC4_LINE} Bc5`, "c3", FUTURE, true, { intervalHours: STABLE_HOURS });
     addCard(`${BC4_LINE} Bc5 c3 Nf6`, "d4", PAST);
     addCard(`${BC4_LINE} Bc5`, "d3", PAST);
 
@@ -2552,7 +2642,7 @@ describe("showing a line drill move's stored idea after the answer", () => {
       idea: "Take the centre and free the bishop.",
     });
     expect(drillOf(state).hint).toEqual({ kind: "none" });
-    expect(cardOf("", "e4")).toMatchObject({ repetitions: 3 });
+    expect(cardOf("", "e4")).toMatchObject({ reviews: 3, last_reviewed_at: T0.toISOString() });
     expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 1)]);
   });
 
@@ -2569,7 +2659,7 @@ describe("showing a line drill move's stored idea after the answer", () => {
       san: "e4",
       idea: "Take the centre and free the bishop.",
     });
-    expect(cardOf("", "e4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
+    expect(cardOf("", "e4")).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
     expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
   });
 
@@ -2591,7 +2681,7 @@ describe("showing a line drill move's stored idea after the answer", () => {
       san: "e4",
       idea: "Take the centre and free the bishop.",
     });
-    expect(cardOf("", "e4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
+    expect(cardOf("", "e4")).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
     expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
   });
 
@@ -2612,7 +2702,7 @@ describe("showing a line drill move's stored idea after the answer", () => {
       san: "e4",
       idea: "Take the centre and free the bishop.",
     });
-    expect(cardOf("", "e4")).toMatchObject({ repetitions: 0, interval_hours: 4 });
+    expect(cardOf("", "e4")).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
   });
 
   it("keeps the answered move while the server plays on, replaces it, and starts the next pass null", async () => {
