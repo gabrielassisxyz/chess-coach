@@ -3,9 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProgressResponseSchema } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { expectAttemptsLeadThePuzzleJoin } from "../../test/support/query-plan.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { INITIAL_PUZZLE_RATING, setPuzzleRating } from "../puzzles/rating.js";
-import { computeCoachProgress, computeProgress, timeClassOf } from "./compute.js";
+import {
+  computeCoachProgress,
+  computeProgress,
+  PUZZLES_BY_MOTIF_SQL,
+  timeClassOf,
+} from "./compute.js";
 
 let tmp: string;
 let db: Database;
@@ -334,6 +340,14 @@ describe("puzzle accuracy", () => {
     insertAttempt("fork", "f4", true, 6);
     const [fork] = computeProgress(db, clockOn(10)).puzzles_by_motif;
     expect(fork).toMatchObject({ attempts_30d: 4, solved_30d: 2, success_rate_30d: 0.5 });
+  });
+});
+
+// The owner's puzzle table holds millions of rows, and the progress route answers on every opening
+// of Practice, so its count per motif must not read puzzles by anything but the attempts' ids.
+describe("puzzles by motif query plan", () => {
+  it("starts from the attempts and reaches a puzzle only by its primary key", () => {
+    expectAttemptsLeadThePuzzleJoin(db, PUZZLES_BY_MOTIF_SQL);
   });
 });
 

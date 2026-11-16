@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { expectAttemptsLeadThePuzzleJoin } from "../../test/support/query-plan.js";
 import type { Clock } from "../clock.js";
 import { type Database, openDatabase } from "../db/open.js";
 import {
@@ -9,6 +10,7 @@ import {
   ensurePuzzleRating,
   INITIAL_PUZZLE_RATING,
   puzzleRatingHistory,
+  READ_RATED_ATTEMPTS_SQL,
   ratingAfter,
   readPuzzleRating,
   setPuzzleRating,
@@ -233,5 +235,13 @@ describe("puzzleRatingHistory", () => {
     const history = puzzleRatingHistory(db, "7", clockOn(10));
     expect(history.current).toBe(1500);
     expect(history.points.at(-1)?.rating).toBe(1224);
+  });
+});
+
+// The boot replay and the rating chart both read the attempts through this query, so it must cost
+// what the attempts cost and not what the puzzle table does.
+describe("rated attempt read query plan", () => {
+  it("starts from the attempts and reaches a puzzle only by its primary key", () => {
+    expectAttemptsLeadThePuzzleJoin(db, READ_RATED_ATTEMPTS_SQL);
   });
 });

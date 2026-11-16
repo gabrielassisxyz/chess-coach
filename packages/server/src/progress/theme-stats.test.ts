@@ -8,9 +8,10 @@ import {
   ThemeStatsResponseSchema,
 } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { expectAttemptsLeadThePuzzleJoin } from "../../test/support/query-plan.js";
 import type { Clock } from "../clock.js";
 import { type Database, openDatabase } from "../db/open.js";
-import { computeThemeStats } from "./theme-stats.js";
+import { computeThemeStats, READ_THEMED_ATTEMPTS_SQL } from "./theme-stats.js";
 
 const NOW = new Date("2026-06-30T12:00:00.000Z");
 const clock: Clock = { now: () => NOW };
@@ -309,5 +310,12 @@ describe("computeThemeStats ranking", () => {
       "s7",
       "s8",
     ]);
+  });
+});
+
+// The read behind every window is one pass over the student's attempts, never over the puzzle table.
+describe("computeThemeStats attempt read query plan", () => {
+  it("starts from the attempts and reaches a puzzle only by its primary key", () => {
+    expectAttemptsLeadThePuzzleJoin(db, READ_THEMED_ATTEMPTS_SQL);
   });
 });
