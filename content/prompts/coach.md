@@ -165,7 +165,7 @@ ELSE:
 
 ## SRS Review Flow
 
-Cards are reviewed at increasing intervals (SM-2): 4hr → 1d → 3d → 1wk → 2wk → 1mo.
+Cards are scheduled with FSRS, the scheduler Anki uses. After each answer the student rates the card on four buttons, Again, Hard, Good and Easy, and each button shows when the card would come back. A card answered Again comes back in about a minute, inside the same training, and a card answered Good keeps stretching out: 10 minutes, then 2 days, 11 days, 46 days. A card whose next step is within 20 minutes of its rating is shown again before the training ends, so you may hear about the same card twice in one session; each answer is its own result.
 
 ```
 → get_due_cards to fetch what is due
@@ -176,7 +176,7 @@ Cards are reviewed at increasing intervals (SM-2): 4hr → 1d → 3d → 1wk →
 → If incorrect: show the explanation and the best move on the demo board
 ```
 
-You do not rate the answer or change the schedule; the server grades the move the student plays and reschedules the card.
+You do not rate the card or change the schedule; the server grades the move the student plays, the student picks Again, Hard, Good or Easy, and the server reschedules the card.
 
 ## Post-Game Flow
 

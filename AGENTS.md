@@ -227,6 +227,39 @@
   row (Puzzles by opening), and one motif goes in `puzzles.motif` (rarest first, `tactics` when none maps). A `PuzzleId` already stored as a `lichess_id` is skipped, so a rerun
   adds nothing. Commits in batches of 5000 rows; the file grows the database to about 3.6 GB, so run it on a copy first.
 - **Deleting a unit:** `pnpm --filter @chess-coach/server delete:repertoire-unit -- --group "King's Pawn Game: McConnell Defense" [--dry-run]` removes the unit the hub's Add built from 1.e4 e5 2.Nf3 Qf6 through `deleteRepertoireUnit` (`db/repertoires.ts`), in one transaction: its positions, game reviews and drill first attempts through the cascade, the cards of its White moves that no other unit stores, and every open run whose queue holds one of its rows or whose current item names it, ended as `discarded`. Once that commits, the games whose review went are reviewed again against the units left, with no message to the coach. It prints the unit, its setup line and the counts; it refuses with exit 1 and writes nothing unless the group holds exactly one variation, rooted at e4 e5 Nf3 Qf6; `--dry-run` runs the delete, prints the same and rolls it back. The group is the book's whole name for the root position, so `King's Pawn Game` alone is refused with the stored groups listed. It never migrates: a database whose applied migrations are not exactly the checkout's is refused, so it runs after the server has started from that checkout. Run it on a copy first, and with no drill of the unit on the board: the delete ends that run's row, but the drill the server holds in memory would go on serving rows that are gone.
+- **Card scheduling:** every card the app schedules is scheduled by FSRS-6 through `ts-fsrs`, pinned at
+  exactly 5.4.2 and imported by `packages/server/src/srs/fsrs.ts` alone, which `srs/fsrs.test.ts` enforces.
+  That is the review cards of the Due cards desk (`srs_cards`), the opening repertoire's move cards
+  (`repertoire_cards`) and the positions from the student's games (`found_cards`). The parameters are the
+  library's defaults, written out in the module so that an upgrade cannot move a schedule unseen: the
+  `default_w` weights, `request_retention` 0.9, a longest interval of 36500 days, Anki's learning steps
+  (1 and 10 minutes, relearning 10) and no fuzz, which a deck of a few dozen cards gains nothing from and
+  which keeps the interval on a button equal to the interval the card gets. A new card answered Again is
+  due in 1 minute, Hard in 6, Good in 10 and Easy in 8 days; answered Good each time it falls due it comes
+  back after 10 minutes, then 2, 11, 46 and 163 days; answered Again at its 46-day review it comes back in
+  10 minutes and, answered Good then, in 3 days. The three tables hold `fsrs_state` (0 New, 1 Learning, 2
+  Review, 3 Relearning), `stability`, `difficulty`, `learning_step`, `lapses`, `interval_hours` (the
+  interval the last rating scheduled, a fraction for a step in minutes), `last_reviewed_at` and
+  `next_review_at`. A grade is 1 Again, 2 Hard, 3 Good or 4 Easy: `srs_reviews.grade` keeps each rating of
+  a review card, and `quality`, the old 0 to 5 scale, stays on the rows written before the grades and is
+  NULL on every new one. Only the Due cards desk lets the student choose: four buttons, Again, Hard, Good
+  and Easy, each showing the interval its grade gives (`rating_preview`, in hours, keyed "1" to "4"), the
+  keys 1 to 4 and Enter on the suggested grade. `rate_card` carries `grade` from 1 to 4 and its schema is
+  strict, so a command with a `quality` is refused as `invalid_command`. The drills rate by themselves,
+  Good for a pass and Again for a miss: the line drill and the From my games drill on the first attempt,
+  and the game review on each stored move a graded game followed (Good) and the one it departed from
+  (Again). In all three a right answer on a card that is not yet due keeps its schedule. Each rating of a
+  repertoire or found card writes a row in `drill_reviews` (`card_kind`, `card_key`, `reviewed_at`,
+  `grade`), in the transaction that moves the card and with no foreign key, so a deleted unit keeps its
+  history; the key of a repertoire card is `<position_key> <move_uci>`, a found card's its position id.
+  Neither table had a review log, and fitting FSRS's parameters to the student later needs one. Migration
+  033 converted the cards the earlier fixed-interval scheduler had set without moving any
+  `next_review_at`: a card with no review stayed New, and a rated card became Review with its interval in
+  days as `stability` and a
+  `difficulty` of 2.1181 when its last review passed or 6.4133 when it failed, the values FSRS gives a new
+  card answered Good and Again; `tools/import-chess-rocket-cards.ts` maps the earlier tutor's schedule by
+  the same rule. The migration has no down step: undoing it is reverting its change and restoring the
+  database backup.
 - **Grading:** a practice move is graded the moment it is dropped (`try_move`). A wrong try leaves
   the item open at the same position; `show_solution` ends it as given up and the board plays the
   solution line. A right answer ends with its move on the board, for a card as for a puzzle's last
@@ -241,8 +274,9 @@
   left from there. It is rated once, at the end; it writes no `puzzle_attempts` row, moves no puzzle
   rating and creates no card. The desk is told whether every step was right first time, so
   `srs_reviews.correct` is 1 only then and `answered_uci` is the first try of the first step; the
-  suggested quality is 4, or 2 after a wrong try or a hint at any step, or 0 once the solution was
-  shown. Its `srs_answer` notification is amended to describe the step the student missed (the one
+  suggested grade (`suggested_grade`) is 3, Good, when every step was right first time without a hint,
+  and 1, Again, after a wrong try or a hint at any step or once the solution was shown. Its
+  `srs_answer` notification is amended to describe the step the student missed (the one
   the solution was shown at, else the first wrong try's), with that step's position, the move tried
   and the move expected, and it lists every try. Every try is kept in
   `training_tries`, and puzzle accuracy is first-try solves
@@ -395,17 +429,33 @@
   The items of such a run carry `position_in_queue` and no `queue_length`, `queue_outcomes` holds the
   items served so far, and the web heads an item `Puzzle N` with no total, draws one progress
   segment per item served, and never offers Finish training. Every other queue keeps a length and
-  ends on its last item: the due cards (20), the opening drills, the Italian drill and a motif that
-  no theme row names (`opening_trap`), which hold 10 positions at most, and a single item the coach
-  serves.
+  ends on its last item: the due cards (20, and one more for each card the run holds, below), the
+  opening drills, the Italian drill and a motif that no theme row names (`opening_trap`), which hold
+  10 positions at most, and a single item the coach serves.
+  A card of a Due cards training that is rated and whose next step falls no more than 20 minutes after
+  the rating (`LEARN_AHEAD_MS`, Anki's learn-ahead limit) is held by the run: it joins the queue at
+  once, so the item's `queue_length`, `queue_outcomes` and `training_runs.size` grow by one, and the
+  stored `items_json` follows the order the items are served in. When the student moves on, a held card
+  whose time has come is served before the next queued card, and when no queued card is left the held
+  card due first is served even if its time has not come, so the run finishes only when nothing is
+  queued and nothing is held. A card served again gets a fresh exposure, the desk's token for one
+  answer and one rating, and follows the same rule when rated, so a new card answered Again comes back
+  after a minute, then after ten, and leaves the run when its next step is days away. A held card the
+  training never reached, because it was ended, left or restarted over, stays due and the next Due
+  cards training picks it up by its `next_review_at`. A single card the coach serves has no run to hold
+  it in, and the line drill keeps its own retry passes while the From my games drill has none, so
+  neither gains the rule.
 - **Repertoire drill:** `start_training {mode: "repertoire", repertoire_id, scope}` runs a stored
   variation as passes from move 1 (`activity/repertoire-session.ts`): the server plays Black and every
   White move not asked, and stops on the moves still to find. `recommended` takes at most 10 due moves,
   the highest reach first, `due` every due move and `all` every move; a move with no card is new and
   due. A new move is first shown with its answer and rated on a later pass; otherwise only the first
-  attempt rates it (SM-2 in `repertoire_cards`, one card per position and move across variations), and
-  a miss comes back on a later pass until it is right first time. In `all`, a move not due keeps its
-  schedule when right. A wrong try within 50 cp of the engine's best that reaches another named opening
+  attempt rates it (FSRS in `repertoire_cards`, one card per position and move across variations: Good
+  for a right first attempt and Again for a miss, which a wrong try, a hint or a shown solution all
+  are), and a miss comes back on a later pass until it is right first time. In `all`, a move not due
+  keeps its schedule when right. A new move is held back while a sibling's card has an `interval_hours`
+  under 72 (`REPERTOIRE_SIBLING_STABLE_HOURS`), which a move answered Good each time crosses at its
+  third review, after 10 minutes and 2 days, with 11 days. A wrong try within 50 cp of the engine's best that reaches another named opening
   carries that name. After each asked move is answered, the drill carries its stored idea in `answered`
   and the Practice column shows it as Why with the move number. `GET /api/repertoires` lists each variation with what each scope would serve.
   A `level` on the command widens the drill from that repertoire to every variation of its group
@@ -431,7 +481,7 @@
   played, so it stays on the board; every other mode still compares with the one solution move. Each
   position keeps its schedule in `found_cards` (`db/found-cards.ts`, the columns of
   `repertoire_cards` keyed by `position_id`): a position with no card is new and due, and the first
-  thing done on an item rates it once, quality 4 for a right try, 2 for a wrong try, a hint or a
+  thing done on an item rates it once, Good for a right try and Again for a wrong try, a hint or a
   shown solution, the card being created by that first rating; a right try on a card not yet due
   keeps its schedule. A miss writes no `srs_cards` card, `puzzle_attempts` is written as for any
   puzzle, and the puzzle rating does not move, since these puzzles have no rating. The run's divider
