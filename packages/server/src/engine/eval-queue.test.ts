@@ -301,6 +301,14 @@ describe("the queue", () => {
     });
   });
 
+  it("adds nothing for a hit on a row shallower than the search, whatever its depth", () => {
+    const h = makeHarness({ rows: [startRow(threeLines(18))] });
+    expect(h.cache.lookup(START, WANT_THREE)).not.toBeNull();
+
+    expect(h.queue.size()).toBe(0);
+    expect(h.log.named("eval_queue.added")).toHaveLength(0);
+  });
+
   it("leaves out a position whose stored row is as deep as the search goes", () => {
     const deep = makeHarness({ rows: [startRow(oneLine(QUEUE_SEARCH.depth))] });
     expect(deep.cache.lookup(START, WANT_THREE)).toBeNull();
