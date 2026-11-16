@@ -25,6 +25,8 @@ export interface SearchResult {
   depth?: number | undefined;
   /** True when `capMs` passed before the engine finished, so the search was stopped at what it had. */
   cutByTime?: boolean;
+  /** Thousands of nodes the search visited, as the engine last counted them; unset when it printed none. */
+  knodes?: number | undefined;
   /** Set by the analysis lane, which can answer from a stored evaluation; a plain search leaves it unset. */
   source?: "cache" | "engine";
 }
@@ -62,6 +64,8 @@ interface ReachedSearch {
   /** The engine's last line for each MultiPV rank, best first. */
   reached: ReachedLine[];
   cutByTime: boolean;
+  /** The highest node count any line printed, which is the search's total so far; null when none did. */
+  nodes: number | null;
 }
 
 // parseInfoLine keeps a line's moves and score; the depth printed beside them is read here.
@@ -70,6 +74,13 @@ function infoDepth(line: string): number | null {
   const at = tokens.indexOf("depth");
   const depth = at < 0 ? Number.NaN : Number(tokens[at + 1]);
   return Number.isInteger(depth) ? depth : null;
+}
+
+function infoNodes(line: string): number | null {
+  const tokens = line.split(/\s+/);
+  const at = tokens.indexOf("nodes");
+  const nodes = at < 0 ? Number.NaN : Number(tokens[at + 1]);
+  return Number.isInteger(nodes) && nodes >= 0 ? nodes : null;
 }
 
 // A stop can leave MultiPV lines a layer apart, the first ones finished in the layer it cut and the
@@ -158,13 +169,14 @@ export class UciEngine implements Searcher {
         ),
       );
     }
-    const { bestmoveLine, reached, cutByTime } = await this.searchUntilBestmove(request);
+    const { bestmoveLine, reached, cutByTime, nodes } = await this.searchUntilBestmove(request);
     return {
       fen: request.fen,
       bestmove: this.validatedBestmove(bestmoveLine, position),
       lines: reached.map(({ moves, score }) => ({ moves, score })),
       depth: shallowestDepth(reached),
       cutByTime,
+      knodes: nodes === null ? undefined : Math.round(nodes / 1000),
     };
   }
 
@@ -175,6 +187,7 @@ export class UciEngine implements Searcher {
         ? `movetime ${request.movetime}`
         : `depth ${request.depth ?? 16}`;
     let cutByTime = false;
+    let nodes: number | null = null;
     const stopAtCap =
       request.capMs === undefined
         ? undefined
@@ -189,7 +202,11 @@ export class UciEngine implements Searcher {
         [`position fen ${request.fen}`, `go ${limit}`],
         (line) => {
           const info = parseInfoLine(line);
-          if (info) infos.set(info.multipv, { ...info, depth: infoDepth(line) });
+          if (info) {
+            infos.set(info.multipv, { ...info, depth: infoDepth(line) });
+            const printed = infoNodes(line);
+            if (printed !== null) nodes = Math.max(nodes ?? 0, printed);
+          }
           return line.startsWith("bestmove");
         },
         (request.capMs ?? request.movetime ?? 0) + this.timeouts.searchSlackMs,
@@ -197,7 +214,7 @@ export class UciEngine implements Searcher {
       ),
     );
     const reached = [...infos.values()].sort((a, b) => a.multipv - b.multipv);
-    return { bestmoveLine, reached, cutByTime };
+    return { bestmoveLine, reached, cutByTime, nodes };
   }
 
   private validatedBestmove(line: string, position: Chess): string | null {
