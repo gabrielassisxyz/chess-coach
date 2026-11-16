@@ -76,6 +76,16 @@ export const STYLE_MEASURES: readonly StyleMeasure[] = [
 export const stylePointsLeft = (points: StylePoints): number =>
   STYLE_POINTS_TOTAL - points.effectiveness - points.soundness - points.learnability;
 
+// What a split that is not complete yet says of itself; null once all the points are placed.
+export function stylePointsLeftText(points: StylePoints): string | null {
+  const left = stylePointsLeft(points);
+  return left === 0 ? null : `${left} ${left === 1 ? "point" : "points"} left to place`;
+}
+
+// "2 · 2 · 2": the split in the order the measures are listed, for a line that was built with it.
+export const stylePointsText = (points: StylePoints): string =>
+  STYLE_MEASURES.map(({ key }) => points[key]).join(" · ");
+
 export const isDefaultStylePoints = (points: StylePoints): boolean =>
   STYLE_MEASURES.every(({ key }) => points[key] === DEFAULT_STYLE_POINTS[key]);
 
@@ -98,14 +108,29 @@ export type AddOpening = (root: readonly string[], points?: StylePoints) => Prom
 const CONNECTION_LOST =
   "The connection ended before the run did. The server may still be building the drill. Reload the page later to see it.";
 
-async function refusalOf(response: Response): Promise<string> {
+// A run the server refused, with the message it gave. `alreadyRunning` is its 409 for a second run
+// that would queue behind the one on, which is the one refusal a page words as "try again later".
+export class RunRefusedError extends Error {
+  readonly alreadyRunning: boolean;
+
+  constructor(message: string, alreadyRunning: boolean) {
+    super(message);
+    this.name = "RunRefusedError";
+    this.alreadyRunning = alreadyRunning;
+  }
+}
+
+async function refusalOf(response: Response): Promise<RunRefusedError> {
+  let message = `The server answered ${response.status}.`;
+  let code: unknown;
   try {
-    const body = (await response.json()) as { message?: unknown };
-    if (typeof body.message === "string" && body.message !== "") return body.message;
+    const body = (await response.json()) as { message?: unknown; error?: unknown };
+    code = body.error;
+    if (typeof body.message === "string" && body.message !== "") message = body.message;
   } catch {
     // An answer with no readable body is told by its status.
   }
-  return `The server answered ${response.status}.`;
+  return new RunRefusedError(message, response.status === 409 && code === "already_running");
 }
 
 async function truncatedIn(response: Response): Promise<boolean> {
@@ -118,7 +143,11 @@ async function truncatedIn(response: Response): Promise<boolean> {
 }
 
 async function runRepertoireSource(
-  line: { root?: readonly string[]; branch?: readonly string[] },
+  line: {
+    root?: readonly string[] | null;
+    branch?: readonly string[] | null;
+    rebuild?: boolean;
+  },
   points?: StylePoints,
 ) {
   let response: Response;
@@ -131,7 +160,7 @@ async function runRepertoireSource(
   } catch {
     throw new Error(CONNECTION_LOST);
   }
-  if (!response.ok) throw new Error(await refusalOf(response));
+  if (!response.ok) throw await refusalOf(response);
   return { truncated: await truncatedIn(response) };
 }
 
@@ -147,6 +176,21 @@ export type AddVariation = (
 
 export const addVariationToServer: AddVariation = (branch, points) =>
   runRepertoireSource({ branch }, points);
+
+// A stored variation named the way GET /api/repertoires lists it: the root a unit of another opening
+// was built from, or the branch a variation of the Italian was built at, and neither for the first
+// variation of the Italian. The server rebuilds the unit those two name and no other.
+export interface RebuildTarget {
+  root: readonly string[] | null;
+  branch: readonly string[] | null;
+}
+
+// Walks one variation again under other style points. The server answers when the run ends, which
+// takes minutes; a run cut short or failed leaves the variation as it was.
+export type RebuildLine = (target: RebuildTarget, points: StylePoints) => Promise<AddedOpening>;
+
+export const rebuildLineOnServer: RebuildLine = (target, points) =>
+  runRepertoireSource({ root: target.root, branch: target.branch, rebuild: true }, points);
 
 export const SCOPE_LABEL: Record<RepertoireScope, string> = {
   recommended: "Recommended",

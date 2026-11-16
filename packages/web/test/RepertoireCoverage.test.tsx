@@ -4,9 +4,8 @@ import {
   type CoverageReply,
   RepertoireCoverageSchema,
 } from "@chess-coach/shared";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PracticeOpenings } from "../src/components/PracticeOpenings.js";
 import { RepertoireCoverage } from "../src/components/RepertoireCoverage.js";
 import {
   fetchCoverageFromServer,
@@ -16,12 +15,6 @@ import {
   replyMoveText,
   soundnessText,
 } from "../src/state/repertoires-api.js";
-import {
-  CLASSICAL_VARIATION,
-  italianRepertoire,
-  repertoireAnswer,
-  repertoireList,
-} from "./practice-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -247,95 +240,6 @@ describe("the coverage of a variation", () => {
     });
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("region", { name: "Coverage of Classical" })).toBeTruthy();
-  });
-});
-
-describe("the coverage on the openings page", () => {
-  function renderPage(
-    fetchCoverage = vi.fn(async (_repertoireId: number) => coverage()),
-    fetchList = vi.fn(async () => repertoireAnswer(repertoireList)),
-  ) {
-    render(
-      <PracticeOpenings
-        busy={false}
-        starting={null}
-        onStart={() => undefined}
-        fetchList={fetchList}
-        fetchCoverage={fetchCoverage}
-      />,
-    );
-    return { fetchCoverage, fetchList };
-  }
-
-  // The variation's name is the button that opens its coverage, in the row of an open card.
-  const toggle = () => screen.getByRole("button", { name: `Coverage of ${CLASSICAL_VARIATION}` });
-
-  async function openCard(): Promise<HTMLElement> {
-    const italian = await screen.findByRole("article", { name: "Italian Game" });
-    fireEvent.click(within(italian).getByRole("button", { name: "Italian Game" }));
-    return italian;
-  }
-
-  it("reads nothing until the student opens a variation's coverage", async () => {
-    const { fetchCoverage } = renderPage();
-    await openCard();
-    expect(toggle().getAttribute("aria-expanded")).toBe("false");
-    expect(fetchCoverage).not.toHaveBeenCalled();
-    fireEvent.click(toggle());
-    expect(toggle().getAttribute("aria-expanded")).toBe("true");
-    await screen.findByRole("region", { name: `Coverage of ${CLASSICAL_VARIATION}` });
-    expect(fetchCoverage).toHaveBeenCalledTimes(1);
-    expect(fetchCoverage).toHaveBeenCalledWith(italianRepertoire.id);
-  });
-
-  it("opens it under the variation's row, and closes it when the name is pressed again", async () => {
-    const { fetchCoverage } = renderPage();
-    const italian = await openCard();
-    fireEvent.click(toggle());
-    const view = await screen.findByRole("region", { name: `Coverage of ${CLASSICAL_VARIATION}` });
-    const row = italian.querySelector(".opening-row") as HTMLElement;
-    expect(row.contains(view)).toBe(true);
-    expect(toggle().getAttribute("aria-controls")).toBe(view.parentElement?.id);
-    fireEvent.click(toggle());
-    expect(screen.queryByRole("region", { name: `Coverage of ${CLASSICAL_VARIATION}` })).toBeNull();
-    fireEvent.click(toggle());
-    await waitFor(() => expect(fetchCoverage).toHaveBeenCalledTimes(2));
-  });
-
-  it("retries only coverage inside the White section when coverage fails", async () => {
-    let resolveSecond: (value: Coverage) => void = () => undefined;
-    const secondCall = new Promise<Coverage>((resolve) => {
-      resolveSecond = resolve;
-    });
-    const fetchCoverage = vi
-      .fn<(repertoireId: number) => Promise<Coverage>>()
-      .mockRejectedValueOnce(new Error("down"))
-      .mockReturnValueOnce(secondCall);
-    const { fetchList } = renderPage(fetchCoverage);
-
-    const card = await screen.findByRole("region", { name: "White" });
-    await screen.findByRole("article", { name: "Italian Game" });
-    await waitFor(() => expect(fetchList).toHaveBeenCalledTimes(1));
-
-    await openCard();
-    fireEvent.click(toggle());
-    const alert = await within(card).findByRole("alert");
-    expect(alert.className).toContain("practice__failure");
-    expect(alert.textContent).toBe("The coverage could not be loaded.");
-
-    fireEvent.click(within(card).getByRole("button", { name: "Try again" }));
-    expect(within(card).getByRole("status").textContent).toBe("Loading the coverage.");
-    expect(fetchCoverage).toHaveBeenCalledTimes(2);
-    expect(fetchList).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      resolveSecond(coverage());
-      await secondCall;
-    });
-    expect(within(card).queryByRole("alert")).toBeNull();
-    expect(
-      within(card).getByRole("region", { name: `Coverage of ${CLASSICAL_VARIATION}` }),
-    ).toBeTruthy();
   });
 });
 

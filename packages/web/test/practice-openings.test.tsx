@@ -110,6 +110,7 @@ function renderPage(
   props: Partial<PracticeOpeningsProps> = {},
 ) {
   const onStart = vi.fn();
+  const onOpenLine = vi.fn();
   const fetchList = typeof listed === "function" ? listed : async () => listed;
   render(
     <PracticeOpenings
@@ -117,10 +118,11 @@ function renderPage(
       starting={null}
       onStart={onStart}
       fetchList={fetchList}
+      lines={{ open: null, onOpen: onOpenLine, onClose: vi.fn() }}
       {...props}
     />,
   );
-  return { onStart };
+  return { onStart, onOpenLine };
 }
 
 const section = (name: string): Promise<HTMLElement> => screen.findByRole("region", { name });
@@ -362,9 +364,7 @@ describe("an opening's card", () => {
     fireEvent.click(head);
     expect(head.getAttribute("aria-expanded")).toBe("true");
     expect(
-      within(italian)
-        .getAllByRole("button", { name: /^Coverage of / })
-        .map((name) => name.textContent),
+      [...italian.querySelectorAll(".opening-row__name")].map((name) => name.textContent),
     ).toEqual(["Giuoco Pianissimo (4.d3)", "Two Knights Defense (4.Ng5)"]);
 
     fireEvent.click(head);
@@ -410,6 +410,31 @@ describe("a variation's row", () => {
     const cells = italian.querySelector(".opening-row__cells") as HTMLElement;
     expect(cells.lastElementChild?.className).toContain("train");
     expect(cells.children).toHaveLength(6);
+  });
+});
+
+describe("a variation's name", () => {
+  it("opens the variation's page instead of unfolding its coverage under the row", async () => {
+    const fetchCoverage = vi.fn();
+    const { onOpenLine } = renderPage(answer(), { fetchCoverage });
+    const italian = await card("Italian Game");
+    fireEvent.click(within(italian).getByRole("button", { name: "Italian Game" }));
+    const name = within(italian).getByRole("button", { name: "Two Knights Defense (4.Ng5)" });
+    expect(name.getAttribute("aria-expanded")).toBeNull();
+    fireEvent.click(name);
+    expect(onOpenLine).toHaveBeenCalledTimes(1);
+    expect(onOpenLine).toHaveBeenCalledWith(5);
+    expect(italian.querySelector(".opening-row__coverage")).toBeNull();
+    expect(screen.queryByRole("region", { name: /^Coverage/ })).toBeNull();
+    expect(fetchCoverage).not.toHaveBeenCalled();
+  });
+
+  it("is text and not a button on a page given no way to open a line", async () => {
+    renderPage(answer(), { lines: undefined });
+    const italian = await card("Italian Game");
+    fireEvent.click(within(italian).getByRole("button", { name: "Italian Game" }));
+    expect(italian.querySelector(".opening-row__name")?.tagName).toBe("SPAN");
+    expect(within(italian).queryByRole("button", { name: "Giuoco Pianissimo (4.d3)" })).toBeNull();
   });
 });
 
