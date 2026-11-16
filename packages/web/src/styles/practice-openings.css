@@ -2,7 +2,8 @@
  * The Openings page of the Practice hub: a header with the side control, a section for each colour,
  * a card for each opening and, once a card is open, a row for each of its variations. Measures are
  * the approved screens'; the 15 px of a variation's name and the 20 px of the card's padding sit
- * between steps of the type and space scales, like the hub's own 20 px heading.
+ * between steps of the type and space scales, like the hub's own 20 px heading. A variation's own
+ * page takes the list's place under the same entry, further down this file.
  */
 .openings-head {
   display: flex;
@@ -22,6 +23,13 @@
   display: flex;
   flex-direction: column;
   gap: 28px;
+}
+
+/* A line's page takes the list's place and the list stays mounted, so the hidden attribute must win
+ * over the display the two parts of the list set for themselves. */
+.openings-head[hidden],
+.openings-body[hidden] {
+  display: none;
 }
 
 .openings-section {
@@ -627,6 +635,254 @@
   font-size: var(--text-sm);
 }
 
+/*
+ * The page of one line, in the list's place: a breadcrumb at 12 px, the name at 28 px and 600 with
+ * its moves in the mono face at 12 px, five tiles of a 12 px label over a 16 px mono value, a
+ * Coverage card and a style card. Measures are the approved screen's. The replies are rows of 13 px
+ * in the grid `70px 70px 1fr`, whose middle column grows to fit a sentence such as "Too few games"
+ * instead of running into the status.
+ */
+.line-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.line-page__crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  list-style: none;
+}
+
+.line-page__crumb + .line-page__crumb::before {
+  content: "›";
+  padding-inline: var(--space-2);
+}
+
+.line-page__back {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.line-page__back:hover {
+  color: var(--text-1);
+  text-decoration: underline;
+}
+
+.line-page__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.line-page__titles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.line-page__title {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 600;
+  line-height: var(--leading-title);
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.line-page__line {
+  margin: 0;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.line-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.line-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 14px var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.line-tile__label {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-label);
+}
+
+.line-tile__value {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.line-tile__accent {
+  color: var(--accent);
+}
+
+.line-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4) 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.line-card__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+
+.line-card__note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.line-coverage__scores {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.line-coverage__up {
+  display: flex;
+}
+
+.line-coverage__line {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+
+.line-replies {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1) var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.line-reply {
+  display: grid;
+  grid-template-columns: 70px minmax(70px, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.line-reply--open {
+  cursor: pointer;
+}
+
+.line-reply--open:hover {
+  background: var(--surface-2);
+}
+
+.line-reply__move {
+  font-family: var(--font-mono);
+}
+
+.line-reply__chance {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.line-reply__status {
+  color: var(--text-2);
+}
+
+.line-reply__status[data-status="covered"] {
+  color: var(--quality-best);
+}
+
+/* A gap takes the accent with its word, never the error tone: nothing is wrong, it is unfinished. */
+.line-reply__status[data-status="gap"] {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.line-style__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.line-style__titles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.line-style__built {
+  margin: 0;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.line-style__rebuild {
+  height: 32px;
+  padding-block: 0;
+}
+
+/* The rows are blocks, so the note that counts the points left takes no room while it is empty. */
+.line-style__points .line-card__note:not(:empty) {
+  padding-top: var(--space-2);
+}
+
+.line-style__ending {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .opening-card__chevron {
     transition: none;
@@ -667,9 +923,26 @@
   .openings-panel__tab,
   .openings-side .segmented__option,
   .opening-card__adder .button,
-  .opening-row__coverage .button,
-  .opening-puzzles .button {
+  .opening-puzzles .button,
+  .line-card .button,
+  .line-reply--open,
+  .line-style__rebuild {
     min-height: 44px;
+  }
+
+  .line-page__back {
+    min-height: 44px;
+    padding-inline: 0;
+  }
+
+  /* The tiles wrap two by two, and the replies go to one column; a row keeps its move, chance and
+   * status on one line. */
+  .line-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .line-replies {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .train__item {

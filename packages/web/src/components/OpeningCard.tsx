@@ -10,11 +10,9 @@ import { NONE } from "../state/practice.js";
 import {
   branchesOf,
   branchKey,
-  type FetchCoverage,
   levelAnchorOf,
   type StylePoints,
 } from "../state/repertoires-api.js";
-import { RepertoireCoverage } from "./RepertoireCoverage.js";
 import {
   AddStatus,
   BranchChoices,
@@ -91,37 +89,36 @@ function OpeningFigures({ values }: { values: FigureValues }) {
   );
 }
 
-// The coverage is read when the student opens it, not with the page: it walks every stored move. A
-// variation being rebuilt says so and trains as before, since its old moves serve until the rebuild
-// ends.
+// The name opens the variation's own page, where its coverage is read. A page given no way to open
+// one draws the name as text. A variation being rebuilt says so and trains as before, since its old
+// moves serve until the rebuild ends.
 function VariationRow({
   variation,
   rebuilding,
   train,
-  fetchCoverage,
+  onOpenLine,
 }: {
   variation: RepertoireSummary;
   rebuilding: boolean;
   train: TrainControls;
-  fetchCoverage: FetchCoverage | undefined;
+  onOpenLine: ((id: number) => void) | undefined;
 }) {
-  const [showingCoverage, setShowingCoverage] = useState(false);
-  const coverageId = useId();
   const name = variation.variation_name;
   return (
     <div className="opening-row">
       <div className="opening-row__title">
         <div className="opening-row__heading">
-          <button
-            type="button"
-            className="opening-row__name"
-            aria-expanded={showingCoverage}
-            aria-controls={showingCoverage ? coverageId : undefined}
-            aria-label={`Coverage of ${name}`}
-            onClick={() => setShowingCoverage(!showingCoverage)}
-          >
-            {name}
-          </button>
+          {onOpenLine === undefined ? (
+            <span className="opening-row__name">{name}</span>
+          ) : (
+            <button
+              type="button"
+              className="opening-row__name"
+              onClick={() => onOpenLine(variation.id)}
+            >
+              {name}
+            </button>
+          )}
           {rebuilding ? <span className="opening-row__rebuilding">Being rebuilt</span> : null}
         </div>
         {variation.line ? <span className="opening-row__line">{variation.line}</span> : null}
@@ -135,15 +132,6 @@ function VariationRow({
           {...train}
         />
       </div>
-      {showingCoverage ? (
-        <div id={coverageId} className="opening-row__coverage">
-          <RepertoireCoverage
-            repertoireId={variation.id}
-            name={name}
-            fetchCoverage={fetchCoverage}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -165,12 +153,15 @@ export interface OpeningCardProps {
   opening: OpeningCardModel;
   train: TrainControls;
   adder: VariationAdder;
-  fetchCoverage: FetchCoverage | undefined;
+  // The variation a rebuild is walking, from the list or from the line's page; null when none is.
+  rebuildingId: number | null;
+  // Opens a variation's own page; a card given none draws the names as text.
+  onOpenLine: ((id: number) => void) | undefined;
 }
 
 // One opening: its name and moves, what it would train, five figures, and under its head, once
 // opened, a row for each variation. Adding a variation opens the book's positions under the head.
-export function OpeningCard({ opening, train, adder, fetchCoverage }: OpeningCardProps) {
+export function OpeningCard({ opening, train, adder, rebuildingId, onOpenLine }: OpeningCardProps) {
   const { group, variations } = opening;
   const name = group.group_name;
   const [open, setOpen] = useState(false);
@@ -181,7 +172,6 @@ export function OpeningCard({ opening, train, adder, fetchCoverage }: OpeningCar
   const anchor = levelAnchorOf(variations);
   const branches = branchesOf(adds.listing?.branches, name);
   const addable = offersVariation(branches, adds.unfinished);
-  const rebuildingId = adds.listing?.rebuilding_id ?? null;
 
   return (
     <article className="opening-card" aria-label={name}>
@@ -243,7 +233,7 @@ export function OpeningCard({ opening, train, adder, fetchCoverage }: OpeningCar
               variation={variation}
               rebuilding={variation.id === rebuildingId}
               train={train}
-              fetchCoverage={fetchCoverage}
+              onOpenLine={onOpenLine}
             />
           ))}
         </div>

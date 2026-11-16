@@ -41,6 +41,7 @@ import {
   type FetchCoverage,
   type FetchRepertoireList,
   fetchRepertoireListFromServer,
+  type RebuildLine,
 } from "../state/repertoires-api.js";
 import type { FetchThemeStats } from "../state/theme-stats-api.js";
 import type { BoardFactory } from "./Board.js";
@@ -48,7 +49,7 @@ import { FoundOverviewPanel } from "./FoundOverviewPanel.js";
 import { PracticeDashboard } from "./PracticeDashboard.js";
 import { type FoundStarting, PracticeFound } from "./PracticeFound.js";
 import { PracticeNav } from "./PracticeNav.js";
-import { PracticeOpenings } from "./PracticeOpenings.js";
+import { type LinePageControls, PracticeOpenings } from "./PracticeOpenings.js";
 import { PracticeOpeningsPlayed } from "./PracticeOpeningsPlayed.js";
 import { type HubStartButton, PracticeOverview, PracticePageHead } from "./PracticeOverview.js";
 import { PracticeThemeStats } from "./PracticeThemeStats.js";
@@ -99,8 +100,10 @@ export interface PracticeHubProps {
   addVariation?: AddVariation | undefined;
   // Where the list of every opening that can be added comes from; the server's by default.
   fetchAddableOpenings?: FetchAddableOpenings | undefined;
-  // Where a variation's coverage comes from when it is opened; the server's by default.
+  // Where a variation's coverage comes from when its page opens; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
+  // What walks a variation again from its page; the server's by default.
+  rebuildLine?: RebuildLine | undefined;
   // Where ranked puzzle theme stats come from when a Stats theme page opens; the server's by default.
   fetchThemeStats?: FetchThemeStats | undefined;
   // Where windowed puzzle rating history comes from when Dashboard opens; the server's by default.
@@ -158,14 +161,17 @@ function PageSlot({ shown, children }: { shown: boolean; children: ReactNode }) 
   );
 }
 
-// The student's stored lines on a page of their own; the hub's starts arrive already marked with this page.
+// The student's stored lines on a page of their own, and the page of the line they opened; the
+// hub's starts arrive already marked with this page.
 function OpeningsPage({
   hub,
   fetchList,
+  lines,
   failure,
 }: {
   hub: PracticeHubProps;
   fetchList: FetchRepertoireList;
+  lines: LinePageControls;
   failure: ReactNode;
 }) {
   const { starting } = hub;
@@ -188,6 +194,8 @@ function OpeningsPage({
         addVariation={hub.addVariation}
         fetchAddable={hub.fetchAddableOpenings}
         fetchCoverage={hub.fetchCoverage}
+        lines={lines}
+        rebuildLine={hub.rebuildLine}
         openingPuzzles={
           hub.onStartOpeningPuzzles
             ? {
@@ -271,7 +279,7 @@ const foundDueOf = (found: FoundPositionsProps | undefined): number | null =>
 
 // The hub's frame: the navigation of its pages beside a column that shows one page at a time.
 export function PracticeHub(props: PracticeHubProps) {
-  const { entry, choose } = usePracticeEntry();
+  const { entry, choose, line, openLine, closeLine } = usePracticeEntry();
   const [choices, setChoices] = useState(0);
   const page = practicePageOf(entry);
   const { marked, failureOn } = useStartsByPage(props, page);
@@ -283,6 +291,19 @@ export function PracticeHub(props: PracticeHubProps) {
   const onChoose = (next: PracticeEntry): void => {
     choose(next);
     setChoices((count) => count + 1);
+  };
+  // A line's page and the list it came from are two pages of one entry, so each way across moves
+  // the page to the top as choosing an entry does.
+  const lines: LinePageControls = {
+    open: line,
+    onOpen: (id) => {
+      openLine(id);
+      setChoices((count) => count + 1);
+    },
+    onClose: () => {
+      closeLine();
+      setChoices((count) => count + 1);
+    },
   };
   // One clock for as long as the hub is drawn, so the cards, which wait for a change of their own
   // props, are not drawn again at every render.
@@ -349,6 +370,7 @@ export function PracticeHub(props: PracticeHubProps) {
           <OpeningsPage
             hub={marked}
             fetchList={openingsDue.fetchList}
+            lines={lines}
             failure={failureOn("openings")}
           />
         </PageSlot>

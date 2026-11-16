@@ -1,5 +1,6 @@
 import type { RepertoireLevel, RepertoireScope, RepertoiresResponse } from "@chess-coach/shared";
 import { useEffect, useId, useRef, useState } from "react";
+import { type LineRebuild, rebuildNamesLine, useLineRebuild } from "../state/line-rebuild.js";
 import {
   type FetchOpeningPuzzles,
   fetchOpeningPuzzlesFromServer,
@@ -25,12 +26,16 @@ import {
   type FetchCoverage,
   type FetchRepertoireList,
   fetchAddableOpeningsFromServer,
+  fetchCoverageFromServer,
   fetchRepertoireListFromServer,
+  type RebuildLine,
+  rebuildLineOnServer,
   type StylePoints,
   stylePointsLeft,
 } from "../state/repertoires-api.js";
 import { OpeningCard, type VariationAdder } from "./OpeningCard.js";
 import { PracticeAddOpening } from "./PracticeAddOpening.js";
+import { PracticeLine } from "./PracticeLine.js";
 import { PracticeOpeningPuzzles } from "./PracticeOpeningPuzzles.js";
 import { AddStatus, type OpeningAdds, useOpeningAdds, withStylePoints } from "./RepertoireMenu.js";
 import { TrainButton, type TrainControls } from "./TrainButton.js";
@@ -44,6 +49,14 @@ export interface OpeningPuzzlesControls {
   // The tag of the puzzle start this page sent, whose tile says so.
   starting: string | null;
   engineMissing: boolean;
+}
+
+// The line's page: the variation open on it, or null for the list, and how a variation's name opens
+// it and the breadcrumb closes it. A page given none draws the names as text.
+export interface LinePageControls {
+  open: number | null;
+  onOpen(id: number): void;
+  onClose(): void;
 }
 
 export interface PracticeOpeningsProps {
@@ -60,8 +73,11 @@ export interface PracticeOpeningsProps {
   // Where the list of every opening that can be added comes from, read when its panel opens; the
   // server's by default.
   fetchAddable?: FetchAddableOpenings | undefined;
-  // Where a variation's coverage comes from when it is opened; the server's by default.
+  // Where a variation's coverage comes from when its page opens; the server's by default.
   fetchCoverage?: FetchCoverage | undefined;
+  lines?: LinePageControls | undefined;
+  // What walks a variation again from its page; the server's by default.
+  rebuildLine?: RebuildLine | undefined;
   openingPuzzles?: OpeningPuzzlesControls | undefined;
 }
 
@@ -75,7 +91,9 @@ interface OpeningsContext {
   addOpening: AddOpening;
   fetchAddable: FetchAddableOpenings;
   adder: VariationAdder;
-  fetchCoverage: FetchCoverage | undefined;
+  // The variation a rebuild is walking, from the list or from the line's page; null when none is.
+  rebuildingId: number | null;
+  onOpenLine: ((id: number) => void) | undefined;
   puzzles: OpeningPuzzlesControls | null;
   // The openings opponents played in the student's games, which White's puzzle block draws from.
   met: RepertoiresResponse["met"];
@@ -222,7 +240,8 @@ function OpeningsSection({
           opening={opening}
           train={ctx.train}
           adder={ctx.adder}
-          fetchCoverage={ctx.fetchCoverage}
+          rebuildingId={ctx.rebuildingId}
+          onOpenLine={ctx.onOpenLine}
         />
       ))}
       {side === "white" ? <AddOpeningArea ctx={ctx} /> : null}
@@ -234,12 +253,14 @@ function OpeningsSection({
 function OpeningsHead({
   filter,
   onFilter,
+  hidden,
 }: {
   filter: OpeningsFilter;
   onFilter(filter: OpeningsFilter): void;
+  hidden: boolean;
 }) {
   return (
-    <div className="openings-head">
+    <div className="openings-head" hidden={hidden}>
       <div className="openings-head__titles">
         <h2 className="screen__title">Openings</h2>
         <p className="screen__note">Your lines from move 1, each move on its own schedule.</p>
@@ -249,9 +270,46 @@ function OpeningsHead({
   );
 }
 
+// The page of the variation the student opened, read off the list this page holds. A variation the
+// list no longer holds is told so, with the way back.
+function LineArea({
+  listing,
+  id,
+  ctx,
+  fetchCoverage,
+  rebuild,
+  onBack,
+}: {
+  listing: RepertoiresResponse;
+  id: number;
+  ctx: OpeningsContext;
+  fetchCoverage: FetchCoverage;
+  rebuild: LineRebuild;
+  onBack(): void;
+}) {
+  const variation = listing.repertoires.find((entry) => entry.id === id);
+  const group = variation
+    ? listing.repertoires.filter(
+        (entry) => entry.side === variation.side && entry.group_name === variation.group_name,
+      )
+    : [];
+  return (
+    <PracticeLine
+      variation={variation}
+      rebuildable={variation === undefined || rebuildNamesLine(variation, group)}
+      rebuildingId={ctx.rebuildingId}
+      train={ctx.train}
+      fetchCoverage={fetchCoverage}
+      rebuild={rebuild}
+      onBack={onBack}
+    />
+  );
+}
+
 // The student's stored lines, a card for each opening under its colour. Every card trains what is
 // recommended and offers the other scopes beside it; a card opens to its variations, each with the
-// same figures and a button of its own. Adding an opening or a variation is the page's too: the
+// same figures and a button of its own, and a variation's name opens the page of that line in the
+// list's place. Adding an opening or a variation, and rebuilding a line, are the page's too: the
 // run takes minutes, so the page, which stays mounted under the hub, is what remembers it.
 export function PracticeOpenings({
   busy,
@@ -261,16 +319,26 @@ export function PracticeOpenings({
   addOpening = addOpeningToServer,
   addVariation = addVariationToServer,
   fetchAddable = fetchAddableOpeningsFromServer,
-  fetchCoverage,
+  fetchCoverage = fetchCoverageFromServer,
+  lines,
+  rebuildLine = rebuildLineOnServer,
   openingPuzzles,
 }: PracticeOpeningsProps) {
   const adds = useOpeningAdds(fetchList);
+  const rebuild = useLineRebuild(rebuildLine, adds.refresh);
   const [filter, setFilter] = useState<OpeningsFilter>("all");
   const [points, setPoints] = useState<StylePoints>({ ...DEFAULT_STYLE_POINTS });
   const listing: RepertoiresResponse | null = adds.listing;
   const addsBusy = busy || stylePointsLeft(points) !== 0;
   const variationName = (id: number): string | null =>
     listing?.repertoires.find((variation) => variation.id === id)?.variation_name ?? null;
+  // Reading the list as the page opens is what lets it find a rebuild another tab started, and an
+  // ending from before it was left is not shown on it again.
+  const openLine = (id: number): void => {
+    rebuild.dismiss();
+    void adds.refresh();
+    lines?.onOpen(id);
+  };
   const ctx: OpeningsContext = {
     train: { disabled: busy || adds.adding !== null, starting, onStart },
     adds,
@@ -287,15 +355,19 @@ export function PracticeOpenings({
       points,
       onPoints: setPoints,
     },
-    fetchCoverage,
+    rebuildingId: rebuild.running ?? listing?.rebuilding_id ?? null,
+    onOpenLine: lines === undefined ? undefined : openLine,
     puzzles: openingPuzzles ?? null,
     met: listing?.met ?? [],
   };
+  // The list stays mounted under the line's page, so what it holds survives going back to it.
+  const openId = lines?.open ?? null;
+  const line = openId !== null && listing !== null ? { id: openId, listing } : null;
 
   return (
     <>
-      <OpeningsHead filter={filter} onFilter={setFilter} />
-      <div className="openings-body">
+      <OpeningsHead filter={filter} onFilter={setFilter} hidden={line !== null} />
+      <div className="openings-body" hidden={line !== null}>
         {adds.loading ? (
           <p className="practice__card-note" role="status">
             Loading your openings.
@@ -324,6 +396,17 @@ export function PracticeOpenings({
               />
             ))}
       </div>
+      {line === null || lines === undefined ? null : (
+        <LineArea
+          key={line.id}
+          listing={line.listing}
+          id={line.id}
+          ctx={ctx}
+          fetchCoverage={fetchCoverage}
+          rebuild={rebuild}
+          onBack={lines.onClose}
+        />
+      )}
     </>
   );
 }
