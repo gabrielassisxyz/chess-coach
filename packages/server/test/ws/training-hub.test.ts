@@ -236,6 +236,39 @@ describe("training over the socket", () => {
     socket.close();
   });
 
+  it("refuses a rating that carries a quality, or a grade outside 1 to 4, with invalid_command", async () => {
+    const server = await start();
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    const refused = [
+      ["q1", { quality: 3 }],
+      ["q2", { quality: 3, grade: 3 }],
+      ["g0", { grade: 0 }],
+      ["g5", { grade: 5 }],
+      ["gf", { grade: 2.5 }],
+      ["gn", {}],
+    ] as const;
+    for (const [commandId, fields] of refused) {
+      socket.send(
+        JSON.stringify({ type: "rate_card", command_id: commandId, exposure_id: "x", ...fields }),
+      );
+      expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: commandId });
+    }
+    // A grade from 1 to 4 passes the schema, and is then refused for the exposure it names.
+    for (const grade of [1, 2, 3, 4]) {
+      socket.send(
+        JSON.stringify({
+          type: "rate_card",
+          command_id: `ok${grade}`,
+          exposure_id: "x",
+          grade,
+        }),
+      );
+      expect(await next("error")).toMatchObject({ command_id: `ok${grade}` });
+    }
+    socket.close();
+  });
+
   it("refuses a start that carries a size with invalid_command and serves one that does not", async () => {
     const server = await start();
     const { socket, next } = await connect(server);
