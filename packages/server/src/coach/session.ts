@@ -156,6 +156,11 @@ export class CoachSession {
     return () => this.permissionListeners.delete(listener);
   }
 
+  /** True while a message handed to the coach has not been answered, in any tab. */
+  isTurnRunning(): boolean {
+    return this.runningTab() !== undefined;
+  }
+
   async start(): Promise<void> {
     assertSubscriptionAuth(this.deps.env ?? process.env);
     mkdirSync(this.deps.dataDir, { recursive: true });

@@ -11,7 +11,8 @@ import { composeServer } from "./compose.js";
 import { resolveLichessToken } from "./db/connections.js";
 import { openDatabase } from "./db/open.js";
 import { bootEngines } from "./engine/boot.js";
-import { openEvalCache } from "./engine/eval-cache.js";
+import { openEvalCache, openEvalCacheWriter } from "./engine/eval-cache.js";
+import { EvalQueue, EvalQueueWorker, QUEUE_NICENESS } from "./engine/eval-queue.js";
 import { evaluatePlayerMove } from "./engine/evaluate.js";
 import { EnginePool } from "./engine/pool.js";
 import { spawnStockfish } from "./engine/process.js";
@@ -69,7 +70,15 @@ const openingNames = loadOpeningNames(contentDir());
 // The same table's lines, for the positions where the Italian can branch into another variation.
 const repertoireBranches = loadRepertoireBranchBook(contentDir());
 // Only the analysis lane reads it; grading goes to the engine at one depth, whatever the file holds.
-const evalCache = openEvalCache(evalCachePath(), log);
+// A miss is queued for a deeper search in the background only when the file can be written to, since
+// a position that cannot be stored afterwards is not worth searching.
+const evalQueue = new EvalQueue(db, log);
+const evalWriter = openEvalCacheWriter(evalCachePath(), log);
+const evalCache = openEvalCache(
+  evalCachePath(),
+  log,
+  evalWriter ? (miss) => evalQueue.offer(miss) : undefined,
+);
 const pool = new EnginePool(() => spawnStockfish(), {}, evalCache);
 // The sinks read `coach` when a turn commits, long after the constant below is initialised.
 const sinks = coachNotificationSinks({ ensureSessionId: (tab) => coach.ensureSessionId(tab) });
@@ -170,6 +179,17 @@ const composed = composeServer({
 });
 const importGrader = composed.grader;
 const app = composed.app;
+// Its engine is a process of its own under nice, so it never takes a turn of the pool's engines, and
+// it starts no search while a game move, a grading search or a coach turn is running.
+const evalWorker = evalWriter
+  ? new EvalQueueWorker({
+      queue: evalQueue,
+      store: evalWriter,
+      spawn: () => spawnStockfish(undefined, QUEUE_NICENESS),
+      busy: () => game.isBusy() || importGrader.isRunning() || coach.isTurnRunning(),
+      log,
+    })
+  : null;
 // A bad puzzle entry throws here, naming <file>:<index>, before anything else starts.
 const seeded = seedPuzzles(db, contentDir(), openingNames);
 log.info("puzzles.seeded", { inserted: seeded.inserted, updated: seeded.updated });
@@ -194,6 +214,7 @@ if (engines.ok) {
   if (game.current()?.finishedAt === null) await activity.enterLiveGame();
   // Games imported before the last shutdown resume grading where they stopped.
   importGrader.kick();
+  evalWorker?.start();
 } else {
   readiness = { ready: false, reason: engines.reason };
   log.warn("engine.start_failed", { reason: engines.reason, detail: engines.detail });
@@ -223,8 +244,10 @@ const shutdown = (signal: string): void => {
   if (stopping) return;
   stopping = true;
   log.info("server.stop", { signal });
-  void Promise.all([coach.stop(), pool.stop()]).finally(() => {
+  void Promise.all([coach.stop(), pool.stop(), evalWorker?.stop()]).finally(() => {
+    // The writer closes last: the connection that closes last is the one that checkpoints its log.
     evalCache.close();
+    evalWriter?.close();
     process.exit(0);
   });
 };

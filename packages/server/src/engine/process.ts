@@ -11,11 +11,27 @@ export interface EngineProcess {
 
 export type EngineSpawner = () => EngineProcess;
 
+/**
+ * What to execute for the engine. With a niceness it runs under `nice`, which replaces itself with
+ * the engine, so the child that is killed or exits is the engine and a background search yields the
+ * processor to the game's engines. The `--` keeps a path that starts with a dash from being read as
+ * an option.
+ */
+export function stockfishCommand(
+  path: string,
+  niceness?: number,
+): { command: string; args: string[] } {
+  if (niceness === undefined) return { command: path, args: [] };
+  return { command: "nice", args: ["-n", String(niceness), "--", path] };
+}
+
 export function spawnStockfish(
   path: string = process.env.STOCKFISH_PATH ?? "stockfish",
+  niceness?: number,
 ): EngineProcess {
   // No shell: the path comes from the environment and must never be parsed as a command line.
-  const child = spawn(path, [], { stdio: ["pipe", "pipe", "ignore"], shell: false });
+  const { command, args } = stockfishCommand(path, niceness);
+  const child = spawn(command, args, { stdio: ["pipe", "pipe", "ignore"], shell: false });
   const lines = createInterface({ input: child.stdout });
   const exitListeners: Array<() => void> = [];
   let exited = false;

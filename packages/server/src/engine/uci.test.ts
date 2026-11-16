@@ -38,6 +38,31 @@ describe("UciEngine search", () => {
     await engine.stop();
   });
 
+  it("reports the search's node count in thousands, the highest any line printed", async () => {
+    const { spawner } = scriptedSpawner(({ emit }) => {
+      emit("info depth 9 multipv 1 score cp 20 nodes 1500400 pv e2e4 e7e5");
+      emit("info depth 9 multipv 2 score cp 10 nodes 1499000 pv d2d4 d7d5");
+      emit("bestmove e2e4");
+    });
+    const engine = new UciEngine(spawner, FAST);
+    await engine.start();
+    const result = await engine.search({ fen: START, depth: 9, multipv: 2 });
+    expect(result.knodes).toBe(1500);
+    await engine.stop();
+  });
+
+  it("leaves the node count unset when the engine printed none", async () => {
+    const { spawner } = scriptedSpawner(({ emit }) => {
+      emit("info depth 9 multipv 1 score cp 20 pv e2e4 e7e5");
+      emit("bestmove e2e4");
+    });
+    const engine = new UciEngine(spawner, FAST);
+    await engine.start();
+    const result = await engine.search({ fen: START, depth: 9 });
+    expect(result.knodes).toBeUndefined();
+    await engine.stop();
+  });
+
   it("runs concurrent searches one at a time, in call order", async () => {
     const order: string[] = [];
     const releases: Array<() => void> = [];

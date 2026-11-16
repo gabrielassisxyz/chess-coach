@@ -102,6 +102,19 @@ const INVENTORY: FailureCase[] = [
     ],
   },
   {
+    name: "evaluation queue engine fault or restart",
+    proofs: [
+      {
+        file: "server/src/engine/eval-queue.test.ts",
+        titles: [
+          "drops the position, logs eval_queue.failed and keeps serving the queue after an engine fault",
+          "keeps its positions across a restart",
+          "leaves the position queued when the shutdown kills its search",
+        ],
+      },
+    ],
+  },
+  {
     name: "WebSocket dropped mid-turn",
     proofs: [
       {
