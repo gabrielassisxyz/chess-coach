@@ -95,6 +95,43 @@ describe("a card answered Good each time it falls due", () => {
   });
 });
 
+// Each rating is handed the previous result as the stored card, as the drills do after a round
+// trip through the tables. No loop waits for a state, so a conversion that drops a field fails on
+// the assertion instead of never reaching it.
+describe("a schedule read back from storage", () => {
+  const rateAtDue = (card: Schedule, grade: Grade): Schedule =>
+    review(card, grade, new Date(card.next_review_at));
+
+  it("continues a learning card from its stored step: Again stays on step 0, Good moves to 1, Good graduates", () => {
+    const again = review(newSchedule(START), GRADE.Again, START);
+    expect(again).toMatchObject({ fsrs_state: CARD_STATE.Learning, learning_step: 0 });
+    expect(again.interval_hours).toBeCloseTo(minutes(1), 9);
+
+    const good = rateAtDue(again, GRADE.Good);
+    expect(good).toMatchObject({ fsrs_state: CARD_STATE.Learning, learning_step: 1 });
+    expect(good.interval_hours).toBeCloseTo(minutes(10), 9);
+
+    const graduated = rateAtDue(good, GRADE.Good);
+    expect(graduated).toMatchObject({ fsrs_state: CARD_STATE.Review, learning_step: 0 });
+    expect(graduated.interval_hours).toBeCloseTo(days(1), 9);
+  });
+
+  it("builds a second lapse on the stored first one", () => {
+    const first = review(newSchedule(START), GRADE.Good, START);
+    const graduated = rateAtDue(first, GRADE.Good);
+    expect(graduated).toMatchObject({ fsrs_state: CARD_STATE.Review, lapses: 0 });
+
+    const lapsed = rateAtDue(graduated, GRADE.Again);
+    expect(lapsed).toMatchObject({ fsrs_state: CARD_STATE.Relearning, lapses: 1 });
+
+    const recovered = rateAtDue(lapsed, GRADE.Good);
+    expect(recovered).toMatchObject({ fsrs_state: CARD_STATE.Review, lapses: 1 });
+
+    const lapsedAgain = rateAtDue(recovered, GRADE.Again);
+    expect(lapsedAgain).toMatchObject({ fsrs_state: CARD_STATE.Relearning, lapses: 2 });
+  });
+});
+
 describe("the interval a button shows", () => {
   it("is the interval the grade gives, for every grade of a card in each state", () => {
     const learning = review(newSchedule(START), GRADE.Good, START);
