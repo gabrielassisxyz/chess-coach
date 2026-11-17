@@ -418,7 +418,8 @@ every button, the breadcrumb's included, is a 44 px target. M1 and M2 still find
   `Solved first try`, `Due cards`) share `.practice-tile` styling (`--surface-1`, `--border`,
   `--quality-best`/`--quality-blunder` arrows, `--status-ready`/`--status-error` split bar, and
   accent `Review` action when `due_now > 0`) in a `minmax(180px, 1fr)` / `12px` grid above the
-  `140px` Puzzle rating SVG (`--surface-2` midline, `--accent` polyline) and the two side-by-side
+  `140px` Puzzle rating chart with a Y axis (HTML values in `--text-3` mono beside the SVG, one
+  `--surface-2` gridline per value, `--accent` polyline scaled to the axis range, 2 to 5 round values) and the two side-by-side
   `Improvement areas` and `Strengths` cards (`minmax(360px, 1fr)`, `48px` theme rows with `See all`
   links) and, below them, the `Openings played` card of up to four `40px` rows in `minmax(0, 1fr)
   80px 72px 160px 48px` with its own `See all`. Loading (`role="status"`), read failures (`role="alert"` + `Try again` per block), and

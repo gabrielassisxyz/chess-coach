@@ -895,6 +895,37 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Rating Y axis: HTML values beside the SVG so card width never stretches them. */
+.practice-dashboard__chart-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: stretch;
+}
+
+.practice-dashboard__chart-row .practice-dashboard__chart {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.practice-dashboard__chart-yaxis {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 140px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.practice-dashboard__chart-yaxis-value {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+
 .practice-dashboard__themes {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
