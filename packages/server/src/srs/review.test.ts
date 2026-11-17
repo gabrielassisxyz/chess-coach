@@ -9,8 +9,12 @@ import { type Database, openDatabase } from "../db/open.js";
 import { getCard, insertCard, listDueCards } from "../db/srs.js";
 import { ReviewDesk } from "./review.js";
 
-const T0 = new Date("2026-03-01T00:00:00.000Z");
+// Midday: the scheduler counts elapsed time in calendar days, and a learning step of ten minutes
+// must not cross a day boundary in the figures below.
+const T0 = new Date("2026-03-01T12:00:00.000Z");
+const MINUTE = 60_000;
 const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
 
 let tmp: string;
 let db: Database;
@@ -45,12 +49,14 @@ function addCard(createdAt: Date = T0, expectedUci = "d2d4"): number {
 }
 
 const reviewRows = () =>
-  db.prepare("SELECT card_id, quality, answered_uci, correct, reviewed_at FROM srs_reviews").all();
+  db
+    .prepare("SELECT card_id, quality, grade, answered_uci, correct, reviewed_at FROM srs_reviews")
+    .all();
 
-function rateOnce(desk: ReviewDesk, cardId: number, uci: string, quality: number) {
+function rateOnce(desk: ReviewDesk, cardId: number, uci: string, grade: number) {
   const served = desk.serveCard(cardId);
   desk.answer(served.exposureId, uci);
-  desk.rate(served.exposureId, quality);
+  return desk.rate(served.exposureId, grade);
 }
 
 describe("serving and grading", () => {
@@ -96,9 +102,9 @@ describe("rating rules", () => {
     const desk = new ReviewDesk({ db, clock });
     const served = desk.serveCard(id);
     desk.answer(served.exposureId, "d2d4");
-    desk.rate(served.exposureId, 5);
+    desk.rate(served.exposureId, 4);
     const after = getCard(db, id);
-    expect(() => desk.rate(served.exposureId, 0)).toThrow(
+    expect(() => desk.rate(served.exposureId, 1)).toThrow(
       expect.objectContaining({ code: "exposure_used" }),
     );
     expect(getCard(db, id)).toEqual(after);
@@ -115,7 +121,7 @@ describe("rating rules", () => {
       expect.objectContaining({ code: "exposure_unknown" }),
     );
     expect(reviewRows()).toEqual([]);
-    expect(getCard(db, id)?.repetitions).toBe(0);
+    expect(getCard(db, id)?.fsrsState).toBe(0);
   });
 
   it("refuses a serving made before another tab rated the card, with exposure_stale", () => {
@@ -127,14 +133,14 @@ describe("rating rules", () => {
     desk.answer(other.exposureId, "d2d4");
     desk.rate(other.exposureId, 4);
     const after = getCard(db, id);
-    expect(() => desk.rate(mine.exposureId, 5)).toThrow(
+    expect(() => desk.rate(mine.exposureId, 3)).toThrow(
       expect.objectContaining({ code: "exposure_stale" }),
     );
     expect(getCard(db, id)).toEqual(after);
     expect(reviewRows()).toHaveLength(1);
   });
 
-  it("refuses a rating before an answer and a quality outside 0..5", () => {
+  it("refuses a rating before an answer, and a grade outside 1 to 4, 0 and 5 included", () => {
     const id = addCard();
     const desk = new ReviewDesk({ db, clock });
     const served = desk.serveCard(id);
@@ -142,61 +148,150 @@ describe("rating rules", () => {
       expect.objectContaining({ code: "exposure_unanswered" }),
     );
     desk.answer(served.exposureId, "d2d4");
-    for (const bad of [-1, 6, 2.5]) {
+    for (const bad of [0, 5, -1, 6, 2.5]) {
       expect(() => desk.rate(served.exposureId, bad)).toThrow(
-        expect.objectContaining({ code: "invalid_quality" }),
+        expect.objectContaining({ code: "invalid_grade" }),
       );
     }
     expect(reviewRows()).toEqual([]);
+    expect(getCard(db, id)?.fsrsState).toBe(0);
+  });
+});
+
+describe("the intervals on the buttons", () => {
+  it("are 1 minute, 6 minutes, 10 minutes and 8 days on a card nobody has rated", () => {
+    const id = addCard();
+    const desk = new ReviewDesk({ db, clock });
+
+    const preview = desk.previewRatings(id);
+
+    expect(Object.keys(preview)).toEqual(["1", "2", "3", "4"]);
+    expect(preview["1"]).toBeCloseTo(1 / 60, 9);
+    expect(preview["2"]).toBeCloseTo(6 / 60, 9);
+    expect(preview["3"]).toBeCloseTo(10 / 60, 9);
+    expect(preview["4"]).toBeCloseTo(8 * 24, 9);
+  });
+
+  it("grow with how late the card is, read at the clock of the preview", () => {
+    const id = addCard();
+    const desk = new ReviewDesk({ db, clock });
+    rateOnce(desk, id, "d2d4", 3);
+    now = new Date(T0.getTime() + 10 * MINUTE);
+    rateOnce(desk, id, "d2d4", 3);
+    const due = new Date(now.getTime() + 2 * DAY);
+
+    now = due;
+    const onTime = desk.previewRatings(id);
+    now = new Date(due.getTime() + 5 * DAY);
+    const late = desk.previewRatings(id);
+
+    expect(onTime["3"]).toBeCloseTo(11 * 24, 9);
+    expect(late["3"]).toBeGreaterThan(onTime["3"]);
+  });
+
+  it("are the interval each grade then gives the card", () => {
+    for (const grade of [1, 2, 3, 4]) {
+      db.exec("DELETE FROM srs_cards");
+      now = T0;
+      const id = addCard();
+      const desk = new ReviewDesk({ db, clock });
+      const shown = desk.previewRatings(id)[`${grade}` as "1" | "2" | "3" | "4"];
+
+      rateOnce(desk, id, "d2d4", grade);
+
+      expect(getCard(db, id)?.intervalHours, `grade ${grade}`).toBeCloseTo(shown, 9);
+    }
   });
 });
 
 describe("rescheduling", () => {
-  it("rated 4 three times then 2 follows the SM-2 table", () => {
+  it("rated Good each time it falls due comes back after 10 minutes, 2 days and 11 days", () => {
     const id = addCard();
     const desk = new ReviewDesk({ db, clock });
     const expected = [
-      { interval_hours: 4, ease_factor: 2.5, repetitions: 1 },
-      { interval_hours: 24, ease_factor: 2.5, repetitions: 2 },
-      { interval_hours: 72, ease_factor: 2.5, repetitions: 3 },
-      { interval_hours: 4, ease_factor: 2.18, repetitions: 0 },
+      { interval: 10 * MINUTE, state: 1, step: 1 },
+      { interval: 2 * DAY, state: 2, step: 0 },
+      { interval: 11 * DAY, state: 2, step: 0 },
     ];
-    [4, 4, 4, 2].forEach((quality, index) => {
-      rateOnce(desk, id, "d2d4", quality);
+    for (const want of expected) {
+      const rated = rateOnce(desk, id, "d2d4", 3);
       const card = getCard(db, id);
-      const want = expected[index] as (typeof expected)[number];
-      expect(card?.intervalHours).toBeCloseTo(want.interval_hours, 6);
-      expect(card?.easeFactor).toBeCloseTo(want.ease_factor, 6);
-      expect(card?.repetitions).toBe(want.repetitions);
-      expect(card?.nextReviewAt).toBe(
-        new Date(now.getTime() + want.interval_hours * HOUR).toISOString(),
-      );
-      now = new Date(now.getTime() + want.interval_hours * HOUR);
-    });
-    expect(reviewRows()).toHaveLength(4);
+      expect(card?.intervalHours).toBeCloseTo(want.interval / HOUR, 9);
+      expect(card).toMatchObject({
+        fsrsState: want.state,
+        learningStep: want.step,
+        lapses: 0,
+        lastReviewedAt: now.toISOString(),
+        nextReviewAt: new Date(now.getTime() + want.interval).toISOString(),
+      });
+      expect(rated).toEqual({
+        reviewedAt: now.toISOString(),
+        nextReviewAt: new Date(now.getTime() + want.interval).toISOString(),
+      });
+      now = new Date(now.getTime() + want.interval);
+    }
+    expect(reviewRows()).toHaveLength(3);
   });
 
-  it("serves a due card, answers it wrong, rates 2 and finds it due again in four hours", () => {
+  it("rated Again on a card it had learned lapses and comes back in 10 minutes", () => {
+    const id = addCard();
+    const desk = new ReviewDesk({ db, clock });
+    for (const interval of [10 * MINUTE, 2 * DAY]) {
+      rateOnce(desk, id, "d2d4", 3);
+      now = new Date(now.getTime() + interval);
+    }
+
+    rateOnce(desk, id, "e2e4", 1);
+
+    expect(getCard(db, id)).toMatchObject({
+      fsrsState: 3,
+      lapses: 1,
+      nextReviewAt: new Date(now.getTime() + 10 * MINUTE).toISOString(),
+    });
+  });
+
+  it("serves a due card, answers it wrong, rates Again and finds it due again in a minute", () => {
     const id = addCard();
     const desk = new ReviewDesk({ db, clock });
     expect(desk.listDueCards().map((card) => card.id)).toEqual([id]);
     const served = desk.serveCard(id);
     expect(desk.answer(served.exposureId, "e2e4").correct).toBe(false);
-    desk.rate(served.exposureId, 2);
+    desk.rate(served.exposureId, 1);
     expect(desk.listDueCards()).toEqual([]);
-    now = new Date(T0.getTime() + 4 * HOUR - 1);
+    now = new Date(T0.getTime() + MINUTE - 1);
     expect(desk.listDueCards()).toEqual([]);
-    now = new Date(T0.getTime() + 4 * HOUR);
+    now = new Date(T0.getTime() + MINUTE);
     expect(desk.listDueCards().map((card) => card.id)).toEqual([id]);
     expect(reviewRows()).toEqual([
       {
         card_id: id,
-        quality: 2,
+        quality: null,
+        grade: 1,
         answered_uci: "e2e4",
         correct: 0,
         reviewed_at: T0.toISOString(),
       },
     ]);
+  });
+
+  it("writes the grade of each of the four buttons and leaves the old quality empty", () => {
+    for (const grade of [1, 2, 3, 4]) {
+      db.exec("DELETE FROM srs_cards");
+      now = T0;
+      const id = addCard();
+      rateOnce(new ReviewDesk({ db, clock }), id, "d2d4", grade);
+
+      expect(reviewRows(), `grade ${grade}`).toEqual([
+        {
+          card_id: id,
+          quality: null,
+          grade,
+          answered_uci: "d2d4",
+          correct: 1,
+          reviewed_at: T0.toISOString(),
+        },
+      ]);
+    }
   });
 
   it("writes the review row and the schedule in one transaction", () => {
@@ -208,24 +303,24 @@ describe("rescheduling", () => {
     db.exec(
       "CREATE TRIGGER fail_update BEFORE UPDATE ON srs_cards BEGIN SELECT RAISE(ABORT, 'injected'); END",
     );
-    expect(() => desk.rate(served.exposureId, 5)).toThrow("injected");
+    expect(() => desk.rate(served.exposureId, 3)).toThrow("injected");
     expect(reviewRows()).toEqual([]);
     expect(getCard(db, id)).toEqual(before);
     db.exec("DROP TRIGGER fail_update");
-    desk.rate(served.exposureId, 5);
+    desk.rate(served.exposureId, 3);
     expect(reviewRows()).toHaveLength(1);
   });
 });
 
 describe("listDueCards", () => {
-  it("orders by due time then id, and a card rated 5 waits for its new date", () => {
+  it("orders by due time then id, and a card rated Good waits for its new date", () => {
     const early = addCard(new Date(T0.getTime() - 2 * HOUR));
     const lateA = addCard(new Date(T0.getTime() - HOUR));
     const lateB = addCard(new Date(T0.getTime() - HOUR));
     addCard(new Date(T0.getTime() + HOUR));
     expect(listDueCards(db, T0).map((card) => card.id)).toEqual([early, lateA, lateB]);
     expect(listDueCards(db, T0, 2).map((card) => card.id)).toEqual([early, lateA]);
-    rateOnce(new ReviewDesk({ db, clock }), early, "d2d4", 5);
+    rateOnce(new ReviewDesk({ db, clock }), early, "d2d4", 3);
     expect(listDueCards(db, T0).map((card) => card.id)).toEqual([lateA, lateB]);
   });
 

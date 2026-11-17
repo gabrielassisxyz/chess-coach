@@ -6,6 +6,7 @@ import type { Database } from "../packages/server/src/db/open.js";
 import { hasImportedBody, insertRoutine } from "../packages/server/src/db/routines.js";
 import { type NewCard, insertCard } from "../packages/server/src/db/srs.js";
 import { dataDir } from "../packages/server/src/paths.js";
+import { CARD_STATE, type CardState } from "../packages/server/src/srs/fsrs.js";
 
 export interface UpstreamCard {
   id: string;
@@ -26,8 +27,30 @@ export interface ImportedCard {
   card: NewCard;
   nextReviewAt: string;
   intervalHours: number;
-  easeFactor: number;
-  repetitions: number;
+  fsrsState: CardState;
+  stability: number | null;
+  difficulty: number | null;
+}
+
+// The upstream tutor schedules with SM-2. A card it has rated becomes a Review card whose stability
+// is its interval in days, which is what the interval was scheduled to be, and whose difficulty is
+// the one FSRS gives a new card answered Good when its last review passed (repetitions over 0) and
+// answered Again when it failed. A card with no interval is New. Migration 033 maps the app's own
+// cards by the same rule, so a card keeps its due date whichever way it arrived.
+const PASSED_DIFFICULTY = 2.1181;
+const FAILED_DIFFICULTY = 6.4133;
+
+export function memoryFromSm2(
+  upstream: Pick<UpstreamCard, "interval_hours" | "repetitions">,
+): Pick<ImportedCard, "fsrsState" | "stability" | "difficulty"> {
+  if (upstream.interval_hours <= 0) {
+    return { fsrsState: CARD_STATE.New, stability: null, difficulty: null };
+  }
+  return {
+    fsrsState: CARD_STATE.Review,
+    stability: upstream.interval_hours / 24,
+    difficulty: upstream.repetitions > 0 ? PASSED_DIFFICULTY : FAILED_DIFFICULTY,
+  };
 }
 
 export interface ImportReport {
@@ -60,8 +83,7 @@ export function convertCard(upstream: UpstreamCard): ImportedCard {
     },
     nextReviewAt: upstream.next_review,
     intervalHours: upstream.interval_hours,
-    easeFactor: upstream.ease_factor,
-    repetitions: upstream.repetitions,
+    ...memoryFromSm2(upstream),
   };
 }
 
@@ -79,8 +101,15 @@ function insertImported(db: Database, imported: ImportedCard): void {
   const inserted = insertCard(db, imported.card);
   if (!inserted) throw new Error("insert returned no row");
   db.prepare(
-    "UPDATE srs_cards SET next_review_at = ?, interval_hours = ?, ease_factor = ?, repetitions = ? WHERE id = ?",
-  ).run(imported.nextReviewAt, imported.intervalHours, imported.easeFactor, imported.repetitions, inserted.id);
+    "UPDATE srs_cards SET next_review_at = ?, interval_hours = ?, fsrs_state = ?, stability = ?, difficulty = ? WHERE id = ?",
+  ).run(
+    imported.nextReviewAt,
+    imported.intervalHours,
+    imported.fsrsState,
+    imported.stability,
+    imported.difficulty,
+    inserted.id,
+  );
 }
 
 export function importCards(db: Database, cards: UpstreamCard[]): ImportReport {

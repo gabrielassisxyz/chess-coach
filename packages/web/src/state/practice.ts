@@ -186,13 +186,12 @@ export function formatInterval(hours: number): string {
   return `${Math.round(hours / 24)} d`;
 }
 
+// FSRS's four grades, the words Anki puts on its buttons.
 export const RATING_WORDS: Record<number, string> = {
-  0: "Blank \u2014 no idea",
-  1: "Wrong, recognised it",
-  2: "Wrong, nearly there",
-  3: "Right, with effort",
-  4: "Right, hesitated",
-  5: "Easy",
+  1: "Again",
+  2: "Hard",
+  3: "Good",
+  4: "Easy",
 };
 
 export interface TrailLine {

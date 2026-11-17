@@ -60,6 +60,7 @@ import {
   listItemMessageTexts,
   openTrainingItem,
   type RunEndReason,
+  replaceTrainingRunItems,
   type StoredRunItem,
   saveTrainingRun,
   setTrainingItemHinted,
@@ -79,7 +80,8 @@ import {
 import { currentPuzzleRating, ratingAfter, setPuzzleRating } from "../puzzles/rating.js";
 import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
-import type { AnswerResult, ReviewDesk } from "../srs/review.js";
+import { GRADE, type Grade } from "../srs/fsrs.js";
+import type { AnswerResult, RatedCard, ReviewDesk } from "../srs/review.js";
 import { ActivityError } from "./errors.js";
 import { Exploration } from "./exploration.js";
 import { selectFoundDrillPositions } from "./found-drill.js";
@@ -91,6 +93,9 @@ export type DeskPort = Pick<
 >;
 
 export const DUE_QUEUE_SIZE = 20;
+// A card whose next step falls this soon after its rating is served again before its training ends:
+// Anki's learn-ahead limit.
+export const LEARN_AHEAD_MS = 20 * 60_000;
 // The puzzles drawn at a time: a queue without an end gets this many when it starts and again each
 // time the student reaches its last item, and a drill over a fixed set holds this many.
 export const PUZZLE_BATCH_SIZE = 10;
@@ -121,7 +126,7 @@ export interface PracticeRunPort {
   showSolution(): void;
   hint(): void;
   askCoach(): void;
-  rate(exposureId: string, quality: number): void;
+  rate(exposureId: string, grade: number): void;
   next(): void;
   end(): void;
   /** The run stopped being on the board without the student ending it. */
@@ -187,7 +192,7 @@ interface Served {
   tries: (TriedMove & { ply: number })[];
   gaveUp: boolean;
   solutionLine: string[] | null;
-  suggestedQuality: number | null;
+  suggestedGrade: number | null;
   hintSquare: string | null;
   hinted: boolean;
   // Offset of the first hint from when the item was served; null when no hint was given.
@@ -207,12 +212,10 @@ interface Served {
 // UCI's null move: a card given up before any try has no move of the student's to record.
 const NO_MOVE_UCI = "0000";
 
-// The rating a finished card pre-selects: the first try decides it, a hint means the student did
-// not know it, and giving up means blank.
-function suggestedQualityOf(gaveUp: boolean, firstTryRight: boolean, hinted: boolean): number {
-  if (gaveUp) return 0;
-  if (hinted) return 2;
-  return firstTryRight ? 4 : 2;
+// The grade a finished card pre-selects: Good when every step was right first time without a hint,
+// Again after a wrong try, a hint or the solution shown.
+function suggestedGradeOf(gaveUp: boolean, firstTryRight: boolean, hinted: boolean): Grade {
+  return !gaveUp && !hinted && firstTryRight ? GRADE.Good : GRADE.Again;
 }
 
 // The served item as `training_runs.current_json` keeps it: where the run stood at its last step.
@@ -571,6 +574,9 @@ export class TrainingRun implements PracticeRunPort {
   private readonly clock: Clock;
   // Set while a transition writes, so the coach is woken once the rows are committed.
   private wake = false;
+  // The cards rated inside the learn-ahead limit, each with the instant its next step falls due. They
+  // sit at the end of the queue until the student moves on; a run that ends first leaves them due.
+  private readonly pending = new Map<QueueEntry, number>();
 
   /**
    * `runId` is the `training_runs` row this queue keeps current; a single item the coach served
@@ -712,7 +718,7 @@ export class TrainingRun implements PracticeRunPort {
       last_try: lastTry ? { uci: lastTry.uci, san: lastTry.san, correct: lastTry.correct } : null,
       gave_up: s.gaveUp,
       solution_line: s.solutionLine,
-      suggested_quality: s.suggestedQuality,
+      suggested_grade: s.suggestedGrade,
       hint_square: open ? s.hintSquare : null,
       summary: this.summary,
       moves: this.playedLine(s),
@@ -898,7 +904,7 @@ export class TrainingRun implements PracticeRunPort {
     });
   }
 
-  rate(exposureId: string, quality: number): void {
+  rate(exposureId: string, grade: number): void {
     const s = this.served;
     if (this.summary !== null) {
       throw new ActivityError("item_finished", "the queue has ended");
@@ -907,10 +913,33 @@ export class TrainingRun implements PracticeRunPort {
     if (s.item.kind !== "card" || s.item.exposure_id !== exposureId) {
       throw new SrsError("exposure_unknown", "that card is not the one on the board");
     }
+    const cardId = s.item.card_id;
     this.transition(() => {
-      this.deps.desk.rate(exposureId, quality);
+      const rated = this.deps.desk.rate(exposureId, grade);
       s.status = "rated";
+      this.holdIfDueSoon(cardId, rated);
     });
+  }
+
+  // A card of a Due cards training that comes due within the learn-ahead limit is held by the run:
+  // it joins the queue at once, so the run's length grows, and is served again before the run ends.
+  // A single card the coach serves has no run to hold it in.
+  private holdIfDueSoon(cardId: number, rated: RatedCard): void {
+    if (this.mode !== "srs" || this.runId === null) return;
+    const dueMs = Date.parse(rated.nextReviewAt);
+    if (dueMs - Date.parse(rated.reviewedAt) > LEARN_AHEAD_MS) return;
+    const entry: QueueEntry = { kind: "card", cardId };
+    this.queue.push(entry);
+    this.pending.set(entry, dueMs);
+    this.storeQueue();
+    const { item } = this.served;
+    if (item.kind === "card") this.served.item = { ...item, queue_length: this.queue.length };
+  }
+
+  // The queue is the order the items are served in, so a card moved ahead rewrites the stored items.
+  private storeQueue(): void {
+    if (this.runId === null) return;
+    replaceTrainingRunItems(this.deps.db, this.runId, this.queue.map(storedItemOf));
   }
 
   // The last item's next ends a queue with a length: the summary is written once, here. A queue
@@ -932,9 +961,34 @@ export class TrainingRun implements PracticeRunPort {
         this.finish();
         return;
       }
+      this.arrangeNext();
       this.position += 1;
       this.served = this.serve(this.position);
     });
+  }
+
+  // A held card whose time has come is served before the next queued card. With no queued card left
+  // the held card due first is served though its time has not come, so the run ends only when
+  // nothing is queued and nothing is held. The chosen entry is moved to the slot after the one on
+  // the board, which is where `next` serves from.
+  private arrangeNext(): void {
+    if (this.pending.size === 0) return;
+    const waiting = this.queue.slice(this.position + 1);
+    const nowMs = this.clock.now().getTime();
+    const dueOf = (entry: QueueEntry): number => this.pending.get(entry) as number;
+    const byDue = (a: QueueEntry, b: QueueEntry): number => dueOf(a) - dueOf(b);
+    const held = waiting.filter((entry) => this.pending.has(entry));
+    const ready = held.filter((entry) => dueOf(entry) <= nowMs).sort(byDue);
+    const queued = waiting.filter((entry) => !this.pending.has(entry));
+    const chosen = ready[0] ?? queued[0] ?? held.sort(byDue)[0];
+    if (chosen === undefined) return;
+    this.pending.delete(chosen);
+    const from = this.queue.indexOf(chosen);
+    const to = this.position + 1;
+    if (from === to) return;
+    this.queue.splice(from, 1);
+    this.queue.splice(to, 0, chosen);
+    this.storeQueue();
   }
 
   // Appends the next batch to the queue and to the run's stored items; false when there is none.
@@ -1098,7 +1152,7 @@ export class TrainingRun implements PracticeRunPort {
     if (line) this.placeLineEnding(s, line, gaveUp);
     else this.placeMoveEnding(s, result, gaveUp);
     s.status = gaveUp ? "failed" : "solved";
-    s.suggestedQuality = suggestedQualityOf(gaveUp, result.correct, s.hinted);
+    s.suggestedGrade = suggestedGradeOf(gaveUp, result.correct, s.hinted);
     this.tally(!gaveUp);
     this.wake = true;
   }
@@ -1326,7 +1380,7 @@ export class TrainingRun implements PracticeRunPort {
       coachAsk: "none" as const,
       note: null,
       solutionLine: null,
-      suggestedQuality: null,
+      suggestedGrade: null,
       hintSquare: null,
       hinted: false,
       hintAtMs: null,

@@ -7,7 +7,7 @@ export type SrsErrorCode =
   | "exposure_stale"
   | "exposure_answered"
   | "exposure_unanswered"
-  | "invalid_quality";
+  | "invalid_grade";
 
 export class SrsError extends Error {
   constructor(

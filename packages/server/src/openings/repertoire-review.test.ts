@@ -269,8 +269,11 @@ interface CardRow {
   introduced_at: string;
   next_review_at: string;
   interval_hours: number;
-  ease_factor: number;
-  repetitions: number;
+  fsrs_state: number;
+  stability: number | null;
+  difficulty: number | null;
+  learning_step: number;
+  lapses: number;
   reviews: number;
   last_reviewed_at: string | null;
 }
@@ -481,6 +484,17 @@ function cardAt(before: string[], san: string): CardRow | undefined {
 const snapshot = () => ({ cards: cardsOf(), positions: positionsOf(), reviews: reviewsOf() });
 const hoursFromNow = (hours: number): string =>
   new Date(now.getTime() + hours * HOUR_MS).toISOString();
+const minutesFromNow = (minutes: number): string =>
+  new Date(now.getTime() + minutes * 60_000).toISOString();
+
+// The grades the game review rated, one row for each rating, in the order they were made.
+const loggedGrades = (): { key: string; grade: number }[] =>
+  (
+    db.prepare("SELECT card_key, grade FROM drill_reviews ORDER BY id").all() as {
+      card_key: string;
+      grade: number;
+    }[]
+  ).map((row) => ({ key: row.card_key, grade: row.grade }));
 
 /** What the explorer and the engine say about 3...h6, a reply too rare for the generator to store. */
 function writeH6Answers(): void {
@@ -541,18 +555,33 @@ describe("a game that follows the repertoire", () => {
     ] as const) {
       expect(cardAt([...prefix], san)).toMatchObject({
         reviews: 1,
-        repetitions: 1,
-        interval_hours: 4,
-        next_review_at: hoursFromNow(4),
+        fsrs_state: 1,
+        learning_step: 1,
+        interval_hours: 10 / 60,
+        next_review_at: minutesFromNow(10),
       });
     }
     // The expected move is the card that fails; the move the student played has none.
     const failed = cardAt(AFTER_NF6, "d4");
-    expect(failed).toMatchObject({ reviews: 1, repetitions: 0, interval_hours: 4 });
-    expect(failed?.ease_factor).toBeLessThan(2.5);
+    expect(failed).toMatchObject({
+      reviews: 1,
+      fsrs_state: 1,
+      learning_step: 0,
+      interval_hours: 1 / 60,
+      next_review_at: minutesFromNow(1),
+    });
+    expect(failed?.difficulty).toBeCloseTo(6.4133, 4);
     expect(cardAt(AFTER_NF6, "d3")).toBeUndefined();
     expect(cardsOf()).toHaveLength(5);
     expect(positionsOf()).toEqual(before);
+    // One row for each rating: Good for each stored move the game followed, Again for the one it left.
+    expect(loggedGrades()).toEqual([
+      { key: `${keyOf([])} e2e4`, grade: 3 },
+      { key: `${keyOf(["e4", "e5"])} g1f3`, grade: 3 },
+      { key: `${keyOf(["e4", "e5", "Nf3", "Nc6"])} f1c4`, grade: 3 },
+      { key: `${keyOf(AFTER_BC5)} c2c3`, grade: 3 },
+      { key: `${keyOf(AFTER_NF6)} d2d4`, grade: 1 },
+    ]);
     expect(reviewOf(id)).toMatchObject({
       outcome: "departed",
       followed_plies: 8,
@@ -876,8 +905,8 @@ describe("a game that reaches the root of another unit", () => {
       opening_name: "Scandinavian Defense",
     });
     expect(cardsOf()).toHaveLength(2);
-    expect(cardAt([], "e4")).toMatchObject({ reviews: 1, repetitions: 1 });
-    expect(cardAt(SCANDINAVIAN, "exd5")).toMatchObject({ reviews: 1, repetitions: 1 });
+    expect(cardAt([], "e4")).toMatchObject({ reviews: 1, learning_step: 1 });
+    expect(cardAt(SCANDINAVIAN, "exd5")).toMatchObject({ reviews: 1, learning_step: 1 });
   });
 
   it("fails the move that unit expected where the student left it", async () => {
@@ -893,7 +922,11 @@ describe("a game that reaches the root of another unit", () => {
       left_san: "Bc4",
       expected_san: "Nc3",
     });
-    expect(cardAt([...AFTER_EXD5, "Qxd5"], "Nc3")).toMatchObject({ reviews: 1, repetitions: 0 });
+    expect(cardAt([...AFTER_EXD5, "Qxd5"], "Nc3")).toMatchObject({
+      reviews: 1,
+      learning_step: 0,
+      interval_hours: 1 / 60,
+    });
   });
 
   it("tells the coach which unit it was compared with", async () => {
@@ -1034,7 +1067,7 @@ describe("two variations that share a root", () => {
       left_san: "b4",
       expected_san: "c3",
     });
-    expect(cardAt(AFTER_BC5, "c3")).toMatchObject({ reviews: 1, repetitions: 0 });
+    expect(cardAt(AFTER_BC5, "c3")).toMatchObject({ reviews: 1, learning_step: 0 });
     expect(cardAt(AFTER_BC5, "d3")).toBeUndefined();
   });
 
@@ -1328,7 +1361,7 @@ describe("processing a game twice", () => {
       reviewRepertoireGame(deps(), id),
     ]);
     expect(results.filter((result) => result !== null)).toHaveLength(1);
-    expect(cardAt(AFTER_NF6, "d4")).toMatchObject({ reviews: 1, repetitions: 0 });
+    expect(cardAt(AFTER_NF6, "d4")).toMatchObject({ reviews: 1, learning_step: 0 });
     expect(reviewsOf()).toHaveLength(1);
     expect(noticesOf()).toHaveLength(1);
   });
@@ -1370,16 +1403,28 @@ describe("choosing the games to review", () => {
 
 describe("rating a repertoire card from a game", () => {
   const move = { positionKey: keyOf([]), uci: "e2e4" };
+  const moveKey = `${move.positionKey} e2e4`;
   const cardNow = (): CardRow => cardsOf()[0] as CardRow;
 
-  // A card learned well: three passes, due in three days.
+  // A card learned well: due in three days.
   function knownCard(): void {
     introduceRepertoireCard(db, move, START_TIME);
-    saveRepertoireCardReview(db, cardNow().id, {
-      schedule: { interval_hours: 72, ease_factor: 2.5, repetitions: 3 },
-      nextReviewAt: hoursFromNow(72),
-      reviewedAt: START_TIME,
+    saveRepertoireCardReview(db, {
+      cardId: cardNow().id,
+      move,
+      grade: 3,
+      schedule: {
+        fsrs_state: 2,
+        stability: 3,
+        difficulty: 2.1181,
+        learning_step: 0,
+        lapses: 0,
+        interval_hours: 72,
+        last_reviewed_at: START_TIME,
+        next_review_at: hoursFromNow(72),
+      },
     });
+    db.exec("DELETE FROM drill_reviews");
   }
 
   it("creates the card of a move never shown and rates it as a first pass", () => {
@@ -1387,34 +1432,42 @@ describe("rating a repertoire card from a game", () => {
     expect(cardNow()).toMatchObject({
       introduced_at: START_TIME,
       reviews: 1,
-      repetitions: 1,
-      interval_hours: 4,
+      fsrs_state: 1,
+      learning_step: 1,
+      interval_hours: 10 / 60,
+      next_review_at: minutesFromNow(10),
     });
+    expect(loggedGrades()).toEqual([{ key: moveKey, grade: 3 }]);
   });
 
-  it("keeps the schedule of a right move that is not due yet", () => {
+  it("keeps the schedule of a right move that is not due yet, and logs nothing", () => {
     knownCard();
     const before = cardNow();
     rateRepertoireCardFromGame(db, move, true, now);
     expect(cardNow()).toEqual(before);
+    expect(loggedGrades()).toEqual([]);
   });
 
-  it("moves a right move up the ladder once it is due", () => {
+  it("stretches a right move's interval once it is due, and logs it as Good", () => {
     knownCard();
     now = new Date(now.getTime() + 80 * HOUR_MS);
     rateRepertoireCardFromGame(db, move, true, now);
-    expect(cardNow()).toMatchObject({ reviews: 2, repetitions: 4, interval_hours: 168 });
+    expect(cardNow()).toMatchObject({ reviews: 2, fsrs_state: 2, lapses: 0 });
+    expect(cardNow().interval_hours).toBeGreaterThan(72);
+    expect(loggedGrades()).toEqual([{ key: moveKey, grade: 3 }]);
   });
 
-  it("resets a missed move even when it is not due yet", () => {
+  it("fails a missed move even when it is not due yet, and logs it as Again", () => {
     knownCard();
     rateRepertoireCardFromGame(db, move, false, now);
     expect(cardNow()).toMatchObject({
       reviews: 2,
-      repetitions: 0,
-      interval_hours: 4,
-      next_review_at: hoursFromNow(4),
+      fsrs_state: 3,
+      lapses: 1,
+      interval_hours: 10 / 60,
+      next_review_at: minutesFromNow(10),
     });
+    expect(loggedGrades()).toEqual([{ key: moveKey, grade: 1 }]);
   });
 });
 
@@ -1474,8 +1527,8 @@ describe("a move that leaves the repertoire but is sound", () => {
     ]);
     expect(cardAt(AFTER_BC5, "c3")).toMatchObject({
       reviews: 1,
-      repetitions: 0,
-      interval_hours: 4,
+      learning_step: 0,
+      interval_hours: 1 / 60,
     });
     expect(cardAt(AFTER_BC5, "b4")).toBeUndefined();
     const [notice] = noticesOf();
@@ -1499,7 +1552,7 @@ describe("a move that leaves the repertoire but is sound", () => {
         outcome: "departed",
         alternative_opening: named ? "Italian Game: Evans Gambit" : null,
       });
-      expect(cardAt(AFTER_BC5, "c3")).toMatchObject({ repetitions: 0 });
+      expect(cardAt(AFTER_BC5, "c3")).toMatchObject({ reviews: 1, learning_step: 0 });
     },
   );
 

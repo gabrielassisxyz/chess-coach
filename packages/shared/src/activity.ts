@@ -87,14 +87,13 @@ const openQueuePosition = {
   queue_length: z.number().int().positive().optional(),
 };
 
-// Hours until the card is due again, for each quality the student could give it.
+// Hours until the card is due again, for each grade the student could give it: 1 Again, 2 Hard,
+// 3 Good, 4 Easy.
 export const RatingPreviewSchema = z.object({
-  "0": z.number(),
   "1": z.number(),
   "2": z.number(),
   "3": z.number(),
   "4": z.number(),
-  "5": z.number(),
 });
 export type RatingPreview = z.infer<typeof RatingPreviewSchema>;
 
@@ -267,7 +266,8 @@ export type RepertoireDrill = z.infer<typeof RepertoireDrillSchema>;
 // `summary` is set once the queue has ended; the last item then stays on the board, locked.
 // `fen` is the position the current step is graded against. `tries` counts the wrong tries on the
 // item. `solution_line` is set once the student gave up: the UCI moves from `fen` to the end.
-// `suggested_quality` is the rating a finished card pre-selects, from how its first try went.
+// `suggested_grade` is the grade a finished card pre-selects: 3 (Good) when every step was right
+// first time without a hint, 1 (Again) otherwise.
 // `hint_square` is the origin square of the expected move after a hint, cleared on the next try.
 export const TrainingActivitySchema = z.object({
   kind: z.literal("training"),
@@ -286,7 +286,7 @@ export const TrainingActivitySchema = z.object({
   last_try: LastTrySchema.nullable(),
   gave_up: z.boolean(),
   solution_line: z.array(z.string()).nullable(),
-  suggested_quality: z.number().int().min(0).max(5).nullable(),
+  suggested_grade: z.number().int().min(1).max(4).nullable(),
   hint_square: SquareSchema.nullable(),
   summary: TrainingSummarySchema.nullable(),
   // The line played so far and the wrong tries beside it, so the move list needs no replay of
