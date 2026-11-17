@@ -166,11 +166,18 @@ describe("the interval a button shows", () => {
   });
 });
 
+// A healthy card reaches 11 days in 3 ratings; the bound turns a broken schedule round trip into a
+// failure instead of a loop that never ends.
+const MAX_RATINGS_TO_REVIEW = 20;
+
 // A card on its way to the given interval by Good answers, each at the instant it fell due.
 function reviewedCard(intervalHours: number): Schedule {
   let card = newSchedule(START);
   let now = START;
-  while (card.interval_hours < intervalHours - 1e-9) {
+  for (let rating = 0; card.interval_hours < intervalHours - 1e-9; rating += 1) {
+    if (rating === MAX_RATINGS_TO_REVIEW) {
+      throw new Error(`the card never reached Review after ${MAX_RATINGS_TO_REVIEW} Good ratings`);
+    }
     card = review(card, GRADE.Good, now);
     now = new Date(card.next_review_at);
   }
