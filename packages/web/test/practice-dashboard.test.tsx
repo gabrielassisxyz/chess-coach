@@ -474,6 +474,14 @@ describe("PracticeDashboard", () => {
     for (const value of ["1200", "1300", "1400", "1500", "1600"]) {
       expect(within(yaxis).getByText(value)).toBeTruthy();
     }
+    const tops = [
+      ...yaxis.querySelectorAll<HTMLElement>(".practice-dashboard__chart-yaxis-value"),
+    ].map((label) => [label.textContent, Number.parseFloat(label.style.top)] as const);
+    expect(tops.map(([text]) => text)).toEqual(["1600", "1500", "1400", "1300", "1200"]);
+    const expectedTops = [8, 34, 60, 86, 112].map((y) => (y / 120) * 100);
+    for (const [index, [, top]] of tops.entries()) {
+      expect(top).toBeCloseTo(expectedTops[index] as number, 3);
+    }
     const svg = within(chartCard).getByRole("img", { name: "Puzzle rating over time" });
     const gridlines = svg.querySelectorAll("line");
     expect(gridlines).toHaveLength(5);
@@ -539,6 +547,24 @@ describe("PracticeDashboard", () => {
     const mobile = rest.join("@media (max-width: 899px)");
     expect(mobile).not.toContain(".practice-dashboard__chart-yaxis-value {");
     expect(mobile).not.toMatch(/\.practice-dashboard__chart-yaxis\s*\{[^}]*font-size/);
+  });
+
+  it("sizes the Y axis values by one fixed rule that never follows the card", () => {
+    const css = readFileSync(join(__dirname, "..", "src", "styles", "practice-hub.css"), "utf8");
+    const rule = (selector: string): string => {
+      const start = css.indexOf(`${selector} {`);
+      expect(start).toBeGreaterThanOrEqual(0);
+      return css.slice(start, css.indexOf("}", start));
+    };
+    expect(rule(".practice-dashboard__chart-yaxis")).toContain("font-size: var(--text-xs);");
+    expect(rule(".practice-dashboard__chart-yaxis")).toContain("height: 140px;");
+    expect(rule(".practice-dashboard__chart")).toContain("height: 140px;");
+    expect(rule(".practice-dashboard__chart-yaxis-value")).not.toContain("font-size");
+    const sizes = css.match(/\.practice-dashboard__chart-yaxis[^{]*\{[^}]*\}/g) ?? [];
+    expect(sizes.length).toBeGreaterThanOrEqual(2);
+    for (const block of sizes) {
+      expect(block).not.toMatch(/font-size:\s*[^;]*(%|vw|vh|vmin|vmax|cqw|cqh|cqi|cqb|em\b)/);
+    }
   });
 
   it("caps Improvement areas and Strengths at five rows without Train buttons and navigates on See all", async () => {

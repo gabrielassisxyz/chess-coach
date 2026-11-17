@@ -73,6 +73,11 @@ describe("ratingChartAxis", () => {
     expect(ratingChartPoints(points)).toBe("0.0,106.8 600.0,8.0");
   });
 
+  it("starts at the multiple at or below the minimum, never rounding up past it", () => {
+    expect(ratingChartAxis(pointsFor([1270, 1290]))).toEqual([1250, 1275, 1300]);
+    expect(ratingChartAxis(pointsFor([1260, 1534]))).toEqual([1200, 1300, 1400, 1500, 1600]);
+  });
+
   it("keeps every span between 2 and 5 values", () => {
     const cases: number[][] = [
       [1534],
