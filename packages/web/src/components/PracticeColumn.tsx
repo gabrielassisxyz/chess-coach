@@ -33,7 +33,7 @@ import { RepertoireHead } from "./RepertoireHead.js";
 
 export interface PracticeColumnActions {
   showSolution(): void;
-  rate(quality: number): void;
+  rate(grade: number): void;
   next(): void;
   end(): void;
   hint(): void;
@@ -341,7 +341,7 @@ function EndedActions({
       {view.canRate && training.item.kind === "card" ? (
         <RatingButtons
           preview={training.item.rating_preview}
-          suggested={training.suggested_quality}
+          suggested={training.suggested_grade}
           onRate={actions.rate}
         />
       ) : null}

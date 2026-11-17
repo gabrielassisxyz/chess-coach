@@ -49,7 +49,7 @@ import type { OpeningNames } from "../openings/names.js";
 import { currentPuzzleRating } from "../puzzles/rating.js";
 import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
-import { dueAt, type Quality, review as reviewSchedule } from "../srs/sm2.js";
+import { GRADE, type Grade, review as reviewSchedule } from "../srs/fsrs.js";
 import { ActivityError } from "./errors.js";
 import type { PracticeRunPort, TrainingDeps } from "./training.js";
 
@@ -68,9 +68,6 @@ export const REPERTOIRE_FLAG_BUDGET_MS = 4000;
 export const REPERTOIRE_FLAG_SEARCH_CAP_MS = REPERTOIRE_FLAG_BUDGET_MS / 2;
 /** What the first hint says when the position stores no idea. */
 export const REPERTOIRE_NO_IDEA = "No idea is stored for this position yet.";
-// The qualities a review card's first try pre-selects in training.ts: right is 4, a miss is 2.
-const REPERTOIRE_PASS_QUALITY: Quality = 4;
-const REPERTOIRE_FAIL_QUALITY: Quality = 2;
 const REPERTOIRE_START_FEN = new Chess().fen();
 
 export interface RepertoireDrillInput {
@@ -605,7 +602,7 @@ export class RepertoireSession implements PracticeRunPort {
       last_try: lastTry ? { uci: lastTry.uci, san: lastTry.san, correct: lastTry.correct } : null,
       gave_up: false,
       solution_line: null,
-      suggested_quality: null,
+      suggested_grade: null,
       hint_square: null,
       summary: this.result
         ? {
@@ -867,14 +864,12 @@ export class RepertoireSession implements PracticeRunPort {
     introduceRepertoireCard(db, state.move, now.toISOString());
     const card = findRepertoireCard(db, state.move) as RepertoireCardSchedule;
     if (right && Date.parse(card.next_review_at) > now.getTime()) return;
-    const schedule = reviewSchedule(
-      card,
-      right ? REPERTOIRE_PASS_QUALITY : REPERTOIRE_FAIL_QUALITY,
-    );
-    saveRepertoireCardReview(db, card.id, {
-      schedule,
-      nextReviewAt: dueAt(now, schedule.interval_hours).toISOString(),
-      reviewedAt: now.toISOString(),
+    const grade: Grade = right ? GRADE.Good : GRADE.Again;
+    saveRepertoireCardReview(db, {
+      cardId: card.id,
+      move: state.move,
+      grade,
+      schedule: reviewSchedule(card, grade, now),
     });
   }
 

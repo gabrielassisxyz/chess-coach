@@ -1,4 +1,5 @@
-import { dueAt, type Quality, review as reviewSchedule, type Schedule } from "../srs/sm2.js";
+import { GRADE, type Grade, review, type Schedule } from "../srs/fsrs.js";
+import { insertDrillReview, repertoireCardKey } from "./drill-reviews.js";
 import type { Database } from "./open.js";
 import { type RepertoireRow, repertoireRebuildCopySql } from "./repertoires.js";
 
@@ -6,9 +7,7 @@ import { type RepertoireRow, repertoireRebuildCopySql } from "./repertoires.js";
 export interface RepertoireCardSchedule extends Schedule {
   id: number;
   introduced_at: string;
-  next_review_at: string;
   reviews: number;
-  last_reviewed_at: string | null;
 }
 
 /** A move the student plays in a variation, with its schedule; `card` is null for a new move. */
@@ -41,8 +40,11 @@ interface RepertoireDrillMoveDbRow {
   introduced_at: string | null;
   next_review_at: string | null;
   interval_hours: number | null;
-  ease_factor: number | null;
-  repetitions: number | null;
+  fsrs_state: Schedule["fsrs_state"] | null;
+  stability: number | null;
+  difficulty: number | null;
+  learning_step: number | null;
+  lapses: number | null;
   reviews: number | null;
   last_reviewed_at: string | null;
 }
@@ -56,8 +58,11 @@ function drillMoveOf(row: RepertoireDrillMoveDbRow): RepertoireDrillMove {
           introduced_at: row.introduced_at as string,
           next_review_at: row.next_review_at as string,
           interval_hours: row.interval_hours as number,
-          ease_factor: row.ease_factor as number,
-          repetitions: row.repetitions as number,
+          fsrs_state: row.fsrs_state as Schedule["fsrs_state"],
+          stability: row.stability,
+          difficulty: row.difficulty,
+          learning_step: row.learning_step as number,
+          lapses: row.lapses as number,
           reviews: row.reviews as number,
           last_reviewed_at: row.last_reviewed_at,
         };
@@ -84,7 +89,8 @@ export function listRepertoireDrillMoves(
     .prepare(
       `SELECT p.id AS row_id, p.position_key, p.ply, p.line_san, p.move_uci, p.move_san, p.reach,
               p.opening_name, p.idea, c.id AS card_id, c.introduced_at, c.next_review_at,
-              c.interval_hours, c.ease_factor, c.repetitions, c.reviews, c.last_reviewed_at
+              c.interval_hours, c.fsrs_state, c.stability, c.difficulty, c.learning_step, c.lapses,
+              c.reviews, c.last_reviewed_at
        FROM repertoire_positions p
        LEFT JOIN repertoire_cards c
          ON c.position_key = p.position_key AND c.move_uci = p.move_uci
@@ -174,31 +180,41 @@ export function findRepertoireCard(
 ): RepertoireCardSchedule | undefined {
   return db
     .prepare(
-      `SELECT id, introduced_at, next_review_at, interval_hours, ease_factor, repetitions, reviews,
-              last_reviewed_at
+      `SELECT id, introduced_at, next_review_at, interval_hours, fsrs_state, stability, difficulty,
+              learning_step, lapses, reviews, last_reviewed_at
        FROM repertoire_cards WHERE position_key = ? AND move_uci = ?`,
     )
     .get(move.positionKey, move.uci) as RepertoireCardSchedule | undefined;
 }
 
+// Every rating that moves a card leaves a row in the log of drill reviews, written with it or not
+// at all, so a rating is never missing from the log and the log never holds one the card does not
+// show.
 export function saveRepertoireCardReview(
   db: Database,
-  cardId: number,
-  review: { schedule: Schedule; nextReviewAt: string; reviewedAt: string },
+  rating: {
+    cardId: number;
+    move: { positionKey: string; uci: string };
+    grade: Grade;
+    schedule: Schedule;
+  },
 ): void {
-  db.prepare(
-    `UPDATE repertoire_cards
-     SET interval_hours = ?, ease_factor = ?, repetitions = ?, next_review_at = ?,
-         last_reviewed_at = ?, reviews = reviews + 1
-     WHERE id = ?`,
-  ).run(
-    review.schedule.interval_hours,
-    review.schedule.ease_factor,
-    review.schedule.repetitions,
-    review.nextReviewAt,
-    review.reviewedAt,
-    cardId,
-  );
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE repertoire_cards
+       SET fsrs_state = @fsrs_state, stability = @stability, difficulty = @difficulty,
+           learning_step = @learning_step, lapses = @lapses, interval_hours = @interval_hours,
+           next_review_at = @next_review_at, last_reviewed_at = @last_reviewed_at,
+           reviews = reviews + 1
+       WHERE id = @id`,
+    ).run({ ...rating.schedule, id: rating.cardId });
+    insertDrillReview(db, {
+      cardKind: "repertoire",
+      cardKey: repertoireCardKey(rating.move),
+      reviewedAt: rating.schedule.last_reviewed_at as string,
+      grade: rating.grade,
+    });
+  })();
 }
 
 /** One first attempt the line drill rated, as `repertoire_first_attempts` keeps it. */
@@ -259,15 +275,11 @@ export function countRepertoireFirstAttemptsInWindow(
   return { attempts: counted.attempts, right: counted.correct_attempts };
 }
 
-// The qualities a drill's first try carries, so a move rates the same whichever way it was played.
-const GAME_PASS_QUALITY: Quality = 4;
-const GAME_FAIL_QUALITY: Quality = 2;
-
 /**
  * Rates a repertoire move that a played game either got right or missed, by the rule a drill's
  * first try follows: a move never shown gets its card now, a right move that is not yet due keeps
- * its schedule so playing it often earns no longer interval, and anything else moves the card
- * along the SM-2 ladder.
+ * its schedule so playing it often earns no longer interval, and anything else is a review, Good
+ * for a move followed and Again for the move the game left.
  */
 export function rateRepertoireCardFromGame(
   db: Database,
@@ -278,10 +290,11 @@ export function rateRepertoireCardFromGame(
   introduceRepertoireCard(db, move, now.toISOString());
   const card = findRepertoireCard(db, move) as RepertoireCardSchedule;
   if (right && Date.parse(card.next_review_at) > now.getTime()) return;
-  const schedule = reviewSchedule(card, right ? GAME_PASS_QUALITY : GAME_FAIL_QUALITY);
-  saveRepertoireCardReview(db, card.id, {
-    schedule,
-    nextReviewAt: dueAt(now, schedule.interval_hours).toISOString(),
-    reviewedAt: now.toISOString(),
+  const grade: Grade = right ? GRADE.Good : GRADE.Again;
+  saveRepertoireCardReview(db, {
+    cardId: card.id,
+    move,
+    grade,
+    schedule: review(card, grade, now),
   });
 }

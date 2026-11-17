@@ -5,7 +5,10 @@ import { insertFoundPosition } from "./found-positions.js";
 import { runMigrations } from "./migrate.js";
 
 const T0 = new Date("2026-11-15T12:00:00.000Z");
+const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
+const minutesAfter = (from: Date, minutes: number): Date =>
+  new Date(from.getTime() + minutes * MINUTE_MS);
 const hoursAfter = (from: Date, hours: number): Date => new Date(from.getTime() + hours * HOUR_MS);
 const ID = "own:0123456789abcdef";
 
@@ -39,59 +42,66 @@ afterEach(() => {
 
 const card = (): FoundCardSchedule | undefined => findFoundCard(db, ID);
 
+const loggedReviews = (): unknown[] =>
+  db.prepare("SELECT card_kind, card_key, reviewed_at, grade FROM drill_reviews ORDER BY id").all();
+
 describe("the schedule of a position from the student's games", () => {
   it("has no card until a drill rates the position", () => {
     expect(card()).toBeUndefined();
+    expect(loggedReviews()).toEqual([]);
   });
 
-  it("creates the card of a position solved first try with quality 4, back in 4 hours", () => {
+  it("creates the card of a position solved first try as Good, back in 10 minutes", () => {
     rateFoundCard(db, ID, true, T0);
-    expect(card()).toEqual({
+    expect(card()).toMatchObject({
       position_id: ID,
-      interval_hours: 4,
-      ease_factor: 2.5,
-      repetitions: 1,
-      next_review_at: hoursAfter(T0, 4).toISOString(),
+      fsrs_state: 1,
+      learning_step: 1,
+      lapses: 0,
+      next_review_at: minutesAfter(T0, 10).toISOString(),
       introduced_at: T0.toISOString(),
       reviews: 1,
       last_reviewed_at: T0.toISOString(),
     });
+    expect(card()?.interval_hours).toBeCloseTo(10 / 60, 9);
+    expect(card()?.difficulty).toBeCloseTo(2.1181, 4);
   });
 
-  it("creates the card of a position missed first with quality 2, back in 4 hours", () => {
+  it("creates the card of a position missed first as Again, back in a minute", () => {
     rateFoundCard(db, ID, false, T0);
     expect(card()).toMatchObject({
-      interval_hours: 4,
-      repetitions: 0,
-      next_review_at: hoursAfter(T0, 4).toISOString(),
+      fsrs_state: 1,
+      learning_step: 0,
+      next_review_at: minutesAfter(T0, 1).toISOString(),
       reviews: 1,
     });
-    expect(card()?.ease_factor).toBeCloseTo(2.18, 10);
+    expect(card()?.difficulty).toBeCloseTo(6.4133, 4);
   });
 
-  it("moves a due card one step up the ladder on a right first try", () => {
+  it("graduates a due card to a 2 day interval on a second right first try", () => {
     rateFoundCard(db, ID, true, T0);
-    const due = hoursAfter(T0, 5);
+    const due = minutesAfter(T0, 10);
     rateFoundCard(db, ID, true, due);
     expect(card()).toMatchObject({
-      interval_hours: 24,
-      repetitions: 2,
-      next_review_at: hoursAfter(due, 24).toISOString(),
+      fsrs_state: 2,
+      learning_step: 0,
+      next_review_at: hoursAfter(due, 48).toISOString(),
       introduced_at: T0.toISOString(),
       reviews: 2,
       last_reviewed_at: due.toISOString(),
     });
+    expect(card()?.interval_hours).toBeCloseTo(48, 9);
   });
 
-  it("brings a card back in 4 hours on a miss, due or not", () => {
+  it("brings a graduated card back in 10 minutes on a miss, due or not", () => {
     rateFoundCard(db, ID, true, T0);
-    rateFoundCard(db, ID, true, hoursAfter(T0, 5));
+    rateFoundCard(db, ID, true, minutesAfter(T0, 10));
     const early = hoursAfter(T0, 6);
     rateFoundCard(db, ID, false, early);
     expect(card()).toMatchObject({
-      interval_hours: 4,
-      repetitions: 0,
-      next_review_at: hoursAfter(early, 4).toISOString(),
+      fsrs_state: 3,
+      lapses: 1,
+      next_review_at: minutesAfter(early, 10).toISOString(),
       reviews: 3,
     });
   });
@@ -99,13 +109,59 @@ describe("the schedule of a position from the student's games", () => {
   it("keeps the whole schedule of a card not yet due on a right first try", () => {
     rateFoundCard(db, ID, true, T0);
     const before = card();
-    rateFoundCard(db, ID, true, hoursAfter(T0, 1));
+    rateFoundCard(db, ID, true, minutesAfter(T0, 5));
     expect(card()).toEqual(before);
+  });
+
+  it("rates a position rated right while due, whether new or already learning", () => {
+    rateFoundCard(db, ID, false, T0);
+    expect(card()?.next_review_at).toBe(minutesAfter(T0, 1).toISOString());
+    rateFoundCard(db, ID, true, minutesAfter(T0, 1));
+    expect(card()).toMatchObject({ fsrs_state: 1, learning_step: 1, reviews: 2 });
   });
 
   it("goes with its position", () => {
     rateFoundCard(db, ID, true, T0);
     db.prepare("DELETE FROM found_positions WHERE id = ?").run(ID);
     expect(card()).toBeUndefined();
+  });
+});
+
+describe("the log of the position's ratings", () => {
+  it("holds one row for each rating: Good for a right first try, Again for anything else", () => {
+    rateFoundCard(db, ID, true, T0);
+    const due = minutesAfter(T0, 10);
+    rateFoundCard(db, ID, false, due);
+
+    expect(loggedReviews()).toEqual([
+      { card_kind: "found", card_key: ID, reviewed_at: T0.toISOString(), grade: 3 },
+      { card_kind: "found", card_key: ID, reviewed_at: due.toISOString(), grade: 1 },
+    ]);
+  });
+
+  it("holds nothing for a right try that kept the schedule of a card not yet due", () => {
+    rateFoundCard(db, ID, true, T0);
+    rateFoundCard(db, ID, true, minutesAfter(T0, 5));
+
+    expect(loggedReviews()).toHaveLength(1);
+  });
+
+  it("outlives the position and its card", () => {
+    rateFoundCard(db, ID, true, T0);
+    db.prepare("DELETE FROM found_positions WHERE id = ?").run(ID);
+
+    expect(loggedReviews()).toEqual([
+      { card_kind: "found", card_key: ID, reviewed_at: T0.toISOString(), grade: 3 },
+    ]);
+  });
+
+  it("is written with the card: a log row that cannot be written leaves the card unrated", () => {
+    db.exec(
+      "CREATE TRIGGER fail_log BEFORE INSERT ON drill_reviews BEGIN SELECT RAISE(ABORT, 'injected'); END",
+    );
+
+    expect(() => rateFoundCard(db, ID, true, T0)).toThrow("injected");
+    expect(card()).toBeUndefined();
+    expect(loggedReviews()).toEqual([]);
   });
 });

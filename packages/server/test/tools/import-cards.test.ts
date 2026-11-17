@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   convertCard,
   importCards,
+  memoryFromSm2,
   type UpstreamCard,
 } from "../../../../tools/import-chess-rocket-cards.js";
 import { type Database, openDatabase } from "../../src/db/open.js";
@@ -31,8 +32,9 @@ describe("convertCard", () => {
     expect(imported).toMatchObject({
       nextReviewAt: "2026-11-05T10:00:00+00:00",
       intervalHours: 24,
-      easeFactor: 2.1,
-      repetitions: 2,
+      fsrsState: 2,
+      stability: 1,
+      difficulty: 2.1181,
     });
     expect(imported.card).toMatchObject({
       sourceKind: "teaching",
@@ -43,6 +45,41 @@ describe("convertCard", () => {
       classification: "mistake",
       explanation: fixture[2].explanation,
       createdAt: fixture[2].created_at,
+    });
+  });
+
+  // The rule migration 033 applies to the app's own cards.
+  it("maps a card whose last review passed to Review, its stability the interval in days", () => {
+    expect(memoryFromSm2({ interval_hours: 72, repetitions: 3 })).toEqual({
+      fsrsState: 2,
+      stability: 3,
+      difficulty: 2.1181,
+    });
+    expect(convertCard({ ...fixture[2], interval_hours: 168, repetitions: 4 })).toMatchObject({
+      fsrsState: 2,
+      stability: 7,
+      difficulty: 2.1181,
+    });
+  });
+
+  it("maps a card whose last review failed to Review with the difficulty of an Again", () => {
+    // The two cards of the fixture are on the ladder's first rung with no review passed.
+    for (const card of [fixture[0], fixture[1]]) {
+      expect(convertCard(card)).toMatchObject({
+        intervalHours: 4,
+        fsrsState: 2,
+        stability: 4 / 24,
+        difficulty: 6.4133,
+      });
+    }
+  });
+
+  it("maps a card with no interval to New, with no stability or difficulty", () => {
+    expect(convertCard({ ...fixture[0], interval_hours: 0, repetitions: 0 })).toMatchObject({
+      intervalHours: 0,
+      fsrsState: 0,
+      stability: null,
+      difficulty: null,
     });
   });
 
@@ -76,9 +113,25 @@ describe("importCards", () => {
       source_kind: "teaching",
       next_review_at: "2026-11-05T10:00:00+00:00",
       interval_hours: 24,
-      ease_factor: 2.1,
-      repetitions: 2,
+      fsrs_state: 2,
+      stability: 1,
+      difficulty: 2.1181,
+      learning_step: 0,
+      lapses: 0,
       created_at: fixture[2].created_at,
+    });
+  });
+
+  it("stores a card that has no interval as New, due at its upstream date", () => {
+    importCards(db, [{ ...fixture[0], interval_hours: 0, repetitions: 0 }]);
+    const row = db.prepare("SELECT * FROM srs_cards").get() as Record<string, unknown>;
+
+    expect(row).toMatchObject({
+      next_review_at: fixture[0].next_review,
+      interval_hours: 0,
+      fsrs_state: 0,
+      stability: null,
+      difficulty: null,
     });
   });
 

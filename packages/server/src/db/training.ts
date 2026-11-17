@@ -201,6 +201,19 @@ export function appendTrainingRunItems(
   );
 }
 
+// A queue whose order or length changes while the run is open, as a card held to come back joins it
+// and is moved ahead of the queued ones, is written whole, so the row keeps saying what the run has
+// served or will serve, in the order it serves it. Only an open run is written.
+export function replaceTrainingRunItems(
+  db: Database,
+  runId: number,
+  items: readonly StoredRunItem[],
+): void {
+  db.prepare(
+    "UPDATE training_runs SET items_json = ?, size = ? WHERE id = ? AND ended_at IS NULL",
+  ).run(JSON.stringify(items), items.length, runId);
+}
+
 // Only an open run is written. A step that completes after its run ended, such as a try that waited
 // on the engine while the board moved on, finds the row closed and leaves it as the record of where
 // the run stopped. The step that finishes a run closes it before its own save, so that last save is

@@ -10,12 +10,13 @@ import {
   getCard,
   insertReview,
   listDueCards,
+  scheduleOf,
   updateSchedule,
 } from "../db/srs.js";
 import type { NotificationSink } from "../game/notifications.js";
 import { sanFor } from "./cards.js";
 import { SrsError } from "./errors.js";
-import { dueAt, type Quality, review } from "./sm2.js";
+import { isGrade, previewIntervals, review } from "./fsrs.js";
 
 export { listDueCards };
 
@@ -32,6 +33,12 @@ export interface AnswerResult {
   expected_san: string | null;
 }
 
+/** What a rating did to a card: when it was rated and when the card is due again. */
+export interface RatedCard {
+  reviewedAt: string;
+  nextReviewAt: string;
+}
+
 interface Exposure {
   cardId: number;
   nextReviewAt: string;
@@ -39,9 +46,6 @@ interface Exposure {
   correct: boolean;
   used: boolean;
 }
-
-const isQuality = (value: number): value is Quality =>
-  Number.isInteger(value) && value >= 0 && value <= 5;
 
 export interface ReviewDeskDeps {
   db: Database;
@@ -113,29 +117,16 @@ export class ReviewDesk {
     return { correct: exposure.correct, expected_uci: card.expectedUci, expected_san: expectedSan };
   }
 
-  /** Hours until the card would be due again for each quality, exactly as `rate` would set them. */
+  /** Hours until the card would be due again for each grade, exactly as `rate` would set them. */
   previewRatings(cardId: number): RatingPreview {
-    const card = this.requireCard(cardId);
-    const schedule = {
-      interval_hours: card.intervalHours,
-      ease_factor: card.easeFactor,
-      repetitions: card.repetitions,
-    };
-    const hours = (quality: Quality): number => review(schedule, quality).interval_hours;
-    return {
-      "0": hours(0),
-      "1": hours(1),
-      "2": hours(2),
-      "3": hours(3),
-      "4": hours(4),
-      "5": hours(5),
-    };
+    const hours = previewIntervals(scheduleOf(this.requireCard(cardId)), this.clock.now());
+    return { "1": hours[1], "2": hours[2], "3": hours[3], "4": hours[4] };
   }
 
-  rate(exposureId: string, quality: number): void {
+  rate(exposureId: string, grade: number): RatedCard {
     const exposure = this.requireExposure(exposureId);
-    if (!isQuality(quality)) {
-      throw new SrsError("invalid_quality", `quality ${quality} is not an integer from 0 to 5`);
+    if (!isGrade(grade)) {
+      throw new SrsError("invalid_grade", `grade ${grade} is not an integer from 1 to 4`);
     }
     if (exposure.answeredUci === null) {
       throw new SrsError("exposure_unanswered", "the card has not been answered yet");
@@ -146,30 +137,19 @@ export class ReviewDesk {
     }
     const answeredUci = exposure.answeredUci;
     const now = this.clock.now();
-    const next = review(
-      {
-        interval_hours: card.intervalHours,
-        ease_factor: card.easeFactor,
-        repetitions: card.repetitions,
-      },
-      quality,
-    );
+    const next = review(scheduleOf(card), grade, now);
     this.db.transaction(() => {
       insertReview(this.db, {
         cardId: card.id,
         reviewedAt: now.toISOString(),
-        quality,
+        grade,
         answeredUci,
         correct: exposure.correct,
       });
-      updateSchedule(this.db, card.id, {
-        nextReviewAt: dueAt(now, next.interval_hours).toISOString(),
-        intervalHours: next.interval_hours,
-        easeFactor: next.ease_factor,
-        repetitions: next.repetitions,
-      });
+      updateSchedule(this.db, card.id, next);
     })();
     exposure.used = true;
+    return { reviewedAt: now.toISOString(), nextReviewAt: next.next_review_at };
   }
 
   private requireCard(cardId: number): CardRecord {

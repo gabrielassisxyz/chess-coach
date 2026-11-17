@@ -395,14 +395,16 @@ describe("031_found_notes", () => {
        VALUES ('own:listed', '2026-11-16T00:00:00.000Z', '2026-11-15T00:00:00.000Z', 2)`,
     ).run();
     const positionsBefore = db.prepare("SELECT * FROM found_positions ORDER BY id").all();
-    const cardsBefore = db.prepare("SELECT * FROM found_cards").all();
+    // The columns this migration never touches: a later one reshapes the schedule's own.
+    const cards = "SELECT position_id, next_review_at, introduced_at, reviews FROM found_cards";
+    const cardsBefore = db.prepare(cards).all();
 
     expect(runMigrations(db, defaultMigrationsDir)).toContain("031_found_notes.sql");
 
     expect(db.prepare("SELECT * FROM found_positions ORDER BY id").all()).toEqual(
       positionsBefore.map((row) => ({ ...(row as object), note: null })),
     );
-    expect(db.prepare("SELECT * FROM found_cards").all()).toEqual(cardsBefore);
+    expect(db.prepare(cards).all()).toEqual(cardsBefore);
     expect(db.pragma("foreign_key_check")).toEqual([]);
     const note = (
       db.pragma("table_info(found_positions)") as Array<{

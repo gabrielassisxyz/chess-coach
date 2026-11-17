@@ -375,7 +375,7 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         await activity.trainingAskCoach(command.activity_id);
         return;
       case "rate_card":
-        await activity.rateCard(command.exposure_id, command.quality, command.activity_id);
+        await activity.rateCard(command.exposure_id, command.grade, command.activity_id);
         return;
       case "next_training_item":
         await activity.nextTrainingItem(command.activity_id);

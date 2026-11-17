@@ -135,7 +135,7 @@ const card = {
     exposure_id: "ex-1",
     prompt_fen: START_FEN,
     student_color: "white" as const,
-    rating_preview: { "0": 4, "1": 4, "2": 4, "3": 24, "4": 24, "5": 72 },
+    rating_preview: { "1": 1 / 60, "2": 0.1, "3": 10 / 60, "4": 192 },
     position_in_queue: 1,
     queue_length: 3,
   },
@@ -148,7 +148,7 @@ const card = {
   last_try: null,
   gave_up: false,
   solution_line: null,
-  suggested_quality: null,
+  suggested_grade: null,
   hint_square: null,
   summary: null,
 };
@@ -198,7 +198,7 @@ describe("focus ring", () => {
     chooser.unmount();
 
     const training = render(<Practice server={serverApi(card)} createBoard={inertBoard} />);
-    expect(screen.getAllByRole("button", { name: /^\d (Right|Blank|Wrong|Easy)/ })).toHaveLength(6);
+    expect(screen.getAllByRole("button", { name: /^\d (Again|Hard|Good|Easy)/ })).toHaveLength(4);
     expect(expectFocusRing(training.container)).toBeGreaterThan(8);
   });
 

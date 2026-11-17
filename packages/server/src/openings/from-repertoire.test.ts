@@ -2734,8 +2734,11 @@ interface RepertoireTestCard {
   introduced_at: string;
   next_review_at: string;
   interval_hours: number;
-  ease_factor: number;
-  repetitions: number;
+  fsrs_state: number;
+  stability: number | null;
+  difficulty: number | null;
+  learning_step: number;
+  lapses: number;
   reviews: number;
   last_reviewed_at: string | null;
 }
@@ -2746,7 +2749,7 @@ const cardsOf = (database: Database): RepertoireTestCard[] =>
 /** A card with a schedule of its own, reviewed `reviews` times, so that a kept one is told apart. */
 function scheduleCard(
   move: { line: string[]; uci: string },
-  schedule: { interval_hours: number; ease_factor: number; repetitions: number },
+  schedule: { interval_hours: number; stability: number; difficulty: number },
   reviews: number,
 ): RepertoireTestCard {
   const key = { positionKey: keyOf(move.line), uci: move.uci };
@@ -2754,10 +2757,18 @@ function scheduleCard(
   const card = findRepertoireCard(db, key);
   if (!card) throw new Error(`no card for ${move.uci}`);
   for (let review = 0; review < reviews; review += 1) {
-    saveRepertoireCardReview(db, card.id, {
-      schedule,
-      nextReviewAt: "2026-11-20T09:00:00.000Z",
-      reviewedAt: "2026-11-08T09:00:00.000Z",
+    saveRepertoireCardReview(db, {
+      cardId: card.id,
+      move: key,
+      grade: 3,
+      schedule: {
+        ...schedule,
+        fsrs_state: 2,
+        learning_step: 0,
+        lapses: 0,
+        last_reviewed_at: "2026-11-08T09:00:00.000Z",
+        next_review_at: "2026-11-20T09:00:00.000Z",
+      },
     });
   }
   return cardsOf(db).find((row) => row.id === card.id) as RepertoireTestCard;
@@ -2812,23 +2823,15 @@ describe("rebuilding a unit", () => {
   it("keeps the schedule of a card whose move survives and deletes the card of a move no longer stored", async () => {
     writeItalianTree();
     await generate({}, BRANCH_FIXTURE_NAMES);
-    const survivor = scheduleCard(
-      ON_NF6,
-      { interval_hours: 72, ease_factor: 2.36, repetitions: 3 },
-      2,
-    );
-    const setup = scheduleCard(
-      ON_SETUP,
-      { interval_hours: 24, ease_factor: 2.5, repetitions: 2 },
-      1,
-    );
-    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    const survivor = scheduleCard(ON_NF6, { interval_hours: 72, stability: 3, difficulty: 5.2 }, 2);
+    const setup = scheduleCard(ON_SETUP, { interval_hours: 24, stability: 1, difficulty: 4.1 }, 1);
+    scheduleCard(ON_BC5, { interval_hours: 168, stability: 7, difficulty: 6.3 }, 3);
     writePlanWithinMargin();
 
     const result = await rebuild();
 
     expect(cardsOf(db)).toEqual([survivor, setup]);
-    expect(survivor).toMatchObject({ interval_hours: 72, ease_factor: 2.36, reviews: 2 });
+    expect(survivor).toMatchObject({ interval_hours: 72, difficulty: 5.2, reviews: 2 });
     expect(result).toMatchObject({ cardsKept: 2, cardsDeleted: 1 });
   });
 
@@ -2840,11 +2843,7 @@ describe("rebuilding a unit", () => {
     const other = await generateBranch([...AFTER_C3, "Nf6", "d3"]);
     const branched = variationNamed(other.variation ?? "");
     expect(ownOf(branched.id, AFTER_BC5)?.move_san).toBe("c3");
-    const shared = scheduleCard(
-      ON_BC5,
-      { interval_hours: 168, ease_factor: 2.2, repetitions: 4 },
-      3,
-    );
+    const shared = scheduleCard(ON_BC5, { interval_hours: 168, stability: 7, difficulty: 6.3 }, 3);
     writePlanWithinMargin();
 
     const result = await rebuild();
@@ -2858,7 +2857,7 @@ describe("rebuilding a unit", () => {
   it("changes nothing without rebuild, even where the rule would now answer 3...Bc5 otherwise", async () => {
     writeItalianTree();
     await generate({}, BRANCH_FIXTURE_NAMES);
-    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    scheduleCard(ON_BC5, { interval_hours: 168, stability: 7, difficulty: 6.3 }, 3);
     const stored = rowsOf(db);
     const cards = cardsOf(db);
     writePlanWithinMargin();
@@ -2878,7 +2877,7 @@ describe("rebuilding a unit", () => {
   it("leaves the unit and its cards as they were when the budget cuts the rebuild short", async () => {
     writeItalianTree();
     await generate({}, BRANCH_FIXTURE_NAMES);
-    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    scheduleCard(ON_BC5, { interval_hours: 168, stability: 7, difficulty: 6.3 }, 3);
     const stored = rowsOf(db);
     const cards = cardsOf(db);
     writePlanWithinMargin();
@@ -2905,7 +2904,7 @@ describe("rebuilding a unit", () => {
   it("leaves the unit as it was when the rebuild fails, and keeps no rows apart", async () => {
     writeItalianTree();
     await generate({}, BRANCH_FIXTURE_NAMES);
-    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    scheduleCard(ON_BC5, { interval_hours: 168, stability: 7, difficulty: 6.3 }, 3);
     const stored = rowsOf(db);
     const cards = cardsOf(db);
     writePlanWithinMargin();
@@ -2960,7 +2959,7 @@ describe("rebuilding a unit", () => {
     writeItalianTree();
     await generate({}, BRANCH_FIXTURE_NAMES);
     await generateBranch(D3_BRANCH);
-    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    scheduleCard(ON_BC5, { interval_hours: 168, stability: 7, difficulty: 6.3 }, 3);
     const stored = rowsOf(db);
     const cards = cardsOf(db);
     writePlanWithinMargin();
@@ -2985,7 +2984,7 @@ describe("rebuilding a unit", () => {
     const stored = comparableRows(rowsOf(db));
     const card = scheduleCard(
       { line: SCANDINAVIAN, uci: "e4d5" },
-      { interval_hours: 72, ease_factor: 2.36, repetitions: 3 },
+      { interval_hours: 72, stability: 3, difficulty: 5.2 },
       2,
     );
 
@@ -3018,8 +3017,8 @@ describe("rebuilding a unit", () => {
     writeItalianTree();
     const log = new RecordingLog();
     await postRepertoireRun({ sources: ["repertoire"] }, log, BRANCH_FIXTURE_NAMES);
-    scheduleCard(ON_NF6, { interval_hours: 72, ease_factor: 2.36, repetitions: 3 }, 2);
-    scheduleCard(ON_BC5, { interval_hours: 168, ease_factor: 2.2, repetitions: 4 }, 3);
+    scheduleCard(ON_NF6, { interval_hours: 72, stability: 3, difficulty: 5.2 }, 2);
+    scheduleCard(ON_BC5, { interval_hours: 168, stability: 7, difficulty: 6.3 }, 3);
     writePlanWithinMargin();
 
     const response = await postRepertoireRun(
@@ -3171,14 +3170,10 @@ describe("what a unit keeps of how it was built", () => {
     writeStyleChoice();
     await styled(POINTS_ON.soundness);
     expect(ownAt(AFTER_BC5)?.move_san).toBe("O-O");
-    const kept = scheduleCard(
-      ON_SETUP,
-      { interval_hours: 72, ease_factor: 2.36, repetitions: 3 },
-      2,
-    );
+    const kept = scheduleCard(ON_SETUP, { interval_hours: 72, stability: 3, difficulty: 5.2 }, 2);
     scheduleCard(
       { line: AFTER_BC5, uci: "e1g1" },
-      { interval_hours: 168, ease_factor: 2.2, repetitions: 4 },
+      { interval_hours: 168, stability: 7, difficulty: 6.3 },
       3,
     );
 
@@ -3297,11 +3292,7 @@ describe("GET /api/repertoires and a rebuild posted with what it says", () => {
     const built = await post(app, { sources: ["repertoire"], points: POINTS_321 });
     expect(built.statusCode).toBe(200);
     expect((await listedUnits(app)).map((unit) => unit.points)).toEqual([POINTS_321]);
-    const card = scheduleCard(
-      ON_SETUP,
-      { interval_hours: 72, ease_factor: 2.36, repetitions: 3 },
-      2,
-    );
+    const card = scheduleCard(ON_SETUP, { interval_hours: 72, stability: 3, difficulty: 5.2 }, 2);
 
     const rebuilt = await post(app, {
       sources: ["repertoire"],

@@ -115,9 +115,9 @@ function addFound(id: string, fixture: FoundFixture = {}): void {
   }
   if (fixture.card !== undefined) {
     db.prepare(
-      `INSERT INTO found_cards (position_id, interval_hours, ease_factor, repetitions,
+      `INSERT INTO found_cards (position_id, interval_hours, fsrs_state, stability, difficulty,
          next_review_at, introduced_at, reviews, last_reviewed_at)
-       VALUES (?, 24, 2.5, 2, ?, ?, 2, ?)`,
+       VALUES (?, 24, 2, 1, 2.1181, ?, ?, 2, ?)`,
     ).run(id, fixture.card, hoursFromT0(-48), hoursFromT0(-24));
   }
 }

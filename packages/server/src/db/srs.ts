@@ -1,4 +1,5 @@
 import type { Database } from "better-sqlite3";
+import type { CardState, Grade, Schedule } from "../srs/fsrs.js";
 import type { PlayerColor } from "./games.js";
 
 export interface CardRecord {
@@ -16,8 +17,12 @@ export interface CardRecord {
   createdAt: string;
   nextReviewAt: string;
   intervalHours: number;
-  easeFactor: number;
-  repetitions: number;
+  fsrsState: CardState;
+  stability: number | null;
+  difficulty: number | null;
+  learningStep: number;
+  lapses: number;
+  lastReviewedAt: string | null;
   /** The puzzle the card was born from; no foreign key, so it can name a puzzle that is gone. */
   puzzleId: string | null;
 }
@@ -53,8 +58,12 @@ interface CardRow {
   created_at: string;
   next_review_at: string;
   interval_hours: number;
-  ease_factor: number;
-  repetitions: number;
+  fsrs_state: CardState;
+  stability: number | null;
+  difficulty: number | null;
+  learning_step: number;
+  lapses: number;
+  last_reviewed_at: string | null;
   puzzle_id: string | null;
 }
 
@@ -74,9 +83,27 @@ function toCard(row: CardRow): CardRecord {
     createdAt: row.created_at,
     nextReviewAt: row.next_review_at,
     intervalHours: row.interval_hours,
-    easeFactor: row.ease_factor,
-    repetitions: row.repetitions,
+    fsrsState: row.fsrs_state,
+    stability: row.stability,
+    difficulty: row.difficulty,
+    learningStep: row.learning_step,
+    lapses: row.lapses,
+    lastReviewedAt: row.last_reviewed_at,
     puzzleId: row.puzzle_id,
+  };
+}
+
+/** The columns the scheduler reads and writes, as one object. */
+export function scheduleOf(card: CardRecord): Schedule {
+  return {
+    fsrs_state: card.fsrsState,
+    stability: card.stability,
+    difficulty: card.difficulty,
+    learning_step: card.learningStep,
+    lapses: card.lapses,
+    interval_hours: card.intervalHours,
+    last_reviewed_at: card.lastReviewedAt,
+    next_review_at: card.nextReviewAt,
   };
 }
 
@@ -150,42 +177,24 @@ export function listDueCards(
 export interface NewReview {
   cardId: number;
   reviewedAt: string;
-  quality: number;
+  grade: Grade;
   answeredUci: string;
   correct: boolean;
 }
 
+// `quality`, the old 0 to 5 scale, stays NULL: only the rows written before the grades have one.
 export function insertReview(db: Database, review: NewReview): void {
   db.prepare(
-    `INSERT INTO srs_reviews (card_id, reviewed_at, quality, answered_uci, correct)
+    `INSERT INTO srs_reviews (card_id, reviewed_at, grade, answered_uci, correct)
      VALUES (?, ?, ?, ?, ?)`,
-  ).run(
-    review.cardId,
-    review.reviewedAt,
-    review.quality,
-    review.answeredUci,
-    review.correct ? 1 : 0,
-  );
+  ).run(review.cardId, review.reviewedAt, review.grade, review.answeredUci, review.correct ? 1 : 0);
 }
 
-export function updateSchedule(
-  db: Database,
-  id: number,
-  schedule: {
-    nextReviewAt: string;
-    intervalHours: number;
-    easeFactor: number;
-    repetitions: number;
-  },
-): void {
+export function updateSchedule(db: Database, id: number, schedule: Schedule): void {
   db.prepare(
-    `UPDATE srs_cards SET next_review_at = ?, interval_hours = ?, ease_factor = ?, repetitions = ?
-     WHERE id = ?`,
-  ).run(
-    schedule.nextReviewAt,
-    schedule.intervalHours,
-    schedule.easeFactor,
-    schedule.repetitions,
-    id,
-  );
+    `UPDATE srs_cards SET fsrs_state = @fsrs_state, stability = @stability, difficulty = @difficulty,
+       learning_step = @learning_step, lapses = @lapses, interval_hours = @interval_hours,
+       last_reviewed_at = @last_reviewed_at, next_review_at = @next_review_at
+     WHERE id = @id`,
+  ).run({ ...schedule, id });
 }
