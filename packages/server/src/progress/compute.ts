@@ -67,20 +67,22 @@ function recentGames(db: Database): ProgressGame[] {
   }));
 }
 
+// CROSS JOIN makes the attempts the outer loop, so the cost follows the student's history. With a
+// plain JOIN the planner, which has no row counts here, walks every puzzle in motif order to spare a
+// sort of a few groups and probes the attempts once per puzzle: seconds over the Lichess database.
+export const PUZZLES_BY_MOTIF_SQL = `
+  SELECT p.motif, COUNT(*) AS attempts, SUM(a.solved) AS solved,
+    COALESCE(SUM(a.attempted_at >= ? AND a.attempted_at <= ?), 0) AS attempts_30d,
+    COALESCE(SUM(a.first_try AND a.attempted_at >= ? AND a.attempted_at <= ?), 0) AS solved_30d
+  FROM puzzle_attempts a CROSS JOIN puzzles p ON p.id = a.puzzle_id
+  GROUP BY p.motif ORDER BY p.motif`;
+
 // The 30-day rate is accuracy: only a puzzle solved with no wrong try counts, so one solved after
 // retries or given up is an attempt and not a success.
 function puzzlesByMotif(db: Database, now: Date): ProgressResponse["puzzles_by_motif"] {
   const from = new Date(now.getTime() - MONTH_MS).toISOString();
   const to = now.toISOString();
-  const rows = db
-    .prepare(
-      `SELECT p.motif, COUNT(*) AS attempts, SUM(a.solved) AS solved,
-         COALESCE(SUM(a.attempted_at >= ? AND a.attempted_at <= ?), 0) AS attempts_30d,
-         COALESCE(SUM(a.first_try AND a.attempted_at >= ? AND a.attempted_at <= ?), 0) AS solved_30d
-       FROM puzzle_attempts a JOIN puzzles p ON p.id = a.puzzle_id
-       GROUP BY p.motif ORDER BY p.motif`,
-    )
-    .all(from, to, from, to) as {
+  const rows = db.prepare(PUZZLES_BY_MOTIF_SQL).all(from, to, from, to) as {
     motif: string;
     attempts: number;
     solved: number;

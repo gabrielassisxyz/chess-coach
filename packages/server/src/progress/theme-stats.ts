@@ -47,14 +47,15 @@ function themesOfPuzzle(themes: string | null, motif: string): ReadonlySet<strin
   return new Set(keys.filter((key) => key !== "" && !ORIGIN_THEMES.has(key)));
 }
 
+// CROSS JOIN keeps the attempts as the outer loop, as in the progress route's per-motif count, so a
+// new index or a bigger puzzle table never turns this into a walk of every puzzle.
+export const READ_THEMED_ATTEMPTS_SQL = `
+  SELECT a.attempted_at, a.first_try, p.difficulty_rating AS rating, p.themes, p.motif
+  FROM puzzle_attempts a CROSS JOIN puzzles p ON p.id = a.puzzle_id
+  WHERE p.difficulty_rating IS NOT NULL`;
+
 function readThemedAttempts(db: Database): ThemedAttempt[] {
-  const rows = db
-    .prepare(
-      `SELECT a.attempted_at, a.first_try, p.difficulty_rating AS rating, p.themes, p.motif
-       FROM puzzle_attempts a JOIN puzzles p ON p.id = a.puzzle_id
-       WHERE p.difficulty_rating IS NOT NULL`,
-    )
-    .all() as {
+  const rows = db.prepare(READ_THEMED_ATTEMPTS_SQL).all() as {
     attempted_at: string;
     first_try: number;
     rating: number;

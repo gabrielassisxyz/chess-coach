@@ -50,15 +50,16 @@ interface RatedAttemptRow {
   rating: number;
 }
 
+// CROSS JOIN keeps the attempts as the outer loop, as in the progress route's per-motif count, so a
+// new index or a bigger puzzle table never turns this into a walk of every puzzle.
+export const READ_RATED_ATTEMPTS_SQL = `
+  SELECT a.attempted_at, a.first_try, p.difficulty_rating AS rating
+  FROM puzzle_attempts a CROSS JOIN puzzles p ON p.id = a.puzzle_id
+  WHERE p.difficulty_rating IS NOT NULL
+  ORDER BY a.attempted_at, a.id`;
+
 function readRatedAttempts(db: Database): RatedAttemptRow[] {
-  return db
-    .prepare(
-      `SELECT a.attempted_at, a.first_try, p.difficulty_rating AS rating
-       FROM puzzle_attempts a JOIN puzzles p ON p.id = a.puzzle_id
-       WHERE p.difficulty_rating IS NOT NULL
-       ORDER BY a.attempted_at, a.id`,
-    )
-    .all() as RatedAttemptRow[];
+  return db.prepare(READ_RATED_ATTEMPTS_SQL).all() as RatedAttemptRow[];
 }
 
 export interface RatingReplay {
