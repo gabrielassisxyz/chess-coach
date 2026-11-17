@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Practice } from "../src/screens/Practice.js";
 import { NEEDS_ENGINE_TEXT, NONE } from "../src/state/practice.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
-import { ratingChartPoints } from "../src/state/puzzle-rating-api.js";
+import { ratingChartAxis, ratingChartPoints } from "../src/state/puzzle-rating-api.js";
 import {
   noPlayedColour,
   openPracticePage,
@@ -409,7 +409,10 @@ describe("PracticeDashboard", () => {
 
     const board = dashboardRoot();
     const chartCard = within(board).getByRole("region", { name: "Puzzle rating" });
-    expect(await within(chartCard).findByText("1500")).toBeTruthy();
+    const current = await within(chartCard).findByText("1500", {
+      selector: ".practice-dashboard__rating-current",
+    });
+    expect(current).toBeTruthy();
     expect(within(chartCard).getByText("low 1450 \u00b7 high 1508")).toBeTruthy();
     expect(within(chartCard).getByText("30 days ago")).toBeTruthy();
     expect(within(chartCard).getByText("today")).toBeTruthy();
@@ -417,10 +420,20 @@ describe("PracticeDashboard", () => {
     const svg = within(chartCard).getByRole("img", { name: "Puzzle rating over time" });
     expect(svg.getAttribute("viewBox")).toBe("0 0 600 120");
     expect(svg.getAttribute("preserveAspectRatio")).toBe("none");
-    const midline = svg.querySelector("line");
-    expect(midline?.getAttribute("y1")).toBe("60");
-    expect(midline?.getAttribute("y2")).toBe("60");
-    expect(midline?.getAttribute("stroke")).toBe("var(--surface-2)");
+    expect(svg.querySelector("text")).toBeNull();
+    const gridlines = svg.querySelectorAll("line");
+    expect(gridlines.length).toBeGreaterThanOrEqual(2);
+    expect(gridlines.length).toBeLessThanOrEqual(5);
+    for (const gridline of gridlines) {
+      expect(gridline.getAttribute("stroke")).toBe("var(--surface-2)");
+      expect(gridline.getAttribute("x1")).toBe("0");
+      expect(gridline.getAttribute("x2")).toBe("600");
+    }
+    const yaxis = chartCard.querySelector(".practice-dashboard__chart-yaxis") as HTMLElement;
+    expect(yaxis).toBeTruthy();
+    expect(svg.querySelector(".practice-dashboard__chart-yaxis-value")).toBeNull();
+    expect(within(yaxis).getByText("1450")).toBeTruthy();
+    expect(within(yaxis).getByText("1500")).toBeTruthy();
     const polyline = svg.querySelector("polyline");
     expect(polyline?.getAttribute("stroke")).toBe("var(--accent)");
     expect(polyline?.getAttribute("stroke-width")).toBe("2");
@@ -437,6 +450,121 @@ describe("PracticeDashboard", () => {
 
   it("draws a flat midline polyline without NaN when rating history has one day", () => {
     expect(ratingChartPoints([{ day: "2026-06-10", rating: 1500 }])).toBe("0.0,60.0 600.0,60.0");
+  });
+
+  it("renders Y axis values 1200 to 1600 for a 1200 to 1534 series at the axis heights", async () => {
+    const ratings = Array.from({ length: 30 }, (_, index) => Math.round(1200 + (334 * index) / 29));
+    const points = ratings.map((rating, index) => ({
+      day: new Date(Date.parse("2026-06-10T00:00:00Z") - (29 - index) * 86_400_000)
+        .toISOString()
+        .slice(0, 10),
+      rating,
+    }));
+    expect(ratingChartAxis(points)).toEqual([1200, 1300, 1400, 1500, 1600]);
+    const fetchRatingHistory = vi.fn(async () => makeHistory({ points }));
+    renderPractice({ fetchRatingHistory });
+    openPracticePage("Dashboard");
+
+    const board = dashboardRoot();
+    const chartCard = within(board).getByRole("region", { name: "Puzzle rating" });
+    const yaxis = (await within(chartCard).findByText("1600")).closest(
+      ".practice-dashboard__chart-yaxis",
+    ) as HTMLElement;
+    expect(yaxis).toBeTruthy();
+    for (const value of ["1200", "1300", "1400", "1500", "1600"]) {
+      expect(within(yaxis).getByText(value)).toBeTruthy();
+    }
+    const tops = [
+      ...yaxis.querySelectorAll<HTMLElement>(".practice-dashboard__chart-yaxis-value"),
+    ].map((label) => [label.textContent, Number.parseFloat(label.style.top)] as const);
+    expect(tops.map(([text]) => text)).toEqual(["1600", "1500", "1400", "1300", "1200"]);
+    const expectedTops = [8, 34, 60, 86, 112].map((y) => (y / 120) * 100);
+    for (const [index, [, top]] of tops.entries()) {
+      expect(top).toBeCloseTo(expectedTops[index] as number, 3);
+    }
+    const svg = within(chartCard).getByRole("img", { name: "Puzzle rating over time" });
+    const gridlines = svg.querySelectorAll("line");
+    expect(gridlines).toHaveLength(5);
+    const polyline = svg.querySelector("polyline");
+    const coords = polyline?.getAttribute("points")?.split(" ") ?? [];
+    expect(coords).toHaveLength(30);
+    expect(coords[0]).toBe("0.0,112.0");
+    expect(coords[coords.length - 1]?.split(",")[1]).toBe("25.2");
+  });
+
+  it("renders Y axis values 1500 to 1575 for a flat 1534 series at the height of 1534", async () => {
+    const points = Array.from({ length: 10 }, (_, index) => ({
+      day: new Date(Date.parse("2026-06-10T00:00:00Z") - (9 - index) * 86_400_000)
+        .toISOString()
+        .slice(0, 10),
+      rating: 1534,
+    }));
+    expect(ratingChartAxis(points)).toEqual([1500, 1525, 1550, 1575]);
+    const fetchRatingHistory = vi.fn(async () => makeHistory({ points }));
+    renderPractice({ fetchRatingHistory });
+    openPracticePage("Dashboard");
+
+    const board = dashboardRoot();
+    const chartCard = within(board).getByRole("region", { name: "Puzzle rating" });
+    const yaxis = (await within(chartCard).findByText("1575")).closest(
+      ".practice-dashboard__chart-yaxis",
+    ) as HTMLElement;
+    expect(yaxis).toBeTruthy();
+    for (const value of ["1500", "1525", "1550", "1575"]) {
+      expect(within(yaxis).getByText(value)).toBeTruthy();
+    }
+    const svg = within(chartCard).getByRole("img", { name: "Puzzle rating over time" });
+    expect(svg.querySelectorAll("line")).toHaveLength(4);
+    const polyline = svg.querySelector("polyline");
+    const coords = polyline?.getAttribute("points")?.split(" ") ?? [];
+    expect(coords).toHaveLength(10);
+    for (const pair of coords) {
+      expect(pair.split(",")[1]).toBe("64.9");
+    }
+  });
+
+  it("keeps Y axis values as HTML outside the stretched SVG with a fixed size", async () => {
+    renderPractice();
+    openPracticePage("Dashboard");
+
+    const board = dashboardRoot();
+    const chartCard = within(board).getByRole("region", { name: "Puzzle rating" });
+    const svg = await within(chartCard).findByRole("img", {
+      name: "Puzzle rating over time",
+    });
+    expect(svg.getAttribute("preserveAspectRatio")).toBe("none");
+    expect(svg.querySelector("text")).toBeNull();
+    const yaxis = chartCard.querySelector(".practice-dashboard__chart-yaxis") as HTMLElement;
+    expect(yaxis).toBeTruthy();
+    expect(yaxis.closest("svg")).toBeNull();
+    expect(svg.querySelector(".practice-dashboard__chart-yaxis-value")).toBeNull();
+
+    const cssPath = join(__dirname, "..", "src", "styles", "practice-hub.css");
+    const css = readFileSync(cssPath, "utf8");
+    expect(css).toContain(".practice-dashboard__chart-yaxis {");
+    expect(css).toContain("font-size: var(--text-xs);");
+    const [, ...rest] = css.split("@media (max-width: 899px)");
+    const mobile = rest.join("@media (max-width: 899px)");
+    expect(mobile).not.toContain(".practice-dashboard__chart-yaxis-value {");
+    expect(mobile).not.toMatch(/\.practice-dashboard__chart-yaxis\s*\{[^}]*font-size/);
+  });
+
+  it("sizes the Y axis values by one fixed rule that never follows the card", () => {
+    const css = readFileSync(join(__dirname, "..", "src", "styles", "practice-hub.css"), "utf8");
+    const rule = (selector: string): string => {
+      const start = css.indexOf(`${selector} {`);
+      expect(start).toBeGreaterThanOrEqual(0);
+      return css.slice(start, css.indexOf("}", start));
+    };
+    expect(rule(".practice-dashboard__chart-yaxis")).toContain("font-size: var(--text-xs);");
+    expect(rule(".practice-dashboard__chart-yaxis")).toContain("height: 140px;");
+    expect(rule(".practice-dashboard__chart")).toContain("height: 140px;");
+    expect(rule(".practice-dashboard__chart-yaxis-value")).not.toContain("font-size");
+    const sizes = css.match(/\.practice-dashboard__chart-yaxis[^{]*\{[^}]*\}/g) ?? [];
+    expect(sizes.length).toBeGreaterThanOrEqual(2);
+    for (const block of sizes) {
+      expect(block).not.toMatch(/font-size:\s*[^;]*(%|vw|vh|vmin|vmax|cqw|cqh|cqi|cqb|em\b)/);
+    }
   });
 
   it("caps Improvement areas and Strengths at five rows without Train buttons and navigates on See all", async () => {
@@ -789,5 +917,7 @@ describe("the design checklist", () => {
     expect(record).toContain("`48px` theme rows");
     expect(record).toContain("Puzzle rating");
     expect(record).toContain("Under 900 px");
+    expect(record).toContain("Y axis");
+    expect(record).toContain("gridline");
   });
 });

@@ -23,6 +23,7 @@ import { NEEDS_ENGINE_TEXT, NONE } from "../state/practice.js";
 import {
   type FetchPuzzleRatingHistory,
   fetchPuzzleRatingHistoryFromServer,
+  ratingChartGridlines,
   ratingChartPoints,
 } from "../state/puzzle-rating-api.js";
 import {
@@ -201,6 +202,7 @@ function DashboardRatingCard({
 }) {
   const ready = ratingHistory.status === "ready" ? ratingHistory.value : null;
   const polyline = ready ? ratingChartPoints(ready.points) : null;
+  const gridlines = ready ? ratingChartGridlines(ready.points) : [];
 
   return (
     <section
@@ -239,25 +241,48 @@ function DashboardRatingCard({
       ) : null}
       {ready ? (
         <>
-          <svg
-            className="practice-dashboard__chart"
-            viewBox="0 0 600 120"
-            preserveAspectRatio="none"
-            role="img"
-            aria-label="Puzzle rating over time"
-          >
-            <line x1="0" y1="60" x2="600" y2="60" stroke="var(--surface-2)" strokeWidth={1} />
-            {polyline ? (
-              <polyline
-                fill="none"
-                stroke="var(--accent)"
-                strokeWidth={2}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                points={polyline}
-              />
-            ) : null}
-          </svg>
+          <div className="practice-dashboard__chart-row">
+            <div className="practice-dashboard__chart-yaxis">
+              {[...gridlines].reverse().map(({ value, y }) => (
+                <span
+                  key={value}
+                  className="practice-dashboard__chart-yaxis-value"
+                  style={{ top: `${(y / 120) * 100}%` }}
+                >
+                  {value}
+                </span>
+              ))}
+            </div>
+            <svg
+              className="practice-dashboard__chart"
+              viewBox="0 0 600 120"
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="Puzzle rating over time"
+            >
+              {gridlines.map(({ value, y }) => (
+                <line
+                  key={value}
+                  x1="0"
+                  y1={y}
+                  x2="600"
+                  y2={y}
+                  stroke="var(--surface-2)"
+                  strokeWidth={1}
+                />
+              ))}
+              {polyline ? (
+                <polyline
+                  fill="none"
+                  stroke="var(--accent)"
+                  strokeWidth={2}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  points={polyline}
+                />
+              ) : null}
+            </svg>
+          </div>
           <div className="practice-dashboard__chart-axis">
             <span>{chartStartLabel(ready.points, days)}</span>
             <span>today</span>
