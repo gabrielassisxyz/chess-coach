@@ -243,6 +243,9 @@ function storedItemOf(entry: QueueEntry): StoredRunItem {
 
 const turnOf = (fen: string): PlayerColor => (fen.split(" ")[1] === "b" ? "black" : "white");
 
+// A puzzle made from a position of the student's games, by the prefix its generator gives the id.
+const isOwnGamesPuzzle = (puzzleId: string): boolean => puzzleId.startsWith("own:");
+
 // Two drawing snapshots hold the same shapes in the same order.
 function sameDrawnShapes(a: readonly DrawnShape[], b: readonly DrawnShape[]): boolean {
   if (a.length !== b.length) return false;
@@ -1255,8 +1258,11 @@ export class TrainingRun implements PracticeRunPort {
     s.ratingChange = this.movePuzzleRating(item.rating ?? null, firstTry);
     s.note = this.foundNoteOf(item);
     this.tally(solved);
-    // A position from the student's games keeps its own schedule, so a miss stays off the review desk.
-    if (!firstTry && this.mode !== "found") {
+    // A position from the student's games keeps its own schedule, so a miss stays off the review
+    // desk. Another mode or the coach can still serve its puzzle, and a miss there makes no card
+    // either: the position holds no tactic, which is what a review card asks the student to find.
+    const fromOwnGames = this.mode === "found" || isOwnGamesPuzzle(item.puzzle_id);
+    if (!firstTry && !fromOwnGames) {
       this.cardFromMiss(item, state, s.tries.find((t) => !t.correct)?.uci ?? null);
     }
     // Nothing needed explaining, so the coach hears of it only when the student asks: a row written
