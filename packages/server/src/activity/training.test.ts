@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -23,6 +23,7 @@ import { getCard, insertCard, updateSchedule } from "../db/srs.js";
 import { endRunsLeftOpenAtStart } from "../db/training.js";
 import { GameService } from "../game/service.js";
 import { type Log, RecordingLog, silentLog } from "../log.js";
+import { positionKey, puzzleId } from "../openings/from-games.js";
 import { computeThemeStats } from "../progress/theme-stats.js";
 import { importLichessPuzzles } from "../puzzles/lichess-import.js";
 import { currentPuzzleRating, setPuzzleRating } from "../puzzles/rating.js";
@@ -3853,14 +3854,14 @@ describe("a drill of the positions from the student's games", () => {
     expect(currentPuzzleRating(db)).toBe(1350);
   });
 
-  it("still turns the same puzzle missed in mode puzzles into a review card", async () => {
-    addFound("missed");
+  it("writes no review card and rates no found card when its puzzle is missed in mode puzzles", async () => {
+    addFound("own:missed");
     const { activity } = setup();
     await activity.startTraining({ mode: "puzzles", motif: "opening-black" });
     await activity.trainingTry("d7d5");
-    await activity.trainingTry("e7e5");
-    expect(db.prepare("SELECT puzzle_id FROM srs_cards").all()).toEqual([{ puzzle_id: "missed" }]);
-    expect(foundCard("missed")).toBeUndefined();
+    expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
+    expect(db.prepare("SELECT puzzle_id FROM srs_cards").all()).toEqual([]);
+    expect(foundCard("own:missed")).toBeUndefined();
   });
 
   it("keeps the run in training_runs and ends it as left when the student leaves the board", async () => {
@@ -4145,5 +4146,104 @@ describe("a drill of the positions from games narrowed to one opening", () => {
       await code(activity.startTraining({ mode: "found", scope: "all", opening: "' OR '1'='1" })),
     ).toBe("empty_queue");
     expect(runCount()).toBe(0);
+  });
+});
+
+describe("a miss on a position from the student's games, in any mode but its own drill", () => {
+  const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+  // The id the generator gives the position, so the rule is held to the prefix it really writes.
+  const OWN = puzzleId(positionKey(AFTER_E4));
+  // A Lichess id on a library row of the same motif, so that all three ways serve it too: only the
+  // id tells the two puzzles apart.
+  const LICHESS = "lichess-db:00sHx";
+
+  type Served = Promise<ActivityState | null>;
+  const WAYS: [
+    string,
+    TrainingActivity["mode"],
+    (activity: ActivityService, id: string) => Served,
+  ][] = [
+    [
+      "the openings drill",
+      "openings",
+      (activity) => activity.startTraining({ mode: "openings", color: "black" }),
+    ],
+    [
+      "a puzzles queue",
+      "puzzles",
+      (activity) => activity.startTraining({ mode: "puzzles", motif: "opening-black" }),
+    ],
+    [
+      "a single puzzle the coach serves",
+      "puzzles",
+      (activity, id) => activity.startTrainingItem({ kind: "puzzle", id }),
+    ],
+  ];
+
+  const cardPuzzles = (): unknown[] => db.prepare("SELECT puzzle_id FROM srs_cards").all();
+  const attempts = (): unknown[] =>
+    db
+      .prepare(
+        "SELECT puzzle_id, solved, first_try, tries, gave_up, hinted FROM puzzle_attempts ORDER BY id",
+      )
+      .all();
+
+  it.each(WAYS)(
+    "makes no review card in %s, and still writes the attempt",
+    async (_way, mode, start) => {
+      addPuzzle(OWN, "opening-black", AFTER_E4, ["e7e5"]);
+      const { activity } = setup();
+      const served = training(await start(activity, OWN));
+      expect(served).toMatchObject({ mode, item: { kind: "puzzle", puzzle_id: OWN } });
+      await activity.trainingTry("d7d5");
+      expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
+      expect(cardPuzzles()).toEqual([]);
+      expect(attempts()).toEqual([
+        { puzzle_id: OWN, solved: 1, first_try: 0, tries: 1, gave_up: 0, hinted: 0 },
+      ]);
+    },
+  );
+
+  it.each(WAYS)(
+    "still makes one review card of a Lichess puzzle missed in %s",
+    async (_way, mode, start) => {
+      addPuzzle(LICHESS, "opening-black", AFTER_E4, ["e7e5"]);
+      const { activity } = setup();
+      const served = training(await start(activity, LICHESS));
+      expect(served).toMatchObject({ mode, item: { kind: "puzzle", puzzle_id: LICHESS } });
+      await activity.trainingTry("d7d5");
+      expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
+      expect(cardPuzzles()).toEqual([{ puzzle_id: LICHESS }]);
+      expect(attempts()).toEqual([
+        { puzzle_id: LICHESS, solved: 1, first_try: 0, tries: 1, gave_up: 0, hinted: 0 },
+      ]);
+    },
+  );
+
+  it("makes none either when the solution is shown or the solve took a hint", async () => {
+    addPuzzle(OWN, "opening-black", AFTER_E4, ["e7e5"]);
+    const { activity } = setup();
+    await activity.startTrainingItem({ kind: "puzzle", id: OWN });
+    expect(training(await activity.trainingShowSolution()).status).toBe("failed");
+    await activity.endTraining();
+    await activity.startTrainingItem({ kind: "puzzle", id: OWN });
+    await activity.trainingHint();
+    expect(training(await activity.trainingTry("e7e5")).status).toBe("solved");
+    expect(cardPuzzles()).toEqual([]);
+    expect(attempts()).toEqual([
+      { puzzle_id: OWN, solved: 0, first_try: 0, tries: 0, gave_up: 1, hinted: 0 },
+      { puzzle_id: OWN, solved: 1, first_try: 0, tries: 0, gave_up: 0, hinted: 1 },
+    ]);
+  });
+
+  it("is what the Grading entry of AGENTS.md says", () => {
+    const agents = readFileSync(join(import.meta.dirname, "../../../../AGENTS.md"), "utf8");
+    const entry = /- \*\*Grading:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "";
+    const grading = entry.replace(/\s+/g, " ");
+    expect(grading).toContain(
+      "a position from the student's games never becomes a review card: a puzzle whose id starts with `own:` makes none in any mode",
+    );
+    expect(grading).toContain("a single puzzle the coach serves included");
+    expect(grading).toContain("still writes its `puzzle_attempts` row");
   });
 });

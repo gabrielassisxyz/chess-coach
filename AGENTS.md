@@ -264,7 +264,13 @@
   the item open at the same position; `show_solution` ends it as given up and the board plays the
   solution line. A right answer ends with its move on the board, for a card as for a puzzle's last
   move: `fen` and `exploring.fen` are the position after it. A card given up keeps the position it
-  was served in, because `solution_line` is the moves from `fen`. A card born from a puzzle
+  was served in, because `solution_line` is the moves from `fen`. A puzzle not solved first try
+  becomes a review card, one per puzzle, but a position from the student's games never becomes a
+  review card: a puzzle whose id starts with `own:` makes none in any mode, a single puzzle the coach
+  serves included, and still writes its `puzzle_attempts` row. Such a position holds no tactic to
+  find, and the ones From my games lists are trained by its drill, on a schedule of their own;
+  migration 034 deleted the cards the old openings drill had made of these puzzles, with their
+  reviews. A card born from a puzzle
   (`srs_cards.puzzle_id`) is reviewed through the puzzle's whole stored solution, when the puzzle is
   still stored, has an odd number of plies from 3 up and starts from the card's position and first
   move; any other card is graded on its own `expected_uci` alone. It stays an item of kind `card` and
