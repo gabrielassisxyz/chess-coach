@@ -1,4 +1,6 @@
-import type { TrainingActivity } from "@chess-coach/shared";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { CardOrigin, TrainingActivity } from "@chess-coach/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -187,6 +189,118 @@ describe("headingOf", () => {
     );
     expect(html).toContain("Italian Opening");
     expect(html).toContain('class="practice-item__opening-name">Italian Game: Giuoco Piano</p>');
+  });
+});
+
+// A review card at the third place of a queue of twenty; without an origin it is the item an older
+// server sent.
+function reviewCard(
+  origin?: CardOrigin,
+  overrides: Partial<TrainingActivity> = {},
+): TrainingActivity {
+  return puzzle({
+    mode: "srs",
+    item: {
+      kind: "card",
+      card_id: 7,
+      exposure_id: "ex-1",
+      prompt_fen: START_FEN,
+      student_color: "white",
+      rating_preview: { "1": 1 / 60, "2": 0.1, "3": 10 / 60, "4": 192 },
+      position_in_queue: 3,
+      queue_length: 20,
+      ...(origin ? { origin } : {}),
+    },
+    ...overrides,
+  });
+}
+
+describe("the heading of a review card", () => {
+  const HEADINGS = [
+    ["puzzle", "Card 3 of 20 · Missed puzzle"],
+    ["game", "Card 3 of 20 · From your game"],
+    ["coach", "Card 3 of 20 · Coach card"],
+  ] as const;
+
+  const renderColumn = (training: TrainingActivity): string =>
+    renderToStaticMarkup(
+      createElement(PracticeColumn, {
+        training,
+        view: trainingView(training),
+        actions: {
+          showSolution() {},
+          rate() {},
+          next() {},
+          end() {},
+          hint() {},
+          toggleScratch() {},
+          takeBack() {},
+          resetLine() {},
+        },
+        card: stateCardOf(training, trainingView(training), null, 0),
+        elapsedMs: 0,
+        scratchLine: null,
+        shownPly: 0,
+        engineStrip: null,
+      }),
+    );
+
+  it.each(HEADINGS)("ends with what a card of origin %s was made from", (origin, title) => {
+    expect(headingOf(reviewCard(origin), null)).toEqual({ title, tag: null, openingName: null });
+  });
+
+  it.each(HEADINGS)("is the heading the column draws for origin %s", (origin, title) => {
+    const html = renderColumn(reviewCard(origin));
+    expect(html).toContain(`<h2 class="practice-item__title">${title}</h2>`);
+    expect(html).not.toContain("practice-item__tag");
+  });
+
+  it("says it from the first move to the end of the item", () => {
+    for (const status of ["prompt", "in_progress", "solved", "failed", "rated"] as const) {
+      expect(headingOf(reviewCard("puzzle", { status }), null).title).toBe(
+        "Card 3 of 20 · Missed puzzle",
+      );
+    }
+  });
+
+  it("keeps the heading it had for a card that names no origin", () => {
+    expect(headingOf(reviewCard(), null)).toEqual({
+      title: "Card 3 of 20",
+      tag: null,
+      openingName: null,
+    });
+    expect(renderColumn(reviewCard())).toContain(
+      '<h2 class="practice-item__title">Card 3 of 20</h2>',
+    );
+  });
+
+  it("leaves the line over the conversation as it was", () => {
+    expect(contextLineOf(reviewCard("puzzle"), null)).toBe("Card 3 · you play White");
+    expect(contextLineOf(reviewCard(), null)).toBe("Card 3 · you play White");
+  });
+
+  it("is recorded with the card's note in the Practice column of the design check", () => {
+    const check = readFileSync(join(import.meta.dirname, "../DESIGN-CHECK.md"), "utf8");
+    // The paragraphs are wrapped, so a phrase may break across a line.
+    const paragraph = check
+      .split("\n\n")
+      .map((text) => text.replace(/\s+/g, " "))
+      .find(
+        (text) =>
+          text.startsWith("The Practice column was re-checked") && text.includes("review card"),
+      );
+    expect(paragraph).toBeDefined();
+    for (const said of [
+      "`Missed puzzle`",
+      "`From your game`",
+      "`Coach card`",
+      "the card's explanation",
+      "Why",
+      "test/practice-item.test.ts",
+      "M1 and M2",
+    ]) {
+      expect(paragraph).toContain(said);
+    }
   });
 });
 
