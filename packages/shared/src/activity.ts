@@ -97,12 +97,19 @@ export const RatingPreviewSchema = z.object({
 });
 export type RatingPreview = z.infer<typeof RatingPreviewSchema>;
 
+// What a review card was made from, said before the first move: a puzzle the student missed holds
+// a tactic, while a card from one of the student's games or from the coach may ask for a quiet move.
+export const CardOriginSchema = z.enum(["puzzle", "game", "coach"]);
+export type CardOrigin = z.infer<typeof CardOriginSchema>;
+
+// The server always sends `origin`; a fixture need not carry it.
 export const CardItemSchema = z.object({
   kind: z.literal("card"),
   card_id: z.number().int(),
   exposure_id: z.string(),
   prompt_fen: z.string(),
   student_color: ColorSchema,
+  origin: CardOriginSchema.optional(),
   rating_preview: RatingPreviewSchema,
   ...queuePosition,
 });
@@ -209,7 +216,8 @@ export type QueueOutcome = z.infer<typeof QueueOutcomeSchema>;
 
 // The note a position from the student's games holds on why its best accepted move is played there.
 // `san` is that move, which is not always the one the student played: any accepted move is right,
-// and an item solved with one of them has no `expected` move to name it by.
+// and an item solved with one of them has no `expected` move to name it by. A review card carries
+// its stored explanation in the same shape, `san` being the move the card asks for.
 export const FoundNoteSchema = z.object({ san: z.string(), text: z.string() });
 export type FoundNote = z.infer<typeof FoundNoteSchema>;
 
@@ -302,8 +310,9 @@ export const TrainingActivitySchema = z.object({
   // Set on a puzzle solved first try without a hint, which the coach does not comment on unprompted:
   // `offered` until the student asks for the comment, `requested` after.
   coach_comment: z.enum(["offered", "requested"]).nullable().optional(),
-  // Present on a drill of the positions from the student's games only: the stored note once the item
-  // has ended, null while it is open and when the position has none.
+  // Present on a drill of the positions from the student's games and on a review card only: the
+  // stored note, or the card's explanation, once the item has ended, null while it is open and when
+  // there is none.
   note: FoundNoteSchema.nullable().optional(),
   // Present on a repertoire drill only.
   repertoire: RepertoireDrillSchema.optional(),

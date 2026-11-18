@@ -1,4 +1,5 @@
 import type {
+  CardOrigin,
   ExpectedMove,
   FoundNote,
   PlayedMove,
@@ -44,7 +45,7 @@ import {
   type PuzzleSummary,
   recordPuzzleAttempt,
 } from "../db/puzzles.js";
-import { getCard, insertCard } from "../db/srs.js";
+import { type CardRecord, getCard, insertCard } from "../db/srs.js";
 import {
   amendPendingNotification,
   appendTrainingRunItems,
@@ -204,8 +205,9 @@ interface Served {
   // A puzzle solved first try without a hint writes no coach notification; `coachAsk` says whether
   // the item is one of those and whether the student has since asked for the comment.
   coachAsk: "none" | "offered" | "requested";
-  // What a position from the student's games says about its best move, set when the item ends and
-  // never while it is open, so the note cannot hint at the answer; null for every other item.
+  // What a position from the student's games says about its best move, or the explanation stored
+  // with a review card, set when the item ends and never while it is open, so the note cannot hint
+  // at the answer; null for every other item.
   note: FoundNote | null;
 }
 
@@ -245,6 +247,15 @@ const turnOf = (fen: string): PlayerColor => (fen.split(" ")[1] === "b" ? "black
 
 // A puzzle made from a position of the student's games, by the prefix its generator gives the id.
 const isOwnGamesPuzzle = (puzzleId: string): boolean => puzzleId.startsWith("own:");
+
+// What a review card was made from, read off its stored columns in this order: a move of a game,
+// then its puzzle, which is a position from the student's games or a puzzle the student missed,
+// and a card with neither is one the coach's tool made.
+function reviewCardOriginOf(card: Pick<CardRecord, "sourceKind" | "puzzleId">): CardOrigin {
+  if (card.sourceKind === "game_move") return "game";
+  if (card.puzzleId !== null) return isOwnGamesPuzzle(card.puzzleId) ? "game" : "puzzle";
+  return "coach";
+}
 
 // Two drawing snapshots hold the same shapes in the same order.
 function sameDrawnShapes(a: readonly DrawnShape[], b: readonly DrawnShape[]): boolean {
@@ -735,7 +746,7 @@ export class TrainingRun implements PracticeRunPort {
       student_rating: currentPuzzleRating(this.deps.db),
       rating_change: s.ratingChange,
       coach_comment: s.coachAsk === "none" ? null : s.coachAsk,
-      ...(this.mode === "found" ? { note: s.note } : {}),
+      ...(this.mode === "found" || s.item.kind === "card" ? { note: s.note } : {}),
     };
   }
 
@@ -1156,8 +1167,21 @@ export class TrainingRun implements PracticeRunPort {
     else this.placeMoveEnding(s, result, gaveUp);
     s.status = gaveUp ? "failed" : "solved";
     s.suggestedGrade = suggestedGradeOf(gaveUp, result.correct, s.hinted);
+    s.note = this.cardNoteOf(s);
     this.tally(!gaveUp);
     this.wake = true;
+  }
+
+  // The explanation stored with a review card, titled by the move the card asks for from its own
+  // position. A card reviewed through a line is served only when that move starts the line, so the
+  // title is the line's first move whatever step the item ended at.
+  private cardNoteOf(s: Served): FoundNote | null {
+    if (s.item.kind !== "card") return null;
+    const card = getCard(this.deps.db, s.item.card_id);
+    const text = card?.explanation ?? null;
+    if (!card || text === null || text.trim() === "") return null;
+    const san = sanFor(s.item.prompt_fen, card.expectedUci);
+    return san === null ? null : { san, text };
   }
 
   // A right answer stays on the board, as a puzzle's last move does. A card given up keeps the
@@ -1396,6 +1420,8 @@ export class TrainingRun implements PracticeRunPort {
     if (entry.kind === "card") {
       const card = this.deps.desk.serveCard(entry.cardId);
       const line = puzzleLineOfCard(this.deps.db, card.cardId);
+      const stored = getCard(this.deps.db, card.cardId);
+      if (!stored) throw new ActivityError("card_not_found", `card ${card.cardId} does not exist`);
       return {
         item: {
           kind: "card",
@@ -1403,6 +1429,7 @@ export class TrainingRun implements PracticeRunPort {
           exposure_id: card.exposureId,
           prompt_fen: card.promptFen,
           student_color: card.studentColor,
+          origin: reviewCardOriginOf(stored),
           rating_preview: this.deps.desk.previewRatings(card.cardId),
           ...position,
           ...length,
