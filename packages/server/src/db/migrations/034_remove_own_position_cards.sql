@@ -1,0 +1,11 @@
+-- A review card whose puzzle is a position from the student's games (an own: id) was made by the
+-- old openings drill each time such a position was missed. The position holds no tactic, so on the
+-- review desk the student searched for one that is not there. These cards go; the positions stay
+-- where they are trained now, in found_positions with their schedule in found_cards, and the
+-- puzzles and their attempts are not touched.
+--
+-- srs_reviews.card_id cascades from the card, and every connection the server opens enforces
+-- foreign keys, so the reviews of these cards go with them and no other statement is needed.
+-- Nothing else points at a card by a foreign key: training_items.card_id and
+-- training_runs.items_json keep the ids as a record of what was served.
+DELETE FROM srs_cards WHERE puzzle_id LIKE 'own:%';
