@@ -130,6 +130,8 @@ export interface PracticeRunPort {
   askCoach(): void;
   rate(exposureId: string, grade: number): void;
   next(): void;
+  /** Serves the ended puzzle again from its first move; the second play counts for nothing. */
+  retry(): void;
   end(): void;
   /** The run stopped being on the board without the student ending it. */
   leave(): void;
@@ -210,6 +212,10 @@ interface Served {
   // with a review card, set when the item ends and never while it is open, so the note cannot hint
   // at the answer; null for every other item.
   note: FoundNote | null;
+  // The first play of this puzzle when this serving is a retry of it, else null. A retry is graded
+  // on the board and counts for nothing but itself, so whatever the first play left stays its own:
+  // the attempt, the rating, the card, the run's outcome and the coach's offer.
+  firstPlay: Served | null;
 }
 
 // UCI's null move: a card given up before any try has no move of the student's to record.
@@ -713,6 +719,8 @@ export class TrainingRun implements PracticeRunPort {
     const open = this.isOpen();
     const lastMove = open ? s.explore.lastMove : null;
     const lastTry = s.tries.at(-1);
+    // An open retry has no solved item to ask about; its end shows the offer the first play left.
+    const coachAsk = open ? "none" : (s.firstPlay ?? s).coachAsk;
     return {
       kind: "training",
       activity_id: activityId,
@@ -752,7 +760,8 @@ export class TrainingRun implements PracticeRunPort {
       ),
       student_rating: currentPuzzleRating(this.deps.db),
       rating_change: s.ratingChange,
-      coach_comment: s.coachAsk === "none" ? null : s.coachAsk,
+      coach_comment: coachAsk === "none" ? null : coachAsk,
+      ...(s.firstPlay ? { retry: true } : {}),
       ...(this.mode === "found" || s.item.kind === "card" ? { note: s.note } : {}),
     };
   }
@@ -907,7 +916,8 @@ export class TrainingRun implements PracticeRunPort {
 
   /** Writes the notification a first-try solve held back, once, and wakes the coach. */
   askCoach(): void {
-    const s = this.served;
+    // The offer is the first play's, so after a retry the coach is told of that play, not the retry.
+    const s = this.served.firstPlay ?? this.served;
     if (this.isOpen() || this.summary !== null || s.coachAsk === "none") {
       throw new ActivityError("not_in_training", "no solved item is waiting for a coach comment");
     }
@@ -1029,6 +1039,27 @@ export class TrainingRun implements PracticeRunPort {
     return true;
   }
 
+  /**
+   * Serves the ended puzzle again from its first move, at the same place in the queue. The second
+   * play is practice of a pattern just seen: it is graded on the board and kept in the ledger as an
+   * item of its own, and its end counts for nothing else.
+   */
+  retry(): void {
+    const s = this.served;
+    if (this.summary !== null) {
+      throw new ActivityError("item_finished", "the queue has already ended");
+    }
+    if (s.item.kind !== "puzzle") {
+      throw new ActivityError("invalid_state", "only a puzzle can be played again");
+    }
+    if (this.isOpen()) {
+      throw new ActivityError("invalid_state", "finish this puzzle before playing it again");
+    }
+    this.transition(() => {
+      this.served = { ...this.serve(this.position), firstPlay: s.firstPlay ?? s };
+    });
+  }
+
   /** The student left the queue; a finished queue keeps the reason it already has. */
   end(): void {
     this.closeRun("ended");
@@ -1088,7 +1119,7 @@ export class TrainingRun implements PracticeRunPort {
       hinted: s.hinted,
       hint_square: s.hintSquare,
       rating_change: s.ratingChange,
-      coach_ask: s.coachAsk,
+      coach_ask: (s.firstPlay ?? s).coachAsk,
     };
     saveTrainingRun(this.deps.db, this.runId, {
       position: this.position,
@@ -1275,6 +1306,12 @@ export class TrainingRun implements PracticeRunPort {
   ): void {
     const solved = state.status === "solved";
     const firstTry = solvedFirstTry(state) && !s.hinted;
+    s.note = this.foundNoteOf(item);
+    // A retry stops here. With no attempt row, the rating and every figure read from the attempts
+    // stay as the first play left them; a row marked as a retry would need each of those readers,
+    // and every later one, to skip it. The card, the run's outcome and the coach keep the first
+    // play's too.
+    if (s.firstPlay) return;
     recordPuzzleAttempt(this.deps.db, {
       puzzleId: item.puzzle_id,
       attemptedAt: this.clock.now().toISOString(),
@@ -1287,7 +1324,6 @@ export class TrainingRun implements PracticeRunPort {
       hinted: s.hinted,
     });
     s.ratingChange = this.movePuzzleRating(item.rating ?? null, firstTry);
-    s.note = this.foundNoteOf(item);
     this.tally(solved);
     // A position from the student's games keeps its own schedule, so a miss stays off the review
     // desk. Another mode or the coach can still serve its puzzle, and a miss there makes no card
@@ -1370,11 +1406,12 @@ export class TrainingRun implements PracticeRunPort {
   }
 
   // A position from the student's games is rated once, by the first thing the student does on it:
-  // a right try passes it, and a wrong try, a hint or a give-up fails it. Each caller runs inside
-  // `transition`, so the card moves with the step that rated it or not at all.
+  // a right try passes it, and a wrong try, a hint or a give-up fails it; a retry rates nothing.
+  // Each caller runs inside `transition`, so the card moves with the step that rated it or not at
+  // all.
   private rateFoundPosition(s: Served, right: boolean): void {
     if (this.mode !== "found" || s.item.kind !== "puzzle") return;
-    if (s.tries.length > 0 || s.hinted || s.gaveUp) return;
+    if (s.firstPlay || s.tries.length > 0 || s.hinted || s.gaveUp) return;
     rateFoundCard(this.deps.db, s.item.puzzle_id, right, this.clock.now());
   }
 
@@ -1416,6 +1453,7 @@ export class TrainingRun implements PracticeRunPort {
       gaveUp: false,
       coachAsk: "none" as const,
       note: null,
+      firstPlay: null,
       solutionLine: null,
       suggestedGrade: null,
       hintSquare: null,

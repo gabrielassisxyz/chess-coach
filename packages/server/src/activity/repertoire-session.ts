@@ -731,6 +731,11 @@ export class RepertoireSession implements PracticeRunPort {
     throw new ActivityError("not_in_training", "this drill has no quiet item to ask about");
   }
 
+  /** A line is drilled in passes the drill repeats by itself, so it has no item to play again. */
+  retry(): void {
+    throw new ActivityError("invalid_state", "only a puzzle can be played again");
+  }
+
   /** The first call gives the stored idea, the second the move; either fails the move. */
   hint(): void {
     const { ask, state } = this.requireAsk();

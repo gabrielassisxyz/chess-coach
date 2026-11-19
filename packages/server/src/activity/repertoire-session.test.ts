@@ -2611,6 +2611,18 @@ describe("pinning the line drill rules that stayed green under mutation", () => 
     expect(state.last_try).toMatchObject({ san: "d4", correct: true });
   });
 
+  it("refuses retry_item during a drill with invalid_state and leaves the pass as it was", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    const state = await start(service, id, "due");
+    const passes = () => db.prepare("SELECT COUNT(*) AS n FROM training_items").get();
+    const before = passes();
+    expect(await code(service.retryTrainingItem(state.activity_id))).toBe("invalid_state");
+    expect(service.current()).toEqual(state);
+    expect(passes()).toEqual(before);
+  });
+
   it("refuses ask_coach_about_item during a drill with not_in_training and no puzzle result", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");

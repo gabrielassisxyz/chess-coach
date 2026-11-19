@@ -9,8 +9,10 @@ import {
 } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { expectAttemptsLeadThePuzzleJoin } from "../../test/support/query-plan.js";
+import { TrainingRun } from "../activity/training.js";
 import type { Clock } from "../clock.js";
 import { type Database, openDatabase } from "../db/open.js";
+import { ReviewDesk } from "../srs/review.js";
 import { computeThemeStats, READ_THEMED_ATTEMPTS_SQL } from "./theme-stats.js";
 
 const NOW = new Date("2026-06-30T12:00:00.000Z");
@@ -310,6 +312,50 @@ describe("computeThemeStats ranking", () => {
       "s7",
       "s8",
     ]);
+  });
+});
+
+// A retry is a second play of a puzzle that already ended in the run. It writes no attempt, which
+// is what keeps it out of every figure here.
+describe("computeThemeStats after a retry of an ended puzzle", () => {
+  const BACK_RANK = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1";
+
+  // A rated puzzle the run can serve and grade: one move mates on the back rank. It is the only
+  // puzzle of its motif, so the queue holds it alone and none of the attempt fixtures.
+  function startRunOnOnePuzzle(): TrainingRun {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san,
+         explanation, difficulty_rating, themes)
+       VALUES ('played', 'test', 'skewer', 'easy', ?, '["a1a8"]', '["Ra8#"]', 'why', 1500,
+         'fork short')`,
+    ).run(BACK_RANK);
+    const desk = new ReviewDesk({ db, clock });
+    const run = TrainingRun.begin({ db, desk, clock }, { mode: "puzzles", motif: "skewer" });
+    expect(run.state(1).item).toMatchObject({ kind: "puzzle", puzzle_id: "played", rating: 1500 });
+    return run;
+  }
+
+  it.each([
+    ["solved first try, then given up", true],
+    ["given up, then solved first try", false],
+  ])("answers the same played and first-try counts for a puzzle %s", (_name, solvedFirst) => {
+    addThemeAttempts("fork", 8, 5, 1500);
+    const run = startRunOnOnePuzzle();
+    if (solvedFirst) run.tryMove("a1a8");
+    else run.showSolution();
+    const before = stats("30");
+    expect(before.overall).toMatchObject({ played: 9, first_try: solvedFirst ? 6 : 5 });
+    expect(themeOf(before, "short")).toMatchObject({ played: 1, first_try: solvedFirst ? 1 : 0 });
+
+    run.retry();
+    expect(stats("30")).toEqual(before);
+    if (solvedFirst) run.showSolution();
+    else run.tryMove("a1a8");
+    const after = stats("30");
+    expect(after.overall.played).toBe(before.overall.played);
+    expect(after.overall.first_try).toBe(before.overall.first_try);
+    expect(after).toEqual(before);
+    expect(stats("all")).toMatchObject({ overall: before.overall });
   });
 });
 

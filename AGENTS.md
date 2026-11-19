@@ -313,6 +313,29 @@
   the line and restores graded drops. The activity carries the item's line so far (`moves`), the
   wrong tries beside their ply (`wrong_tries`) and one outcome per queue position
   (`queue_outcomes`, kept in `training_runs.outcomes_json`).
+- **Retry:** `retry_item {activity_id}` serves the puzzle that just ended, solved or with the
+  solution shown, again from its first move at the same place in the queue: status `prompt`, no
+  try, no move, a new `served_at`, so the timer restarts, and `retry: true` in the state, which no
+  other item carries. The second play is practice of a pattern just seen and counts for nothing but
+  itself. It is graded on the board like any play (right and wrong tries, hint, shown solution) and
+  kept as a `training_items` row of its own with its `training_tries`, and its end writes no
+  `puzzle_attempts` row. No row, rather than a row marked as a retry: the rating replayed at boot,
+  the rating history, the theme statistics, the figures per motif and the two opening tallies all
+  count every attempt row, and each of them, like every later reader, would have to skip a marked
+  one. So the puzzle rating does not move and the ended retry carries no `rating_change`, no review
+  card is made or changed, the run's solved and failed counts and the item's entry of
+  `queue_outcomes` stay the first play's, and in a From my games drill the position's `found_cards`
+  row stays as the first play left it, while its note is shown again once the retry ends. The coach
+  is told nothing: a retry's end writes no notification, and `coach_comment` is null while the retry
+  is open and, once it has ended, what the first play left, so a comment still on offer can be asked
+  for and describes the first play. The queue keeps its length, and a retry that ended can be
+  retried again. The command is refused with `item_finished` once the queue has ended and with
+  `invalid_state` on an item still open and on an item that is not a puzzle, a review card or a line
+  of a repertoire drill; `stale_activity` and `not_in_training` answer as for any training command.
+  The Practice column draws Retry beside Analyse, under Continue training, on an ended puzzle only.
+  A press holds the automatic jump to the next puzzle for that serving, so the jump cannot overtake
+  the retry on its way to the server. The coach panel waits for no reply once a retry has ended
+  (`endedItemKey` in `state/transcript.ts`), since none is coming.
 - **Puzzle rating:** the student's puzzle rating is plain Elo (K 32, start 1200) against the
   library's `difficulty_rating`; a first-try solve wins, anything else loses, an unrated puzzle
   (opening drills) moves nothing. It lives in `settings.puzzle_rating`, is replayed once from
