@@ -64,9 +64,9 @@ Shell
   board and the engine settings anchored to their icons; coordinates inside the squares in
   10 px mono by default. A repertoire line drill swaps the ratings for the variation in play
   and three counts, names the opening and the variation of the move asked on a hairline row
-  under them, and its open state hides the bar's Explore button. A review card's title ends
-  with what the card was made from, and once it has ended its state card holds the card's
-  explanation under the verdict.
+  under them, and its open state hides the bar's Explore button. A review card says what it
+  was made from in the tag beside its title, and once it has ended its state card holds the
+  card's explanation under the verdict.
 
 Phone (under 900 px)
 
@@ -285,19 +285,20 @@ tiles wrap two by two, the replies go to one column with move, chance and status
 every button, the breadcrumb's included, is a 44 px target. M1 and M2 still find no matches.
 
 The Practice column was re-checked on rows 6, 8, 9 and 16, and the Phone column on row 19, for
-the heading and the note of a review card on the Practice item, against the markup,
-`practice.css` and `test/practice-item.test.ts`; the cells were not measured in a browser. The
-item's title, 14 px and 500 in Plex Sans on one line, ends with a middle dot and what the card was
-made from, `Missed puzzle`, `From your game` or `Coach card`, from the first move on; it adds no
-element and no colour, and the row keeps its timer and its End button. The longest title, a
-twentieth card from a game, is 201 px by the face's own advance widths, and with a four-digit
-timer and End the row comes to 284 px of the 294 px a 328 px column leaves it. Once the card has
-ended, solved, with the solution shown or rated, the state card holds the card's explanation under
-the verdict in the block a position from the student's games already uses: `Why` and the move at
-14 px and 500 over the text at 14 px in the primary text, 2 px apart, wrapping anywhere inside the
-card. The block is no card of its own, a card with no explanation draws none, and nothing of it is
-drawn while the card is open. Under 900 px the title and the block are as on the desktop and the
-buttons under them stay 44 px. M1 and M2 still find no matches.
+the tag and the note of a review card on the Practice item, against the markup, `practice.css`
+and `test/practice-item.test.ts`; the cells were not measured in a browser. A review card says
+what it was made from in the tag beside the title, `Missed puzzle`, `From your game` or
+`Coach card`, from the first move on: 12 px in the secondary text on one line, the tag a puzzle's
+theme already uses, cut with an ellipsis where the row is short. It adds no element of its own and
+no colour. The title stays the card's place in the queue at 14 px and 500 and does not grow with
+the origin, so the row keeps its timer and its End button when a card that comes back lengthens
+the queue. Once the card has ended, solved, with the solution shown or rated, the state card
+holds the card's explanation under the verdict in the block a position from the student's games
+already uses: `Why` and the move at 14 px and 500 over the text at 14 px in the primary text,
+2 px apart, wrapping anywhere inside the card. The block is no card of its own, a card with no
+explanation draws none, and nothing of it is drawn while the card is open. Under 900 px the
+title, the tag and the block are as on the desktop and the buttons under them stay 44 px. M1 and
+M2 still find no matches.
 
 ## Partial cells
 

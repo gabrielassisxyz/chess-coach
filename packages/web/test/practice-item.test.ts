@@ -216,10 +216,10 @@ function reviewCard(
 }
 
 describe("the heading of a review card", () => {
-  const HEADINGS = [
-    ["puzzle", "Card 3 of 20 · Missed puzzle"],
-    ["game", "Card 3 of 20 · From your game"],
-    ["coach", "Card 3 of 20 · Coach card"],
+  const TAGS = [
+    ["puzzle", "Missed puzzle"],
+    ["game", "From your game"],
+    ["coach", "Coach card"],
   ] as const;
 
   const renderColumn = (training: TrainingActivity): string =>
@@ -245,38 +245,59 @@ describe("the heading of a review card", () => {
       }),
     );
 
-  it.each(HEADINGS)("ends with what a card of origin %s was made from", (origin, title) => {
-    expect(headingOf(reviewCard(origin), null)).toEqual({ title, tag: null, openingName: null });
+  it.each(TAGS)("says in the tag what a card of origin %s was made from", (origin, tag) => {
+    expect(headingOf(reviewCard(origin), null)).toEqual({
+      title: "Card 3 of 20",
+      tag,
+      openingName: null,
+    });
   });
 
-  it.each(HEADINGS)("is the heading the column draws for origin %s", (origin, title) => {
-    const html = renderColumn(reviewCard(origin));
-    expect(html).toContain(`<h2 class="practice-item__title">${title}</h2>`);
-    expect(html).not.toContain("practice-item__tag");
+  it.each(TAGS)("is drawn beside the title, in a puzzle's tag, for origin %s", (origin, tag) => {
+    const title = '<h2 class="practice-item__title">Card 3 of 20</h2>';
+    expect(renderColumn(reviewCard(origin))).toContain(
+      `${title}<span class="practice-item__tag">${tag}</span>`,
+    );
   });
 
   it("says it from the first move to the end of the item", () => {
     for (const status of ["prompt", "in_progress", "solved", "failed", "rated"] as const) {
-      expect(headingOf(reviewCard("puzzle", { status }), null).title).toBe(
-        "Card 3 of 20 · Missed puzzle",
-      );
+      expect(headingOf(reviewCard("puzzle", { status }), null)).toMatchObject({
+        title: "Card 3 of 20",
+        tag: "Missed puzzle",
+      });
     }
   });
 
-  it("keeps the heading it had for a card that names no origin", () => {
+  // A card that comes back inside the training lengthens the queue, and the title must not grow
+  // with the origin on top of that.
+  it("keeps the title to the card's place in the queue, whatever the origin", () => {
+    const late = reviewCard("game");
+    late.item = { ...late.item, position_in_queue: 22, queue_length: 35 };
+    expect(headingOf(late, null)).toEqual({
+      title: "Card 22 of 35",
+      tag: "From your game",
+      openingName: null,
+    });
+  });
+
+  it("keeps the heading it had, with no tag, for a card that names no origin", () => {
     expect(headingOf(reviewCard(), null)).toEqual({
       title: "Card 3 of 20",
       tag: null,
       openingName: null,
     });
-    expect(renderColumn(reviewCard())).toContain(
-      '<h2 class="practice-item__title">Card 3 of 20</h2>',
-    );
+    const html = renderColumn(reviewCard());
+    expect(html).toContain('<h2 class="practice-item__title">Card 3 of 20</h2>');
+    expect(html).not.toContain("practice-item__tag");
   });
 
-  it("leaves the line over the conversation as it was", () => {
-    expect(contextLineOf(reviewCard("puzzle"), null)).toBe("Card 3 · you play White");
+  it("leaves the line over the conversation as it was, with no origin in it", () => {
+    for (const [origin] of TAGS) {
+      expect(contextLineOf(reviewCard(origin), null)).toBe("Card 3 · you play White");
+    }
     expect(contextLineOf(reviewCard(), null)).toBe("Card 3 · you play White");
+    expect(contextLineOf(puzzle(), "fork")).toBe("Puzzle 3 · Fork · you play White");
   });
 
   it("is recorded with the card's note in the Practice column of the design check", () => {
@@ -291,6 +312,7 @@ describe("the heading of a review card", () => {
       );
     expect(paragraph).toBeDefined();
     for (const said of [
+      "in the tag beside the title",
       "`Missed puzzle`",
       "`From your game`",
       "`Coach card`",

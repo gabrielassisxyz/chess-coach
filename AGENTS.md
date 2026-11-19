@@ -288,8 +288,10 @@
   first move: it carries `origin` from the moment it is served, read off `srs_cards` in this order,
   `game` for `source_kind` `game_move`, `game` for a `puzzle_id` that starts with `own:`, `puzzle`
   for any other `puzzle_id` and `coach` for the rest, the cards the coach's `add_srs_card` made. The
-  Practice column writes it at the end of the item's heading, after a middle dot, as
-  `Missed puzzle`, `From your game` or `Coach card`: `Card 3 of 20 · Missed puzzle`. A missed puzzle
+  Practice column writes it in the tag beside the item's title, the small text a puzzle's theme
+  uses, as `Missed puzzle`, `From your game` or `Coach card`. The title stays `Card 3 of 20`, since
+  a card that comes back inside the training lengthens the queue and the title with it, and the
+  line pinned over the conversation does not repeat the origin. A missed puzzle
   holds a tactic, and the other two may ask for a quiet move. Once the card has ended, solved or
   with the solution shown, the state carries its explanation in `note`, the field of a From my
   games item: `{san, text}` with `srs_cards.explanation` and the SAN of the card's expected move,

@@ -4485,7 +4485,9 @@ describe("what a review card says it is, and the explanation it shows at the end
       "`Missed puzzle`",
       "`From your game`",
       "`Coach card`",
-      "`Card 3 of 20 \u00b7 Missed puzzle`",
+      "in the tag beside the item's title",
+      "The title stays `Card 3 of 20`",
+      "the line pinned over the conversation does not repeat the origin",
       "`srs_cards.explanation`",
       "null while the card is open, a hint included",
     ]) {
