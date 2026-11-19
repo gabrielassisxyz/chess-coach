@@ -22,6 +22,10 @@ const MOTIF_BY_THEME: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["endgame", ["endgame"]],
 ];
 
+// What a puzzle that maps to no motif stores as its explanation. It says nothing about the
+// position, so whatever shows a stored explanation treats this one as none.
+export const FILLER_PUZZLE_EXPLANATION = "Find the best move in this position.";
+
 const EXPLANATION_BY_MOTIF: Readonly<Record<string, string>> = {
   skewer: "Attack the more valuable piece so it must move and exposes the one behind it.",
   back_rank_mate: "The king is boxed in on its first rank, so a check along that rank is mate.",
@@ -31,7 +35,7 @@ const EXPLANATION_BY_MOTIF: Readonly<Record<string, string>> = {
   opening: "Find the strongest move while the pieces are still developing.",
   checkmate: "Look for the forcing line that ends in checkmate.",
   endgame: "With few pieces left, the accurate move decides the game.",
-  [FALLBACK_MOTIF]: "Find the best move in this position.",
+  [FALLBACK_MOTIF]: FILLER_PUZZLE_EXPLANATION,
 };
 
 export function pickMotif(themes: readonly string[]): string {

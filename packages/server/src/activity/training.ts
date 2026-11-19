@@ -78,6 +78,7 @@ import {
   startAttempt,
   tryMove as tryPuzzleMove,
 } from "../puzzles/attempt.js";
+import { FILLER_PUZZLE_EXPLANATION } from "../puzzles/lichess-import.js";
 import { currentPuzzleRating, ratingAfter, setPuzzleRating } from "../puzzles/rating.js";
 import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
@@ -256,6 +257,12 @@ function reviewCardOriginOf(card: Pick<CardRecord, "sourceKind" | "puzzleId">): 
   if (card.puzzleId !== null) return isOwnGamesPuzzle(card.puzzleId) ? "game" : "puzzle";
   return "coach";
 }
+
+// A stored explanation that explains nothing and so makes no note: a blank one, and the sentence
+// the Lichess import gives a puzzle of no motif, which under "Why" reads as an empty answer. The
+// import's other sentences describe a motif and are shown.
+const explainsNothing = (explanation: string): boolean =>
+  explanation.trim() === "" || explanation === FILLER_PUZZLE_EXPLANATION;
 
 // Two drawing snapshots hold the same shapes in the same order.
 function sameDrawnShapes(a: readonly DrawnShape[], b: readonly DrawnShape[]): boolean {
@@ -1179,7 +1186,7 @@ export class TrainingRun implements PracticeRunPort {
     if (s.item.kind !== "card") return null;
     const card = getCard(this.deps.db, s.item.card_id);
     const text = card?.explanation ?? null;
-    if (!card || text === null || text.trim() === "") return null;
+    if (!card || text === null || explainsNothing(text)) return null;
     const san = sanFor(s.item.prompt_fen, card.expectedUci);
     return san === null ? null : { san, text };
   }

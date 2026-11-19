@@ -297,8 +297,11 @@
   games item: `{san, text}` with `srs_cards.explanation` and the SAN of the card's expected move,
   which is the first move of the line for a card reviewed through one, whatever step it ended at.
   It is null while the card is open, a hint included, since the text gives the answer away, and
-  when the explanation is null or empty; the column draws it under the verdict as "Why <SAN>" and
-  the text, and it stays once the card is rated. Every try is kept in
+  when the explanation explains nothing: null, blank, or exactly the sentence the Lichess import
+  stores for a puzzle of no motif (`FILLER_PUZZLE_EXPLANATION` in `puzzles/lichess-import.ts`),
+  which under "Why" reads as an empty answer, while the import's sentences that describe a motif
+  are shown. The column draws the note under the verdict as "Why <SAN>" and the text, and it stays
+  once the card is rated. Every try is kept in
   `training_tries`, and puzzle accuracy is first-try solves
   (`puzzle_attempts.first_try`). The coach hears once per item, when it ends, except a puzzle solved first try without a hint: that writes no notification, the state carries `coach_comment: "offered"`, and `ask_coach_about_item {activity_id}` (refused with `stale_activity`, `not_in_training` or `already_requested`) writes it with the position and the solution. A `hint` marks the
   origin square of the expected move, clears on the next try, and makes the solve count as missed.

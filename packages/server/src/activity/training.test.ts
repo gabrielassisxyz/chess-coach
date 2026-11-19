@@ -29,7 +29,7 @@ import { GameService } from "../game/service.js";
 import { type Log, RecordingLog, silentLog } from "../log.js";
 import { positionKey, puzzleId } from "../openings/from-games.js";
 import { computeThemeStats } from "../progress/theme-stats.js";
-import { importLichessPuzzles } from "../puzzles/lichess-import.js";
+import { FILLER_PUZZLE_EXPLANATION, importLichessPuzzles } from "../puzzles/lichess-import.js";
 import { currentPuzzleRating, setPuzzleRating } from "../puzzles/rating.js";
 import { createCardsFromGame } from "../srs/cards.js";
 import { ReviewDesk } from "../srs/review.js";
@@ -4413,6 +4413,80 @@ describe("what a review card says it is, and the explanation it shows at the end
       expect(training(await activity.trainingShowSolution())).toHaveProperty("note", null);
     });
 
+    describe("of a card left by an imported Lichess puzzle", () => {
+      // One Lichess row under the themes given. The import files it under a motif by its themes
+      // and stores that motif's sentence as the explanation, which the miss copies to the card.
+      const rowOf = (id: string, themes: string): string =>
+        [
+          id,
+          "q3k1nr/1pp1nQpp/3p4/1P2p3/4P3/B1PP1b2/B5PP/5K2 b k - 0 17",
+          "e8d7 a2e6 d7d8 f7f8",
+          "1498,76,87,178",
+          themes,
+          "https://lichess.org/game/yyznGmXs/black#34,,",
+        ].join(",");
+
+      async function missImported(id: string, themes: string) {
+        async function* lines(): AsyncGenerator<string> {
+          yield rowOf(id, themes);
+        }
+        await importLichessPuzzles({ lines: lines(), db, clock: fixedClock, log: silentLog });
+        const { activity } = setup();
+        await missPuzzle(activity, `lichess-db:${id}`);
+        const cards = db.prepare("SELECT explanation FROM srs_cards").all();
+        expect(cards).toHaveLength(1);
+        return { activity, explanation: (cards[0] as { explanation: string | null }).explanation };
+      }
+
+      it("is null for the sentence the import gives a puzzle of no motif, solved or shown", async () => {
+        const { activity, explanation } = await missImported("00none", "middlegame short");
+        expect(explanation).toBe(FILLER_PUZZLE_EXPLANATION);
+        await activity.startTraining({ mode: "srs" });
+        await activity.trainingTry("a2e6");
+        const solved = onTheWire(await activity.trainingTry("f7f8"));
+        expect(solved.status).toBe("solved");
+        expect(solved).toHaveProperty("note", null);
+        await activity.endTraining();
+        await activity.startTraining({ mode: "srs" });
+        const shown = onTheWire(await activity.trainingShowSolution());
+        expect(shown.status).toBe("failed");
+        expect(shown).toHaveProperty("note", null);
+      });
+
+      it("is the sentence the import gives a motif, which says something", async () => {
+        const themes = "mate mateIn2 middlegame short";
+        const { activity, explanation } = await missImported("00sHx", themes);
+        expect(explanation).toBeTruthy();
+        expect(explanation).not.toBe(FILLER_PUZZLE_EXPLANATION);
+        await activity.startTraining({ mode: "srs" });
+        await activity.trainingTry("a2e6");
+        const solved = onTheWire(await activity.trainingTry("f7f8"));
+        expect(solved).toMatchObject({
+          status: "solved",
+          note: { san: "Be6+", text: explanation },
+        });
+      });
+    });
+
+    it("is null for a card of another origin that stores exactly the import's filler", async () => {
+      await addCoachCard(FILLER_PUZZLE_EXPLANATION);
+      const { activity } = setup();
+      const served = onTheWire(await activity.startTraining({ mode: "srs" }));
+      expect(served.item).toMatchObject({ origin: "coach" });
+      const solved = onTheWire(await activity.trainingTry("d2d4"));
+      expect(solved.status).toBe("solved");
+      expect(solved).toHaveProperty("note", null);
+    });
+
+    it("is shown for an explanation that only starts with the import's filler", async () => {
+      const longer = `${FILLER_PUZZLE_EXPLANATION} The queen's pawn is defended, the king's is not.`;
+      await addCoachCard(longer);
+      const { activity } = setup();
+      await activity.startTraining({ mode: "srs" });
+      const solved = onTheWire(await activity.trainingTry("d2d4"));
+      expect(solved).toMatchObject({ status: "solved", note: { san: "d4", text: longer } });
+    });
+
     it("moves on with the item: the next card shows none while it is open", async () => {
       await addCoachCard(WHY);
       addCard("d2d4");
@@ -4490,6 +4564,8 @@ describe("what a review card says it is, and the explanation it shows at the end
       "the line pinned over the conversation does not repeat the origin",
       "`srs_cards.explanation`",
       "null while the card is open, a hint included",
+      "`FILLER_PUZZLE_EXPLANATION`",
+      "the import's sentences that describe a motif are shown",
     ]) {
       expect(grading).toContain(said);
     }
