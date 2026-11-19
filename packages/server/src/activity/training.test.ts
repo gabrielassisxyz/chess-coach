@@ -4660,6 +4660,15 @@ describe("a retry of an ended puzzle", () => {
          FROM training_runs ORDER BY id DESC LIMIT 1`,
       )
       .get();
+  // What the run's row says of the item on the board, written with every step.
+  const storedCurrent = (): { item_id: number; status: string; coach_ask: string } =>
+    JSON.parse(
+      (
+        db.prepare("SELECT current_json FROM training_runs ORDER BY id DESC LIMIT 1").get() as {
+          current_json: string;
+        }
+      ).current_json,
+    );
   // Each serve of the puzzle as the ledger keeps it, with the tries graded under it.
   const servesOf = (id: string): unknown[] =>
     db
@@ -4786,6 +4795,10 @@ describe("a retry of an ended puzzle", () => {
       "b5c7",
       "a1c1",
     ]);
+    const lastServe = db.prepare("SELECT MAX(id) AS id FROM training_items").get() as {
+      id: number;
+    };
+    expect(storedCurrent()).toMatchObject({ item_id: lastServe.id, status: "solved" });
 
     const shown = setup(clock);
     await shown.activity.startTraining({ mode: "puzzles", motif: "fork" });
@@ -5017,11 +5030,13 @@ describe("a retry of an ended puzzle", () => {
       expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
       const ended = await playBackRank(activity, ending);
       expect(ended.coach_comment).toBe("offered");
+      expect(storedCurrent().coach_ask).toBe("offered");
       expect(notes()).toEqual([]);
       expect(flushed).not.toHaveBeenCalled();
 
       const asked = training(await activity.trainingAskCoach());
       expect(asked).toMatchObject({ coach_comment: "requested", status: ended.status });
+      expect(storedCurrent().coach_ask).toBe("requested");
       expect(notes()).toHaveLength(1);
       expect(notes()[0]).toMatchObject({
         type: "puzzle_result",
