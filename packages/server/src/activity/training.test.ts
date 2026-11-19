@@ -4822,13 +4822,14 @@ describe("a retry of an ended puzzle", () => {
     addPuzzle("b2", "fork", BACK_RANK, ["a1a8"]);
     const { activity } = setup();
     const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
-    await activity.trainingTry("a1a8");
+    expect(training(await activity.trainingTry("a1a8")).coach_comment).toBe("offered");
     await activity.retryTrainingItem();
     await activity.trainingShowSolution();
     const third = training(await activity.retryTrainingItem());
     expect(third).toMatchObject({ status: "prompt", retry: true, tries: 0 });
     expect(third.item).toEqual(start.item);
-    await activity.trainingTry("a1a8");
+    // The play the offer is about is still the first one, not the retry before this one.
+    expect(training(await activity.trainingTry("a1a8")).coach_comment).toBe("offered");
     const next = training(await activity.nextTrainingItem());
     expect(next).toMatchObject({ status: "prompt", item: { position_in_queue: 2 } });
     expect(next).not.toHaveProperty("retry");
