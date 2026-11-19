@@ -614,7 +614,10 @@
   color: var(--text-1);
 }
 
-/* Why the best move of a position from the student's games is played, under the verdict. */
+/*
+ * Under the verdict: why the best move of a position from the student's games is played, or the
+ * explanation stored with a review card.
+ */
 .state-card__note {
   display: flex;
   flex-direction: column;

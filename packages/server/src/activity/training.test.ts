@@ -7,26 +7,31 @@ import {
   LICHESS_PRACTICE_MOTIFS,
   MIX_PRACTICE_MOTIF,
   type TrainingActivity,
+  TrainingActivitySchema,
   UNNAMED_OPENING,
 } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { makeWorld } from "../../test/fakes/fake-world.js";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
-import { START_FEN } from "../../test/fixture-game.js";
+import { insertGradedGame, START_FEN } from "../../test/fixture-game.js";
 import type { Clock } from "../clock.js";
 import { type CoachNotification, renderNotifications } from "../coach/notify.js";
+import { buildSrsTools } from "../coach/srs-tools.js";
 import { appendChatMessage, createCoachSession, listChatTail } from "../db/chat.js";
 import { insertFoundPosition, setFoundNote } from "../db/found-positions.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { listPuzzles, recordPuzzleAttempt } from "../db/puzzles.js";
-import { getCard, insertCard, updateSchedule } from "../db/srs.js";
+import { getCard, insertCard, setExplanation, updateSchedule } from "../db/srs.js";
 import { endRunsLeftOpenAtStart } from "../db/training.js";
 import { GameService } from "../game/service.js";
 import { type Log, RecordingLog, silentLog } from "../log.js";
 import { positionKey, puzzleId } from "../openings/from-games.js";
 import { computeThemeStats } from "../progress/theme-stats.js";
-import { importLichessPuzzles } from "../puzzles/lichess-import.js";
+import { FILLER_PUZZLE_EXPLANATION, importLichessPuzzles } from "../puzzles/lichess-import.js";
 import { currentPuzzleRating, setPuzzleRating } from "../puzzles/rating.js";
+import { createCardsFromGame } from "../srs/cards.js";
 import { ReviewDesk } from "../srs/review.js";
 import { ActivityService } from "./service.js";
 
@@ -4245,5 +4250,325 @@ describe("a miss on a position from the student's games, in any mode but its own
     );
     expect(grading).toContain("a single puzzle the coach serves included");
     expect(grading).toContain("still writes its `puzzle_attempts` row");
+  });
+});
+
+describe("what a review card says it is, and the explanation it shows at the end", () => {
+  const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+  const LICHESS = "lichess-db:03oA5";
+  const WHY = "Take the centre first: the queen's pawn is defended, the king's pawn is not.";
+
+  // The state as the browser reads it: the schema drops whatever it does not declare.
+  const onTheWire = (state: ActivityState | null): TrainingActivity =>
+    TrainingActivitySchema.parse(training(state));
+  const originOf = (state: ActivityState | null): unknown =>
+    (onTheWire(state).item as { origin?: unknown }).origin;
+  const storedCards = (): unknown[] =>
+    db.prepare("SELECT source_kind, puzzle_id FROM srs_cards ORDER BY id").all();
+  const exposureOf = (state: TrainingActivity): string =>
+    (state.item as { exposure_id: string }).exposure_id;
+
+  // The coach's own tool, called as the SDK calls it, with the fake world's evaluator.
+  async function addCoachCard(explanation: string): Promise<number> {
+    const tools = buildSrsTools({
+      db,
+      clock: fixedClock,
+      evaluateMove: makeWorld(db).world.evaluateMove,
+    });
+    const tool = tools.find((entry) => entry.name === "add_srs_card");
+    if (!tool) throw new Error("add_srs_card is not registered");
+    const input = { fen: START_FEN, played_uci: "e2e4", best_uci: "d2d4", explanation };
+    const result = await tool.handler(z.object(tool.inputSchema).parse(input) as never, {});
+    const body = JSON.parse((result.content[0] as { text: string }).text) as { card_id: number };
+    return body.card_id;
+  }
+
+  // The card a missed puzzle leaves, made by the miss itself: the puzzle is given up and its run ended.
+  async function missPuzzle(activity: ActivityService, id: string): Promise<void> {
+    await activity.startTrainingItem({ kind: "puzzle", id });
+    await activity.trainingShowSolution();
+    await activity.endTraining();
+  }
+
+  describe("the origin of the card", () => {
+    it("is game for a card made from a move of a game", async () => {
+      expect(createCardsFromGame(db, insertGradedGame(db), fixedClock)).toMatchObject({
+        created: 3,
+      });
+      expect(storedCards()).toContainEqual({ source_kind: "game_move", puzzle_id: null });
+      const { activity } = setup();
+      expect(originOf(await activity.startTraining({ mode: "srs" }))).toBe("game");
+    });
+
+    it("is game for a card whose puzzle is a position from the student's games", async () => {
+      const own = puzzleId(positionKey(AFTER_E4));
+      addPuzzle(own, "opening-black", AFTER_E4, ["e7e5"]);
+      addPuzzleCard(own, AFTER_E4, "e7e5");
+      expect(storedCards()).toEqual([{ source_kind: "teaching", puzzle_id: own }]);
+      const { activity } = setup();
+      expect(originOf(await activity.startTraining({ mode: "srs" }))).toBe("game");
+    });
+
+    it("is puzzle for the card a missed Lichess puzzle leaves", async () => {
+      addPuzzle(LICHESS, "fork", LICHESS_FORK, LICHESS_FORK_LINE);
+      const { activity } = setup();
+      await missPuzzle(activity, LICHESS);
+      expect(storedCards()).toEqual([{ source_kind: "teaching", puzzle_id: LICHESS }]);
+      expect(originOf(await activity.startTraining({ mode: "srs" }))).toBe("puzzle");
+    });
+
+    it("is coach for a card the coach's tool made", async () => {
+      await addCoachCard(WHY);
+      expect(storedCards()).toEqual([{ source_kind: "teaching", puzzle_id: null }]);
+      const { activity } = setup();
+      expect(originOf(await activity.startTraining({ mode: "srs" }))).toBe("coach");
+    });
+
+    // The rule reads the columns in order, and the kind of source comes first.
+    it("stays game for a game's card that names a puzzle the student missed", async () => {
+      addPuzzle(LICHESS, "fork", LICHESS_FORK, LICHESS_FORK_LINE);
+      const card = insertCard(db, {
+        sourceKind: "game_move",
+        sourceGameId: null,
+        sourceMoveId: null,
+        promptFen: LICHESS_FORK,
+        studentColor: "black",
+        playedUci: null,
+        expectedUci: "f8d6",
+        cpLoss: 150,
+        classification: "mistake",
+        explanation: null,
+        createdAt: T0.toISOString(),
+        puzzleId: LICHESS,
+      });
+      expect(card).not.toBeNull();
+      const { activity } = setup();
+      expect(originOf(await activity.startTraining({ mode: "srs" }))).toBe("game");
+    });
+
+    it("comes with a single card the coach serves, and stays with the item to its end", async () => {
+      const id = await addCoachCard(WHY);
+      const { activity } = setup();
+      const served = await activity.startTrainingItem({ kind: "card", id });
+      expect(originOf(served)).toBe("coach");
+      expect(originOf(await activity.trainingTry("e2e4"))).toBe("coach");
+      const solved = await activity.trainingTry("d2d4");
+      expect(originOf(solved)).toBe("coach");
+      expect(originOf(await activity.rateCard(exposureOf(training(solved)), 3))).toBe("coach");
+    });
+  });
+
+  describe("the explanation of the card", () => {
+    it("is not in the state while the card is open, a wrong try or a hint included", async () => {
+      await addCoachCard(WHY);
+      const { activity } = setup();
+      const served = onTheWire(await activity.startTraining({ mode: "srs" }));
+      expect(served.note).toBeNull();
+      expect(onTheWire(await activity.trainingTry("e2e4")).note).toBeNull();
+      expect(onTheWire(await activity.trainingHint()).note).toBeNull();
+      expect(JSON.stringify(activity.current())).not.toContain(WHY);
+    });
+
+    it("comes with a solved card, titled by its expected move, and stays once it is rated", async () => {
+      await addCoachCard(WHY);
+      const { activity } = setup();
+      const served = training(await activity.startTraining({ mode: "srs" }));
+      const solved = onTheWire(await activity.trainingTry("d2d4"));
+      expect(solved).toMatchObject({ status: "solved", note: { san: "d4", text: WHY } });
+      const rated = onTheWire(await activity.rateCard(exposureOf(served), 3));
+      expect(rated).toMatchObject({ status: "rated", note: { san: "d4", text: WHY } });
+    });
+
+    it("comes with the solution once it is shown, even after a wrong try", async () => {
+      await addCoachCard(WHY);
+      const { activity } = setup();
+      await activity.startTraining({ mode: "srs" });
+      await activity.trainingTry("e2e4");
+      const shown = onTheWire(await activity.trainingShowSolution());
+      expect(shown).toMatchObject({
+        status: "failed",
+        gave_up: true,
+        expected: { uci: "d2d4", san: "d4" },
+        note: { san: "d4", text: WHY },
+      });
+    });
+
+    it("is null at the end of a card that stores no explanation", async () => {
+      addCard("d2d4");
+      const { activity } = setup();
+      await activity.startTraining({ mode: "srs" });
+      const solved = training(await activity.trainingTry("d2d4"));
+      expect(solved.status).toBe("solved");
+      expect(solved).toHaveProperty("note", null);
+    });
+
+    it.each(["", "  \n"])("is null at the end of a card whose explanation is %j", async (empty) => {
+      const id = addCard("d2d4");
+      expect(setExplanation(db, id, empty)).toBe(true);
+      const { activity } = setup();
+      await activity.startTraining({ mode: "srs" });
+      expect(training(await activity.trainingTry("d2d4"))).toHaveProperty("note", null);
+      await activity.endTraining();
+      await activity.startTraining({ mode: "srs" });
+      expect(training(await activity.trainingShowSolution())).toHaveProperty("note", null);
+    });
+
+    describe("of a card left by an imported Lichess puzzle", () => {
+      // One Lichess row under the themes given. The import files it under a motif by its themes
+      // and stores that motif's sentence as the explanation, which the miss copies to the card.
+      const rowOf = (id: string, themes: string): string =>
+        [
+          id,
+          "q3k1nr/1pp1nQpp/3p4/1P2p3/4P3/B1PP1b2/B5PP/5K2 b k - 0 17",
+          "e8d7 a2e6 d7d8 f7f8",
+          "1498,76,87,178",
+          themes,
+          "https://lichess.org/game/yyznGmXs/black#34,,",
+        ].join(",");
+
+      async function missImported(id: string, themes: string) {
+        async function* lines(): AsyncGenerator<string> {
+          yield rowOf(id, themes);
+        }
+        await importLichessPuzzles({ lines: lines(), db, clock: fixedClock, log: silentLog });
+        const { activity } = setup();
+        await missPuzzle(activity, `lichess-db:${id}`);
+        const cards = db.prepare("SELECT explanation FROM srs_cards").all();
+        expect(cards).toHaveLength(1);
+        return { activity, explanation: (cards[0] as { explanation: string | null }).explanation };
+      }
+
+      it("is null for the sentence the import gives a puzzle of no motif, solved or shown", async () => {
+        const { activity, explanation } = await missImported("00none", "middlegame short");
+        expect(explanation).toBe(FILLER_PUZZLE_EXPLANATION);
+        await activity.startTraining({ mode: "srs" });
+        await activity.trainingTry("a2e6");
+        const solved = onTheWire(await activity.trainingTry("f7f8"));
+        expect(solved.status).toBe("solved");
+        expect(solved).toHaveProperty("note", null);
+        await activity.endTraining();
+        await activity.startTraining({ mode: "srs" });
+        const shown = onTheWire(await activity.trainingShowSolution());
+        expect(shown.status).toBe("failed");
+        expect(shown).toHaveProperty("note", null);
+      });
+
+      it("is the sentence the import gives a motif, which says something", async () => {
+        const themes = "mate mateIn2 middlegame short";
+        const { activity, explanation } = await missImported("00sHx", themes);
+        expect(explanation).toBeTruthy();
+        expect(explanation).not.toBe(FILLER_PUZZLE_EXPLANATION);
+        await activity.startTraining({ mode: "srs" });
+        await activity.trainingTry("a2e6");
+        const solved = onTheWire(await activity.trainingTry("f7f8"));
+        expect(solved).toMatchObject({
+          status: "solved",
+          note: { san: "Be6+", text: explanation },
+        });
+      });
+    });
+
+    it("is null for a card of another origin that stores exactly the import's filler", async () => {
+      await addCoachCard(FILLER_PUZZLE_EXPLANATION);
+      const { activity } = setup();
+      const served = onTheWire(await activity.startTraining({ mode: "srs" }));
+      expect(served.item).toMatchObject({ origin: "coach" });
+      const solved = onTheWire(await activity.trainingTry("d2d4"));
+      expect(solved.status).toBe("solved");
+      expect(solved).toHaveProperty("note", null);
+    });
+
+    it("is shown for an explanation that only starts with the import's filler", async () => {
+      const longer = `${FILLER_PUZZLE_EXPLANATION} The queen's pawn is defended, the king's is not.`;
+      await addCoachCard(longer);
+      const { activity } = setup();
+      await activity.startTraining({ mode: "srs" });
+      const solved = onTheWire(await activity.trainingTry("d2d4"));
+      expect(solved).toMatchObject({ status: "solved", note: { san: "d4", text: longer } });
+    });
+
+    it("moves on with the item: the next card shows none while it is open", async () => {
+      await addCoachCard(WHY);
+      addCard("d2d4");
+      const { activity } = setup();
+      const served = training(await activity.startTraining({ mode: "srs" }));
+      expect(training(await activity.trainingTry("d2d4")).note).toMatchObject({ text: WHY });
+      await activity.rateCard(exposureOf(served), 4);
+      const next = training(await activity.nextTrainingItem());
+      expect(next.item).toMatchObject({ kind: "card", position_in_queue: 2 });
+      expect(next.note).toBeNull();
+    });
+
+    describe("of a card reviewed through its puzzle's line", () => {
+      // The puzzle's own text is what the miss stores with the card.
+      const LINE_WHY = "why";
+
+      async function startLineCard(): Promise<ActivityService> {
+        addPuzzle(LICHESS, "fork", LICHESS_FORK, LICHESS_FORK_LINE);
+        const { activity } = setup();
+        await missPuzzle(activity, LICHESS);
+        const served = onTheWire(await activity.startTraining({ mode: "srs" }));
+        expect(served).toMatchObject({ fen: LICHESS_FORK, note: null });
+        return activity;
+      }
+
+      it("stays out at every step of the line, a hint at a later step included", async () => {
+        const activity = await startLineCard();
+        const first = onTheWire(await activity.trainingTry("f8d6"));
+        expect(first).toMatchObject({ status: "in_progress", note: null });
+        expect(onTheWire(await activity.trainingHint()).note).toBeNull();
+        const second = onTheWire(await activity.trainingTry("f6e4"));
+        expect(second).toMatchObject({ status: "in_progress", note: null });
+      });
+
+      it("comes at the last step, titled by the first move of the line", async () => {
+        const activity = await startLineCard();
+        await activity.trainingTry("f8d6");
+        await activity.trainingTry("f6e4");
+        const done = onTheWire(await activity.trainingTry("e4d6"));
+        expect(done).toMatchObject({
+          status: "solved",
+          fen: LICHESS_FORK_SOLVED,
+          note: { san: "Bxd6", text: LINE_WHY },
+        });
+      });
+
+      it("comes when the solution is shown at a later step, still titled by the first move", async () => {
+        const activity = await startLineCard();
+        await activity.trainingTry("f8d6");
+        const given = onTheWire(await activity.trainingShowSolution());
+        expect(given).toMatchObject({
+          status: "failed",
+          fen: LICHESS_FORK_AFTER_FIRST_REPLY,
+          expected: { uci: "f6e4", san: "Ne4+" },
+          note: { san: "Bxd6", text: LINE_WHY },
+        });
+      });
+    });
+  });
+
+  it("is what the Grading and Found notes entries of AGENTS.md say", () => {
+    const agents = readFileSync(join(import.meta.dirname, "../../../../AGENTS.md"), "utf8");
+    const entryOf = (name: string): string =>
+      (
+        new RegExp(`- \\*\\*${name}:\\*\\*[\\s\\S]*?(?=\\n- \\*\\*)`).exec(agents)?.[0] ?? ""
+      ).replace(/\s+/g, " ");
+    const grading = entryOf("Grading");
+    for (const said of [
+      "`origin`",
+      "`Missed puzzle`",
+      "`From your game`",
+      "`Coach card`",
+      "in the tag beside the item's title",
+      "The title stays `Card 3 of 20`",
+      "the line pinned over the conversation does not repeat the origin",
+      "`srs_cards.explanation`",
+      "null while the card is open, a hint included",
+      "`FILLER_PUZZLE_EXPLANATION`",
+      "the import's sentences that describe a motif are shown",
+    ]) {
+      expect(grading).toContain(said);
+    }
+    expect(entryOf("Found notes")).toContain("a review card carries its own explanation");
   });
 });

@@ -284,7 +284,24 @@
   and 1, Again, after a wrong try or a hint at any step or once the solution was shown. Its
   `srs_answer` notification is amended to describe the step the student missed (the one
   the solution was shown at, else the first wrong try's), with that step's position, the move tried
-  and the move expected, and it lists every try. Every try is kept in
+  and the move expected, and it lists every try. A card item says what it was made from before the
+  first move: it carries `origin` from the moment it is served, read off `srs_cards` in this order,
+  `game` for `source_kind` `game_move`, `game` for a `puzzle_id` that starts with `own:`, `puzzle`
+  for any other `puzzle_id` and `coach` for the rest, the cards the coach's `add_srs_card` made. The
+  Practice column writes it in the tag beside the item's title, the small text a puzzle's theme
+  uses, as `Missed puzzle`, `From your game` or `Coach card`. The title stays `Card 3 of 20`, since
+  a card that comes back inside the training lengthens the queue and the title with it, and the
+  line pinned over the conversation does not repeat the origin. A missed puzzle
+  holds a tactic, and the other two may ask for a quiet move. Once the card has ended, solved or
+  with the solution shown, the state carries its explanation in `note`, the field of a From my
+  games item: `{san, text}` with `srs_cards.explanation` and the SAN of the card's expected move,
+  which is the first move of the line for a card reviewed through one, whatever step it ended at.
+  It is null while the card is open, a hint included, since the text gives the answer away, and
+  when the explanation explains nothing: null, blank, or exactly the sentence the Lichess import
+  stores for a puzzle of no motif (`FILLER_PUZZLE_EXPLANATION` in `puzzles/lichess-import.ts`),
+  which under "Why" reads as an empty answer, while the import's sentences that describe a motif
+  are shown. The column draws the note under the verdict as "Why <SAN>" and the text, and it stays
+  once the card is rated. Every try is kept in
   `training_tries`, and puzzle accuracy is first-try solves
   (`puzzle_attempts.first_try`). The coach hears once per item, when it ends, except a puzzle solved first try without a hint: that writes no notification, the state carries `coach_comment: "offered"`, and `ask_coach_about_item {activity_id}` (refused with `stale_activity`, `not_in_training` or `already_requested`) writes it with the position and the solution. A `hint` marks the
   origin square of the expected move, clears on the next try, and makes the solve count as missed.
@@ -517,7 +534,8 @@
   item ended solved or with the solution shown: `{san, text}` with the stored note and the best
   accepted move's SAN, since an item solved with another accepted move has no `expected` move to
   name it by, or null when the position has none. It is null while the item is open, a hint included, and
-  the field is absent in every other mode, whose puzzles may share the id. The Practice column draws it
+  the field is absent from a puzzle of every other mode, which may share the id; a review card carries
+  its own explanation in the same field (see Grading). The Practice column draws it
   in the item's card under the verdict, as "Why <SAN>" and the text, and draws nothing when it is null
   or before the end.
 - **From my games list:** `GET /api/found-positions` (optional `color`, `phase` and `opening`) answers

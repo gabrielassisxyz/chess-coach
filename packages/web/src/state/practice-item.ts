@@ -1,4 +1,5 @@
 import type {
+  CardOrigin,
   LegalMoveEntry,
   PlayedMove,
   QueueOutcome,
@@ -28,6 +29,14 @@ const KIND_WORD: Record<TrainingMode, string> = {
 
 const sideWord = (side: "white" | "black"): string => (side === "white" ? "White" : "Black");
 
+// Said beside a review card's title before the first move, so the student knows whether a tactic
+// is certain, as in a missed puzzle, or the answer may be a quiet move.
+const CARD_ORIGIN_WORD: Record<CardOrigin, string> = {
+  puzzle: "Missed puzzle",
+  game: "From your game",
+  coach: "Coach card",
+};
+
 export interface ItemHeading {
   title: string;
   tag: string | null;
@@ -35,11 +44,16 @@ export interface ItemHeading {
 }
 
 // The tag names only what the student already knows: the motif they chose, the colour of an
-// opening drill, or, on an Any-motif run, the pattern once the item has ended.
+// opening drill, or, on an Any-motif run, the pattern once the item has ended. A review card's
+// tag says what the card was made from, which gives nothing of the answer away; it is a tag and not
+// part of the title because the title has to stay short as the queue grows.
 export function headingOf(training: TrainingActivity, runMotif: string | null): ItemHeading {
   const { item, mode } = training;
   const total = item.queue_length === undefined ? "" : ` of ${item.queue_length}`;
   const title = `${KIND_WORD[mode]} ${item.position_in_queue}${total}`;
+  if (item.kind === "card" && item.origin) {
+    return { title, tag: CARD_ORIGIN_WORD[item.origin], openingName: null };
+  }
   if (item.kind !== "puzzle") return { title, tag: null, openingName: null };
   const openingName = item.opening_name ?? null;
   if (mode === "openings") {
@@ -54,12 +68,13 @@ export function headingOf(training: TrainingActivity, runMotif: string | null): 
 }
 
 // The line pinned over the conversation: which item is on the board and which side the student
-// plays, with the pattern only when the heading would show it too.
+// plays, with the pattern only when the heading would show it too. A review card's tag is where the
+// card came from and no pattern, so the line leaves it out.
 export function contextLineOf(training: TrainingActivity, runMotif: string | null): string {
   const heading = headingOf(training, runMotif);
   const [kind, position] = heading.title.split(" ");
   const parts = [`${kind} ${position}`];
-  if (heading.tag) parts.push(heading.tag);
+  if (heading.tag && training.item.kind !== "card") parts.push(heading.tag);
   parts.push(`you play ${sideWord(training.orientation)}`);
   return parts.join(" \u00b7 ");
 }
@@ -201,12 +216,15 @@ export interface StateCard {
   tone: CardTone;
   title: string;
   body: string;
-  /** Why the best move of a position from the student's games is played, once its item has ended. */
+  /**
+   * Why the best move of a position from the student's games is played, or the explanation stored
+   * with a review card, once the item has ended.
+   */
   note?: { title: string; body: string };
 }
 
 // The note stays out of the card while the item is open, where the server sends none, and when the
-// position has none, so a position nobody wrote a note for shows no empty line.
+// position or the review card has none, so an item nobody wrote a note for shows no empty line.
 function noteOf(training: TrainingActivity): Pick<StateCard, "note"> {
   const { note } = training;
   return note ? { note: { title: `Why ${note.san}`, body: note.text } } : {};

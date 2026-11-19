@@ -862,6 +862,86 @@ describe("a card on the board", () => {
   });
 });
 
+describe("the explanation of a review card", () => {
+  const NOTE = { san: "d4", text: "Take the centre first: the queen's pawn is defended." };
+  const solvedCard = (overrides: Partial<TrainingActivity> = {}): TrainingActivity =>
+    card({
+      status: "solved",
+      input_enabled: false,
+      legal_moves: [],
+      last_move: { from: "d2", to: "d4" },
+      last_try: { uci: "d2d4", san: "d4", correct: true },
+      moves: [{ ply: 0, uci: "d2d4", san: "d4", by: "student" }],
+      suggested_grade: 3,
+      ...overrides,
+    });
+  const noteBlock = (): Element | null => document.querySelector(".state-card__note");
+  const noteText = (part: "title" | "body"): string | null | undefined =>
+    noteBlock()?.querySelector(`.state-card__note-${part}`)?.textContent;
+
+  it("draws Why with the move, then the text, under the verdict of a solved card", () => {
+    render(<Practice server={api(solvedCard({ note: NOTE }))} createBoard={spyBoard} />);
+    expect(screen.getByRole("status").textContent).toBe("Solved");
+    expect(noteText("title")).toBe("Why d4");
+    expect(noteText("body")).toBe(NOTE.text);
+    const verdict = document.querySelector(".state-card__head");
+    expect(verdict?.textContent).toContain("Solved");
+    expect(verdict?.nextElementSibling).toBe(noteBlock());
+  });
+
+  it("draws it once the solution was shown, and keeps it once the card is rated", () => {
+    render(<Practice server={api(card({ ...answeredCard, note: NOTE }))} createBoard={spyBoard} />);
+    expect(screen.getByText("Solution shown")).toBeTruthy();
+    expect(noteText("title")).toBe("Why d4");
+    expect(noteText("body")).toBe(NOTE.text);
+    cleanup();
+    render(
+      <Practice
+        server={api(card({ ...answeredCard, status: "rated", note: NOTE }))}
+        createBoard={spyBoard}
+      />,
+    );
+    expect(screen.getByText("Rated")).toBeTruthy();
+    expect(noteText("body")).toBe(NOTE.text);
+  });
+
+  it("draws it exactly as the note of a position from the student's games", () => {
+    render(<Practice server={api(solvedCard({ note: NOTE }))} createBoard={spyBoard} />);
+    const ofCard = noteBlock()?.outerHTML;
+    cleanup();
+    const found = puzzle({ mode: "found", status: "solved", input_enabled: false, note: NOTE });
+    render(<Practice server={api(found)} createBoard={spyBoard} />);
+    expect(ofCard).toBeDefined();
+    expect(noteBlock()?.outerHTML).toBe(ofCard);
+  });
+
+  it("draws nothing for a card without one, solved, shown or rated", () => {
+    for (const ended of [
+      solvedCard({ note: null }),
+      solvedCard(),
+      card({ ...answeredCard, note: null }),
+      card({ ...answeredCard, status: "rated", note: null }),
+    ]) {
+      const { unmount } = render(<Practice server={api(ended)} createBoard={spyBoard} />);
+      expect(noteBlock()).toBeNull();
+      expect(document.querySelector(".state-card")?.textContent).not.toContain("Why");
+      unmount();
+    }
+  });
+
+  it("draws nothing while the card is open, though the state were to carry one", () => {
+    for (const open of [
+      card({ note: NOTE }),
+      card({ note: NOTE, hint_square: "d2" }),
+      card({ note: NOTE, tries: 1, last_try: { uci: "c2c4", san: "c4", correct: false } }),
+    ]) {
+      const { unmount } = render(<Practice server={api(open)} createBoard={spyBoard} />);
+      expect(noteBlock()).toBeNull();
+      unmount();
+    }
+  });
+});
+
 describe("a puzzle on the board", () => {
   it("never offers a rating, before or after the answer", () => {
     for (const status of ["prompt", "in_progress", "solved", "failed"] as const) {
