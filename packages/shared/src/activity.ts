@@ -310,6 +310,9 @@ export const TrainingActivitySchema = z.object({
   // Set on a puzzle solved first try without a hint, which the coach does not comment on unprompted:
   // `offered` until the student asks for the comment, `requested` after.
   coach_comment: z.enum(["offered", "requested"]).nullable().optional(),
+  // True on a puzzle served again by `retry_item`, and absent otherwise. The second play is practice
+  // that counts for nothing but itself, so its end moves no rating and tells the coach nothing.
+  retry: z.boolean().optional(),
   // Present on a drill of the positions from the student's games and on a review card only: the
   // stored note, or the card's explanation, once the item has ended, null while it is open and when
   // there is none.

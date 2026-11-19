@@ -110,6 +110,8 @@ describe("training over the socket", () => {
       { type: "rate_card", exposure_id: "x", grade: 3 },
       { type: "rate_card", exposure_id: "x", grade: 4 },
       { type: "next_training_item" },
+      { type: "retry_item" },
+      { type: "retry_item", activity_id: 3 },
       { type: "end_training", activity_id: 3 },
       { type: "explore", kind: "move", uci: "e2e4", activity_id: 3 },
       { type: "explore", kind: "undo" },
@@ -165,6 +167,9 @@ describe("training over the socket", () => {
       },
       { type: "resume_training" },
       { type: "discard_training" },
+      { type: "retry_item", activity_id: 0 },
+      { type: "retry_item", activity_id: "3" },
+      { type: "retry" },
       { type: "analyse", fen: "short" },
       { type: "analyse", fen: BACK_RANK, lines: 6 },
       { type: "analyse", fen: BACK_RANK, depth: 4 },
@@ -233,6 +238,66 @@ describe("training over the socket", () => {
     expect(await next("error")).toMatchObject({ code: "item_finished", command_id: "c4" });
     socket.send(JSON.stringify({ type: "show_solution", command_id: "c5" }));
     expect(await next("error")).toMatchObject({ code: "item_finished", command_id: "c5" });
+    socket.close();
+  });
+
+  it("routes retry_item to the ended puzzle and refuses it by code on an open item and an ended queue", async () => {
+    const log = new RecordingLog();
+    const server = await start(seededDatabase(), log);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "c1", mode: "puzzles", motif: "fork" }),
+    );
+    const served = (await next("activity")) as { state: { activity_id: number; item: unknown } };
+    await next("training");
+    const id = served.state.activity_id;
+    const failedOf = (commandId: string) =>
+      log.named("ws.command_failed").find((entry) => entry.fields.command_id === commandId);
+    const retry = (commandId: string, activityId: number = id) =>
+      socket.send(
+        JSON.stringify({ type: "retry_item", command_id: commandId, activity_id: activityId }),
+      );
+
+    retry("c2");
+    expect(await next("error")).toMatchObject({ code: "invalid_state", command_id: "c2" });
+    expect(failedOf("c2")).toMatchObject({ level: "warn", fields: { code: "invalid_state" } });
+
+    socket.send(JSON.stringify({ type: "try_move", command_id: "c3", uci: "a1a8" }));
+    expect(await next("training")).toMatchObject({ status: "solved" });
+    await next("activity");
+    retry("c4", id + 1);
+    expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "c4" });
+
+    retry("c5");
+    expect(ServerEventSchema.parse(await next("activity"))).toMatchObject({
+      type: "activity",
+      state: {
+        kind: "training",
+        activity_id: id,
+        status: "prompt",
+        retry: true,
+        tries: 0,
+        moves: [],
+        item: served.state.item,
+      },
+    });
+    expect(ServerEventSchema.parse(await next("training"))).toMatchObject({
+      type: "training",
+      status: "prompt",
+      item: served.state.item,
+    });
+    expect(log.named("ws.command_done").map((entry) => entry.fields.type)).toContain("retry_item");
+
+    socket.send(JSON.stringify({ type: "show_solution", command_id: "c6" }));
+    expect(await next("training")).toMatchObject({ status: "failed" });
+    await next("activity");
+    socket.send(JSON.stringify({ type: "next_training_item", command_id: "c7" }));
+    expect(await next("training")).toMatchObject({ summary: { solved: 1, failed: 0 } });
+    await next("activity");
+    retry("c8");
+    expect(await next("error")).toMatchObject({ code: "item_finished", command_id: "c8" });
+    expect(failedOf("c8")).toMatchObject({ level: "warn", fields: { code: "item_finished" } });
     socket.close();
   });
 

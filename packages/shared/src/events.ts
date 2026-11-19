@@ -133,6 +133,7 @@ export const ErrorCodeSchema = z.enum([
   "empty_queue",
   "item_unfinished",
   "item_finished",
+  "invalid_state",
   "card_not_found",
   "exposure_unknown",
   "exposure_used",
@@ -490,6 +491,14 @@ export const NextTrainingItemCommandSchema = z.object({
   activity_id: activityId,
 });
 
+// Serves the ended puzzle on the board again from its first move, at the same place in the queue.
+// The second play is practice: it is graded on the board and counts for nothing else.
+export const RetryItemCommandSchema = z.object({
+  type: z.literal("retry_item"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
 export const EndTrainingCommandSchema = z.object({
   type: z.literal("end_training"),
   command_id: commandId,
@@ -531,6 +540,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   AskCoachAboutItemCommandSchema,
   RateCardCommandSchema,
   NextTrainingItemCommandSchema,
+  RetryItemCommandSchema,
   EndTrainingCommandSchema,
   CreateCardsCommandSchema,
   AskCoachAboutPlyCommandSchema,

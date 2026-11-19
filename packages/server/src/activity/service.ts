@@ -391,6 +391,13 @@ export class ActivityService {
     );
   }
 
+  // The ended puzzle again from its first move. It is a serve like any other, so the log says so.
+  retryTrainingItem(expectedActivityId?: number): Promise<ActivityState> {
+    return this.stepTraining(expectedActivityId, "retryTrainingItem", (run) => run.retry()).then(
+      (state) => this.logServed(state),
+    );
+  }
+
   // Back to what was under the queue: the live game if it is still unfinished, else an empty board.
   // A demo shown over a finished item keeps the run, so ending from that demo ends the same run.
   endTraining(expectedActivityId?: number): Promise<ActivityState | null> {

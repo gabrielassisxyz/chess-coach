@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProgressResponseSchema, ThemeStatsResponseSchema } from "@chess-coach/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { TrainingRun } from "../activity/training.js";
 import { buildApp } from "../app.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { INITIAL_PUZZLE_RATING, setPuzzleRating } from "../puzzles/rating.js";
+import { ReviewDesk } from "../srs/review.js";
 
 let tmp: string;
 let db: Database;
@@ -142,6 +144,36 @@ describe("GET /api/puzzles/themes/stats", () => {
       overall: { played: 2 },
       overall_previous: null,
     });
+  });
+
+  it("answers the same played and first-try counts before and after a retry of an ended puzzle", async () => {
+    addRatedAttempt("earlier", 2);
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san,
+         explanation, difficulty_rating, themes)
+       VALUES ('played', 'test', 'skewer', 'easy', '6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1',
+         '["a1a8"]', '["Ra8#"]', 'why', 1500, 'fork short')`,
+    ).run();
+    const app = buildApp({ db });
+    const overall = async (): Promise<unknown> =>
+      ThemeStatsResponseSchema.parse(
+        (await app.inject({ method: "GET", url: "/api/puzzles/themes/stats" })).json(),
+      ).overall;
+    // The only puzzle of its motif, so the queue holds it alone and not the attempt fixture.
+    const run = TrainingRun.begin(
+      { db, desk: new ReviewDesk({ db }) },
+      { mode: "puzzles", motif: "skewer" },
+    );
+    expect(run.state(1).item).toMatchObject({ kind: "puzzle", puzzle_id: "played" });
+    run.tryMove("a1a8");
+    const before = await overall();
+    expect(before).toMatchObject({ played: 2, first_try: 2 });
+    run.retry();
+    run.showSolution();
+    const after = await overall();
+    await app.close();
+    expect(after).toMatchObject({ played: 2, first_try: 2 });
+    expect(after).toEqual(before);
   });
 
   it("refuses a window it does not offer with bad_query", async () => {

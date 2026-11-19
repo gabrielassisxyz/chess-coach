@@ -3908,6 +3908,66 @@ describe("a drill of the positions from the student's games", () => {
     expect(foundCard("b")).toBeUndefined();
   });
 
+  describe("a retry of a position that ended", () => {
+    const foundRow = (id: string): unknown =>
+      db.prepare("SELECT * FROM found_cards WHERE position_id = ?").get(id);
+
+    it.each([
+      ["a wrong try", (activity: ActivityService) => activity.trainingTry("d7d5")],
+      ["a hint", (activity: ActivityService) => activity.trainingHint()],
+      ["the solution shown", (activity: ActivityService) => activity.trainingShowSolution()],
+    ])("leaves the card a right first play made as it was after %s", async (_name, miss) => {
+      addFound("one");
+      const clock = steppingClock();
+      const { activity } = setup(clock);
+      await activity.startTraining({ mode: "found", scope: "all" });
+      const solved = training(await activity.trainingTry("e7e5"));
+      expect(solved.status).toBe("solved");
+      const card = foundRow("one");
+      expect(card).toMatchObject({ reviews: 1, lapses: 0 });
+      expect(loggedGrades()).toEqual([{ key: "one", grade: 3 }]);
+
+      clock.advance(3600);
+      const again = training(await activity.retryTrainingItem());
+      expect(again).toMatchObject({ status: "prompt", retry: true, mode: "found" });
+      expect(again.item).toMatchObject({ puzzle_id: "one", position_in_queue: 1 });
+      await miss(activity);
+      expect(foundRow("one")).toEqual(card);
+      if (training(activity.current()).status !== "failed") await activity.trainingShowSolution();
+      expect(training(activity.current())).toMatchObject({ status: "failed", retry: true });
+      expect(foundRow("one")).toEqual(card);
+      expect(loggedGrades()).toEqual([{ key: "one", grade: 3 }]);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM puzzle_attempts").get()).toEqual({ n: 1 });
+    });
+
+    it("leaves the card a missed first play made as it was when the retry is right", async () => {
+      addFound("one", { accepted: ["e7e5", "c7c5"] });
+      const clock = steppingClock();
+      const { activity, notes } = setup(clock);
+      await activity.startTraining({ mode: "found", scope: "all" });
+      await activity.trainingTry("d7d5");
+      await activity.trainingTry("e7e5");
+      const card = foundRow("one");
+      expect(card).toMatchObject({ reviews: 1 });
+      expect(loggedGrades()).toEqual([{ key: "one", grade: 1 }]);
+      const told = notes();
+
+      clock.advance(3600);
+      await activity.retryTrainingItem();
+      const solved = training(await activity.trainingTry("c7c5"));
+      expect(solved).toMatchObject({
+        status: "solved",
+        retry: true,
+        moves: [{ uci: "c7c5", san: "c5" }],
+        queue_outcomes: ["solved"],
+      });
+      expect(foundRow("one")).toEqual(card);
+      expect(loggedGrades()).toEqual([{ key: "one", grade: 1 }]);
+      expect(notes()).toEqual(told);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM puzzle_attempts").get()).toEqual({ n: 1 });
+    });
+  });
+
   describe("the note of the position", () => {
     const NOTE = "Claims the center and frees the bishop for the diagonal.";
 
@@ -3924,6 +3984,17 @@ describe("a drill of the positions from the student's games", () => {
       expect(training(await activity.trainingTry("d7d5")).note).toBeNull();
       expect(training(await activity.trainingHint()).note).toBeNull();
       expect(JSON.stringify(activity.current())).not.toContain(NOTE);
+    });
+
+    it("goes while a retry is open and comes back when the retry ends", async () => {
+      addNoted("noted");
+      const { activity } = setup();
+      await activity.startTraining({ mode: "found", scope: "all" });
+      await activity.trainingTry("e7e5");
+      expect(training(await activity.retryTrainingItem()).note).toBeNull();
+      expect(JSON.stringify(activity.current())).not.toContain(NOTE);
+      const shown = training(await activity.trainingShowSolution());
+      expect(shown).toMatchObject({ status: "failed", note: { san: "e5", text: NOTE } });
     });
 
     it("comes with a solved item, titled by the move that was right", async () => {
@@ -4570,5 +4641,477 @@ describe("what a review card says it is, and the explanation it shows at the end
       expect(grading).toContain(said);
     }
     expect(entryOf("Found notes")).toContain("a review card carries its own explanation");
+  });
+});
+
+describe("a retry of an ended puzzle", () => {
+  const countOf = (sql: string, ...params: (string | number)[]): number =>
+    (db.prepare(sql).get(...params) as { n: number }).n;
+  const attemptsOf = (id: string): number =>
+    countOf("SELECT COUNT(*) AS n FROM puzzle_attempts WHERE puzzle_id = ?", id);
+  const storedRating = (): unknown =>
+    db.prepare("SELECT value FROM settings WHERE key = 'puzzle_rating'").get();
+  const cards = (): unknown[] => db.prepare("SELECT * FROM srs_cards ORDER BY id").all();
+  // The run's row as its last step left it, without the served item, which a retry replaces.
+  const tallyOfRun = (): unknown =>
+    db
+      .prepare(
+        `SELECT size, items_json, position, solved, failed, outcomes_json
+         FROM training_runs ORDER BY id DESC LIMIT 1`,
+      )
+      .get();
+  // Each serve of the puzzle as the ledger keeps it, with the tries graded under it.
+  const servesOf = (id: string): unknown[] =>
+    db
+      .prepare(
+        `SELECT i.served_at, i.answered_at, i.answer_uci, i.correct, i.hinted,
+           (SELECT COUNT(*) FROM training_tries t WHERE t.item_id = i.id) AS tries
+         FROM training_items i WHERE i.puzzle_id = ? ORDER BY i.id`,
+      )
+      .all(id);
+
+  // How a second play can end: each is a miss or a win on a first play, and nothing on a retry.
+  const ENDINGS = ["solved", "solved after a wrong try", "solved with a hint", "given up"] as const;
+  type Ending = (typeof ENDINGS)[number];
+
+  async function playBackRank(
+    activity: ActivityService,
+    ending: Ending,
+  ): Promise<TrainingActivity> {
+    if (ending === "given up") return training(await activity.trainingShowSolution());
+    if (ending === "solved after a wrong try") await activity.trainingTry("a1a2");
+    if (ending === "solved with a hint") await activity.trainingHint();
+    return training(await activity.trainingTry("a1a8"));
+  }
+
+  it.each(["solved", "failed"] as const)(
+    "serves a %s puzzle again at its place in the queue, from its first move",
+    async (status) => {
+      addPuzzle("f1", "fork", FORK, FORK_LINE);
+      const clock = steppingClock();
+      const log = new RecordingLog();
+      const { activity } = setup(clock, log);
+      const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+      await activity.trainingTry("f4e5");
+      await activity.trainingTry("b5c7");
+      clock.advance(40);
+      const ended = training(
+        status === "solved"
+          ? await activity.trainingTry("a1c1")
+          : await activity.trainingShowSolution(),
+      );
+      expect(ended).toMatchObject({ status, tries: 1 });
+      expect(ended).not.toHaveProperty("retry");
+      clock.advance(5);
+
+      const again = training(await activity.retryTrainingItem(start.activity_id));
+      expect(TrainingActivitySchema.parse(again)).toEqual(again);
+      expect(again).toMatchObject({
+        activity_id: start.activity_id,
+        status: "prompt",
+        retry: true,
+        fen: FORK,
+        input_enabled: true,
+        tries: 0,
+        last_try: null,
+        moves: [],
+        wrong_tries: [],
+        exploring: { fen: FORK, line_san: [], trail: [] },
+        gave_up: false,
+        expected: null,
+        solution_line: null,
+        hint_square: null,
+        summary: null,
+        served_at: new Date(T0.getTime() + 45_000).toISOString(),
+      });
+      expect(again.item).toEqual(start.item);
+      expect(again.served_at).not.toBe(ended.served_at);
+      expect(again.legal_moves).toEqual(start.legal_moves);
+      expect(log.named("training.item_served").map((entry) => entry.fields.item)).toEqual([
+        start.item,
+        start.item,
+      ]);
+    },
+  );
+
+  it("grades the second play on the board and keeps it in the ledger as an item of its own", async () => {
+    addPuzzle("f1", "fork", FORK, FORK_LINE);
+    const clock = steppingClock();
+    const log = new RecordingLog();
+    const { activity } = setup(clock, log);
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("b5c7");
+    await activity.trainingTry("a1c1");
+    clock.advance(30);
+    await activity.retryTrainingItem();
+    clock.advance(4);
+    const wrong = training(await activity.trainingTry("f4e5"));
+    expect(wrong).toMatchObject({
+      status: "prompt",
+      tries: 1,
+      last_try: { uci: "f4e5", correct: false },
+      wrong_tries: [{ ply: 0, uci: "f4e5", san: "Be5" }],
+    });
+    const hinted = training(await activity.trainingHint());
+    expect(hinted.hint_square).toBe("b5");
+    const mid = training(await activity.trainingTry("b5c7"));
+    expect(mid).toMatchObject({ status: "in_progress", fen: FORK_PUZZLE_AFTER_REPLY_FEN });
+    clock.advance(6);
+    const solved = training(await activity.trainingTry("a1c1"));
+    expect(solved).toMatchObject({ status: "solved", fen: FORK_PUZZLE_SOLVED_FEN, retry: true });
+    expect((solved.moves ?? []).map((move) => move.uci)).toEqual(FORK_LINE);
+
+    expect(servesOf("f1")).toEqual([
+      {
+        served_at: T0.toISOString(),
+        answered_at: T0.toISOString(),
+        answer_uci: "a1c1",
+        correct: 1,
+        hinted: 0,
+        tries: 2,
+      },
+      {
+        served_at: new Date(T0.getTime() + 30_000).toISOString(),
+        answered_at: new Date(T0.getTime() + 40_000).toISOString(),
+        answer_uci: "a1c1",
+        correct: 0,
+        hinted: 1,
+        tries: 3,
+      },
+    ]);
+    expect(log.named("training.answer").map((entry) => entry.fields.uci)).toEqual([
+      "b5c7",
+      "a1c1",
+      "f4e5",
+      "b5c7",
+      "a1c1",
+    ]);
+
+    const shown = setup(clock);
+    await shown.activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await shown.activity.trainingTry("b5c7");
+    await shown.activity.trainingTry("a1c1");
+    await shown.activity.retryTrainingItem();
+    await shown.activity.trainingTry("b5c7");
+    const given = training(await shown.activity.trainingShowSolution());
+    expect(given).toMatchObject({
+      status: "failed",
+      gave_up: true,
+      retry: true,
+      fen: FORK_PUZZLE_AFTER_REPLY_FEN,
+      expected: { uci: "a1c1", san: "Rc1" },
+      solution_line: ["a1c1"],
+    });
+  });
+
+  it("can be asked again of a retry that ended, and moves on to the next item as before", async () => {
+    addPuzzle("b1", "fork", BACK_RANK, ["a1a8"]);
+    addPuzzle("b2", "fork", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    await activity.trainingTry("a1a8");
+    await activity.retryTrainingItem();
+    await activity.trainingShowSolution();
+    const third = training(await activity.retryTrainingItem());
+    expect(third).toMatchObject({ status: "prompt", retry: true, tries: 0 });
+    expect(third.item).toEqual(start.item);
+    await activity.trainingTry("a1a8");
+    const next = training(await activity.nextTrainingItem());
+    expect(next).toMatchObject({ status: "prompt", item: { position_in_queue: 2 } });
+    expect(next).not.toHaveProperty("retry");
+    expect(next.queue_outcomes).toEqual(["solved", "current"]);
+    expect(servesOf(start.item.kind === "puzzle" ? start.item.puzzle_id : "")).toHaveLength(3);
+  });
+
+  it("refuses an open item, a card and an ended queue, and leaves the board as it was", async () => {
+    addPuzzle("f1", "fork", FORK, FORK_LINE);
+    addCard("d2d4");
+    const { activity } = setup();
+    expect(await code(activity.retryTrainingItem())).toBe("not_in_training");
+
+    const start = training(await activity.startTraining({ mode: "puzzles", motif: "fork" }));
+    expect(await code(activity.retryTrainingItem(start.activity_id))).toBe("invalid_state");
+    await activity.trainingTry("b5c7");
+    expect(await code(activity.retryTrainingItem(start.activity_id))).toBe("invalid_state");
+    const solved = training(await activity.trainingTry("a1c1"));
+    expect(await code(activity.retryTrainingItem(start.activity_id + 1))).toBe("stale_activity");
+    expect(activity.current()).toEqual(solved);
+    expect(servesOf("f1")).toHaveLength(1);
+    const ended = training(await activity.nextTrainingItem());
+    expect(ended.summary).toEqual({ solved: 1, failed: 0 });
+    expect(await code(activity.retryTrainingItem())).toBe("item_finished");
+    expect(activity.current()).toEqual(ended);
+    expect(servesOf("f1")).toHaveLength(1);
+    await activity.endTraining();
+
+    const card = training(await activity.startTraining({ mode: "srs" }));
+    expect(await code(activity.retryTrainingItem())).toBe("invalid_state");
+    const answered = training(await activity.trainingTry("d2d4"));
+    expect(await code(activity.retryTrainingItem())).toBe("invalid_state");
+    expect(activity.current()).toEqual(answered);
+    await activity.rateCard((card.item as { exposure_id: string }).exposure_id, 3);
+    expect(await code(activity.retryTrainingItem())).toBe("invalid_state");
+    expect(countOf("SELECT COUNT(*) AS n FROM training_items WHERE kind = 'card'")).toBe(1);
+  });
+
+  it.each(ENDINGS)("writes no attempt row when the retry is %s", async (ending) => {
+    addPuzzle("r1", "fork", BACK_RANK, ["a1a8"], 1400);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("a1a8");
+    expect(attemptsOf("r1")).toBe(1);
+    const attempt = db.prepare("SELECT * FROM puzzle_attempts").all();
+    await activity.retryTrainingItem();
+    expect(attemptsOf("r1")).toBe(1);
+    const ended = await playBackRank(activity, ending);
+    expect(ended.status).toBe(ending === "given up" ? "failed" : "solved");
+    expect(attemptsOf("r1")).toBe(1);
+    expect(db.prepare("SELECT * FROM puzzle_attempts").all()).toEqual(attempt);
+  });
+
+  it.each(ENDINGS)("leaves the puzzle rating alone when the retry is %s", async (ending) => {
+    addPuzzle("r1", "fork", BACK_RANK, ["a1a8"], 1400);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const first = training(await activity.trainingTry("a1a8"));
+    expect(first).toMatchObject({ student_rating: 1224, rating_change: 24 });
+    const stored = storedRating();
+    expect(stored).toEqual({ value: "1224" });
+
+    const again = training(await activity.retryTrainingItem());
+    expect(again).toMatchObject({ student_rating: 1224, rating_change: null });
+    const ended = await playBackRank(activity, ending);
+    expect(ended).toMatchObject({ student_rating: 1224, rating_change: null });
+    expect(ended.item).toMatchObject({ rating: 1400 });
+    expect(storedRating()).toEqual(stored);
+    expect(currentPuzzleRating(db)).toBe(1224);
+  });
+
+  it("does not win back the rating a missed first play lost", async () => {
+    addPuzzle("r1", "fork", BACK_RANK, ["a1a8"], 1200);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const missed = training(await activity.trainingShowSolution());
+    expect(missed).toMatchObject({ student_rating: 1184, rating_change: -16 });
+    await activity.retryTrainingItem();
+    const solved = training(await activity.trainingTry("a1a8"));
+    expect(solved).toMatchObject({ status: "solved", student_rating: 1184, rating_change: null });
+    expect(storedRating()).toEqual({ value: "1184" });
+  });
+
+  it.each(ENDINGS.filter((ending) => ending !== "solved"))(
+    "makes no review card of a puzzle solved first try when the retry is %s",
+    async (ending) => {
+      addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+      const { activity } = setup();
+      await activity.startTraining({ mode: "puzzles", motif: "fork" });
+      await activity.trainingTry("a1a8");
+      await activity.retryTrainingItem();
+      await playBackRank(activity, ending);
+      expect(cards()).toEqual([]);
+    },
+  );
+
+  it.each(ENDINGS)(
+    "leaves the card a missed first play made as it was when the retry is %s",
+    async (ending) => {
+      addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+      const clock = steppingClock();
+      const { activity } = setup(clock);
+      await activity.startTraining({ mode: "puzzles", motif: "fork" });
+      await activity.trainingTry("a1a2");
+      await activity.trainingTry("a1a8");
+      const made = cards();
+      expect(made).toMatchObject([
+        { puzzle_id: "f1", played_uci: "a1a2", next_review_at: T0.toISOString() },
+      ]);
+      clock.advance(3600);
+      await activity.retryTrainingItem();
+      await playBackRank(activity, ending);
+      expect(cards()).toEqual(made);
+      expect(countOf("SELECT COUNT(*) AS n FROM srs_reviews")).toBe(0);
+    },
+  );
+
+  it("keeps the first play's outcome in the run when a solved puzzle is retried and given up", async () => {
+    addPuzzle("b1", "fork", BACK_RANK, ["a1a8"]);
+    addPuzzle("b2", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, rows } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const solved = training(await activity.trainingTry("a1a8"));
+    expect(solved.queue_outcomes).toEqual(["solved", "pending"]);
+    const tally = tallyOfRun();
+    expect(tally).toMatchObject({ size: 2, position: 0, solved: 1, failed: 0 });
+    expect(tally).toMatchObject({ outcomes_json: JSON.stringify(["solved"]) });
+
+    const again = training(await activity.retryTrainingItem());
+    expect(again.queue_outcomes).toEqual(["solved", "pending"]);
+    expect(again.item).toMatchObject({ position_in_queue: 1, queue_length: 2 });
+    const given = training(await activity.trainingShowSolution());
+    expect(given).toMatchObject({ status: "failed", queue_outcomes: ["solved", "pending"] });
+    expect(tallyOfRun()).toEqual(tally);
+
+    await activity.nextTrainingItem();
+    await activity.trainingShowSolution();
+    const ended = training(await activity.nextTrainingItem());
+    expect(ended.summary).toEqual({ solved: 1, failed: 1 });
+    expect(ended.queue_outcomes).toEqual(["solved", "failed"]);
+    expect(rows().filter((row) => row.type === "training_summary")).toEqual([
+      { type: "training_summary", mode: "puzzles", solved: 1, failed: 1 },
+    ]);
+  });
+
+  it("keeps a missed first play missed in the run when the retry is solved", async () => {
+    addPuzzle("b1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingShowSolution();
+    const tally = tallyOfRun();
+    expect(tally).toMatchObject({
+      solved: 0,
+      failed: 1,
+      outcomes_json: JSON.stringify(["failed"]),
+    });
+    await activity.retryTrainingItem();
+    const solved = training(await activity.trainingTry("a1a8"));
+    expect(solved).toMatchObject({ status: "solved", queue_outcomes: ["failed"] });
+    expect(tallyOfRun()).toEqual(tally);
+    expect(training(await activity.nextTrainingItem()).summary).toEqual({ solved: 0, failed: 1 });
+  });
+
+  it.each(ENDINGS)(
+    "tells the coach nothing when the retry of a missed puzzle is %s",
+    async (ending) => {
+      addPuzzle("f1", "fork", BACK_RANK, ["a1a8"]);
+      const { activity, flushed, rows } = setup();
+      await activity.startTraining({ mode: "puzzles", motif: "fork" });
+      await activity.trainingTry("a1a2");
+      const missed = training(await activity.trainingTry("a1a8"));
+      expect(missed.coach_comment).toBeNull();
+      const told = rows();
+      expect(told).toMatchObject([{ type: "puzzle_result", first_try: false }]);
+      expect(flushed).toHaveBeenCalledTimes(1);
+
+      const again = training(await activity.retryTrainingItem());
+      expect(again.coach_comment).toBeNull();
+      const ended = await playBackRank(activity, ending);
+      expect(ended.coach_comment).toBeNull();
+      expect(rows()).toEqual(told);
+      expect(flushed).toHaveBeenCalledTimes(1);
+      expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
+      expect(rows()).toEqual(told);
+    },
+  );
+
+  it.each(ENDINGS)(
+    "leaves the comment a first-try solve left on offer when the retry is %s",
+    async (ending) => {
+      addPuzzle("b1", "pin", BACK_RANK, ["a1a8"]);
+      const { activity, flushed, notes } = setup();
+      await activity.startTraining({ mode: "puzzles", motif: "pin" });
+      const solved = training(await activity.trainingTry("a1a8"));
+      expect(solved.coach_comment).toBe("offered");
+
+      const again = training(await activity.retryTrainingItem());
+      expect(again.coach_comment).toBeNull();
+      expect(await code(activity.trainingAskCoach())).toBe("not_in_training");
+      const ended = await playBackRank(activity, ending);
+      expect(ended.coach_comment).toBe("offered");
+      expect(notes()).toEqual([]);
+      expect(flushed).not.toHaveBeenCalled();
+
+      const asked = training(await activity.trainingAskCoach());
+      expect(asked).toMatchObject({ coach_comment: "requested", status: ended.status });
+      expect(notes()).toHaveLength(1);
+      expect(notes()[0]).toMatchObject({
+        type: "puzzle_result",
+        puzzle_id: "b1",
+        requested: true,
+        solved: true,
+        first_try: true,
+        tries: 0,
+        gave_up: false,
+        answered_uci: ["a1a8"],
+        solution_san: ["Ra8#"],
+        reasoning: { tries: [{ uci: "a1a8", correct: true }], gave_up: false, hint_at_ms: null },
+      });
+      expect(flushed).toHaveBeenCalledTimes(1);
+      expect(await code(activity.trainingAskCoach())).toBe("already_requested");
+    },
+  );
+
+  it("keeps a comment already asked for as asked through a retry, and writes nothing more", async () => {
+    addPuzzle("b1", "fork", BACK_RANK, ["a1a8"]);
+    const { activity, flushed, notes } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    await activity.trainingTry("a1a8");
+    const asked = training(await activity.trainingAskCoach());
+    expect(asked.coach_comment).toBe("requested");
+    const told = notes();
+    expect(told).toHaveLength(1);
+
+    expect(training(await activity.retryTrainingItem()).coach_comment).toBeNull();
+    const given = training(await activity.trainingShowSolution());
+    expect(given.coach_comment).toBe("requested");
+    expect(await code(activity.trainingAskCoach())).toBe("already_requested");
+    expect(notes()).toEqual(told);
+    expect(flushed).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves 1 solved, 1 attempt row and the first solve's rating after a second solve", async () => {
+    addPuzzle("r1", "fork", BACK_RANK, ["a1a8"], 1400);
+    const { activity } = setup();
+    await activity.startTraining({ mode: "puzzles", motif: "fork" });
+    const first = training(await activity.trainingTry("a1a8"));
+    expect(first).toMatchObject({ status: "solved", student_rating: 1224, rating_change: 24 });
+    await activity.retryTrainingItem();
+    const second = training(await activity.trainingTry("a1a8"));
+    expect(second).toMatchObject({
+      status: "solved",
+      retry: true,
+      student_rating: 1224,
+      rating_change: null,
+      queue_outcomes: ["solved"],
+    });
+    expect(tallyOfRun()).toMatchObject({ solved: 1, failed: 0 });
+    expect(attemptsOf("r1")).toBe(1);
+    expect(storedRating()).toEqual({ value: "1224" });
+    expect(cards()).toEqual([]);
+    expect(training(await activity.nextTrainingItem()).summary).toEqual({ solved: 1, failed: 0 });
+  });
+
+  it("serves a single puzzle the coach picked again, with nothing kept but the ledger", async () => {
+    addPuzzle("f1", "fork", BACK_RANK, ["a1a8"], 1400);
+    const { activity } = setup();
+    await activity.startTrainingItem({ kind: "puzzle", id: "f1" });
+    await activity.trainingTry("a1a8");
+    const again = training(await activity.retryTrainingItem());
+    expect(again).toMatchObject({ status: "prompt", retry: true, student_rating: 1224 });
+    const given = training(await activity.trainingShowSolution());
+    expect(given).toMatchObject({ status: "failed", student_rating: 1224, rating_change: null });
+    expect(attemptsOf("f1")).toBe(1);
+    expect(cards()).toEqual([]);
+    expect(servesOf("f1")).toHaveLength(2);
+  });
+
+  it("is what the Retry entry of AGENTS.md says", () => {
+    const agents = readFileSync(join(import.meta.dirname, "../../../../AGENTS.md"), "utf8");
+    const entry = (/- \*\*Retry:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "").replace(
+      /\s+/g,
+      " ",
+    );
+    for (const said of [
+      "`retry_item {activity_id}`",
+      "writes no `puzzle_attempts` row",
+      "`item_finished`",
+      "`invalid_state`",
+      "`retry: true`",
+      "`training_items`",
+      "`queue_outcomes`",
+      "`found_cards`",
+      "`coach_comment`",
+    ]) {
+      expect(entry).toContain(said);
+    }
   });
 });
