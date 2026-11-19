@@ -300,6 +300,17 @@ explanation draws none, and nothing of it is drawn while the card is open. Under
 title, the tag and the block are as on the desktop and the buttons under them stay 44 px. M1 and
 M2 still find no matches.
 
+The Practice column was re-checked on rows 3, 8, 9, 14 and 17, and the Phone column on row 19,
+for the Retry button of an ended puzzle, against the markup, `practice.css` and
+`test/Practice.test.tsx`; the cells were not measured in a browser. Retry is drawn under Continue
+training in the row Analyse already has, before it, as the same secondary button: 32 px high,
+the 4 px radius and hairline border of a control, the two sharing the row's width evenly with the
+8 px gap between them. It adds no rule to a stylesheet, no element of its own and no colour, and
+Continue training stays the only primary button of the card. It is drawn on a puzzle that ended,
+solved or with the solution shown, and on nothing else: a review card and a line of a repertoire
+drill keep Analyse alone, which then takes the whole row as before. Under 900 px both buttons are
+44 px targets by the rule the card's buttons already follow. M1 and M2 still find no matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph

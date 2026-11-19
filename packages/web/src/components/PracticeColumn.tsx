@@ -35,6 +35,7 @@ export interface PracticeColumnActions {
   showSolution(): void;
   rate(grade: number): void;
   next(): void;
+  retry(): void;
   end(): void;
   hint(): void;
   toggleScratch(): void;
@@ -367,6 +368,12 @@ function EndedActions({
         </svg>
       </button>
       <div className="state-card__actions state-card__actions--even">
+        {/* A card is rated once and a line drill repeats its own passes; only a puzzle is replayed. */}
+        {training.item.kind === "puzzle" ? (
+          <button type="button" className="button" onClick={actions.retry}>
+            Retry
+          </button>
+        ) : null}
         <button type="button" className="button" onClick={actions.toggleScratch}>
           Analyse
         </button>

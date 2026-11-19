@@ -332,6 +332,10 @@
   retried again. The command is refused with `item_finished` once the queue has ended and with
   `invalid_state` on an item still open and on an item that is not a puzzle, a review card or a line
   of a repertoire drill; `stale_activity` and `not_in_training` answer as for any training command.
+  The Practice column draws Retry beside Analyse, under Continue training, on an ended puzzle only.
+  A press holds the automatic jump to the next puzzle for that serving, so the jump cannot overtake
+  the retry on its way to the server. The coach panel waits for no reply once a retry has ended
+  (`endedItemKey` in `state/transcript.ts`), since none is coming.
 - **Puzzle rating:** the student's puzzle rating is plain Elo (K 32, start 1200) against the
   library's `difficulty_rating`; a first-try solve wins, anything else loses, an unrated puzzle
   (opening drills) moves nothing. It lives in `settings.puzzle_rating`, is replayed once from

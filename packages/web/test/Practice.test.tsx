@@ -17,7 +17,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type BoardFactory, MOVE_PAUSE_MS } from "../src/components/Board.js";
 import { PracticeHub, type PracticeHubProps } from "../src/components/PracticeHub.js";
 import { type ServerApi, useServer } from "../src/hooks/useServer.js";
-import { Practice } from "../src/screens/Practice.js";
+import { AUTO_NEXT_MS, Practice } from "../src/screens/Practice.js";
+import { BOARD_PREFS_STORAGE_KEY } from "../src/state/board-prefs.js";
 import { formatInterval, NONE, nextBatchParts, trainingView } from "../src/state/practice.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
@@ -1014,6 +1015,110 @@ describe("a puzzle on the board", () => {
     rerender(<Practice server={api(puzzle({ status: "solved" }))} createBoard={spyBoard} />);
     const next = screen.getByRole("button", { name: "Continue training" }) as HTMLButtonElement;
     expect(next.disabled).toBe(false);
+  });
+});
+
+describe("Retry on an ended puzzle", () => {
+  const ended = (status: "solved" | "failed"): TrainingActivity =>
+    puzzle({ status, input_enabled: false, legal_moves: [] });
+  const retryButton = (): HTMLElement | null => screen.queryByRole("button", { name: "Retry" });
+
+  it.each(["solved", "failed"] as const)(
+    "sends retry_item for the %s puzzle on the board",
+    (status) => {
+      const server = api(ended(status));
+      render(<Practice server={server} createBoard={spyBoard} />);
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      expect(vi.mocked(server.send).mock.calls).toEqual([[{ type: "retry_item", activity_id: 4 }]]);
+    },
+  );
+
+  it("sits beside Analyse as the same kind of button, under Continue training", () => {
+    render(<Practice server={api(ended("solved"))} createBoard={spyBoard} />);
+    const retry = screen.getByRole("button", { name: "Retry" });
+    const analyse = screen.getByRole("button", { name: "Analyse" });
+    expect(retry.parentElement?.className).toBe("state-card__actions state-card__actions--even");
+    expect([...(retry.parentElement?.children ?? [])]).toEqual([retry, analyse]);
+    expect(retry.className).toBe(analyse.className);
+    expect(retry.className).toBe("button");
+    const next = screen.getByRole("button", { name: "Continue training" });
+    expect(next.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("is not offered while the puzzle is open, once the queue has ended or while analysing", () => {
+    for (const status of ["prompt", "in_progress"] as const) {
+      const { unmount } = render(
+        <Practice server={api(puzzle({ status }))} createBoard={spyBoard} />,
+      );
+      expect(retryButton()).toBeNull();
+      unmount();
+    }
+    const summarized = puzzle({ status: "solved", summary: { solved: 1, failed: 0 } });
+    const { unmount } = render(<Practice server={api(summarized)} createBoard={spyBoard} />);
+    expect(retryButton()).toBeNull();
+    unmount();
+
+    render(<Practice server={api(ended("solved"))} createBoard={spyBoard} />);
+    fireEvent.click(screen.getByRole("button", { name: "Analyse" }));
+    expect(retryButton()).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to position" }));
+    expect(retryButton()).not.toBeNull();
+  });
+
+  it("is not offered on a card, answered or rated, nor on a line drill that ended", () => {
+    const others = [
+      answeredCard,
+      card({ status: "solved", input_enabled: false, legal_moves: [] }),
+      card({ status: "rated", input_enabled: false, legal_moves: [] }),
+      { ...repertoireActivity(), status: "solved" as const, input_enabled: false, legal_moves: [] },
+    ];
+    for (const other of others) {
+      const { unmount } = render(
+        <Practice server={api(other)} createBoard={spyBoard} {...hubProps} />,
+      );
+      expect(screen.getByRole("button", { name: "Analyse" })).toBeTruthy();
+      expect(retryButton()).toBeNull();
+      unmount();
+    }
+  });
+
+  it("holds the jump to the next puzzle once pressed, and jumps again when the retry ends", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      window.localStorage.setItem(BOARD_PREFS_STORAGE_KEY, JSON.stringify({ autoNext: true }));
+      const first = api(ended("solved"));
+      const { rerender } = render(<Practice server={first} createBoard={spyBoard} />);
+      act(() => vi.advanceTimersByTime(AUTO_NEXT_MS - 1));
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      act(() => vi.advanceTimersByTime(AUTO_NEXT_MS * 2));
+      expect(vi.mocked(first.send).mock.calls).toEqual([[{ type: "retry_item", activity_id: 4 }]]);
+
+      const again = { served_at: "2026-03-01T00:01:00.000Z", retry: true };
+      const open = api(puzzle(again));
+      rerender(<Practice server={open} createBoard={spyBoard} />);
+      act(() => vi.advanceTimersByTime(AUTO_NEXT_MS * 2));
+      expect(open.send).not.toHaveBeenCalled();
+      const solvedAgain = api({ ...ended("solved"), ...again });
+      rerender(<Practice server={solvedAgain} createBoard={spyBoard} />);
+      act(() => vi.advanceTimersByTime(AUTO_NEXT_MS));
+      expect(vi.mocked(solvedAgain.send).mock.calls).toEqual([
+        [{ type: "next_training_item", activity_id: 4 }],
+      ]);
+    } finally {
+      vi.useRealTimers();
+      window.localStorage.removeItem(BOARD_PREFS_STORAGE_KEY);
+    }
+  });
+
+  it("offers it again on a retry that ended, and Continue still moves on", () => {
+    const server = api({ ...ended("failed"), retry: true, gave_up: true, solution_line: [] });
+    render(<Practice server={server} createBoard={spyBoard} />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue training" }));
+    expect(vi.mocked(server.send).mock.calls).toEqual([
+      [{ type: "retry_item", activity_id: 4 }],
+      [{ type: "next_training_item", activity_id: 4 }],
+    ]);
   });
 });
 

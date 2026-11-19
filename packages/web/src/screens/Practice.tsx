@@ -365,6 +365,10 @@ function Item({
   const activityId = training.activity_id;
   const exposureId = training.exposure_id;
   const drill = training.repertoire ?? null;
+  // The serving Retry was pressed on. The jump to the next puzzle waits on it, or its timer could
+  // fire while the retry is on its way to the server and be refused on the puzzle served again.
+  const servedKey = `${training.served_at}:${training.item.position_in_queue}`;
+  const [retried, setRetried] = useState<string | null>(null);
   const card =
     drill && board.scratchLine === null
       ? repertoireCardOf(training, drill, view)
@@ -382,6 +386,9 @@ function Item({
       }
     },
     next: () => server.send({ type: "next_training_item", activity_id: activityId }),
+    retry: () => {
+      if (server.send({ type: "retry_item", activity_id: activityId })) setRetried(servedKey);
+    },
     end: () => server.send({ type: "end_training", activity_id: activityId }),
     hint: () => server.send({ type: "hint", activity_id: activityId }),
     toggleScratch: board.toggleScratch,
@@ -389,7 +396,8 @@ function Item({
     resetLine: board.resetLine,
   };
   useItemShortcuts(view, actions);
-  const busyWithItem = board.scratchLine !== null || board.shownPly < board.tip || engine.on;
+  const busyWithItem =
+    board.scratchLine !== null || board.shownPly < board.tip || engine.on || retried === servedKey;
   useAutoNext(training, view, prefs.autoNext, busyWithItem, actions.next);
   // The engine's arrows and the arrow of the move a repertoire drill shows, drawn together.
   const shapes = useMemo(

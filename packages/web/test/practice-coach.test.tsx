@@ -124,6 +124,28 @@ describe("the coach reply pending on an ended item", () => {
     ).toBe(false);
   });
 
+  it("is not set by a retry that ended, since the coach is told nothing of it", () => {
+    const first = activityOf(puzzle({ status: "failed", gave_up: true }));
+    const again = { served_at: "2026-03-01T00:01:00.000Z", retry: true };
+    const open = activityOf(puzzle({ ...again }));
+    for (const end of [{ status: "solved" }, { status: "failed", gave_up: true }] as const) {
+      expect(reduce(activityOf(puzzle({ ...again, ...end }))).practiceReplyPending).toBe(false);
+      const replied = reduce(first, chatOf(1, { kind: "text_delta", text: "Boa" }), open);
+      expect(replied.practiceReplyPending).toBe(false);
+      const after = chatReducer(replied, {
+        type: "server",
+        event: activityOf(puzzle({ ...again, ...end })),
+      });
+      expect(after.practiceReplyPending).toBe(false);
+      expect(practiceWaitingLabel(after.activity, after.practiceReplyPending)).toBeUndefined();
+    }
+    // The same ended state without the mark is a first play, which the coach does answer.
+    const { retry: _retry, ...firstPlay } = again;
+    expect(
+      reduce(activityOf(puzzle({ ...firstPlay, status: "solved" }))).practiceReplyPending,
+    ).toBe(true);
+  });
+
   it("clears when the reply streams, when the turn ends and on a turn error", () => {
     const ended = activityOf(puzzle({ status: "solved" }));
     expect(reduce(ended, chatOf(1, { kind: "text_delta", text: "Boa" })).practiceReplyPending).toBe(
@@ -255,6 +277,17 @@ describe("a puzzle solved first try", () => {
     expect(screen.queryByRole("button", { name: ASK_COACH_LABEL })).toBeNull();
     act(() => FakeSocket.latest.receive({ type: "activity", state: quiet("requested") }));
     expect(screen.getByText(PRACTICE_WAITING_LABEL)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: ASK_COACH_LABEL })).toBeNull();
+  });
+
+  it("shows no waiting label once a retry ended, and still the offer the first play left", () => {
+    openOnPractice({ ...quiet("offered"), retry: true, status: "failed", gave_up: true });
+    expect(screen.queryByText(PRACTICE_WAITING_LABEL)).toBeNull();
+    expect(screen.getByRole("button", { name: ASK_COACH_LABEL })).toBeTruthy();
+    cleanup();
+    openOnPractice(puzzle({ status: "solved", coach_comment: null, retry: true }));
+    expect(screen.queryByText(PRACTICE_WAITING_LABEL)).toBeNull();
+    expect(screen.getByText("puzzle solved")).toBeTruthy();
     expect(screen.queryByRole("button", { name: ASK_COACH_LABEL })).toBeNull();
   });
 
