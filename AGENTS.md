@@ -227,6 +227,20 @@
   row (Puzzles by opening), and one motif goes in `puzzles.motif` (rarest first, `tactics` when none maps). A `PuzzleId` already stored as a `lichess_id` is skipped, so a rerun
   adds nothing. Commits in batches of 5000 rows; the file grows the database to about 3.6 GB, so run it on a copy first.
 - **Deleting a unit:** `pnpm --filter @chess-coach/server delete:repertoire-unit -- --group "King's Pawn Game: McConnell Defense" [--dry-run]` removes the unit the hub's Add built from 1.e4 e5 2.Nf3 Qf6 through `deleteRepertoireUnit` (`db/repertoires.ts`), in one transaction: its positions, game reviews and drill first attempts through the cascade, the cards of its White moves that no other unit stores, and every open run whose queue holds one of its rows or whose current item names it, ended as `discarded`. Once that commits, the games whose review went are reviewed again against the units left, with no message to the coach. It prints the unit, its setup line and the counts; it refuses with exit 1 and writes nothing unless the group holds exactly one variation, rooted at e4 e5 Nf3 Qf6; `--dry-run` runs the delete, prints the same and rolls it back. The group is the book's whole name for the root position, so `King's Pawn Game` alone is refused with the stored groups listed. It never migrates: a database whose applied migrations are not exactly the checkout's is refused, so it runs after the server has started from that checkout. Run it on a copy first, and with no drill of the unit on the board: the delete ends that run's row, but the drill the server holds in memory would go on serving rows that are gone.
+- **Repertoire origin:** `repertoires.origin` says where a unit came from, `generated` for a unit the
+  builder walked (every unit stored before migration 035, and the column's default) and `pgn` for a
+  unit read from a PGN file; nothing writes a `pgn` unit yet. A White move of an imported unit has no
+  engine figures, so `repertoire_positions.cp_loss` and `eval_cp` are nullable for an `own` row too:
+  035 rebuilt the table to drop the two checks that required them (SQLite cannot drop a table check),
+  and `NewRepertoireOwnMove` and the rows `listWhiteMovesLackingIdea` reads type both as `number |
+  null`. Storing 0 for a move nobody measured was rejected, since a reader would average it as if it
+  were measured; filling both with the engine at import was rejected, since nothing reads them on an
+  imported unit. `listWhiteMovesLackingIdea` leaves out a move with no evaluation, so the idea writer
+  never meets one. The coverage figure (`cp_loss ?? 0`), the game review and the rebuild do not read
+  `origin` yet, and each must before it takes an imported unit. A row's `source` is typed once, in
+  `RepertoireMoveSource` (`setup`, `explorer`, `engine`, `mainline`, `game`, `pgn`), and
+  `CoverageSourceSchema` in shared names the same six; `db/repertoire-origin.test.ts` fails when the
+  two differ. The column itself has no check.
 - **Card scheduling:** every card the app schedules is scheduled by FSRS-6 through `ts-fsrs`, pinned at
   exactly 5.4.2 and imported by `packages/server/src/srs/fsrs.ts` alone, which `srs/fsrs.test.ts` enforces.
   That is the review cards of the Due cards desk (`srs_cards`), the opening repertoire's move cards
@@ -938,7 +952,7 @@ rules:
 | Biome's formatter turns a unicode escape for an em dash inside a string into the literal character, which the prose check then refuses, UI copy and test fixtures included: write copy without a dash | tripwire | `bin/ci` refuses the result, but only after every test has passed |
 | A join from a small table to `puzzles` is written `CROSS JOIN` with the small table first (`puzzle_attempts a CROSS JOIN puzzles p ON p.id = a.puzzle_id`): the database has no `sqlite_stat1`, so with a plain `JOIN` the planner may walk all 6.2 million Lichess puzzles by an index and probe the small table once per puzzle, seconds for a handful of rows | tripwire | `progress/compute.test.ts`, `progress/theme-stats.test.ts` and `puzzles/rating.test.ts` assert the plan of their own query; a new query has no guard |
 | The explorer does not refuse an unlisted `ratings` value: it maps each value to the group containing it (400 means 0-999), so a value that is not a listed boundary (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500) quietly asks for another group | tripwire | none yet |
-| A migration runs inside a transaction, where `PRAGMA foreign_keys = OFF` does nothing, so rebuilding `games` (create, copy, drop, rename) cascades into `moves`, clears `srs_cards.source_game_id` and trips `difficulty_changes.game_id`: to change a column of `games`, add the new one, copy it over, drop the old one and rename the new one, as `019_lichess_game_source.sql` does | tripwire | `migration-019.test.ts` holds it for that migration only |
+| A migration runs inside a transaction, where `PRAGMA foreign_keys = OFF` does nothing, so rebuilding `games` (create, copy, drop, rename) cascades into `moves`, clears `srs_cards.source_game_id` and trips `difficulty_changes.game_id`: to change a column of `games`, add the new one, copy it over, drop the old one and rename the new one, as `019_lichess_game_source.sql` does; where only a rebuild can drop a table check, as for `repertoire_positions` in `035_repertoire_origin.sql`, save the child columns the drop would clear (`repertoire_game_reviews.added_reply_id` and `added_answer_id`, `ON DELETE SET NULL`) and write them back after the rename | tripwire | `migration-019.test.ts` and `migration-035.test.ts` hold it for those migrations only |
 
 **A hurdle promoted to a gate is deleted from this table, not duplicated.** The gate is the
 instruction; a line here restating it only dilutes the ones still unguarded.

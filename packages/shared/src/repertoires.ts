@@ -161,8 +161,16 @@ export const CoverageStatusSchema = z.enum(COVERAGE_STATUSES);
 export type CoverageStatus = z.infer<typeof CoverageStatusSchema>;
 
 // How a stored reply entered the variation: fixed by the opening, popular in the explorer, past the
-// goal as the most played or as the engine's, or added by a game the student played.
-export const CoverageSourceSchema = z.enum(["setup", "explorer", "mainline", "engine", "game"]);
+// goal as the most played or as the engine's, added by a game the student played, or read from a
+// PGN file.
+export const CoverageSourceSchema = z.enum([
+  "setup",
+  "explorer",
+  "mainline",
+  "engine",
+  "game",
+  "pgn",
+]);
 export type CoverageSource = z.infer<typeof CoverageSourceSchema>;
 
 // One of Black's replies in a position. `incidence` is the chance a game reaches the position the
