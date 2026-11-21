@@ -1,4 +1,4 @@
-import type { FoundPositionState, RepertoireScope } from "@chess-coach/shared";
+import type { FoundDrillScope, FoundPositionState } from "@chess-coach/shared";
 import type { ListedFoundPosition } from "../db/found-positions.js";
 
 /** The most positions a `recommended` drill of the positions from the student's games serves. */
@@ -25,7 +25,7 @@ const byLatestFound = (a: ListedFoundPosition, b: ListedFoundPosition): number =
  */
 export function selectFoundDrillPositions<T extends ListedFoundPosition>(
   positions: readonly T[],
-  scope: RepertoireScope,
+  scope: FoundDrillScope,
   now: Date,
 ): T[] {
   const inState = (state: FoundPositionState): T[] =>

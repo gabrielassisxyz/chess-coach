@@ -146,9 +146,12 @@
   variation's name opens the page of that line (see Line page). A train button (`components/TrainButton.tsx`) reads
   "Train N" with the level's `recommended` count and sends `start_training {mode: "repertoire",
   repertoire_id, scope: "recommended"}` with `level` `side` on a colour, `group` on a card and none on a
-  row, the id being the first variation listed at that level; its chevron opens "Everything due N" and
-  "All moves N". With nothing recommended it is an outlined "Train all moves" that sends `all`, with no
-  menu. "+ Add a variation" is drawn on a card whose book has a choice no variation plays (or whose run
+  row, the id being the first variation listed at that level; its chevron opens "Everything due N",
+  "Most missed N" and "All moves N", in that order, Most missed only while its count is above 0 and
+  sending `missed` with the level and id the others send (`trainButtonOf` in `state/openings-page.ts`).
+  With nothing recommended it is an outlined "Train all moves" that sends `all`, with no menu, unless
+  moves were missed: then the button keeps its chevron and the menu, since those moves are drilled
+  whether or not they are due. "+ Add a variation" is drawn on a card whose book has a choice no variation plays (or whose run
   stopped short) and opens the book's positions under its head; "Add an opening…" is always drawn
   after the last White card and opens in its place the panel of `components/PracticeAddOpening.tsx`,
   which opens on "All openings". Its header holds the title, two tabs and Close, and under it the style
@@ -530,9 +533,22 @@
   variation as passes from move 1 (`activity/repertoire-session.ts`): the server plays Black and every
   White move not asked, and stops on the moves still to find. A move with no card is new and due as
   soon as it is stored, and the scopes select from every move of the level: `recommended` takes at
-  most 10 due moves, the highest reach first, `due` every due move and `all` every move. Nothing
-  paces new moves, so there is no limit per day and no move waits for another; how much new material
-  to take in a day is the student's, by how many batches they run. `repertoire_cards.introduced_at`
+  most 10 due moves, the highest reach first, `due` every due move, `all` every move and `missed`
+  the moves the student missed most. A move counts as missed when its card has 2 or more rows in
+  `drill_reviews` with `card_kind = 'repertoire'`, `grade = 1` (a miss always rates Again, which a
+  wrong try, a hint and a shown solution all are, in a drill as in a reviewed game) and `reviewed_at`
+  within the 30 days before the start, an instant exactly 30 days earlier being outside; `missed`
+  serves those moves, due or not, ordered by that count descending and then by line order, at most
+  10 (`REPERTOIRE_MISSED_MIN_MISSES`, `REPERTOIRE_MISSED_WINDOW_DAYS` and `REPERTOIRE_MISSED_SIZE` in
+  `repertoire-session.ts`), and the drill still walks them along their lines, in line order. Rows
+  exist from migration 033 on, so an earlier miss does not count, and `repertoire_cards.lapses` is
+  not the measure, since FSRS counts a lapse only when a card in review is forgotten and most
+  misses come while a move is still being learned. `missed` needs no rating rule of its own: a right
+  first attempt on a card not yet due keeps its schedule and writes no `drill_reviews` row, and a
+  miss rates it Again whatever the date. A level with no such move is refused with `empty_queue`
+  before any run is written or replaced. Nothing paces new moves, so there is no limit per day and
+  no move waits for another; how much new material to take in a day is the student's, by how many
+  batches they run. `repertoire_cards.introduced_at`
   is still written when a card is created, and nothing acts on it. A new move is first shown with
   its answer and rated on a later pass; otherwise only the first attempt rates it (FSRS in
   `repertoire_cards`, one card per position and move across variations: Good for a right first
@@ -540,7 +556,10 @@
   comes back on a later pass until it is right first time. In `all`, a move not due keeps its
   schedule when right. A wrong try within 50 cp of the engine's best that reaches another named
   opening carries that name. After each asked move is answered, the drill carries its stored idea in `answered`
-  and the Practice column shows it as Why with the move number. `GET /api/repertoires` lists each variation with what each scope would serve.
+  and the Practice column shows it as Why with the move number. `GET /api/repertoires` lists each variation with what each scope would serve,
+  `missed` among them: every variation, group, side and found count carries it, from one read of
+  `drill_reviews` for the whole answer (`readRepertoireMissCounts`), and it is the number of moves a
+  `missed` drill of that level serves, at most 10.
   A `level` on the command widens the drill from that repertoire to every variation of its group
   (`group`) or every unit of its side (`side`, the Openings page's "Train all" button of a colour); without one it is the
   variation. The level's moves are merged so that a move two variations share, one card, is served
@@ -552,7 +571,8 @@
 - **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?, opening?}` serves
   the listed rows of `found_positions` (see Openings) as one-move exercises through their `own:`
   puzzles (`activity/found-drill.ts`, `TrainingRun`). The scope is required, and a command without
-  one is refused as `invalid_command`: `recommended` takes the due cards, the oldest `next_review_at`
+  one is refused as `invalid_command`, as is one that asks for `missed`, which is the line drill's
+  (`FoundDrillScopeSchema` holds the three this drill has): `recommended` takes the due cards, the oldest `next_review_at`
   first, then the new positions, the latest `first_found_at` first, at most 10 in all; `due` every
   due card and no new position; `all` every listed position, due, then new, then the rest by
   `next_review_at`. There is no daily cap on new positions. `color`, `phase`, `position` (an id the

@@ -162,18 +162,33 @@ export interface TrainButtonModel {
 
 export const TRAIN_ALL_MOVES_TEXT = "Train all moves";
 
+// Most missed sits between Everything due and All moves and is offered only when a drill of it
+// would serve a move: a count of 0, or none sent, leaves it out.
+function trainMenuOf(counts: RepertoireScopeCounts): TrainMenuEntry[] {
+  const missed = counts.missed ?? 0;
+  return [
+    { scope: "due", text: SCOPE_LABEL.due, count: counts.due },
+    ...(missed > 0 ? [{ scope: "missed" as const, text: SCOPE_LABEL.missed, count: missed }] : []),
+    { scope: "all", text: SCOPE_LABEL.all, count: counts.all },
+  ];
+}
+
 export function trainButtonOf(counts: RepertoireScopeCounts, forSide: boolean): TrainButtonModel {
   if (counts.recommended === 0) {
-    return { label: TRAIN_ALL_MOVES_TEXT, scope: "all", menu: [], outlined: true };
+    // Nothing to recommend leaves a plain button, since all it could offer is every move, unless
+    // moves were missed: those are drilled whether or not they are due, so the menu stays.
+    const hasMissed = (counts.missed ?? 0) > 0;
+    return {
+      label: TRAIN_ALL_MOVES_TEXT,
+      scope: "all",
+      menu: hasMissed ? trainMenuOf(counts) : [],
+      outlined: !hasMissed,
+    };
   }
   return {
     label: forSide ? `Train all · ${counts.recommended}` : `Train ${counts.recommended}`,
     scope: "recommended",
-    menu: (["due", "all"] as const).map((scope) => ({
-      scope,
-      text: SCOPE_LABEL[scope],
-      count: counts[scope],
-    })),
+    menu: trainMenuOf(counts),
     outlined: false,
   };
 }

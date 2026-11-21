@@ -658,6 +658,116 @@ describe("the train buttons", () => {
   });
 });
 
+describe("the Most missed entry of the train menu", () => {
+  // The Italian's variations and group and the colour hold moves missed twice or more lately.
+  const withMissed = (): RepertoiresResponse =>
+    answer({
+      repertoires: [
+        { ...pianissimo, moves: { ...pianissimo.moves, missed: 2 } },
+        { ...twoKnights, moves: { ...twoKnights.moves, missed: 0 } },
+        kingsPawn,
+      ],
+      groups: [{ ...italianGroup, moves: { ...italianGroup.moves, missed: 6 } }, kingsPawnGroup],
+      sides: [{ side: "white", moves: { recommended: 7, due: 9, all: 42, missed: 7 } }],
+    });
+
+  const entriesOf = (menu: HTMLElement): (string | null)[] =>
+    within(menu)
+      .getAllByRole("button")
+      .map((entry) => entry.textContent);
+
+  it("sits between Everything due and All moves for a colour, an opening and a variation, and sends missed with the level of its place", async () => {
+    const { onStart } = renderPage(withMissed());
+    const white = await section("White");
+    fireEvent.click(
+      within(white).getByRole("button", { name: "More ways to train, every White opening" }),
+    );
+    expect(
+      entriesOf(within(white).getByRole("group", { name: "Train every White opening" })),
+    ).toEqual(["Everything due 9", "Most missed 7", "All moves 42"]);
+    fireEvent.click(within(white).getByRole("button", { name: "Most missed 7" }));
+    expect(onStart).toHaveBeenLastCalledWith(4, "missed", "side");
+
+    const italian = screen.getByRole("article", { name: "Italian Game" });
+    fireEvent.click(
+      within(italian).getByRole("button", { name: "More ways to train, Italian Game" }),
+    );
+    expect(entriesOf(within(italian).getByRole("group", { name: "Train Italian Game" }))).toEqual([
+      "Everything due 8",
+      "Most missed 6",
+      "All moves 39",
+    ]);
+    fireEvent.click(within(italian).getByRole("button", { name: "Most missed 6" }));
+    expect(onStart).toHaveBeenLastCalledWith(4, "missed", "group");
+
+    fireEvent.click(within(italian).getByRole("button", { name: "Italian Game" }));
+    fireEvent.click(
+      within(italian).getByRole("button", {
+        name: `More ways to train, ${pianissimo.variation_name}`,
+      }),
+    );
+    expect(
+      entriesOf(within(italian).getByRole("group", { name: `Train ${pianissimo.variation_name}` })),
+    ).toEqual(["Everything due 3", "Most missed 2", "All moves 24"]);
+    fireEvent.click(within(italian).getByRole("button", { name: "Most missed 2" }));
+    // A variation names no level, so the call carries two arguments.
+    expect(onStart).toHaveBeenLastCalledWith(4, "missed");
+    expect(onStart.mock.lastCall).toHaveLength(2);
+  });
+
+  it("is left out of a menu whose count is 0, and of one whose answer carries no count", async () => {
+    renderPage(withMissed());
+    const italian = await card("Italian Game");
+    fireEvent.click(within(italian).getByRole("button", { name: "Italian Game" }));
+    fireEvent.click(
+      within(italian).getByRole("button", {
+        name: `More ways to train, ${twoKnights.variation_name}`,
+      }),
+    );
+    expect(
+      entriesOf(within(italian).getByRole("group", { name: `Train ${twoKnights.variation_name}` })),
+    ).toEqual(["Everything due 5", "All moves 15"]);
+    cleanup();
+
+    // The default answer is one from before the scope existed: no level sends a count.
+    renderPage();
+    const older = await card("Italian Game");
+    fireEvent.click(
+      within(older).getByRole("button", { name: "More ways to train, Italian Game" }),
+    );
+    expect(entriesOf(within(older).getByRole("group", { name: "Train Italian Game" }))).toEqual([
+      "Everything due 8",
+      "All moves 39",
+    ]);
+    expect(screen.queryByRole("button", { name: /^Most missed/ })).toBeNull();
+  });
+
+  it("keeps a menu on the button of a level with nothing recommended while its moves were missed, so they can be drilled though none is due", async () => {
+    const { onStart } = renderPage(
+      answer({
+        groups: [
+          italianGroup,
+          { ...kingsPawnGroup, moves: { recommended: 0, due: 0, all: 3, missed: 2 } },
+        ],
+      }),
+    );
+    const kings = await card("King's Pawn Game");
+    const main = within(kings).getByRole("button", { name: "Train all moves, King's Pawn Game" });
+    expect(main.textContent).toBe("Train all moves");
+    fireEvent.click(main);
+    expect(onStart).toHaveBeenLastCalledWith(6, "all", "group");
+
+    fireEvent.click(
+      within(kings).getByRole("button", { name: "More ways to train, King's Pawn Game" }),
+    );
+    const menu = within(kings).getByRole("group", { name: "Train King's Pawn Game" });
+    expect(entriesOf(menu)).toEqual(["Everything due 0", "Most missed 2", "All moves 3"]);
+    expect(isDisabled(within(menu).getByRole("button", { name: "Everything due 0" }))).toBe(true);
+    fireEvent.click(within(menu).getByRole("button", { name: "Most missed 2" }));
+    expect(onStart).toHaveBeenLastCalledWith(6, "missed", "group");
+  });
+});
+
 describe("the page while it reads", () => {
   it("says it is loading, in a quiet sentence, while the list is read", async () => {
     renderPage(() => new Promise<RepertoiresResponse>(() => {}));
@@ -741,6 +851,38 @@ describe("the page's view of the answer", () => {
       inLineText: NONE,
       coverage: NONE,
     });
+  });
+
+  it("puts Most missed between the menu's other two scopes when moves were missed, and offers it with nothing recommended", () => {
+    const counts = { recommended: 5, due: 9, all: 39, missed: 4 };
+    expect(trainButtonOf(counts, false)).toEqual({
+      label: "Train 5",
+      scope: "recommended",
+      menu: [
+        { scope: "due", text: "Everything due", count: 9 },
+        { scope: "missed", text: "Most missed", count: 4 },
+        { scope: "all", text: "All moves", count: 39 },
+      ],
+      outlined: false,
+    });
+    for (const none of [
+      { ...counts, missed: 0 },
+      { recommended: 5, due: 9, all: 39 },
+    ]) {
+      expect(trainButtonOf(none, false).menu.map((entry) => entry.scope)).toEqual(["due", "all"]);
+    }
+    // Nothing due, but four moves missed: the plain button would hide them, so the menu stays.
+    expect(trainButtonOf({ recommended: 0, due: 0, all: 39, missed: 4 }, true)).toEqual({
+      label: "Train all moves",
+      scope: "all",
+      menu: [
+        { scope: "due", text: "Everything due", count: 0 },
+        { scope: "missed", text: "Most missed", count: 4 },
+        { scope: "all", text: "All moves", count: 39 },
+      ],
+      outlined: false,
+    });
+    expect(trainButtonOf({ recommended: 0, due: 0, all: 39, missed: 0 }, true).outlined).toBe(true);
   });
 
   it("offers Train N from the recommended count, Train all moves with none, and the menu's two scopes", () => {

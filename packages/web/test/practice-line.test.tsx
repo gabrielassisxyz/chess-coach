@@ -393,6 +393,49 @@ describe("the Train button of the page", () => {
     expect(onStart).toHaveBeenLastCalledWith(4, "due");
   });
 
+  it("offers Most missed between Everything due and All moves when the variation has moves missed, and sends it with no level", async () => {
+    const { onStart } = renderLine({
+      listed: answer({
+        repertoires: [
+          { ...pianissimo, moves: { recommended: 2, due: 3, all: 24, missed: 4 } },
+          twoKnights,
+        ],
+      }),
+    });
+    const page = await pageOf();
+    fireEvent.click(
+      within(page).getByRole("button", { name: `More ways to train, ${PIANISSIMO}` }),
+    );
+    expect(
+      within(within(page).getByRole("group", { name: `Train ${PIANISSIMO}` }))
+        .getAllByRole("button")
+        .map((entry) => entry.textContent),
+    ).toEqual(["Everything due 3", "Most missed 4", "All moves 24"]);
+    fireEvent.click(within(page).getByRole("button", { name: "Most missed 4" }));
+    expect(onStart).toHaveBeenLastCalledWith(4, "missed");
+    expect(onStart.mock.lastCall).toHaveLength(2);
+  });
+
+  it("leaves Most missed out of the menu when the variation has no such move", async () => {
+    renderLine({
+      listed: answer({
+        repertoires: [
+          { ...pianissimo, moves: { recommended: 2, due: 3, all: 24, missed: 0 } },
+          twoKnights,
+        ],
+      }),
+    });
+    const page = await pageOf();
+    fireEvent.click(
+      within(page).getByRole("button", { name: `More ways to train, ${PIANISSIMO}` }),
+    );
+    expect(
+      within(within(page).getByRole("group", { name: `Train ${PIANISSIMO}` }))
+        .getAllByRole("button")
+        .map((entry) => entry.textContent),
+    ).toEqual(["Everything due 3", "All moves 24"]);
+  });
+
   it("trains all moves with nothing recommended, and waits while a start is in flight", async () => {
     const { onStart } = renderLine({
       listed: answer({

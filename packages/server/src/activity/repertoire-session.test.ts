@@ -16,6 +16,7 @@ import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
 import { buildApp } from "../app.js";
 import type { Clock } from "../clock.js";
 import { appendChatMessage, createCoachSession } from "../db/chat.js";
+import { type DrillCardKind, insertDrillReview, repertoireCardKey } from "../db/drill-reviews.js";
 import { type Database, openDatabase } from "../db/open.js";
 import {
   countRepertoireFirstAttemptsInWindow,
@@ -36,16 +37,20 @@ import { GameService } from "../game/service.js";
 import { importFinishedGame } from "../import/pgn.js";
 import { positionKey } from "../openings/from-games.js";
 import { NO_OPENING_NAMES, parseOpeningTable } from "../openings/names.js";
-import { review } from "../srs/fsrs.js";
+import { GRADE, type Grade, review } from "../srs/fsrs.js";
 import { ReviewDesk } from "../srs/review.js";
 import {
   foundRepertoireIdsOf,
   mergeRepertoireUnitMoves,
   REPERTOIRE_FLAG_BUDGET_MS,
   REPERTOIRE_FLAG_CP,
+  REPERTOIRE_MISSED_MIN_MISSES,
+  REPERTOIRE_MISSED_SIZE,
+  REPERTOIRE_MISSED_WINDOW_DAYS,
   REPERTOIRE_NO_IDEA,
   REPERTOIRE_RECOMMENDED_SIZE,
   type RepertoireTryJudge,
+  readRepertoireMissCounts,
   repertoireScopeCounts,
   repertoireTryJudge,
   selectRepertoireDrillMoves,
@@ -650,6 +655,7 @@ function expectServed(id: number, due: string[], all: string[]): void {
     recommended: Math.min(due.length, 10),
     due: due.length,
     all: all.length,
+    missed: 0,
   });
 }
 
@@ -675,6 +681,7 @@ describe("a move with no card is due as soon as it is stored", () => {
       recommended: 10,
       due: 30,
       all: 30,
+      missed: 0,
     });
 
     const service = boot();
@@ -746,6 +753,267 @@ describe("a move with no card is due as soon as it is stored", () => {
     const service = boot();
     expect(drillOf(await start(service, id, "due")).moves_left).toBe(6);
     expect(drawnLabels(id)).toEqual(newMoves);
+  });
+});
+
+const DAY_MS = 24 * HOUR_MS;
+const daysBefore = (days: number, from: Date = T0): Date =>
+  new Date(from.getTime() - days * DAY_MS);
+
+// The rows a drill's ratings of one card leave in the log, `times` of them at `at`. A miss is a
+// rating of Again, the default.
+function logRatings(
+  lineText: string,
+  san: string,
+  times: number,
+  at: Date,
+  options: { grade?: Grade; cardKind?: DrillCardKind } = {},
+): void {
+  const cardKey = repertoireCardKey(placeOf(lineText, san));
+  for (let index = 0; index < times; index++) {
+    insertDrillReview(db, {
+      cardKind: options.cardKind ?? "repertoire",
+      cardKey,
+      reviewedAt: at.toISOString(),
+      grade: options.grade ?? GRADE.Again,
+    });
+  }
+}
+
+const drillReviewCount = (): number =>
+  (db.prepare("SELECT COUNT(*) AS n FROM drill_reviews").get() as { n: number }).n;
+
+// What a drill of the `missed` scope serves over one variation, in the order it serves them.
+const mostMissedOf = (id: number): string[] =>
+  selectRepertoireDrillMoves(
+    listRepertoireDrillMoves(db, id),
+    "missed",
+    now,
+    readRepertoireMissCounts(db, now),
+  ).map(label);
+
+describe("the most missed moves of a repertoire drill", () => {
+  it("names the rule's numbers as constants: two misses, thirty days, ten moves", () => {
+    expect([
+      REPERTOIRE_MISSED_MIN_MISSES,
+      REPERTOIRE_MISSED_WINDOW_DAYS,
+      REPERTOIRE_MISSED_SIZE,
+    ]).toEqual([2, 30, 10]);
+  });
+
+  it("serves the moves missed twice or more in the last 30 days, the most missed first, due or not", () => {
+    const id = addVariation("Wide", WIDE_ROWS);
+    // Every card is known and not due, but 3.Bc4's.
+    addCards(WIDE_ROWS, (lineText, san) => lineText === "e4 e5 Nf3 Nc6" && san === "Bc4");
+    const recently = daysBefore(2);
+    logRatings("", "e4", 2, recently);
+    logRatings("e4 e5", "Nf3", 1, recently);
+    logRatings("e4 e5 Nf3 Nc6", "Bc4", 3, recently);
+    logRatings("e4 e5 Nf3 Nc6 Bc4 Be7", "d3", 4, recently);
+    logRatings("e4 e5 Nf3 Nc6 Bc4 h6", "d3", 2, recently);
+
+    // 1.e4 and 4.d3 against 3...h6 are missed as often and not due, and the line order settles it.
+    expect(mostMissedOf(id)).toEqual(["Be7 d3", "Nc6 Bc4", "start e4", "h6 d3"]);
+  });
+
+  it("breaks a tie in misses by line order, whatever order the moves are stored in", () => {
+    // The fan unit stores its rows the least likely first, so the order of storage is not line order.
+    const id = addFanUnit(4);
+    for (const reply of ["Be7", "Bc5", "d6"]) {
+      logRatings(`${BC4_LINE} ${reply}`, "d3", 2, daysBefore(2));
+    }
+
+    expect(mostMissedOf(id)).toEqual(["Bc5 d3", "Be7 d3", "d6 d3"]);
+  });
+
+  it("leaves out a move missed twice 31 days ago and never since, and one missed once", () => {
+    const id = addVariation("Wide", WIDE_ROWS);
+    addCards(WIDE_ROWS);
+    logRatings("", "e4", 2, daysBefore(31));
+    logRatings("e4 e5", "Nf3", 1, daysBefore(2));
+    logRatings("e4 e5 Nf3 Nc6", "Bc4", 2, daysBefore(2));
+    // Once long ago and once lately is one miss in the window.
+    logRatings("e4 e5 Nf3 Nc6 Bc4 Bc5", "d3", 1, daysBefore(31));
+    logRatings("e4 e5 Nf3 Nc6 Bc4 Bc5", "d3", 1, daysBefore(2));
+
+    expect(mostMissedOf(id)).toEqual(["Nc6 Bc4"]);
+  });
+
+  it("counts the window from the start: its first instant is out, a millisecond later is in, and so is the start itself", () => {
+    const id = addVariation("Wide", WIDE_ROWS);
+    addCards(WIDE_ROWS);
+    const first = daysBefore(REPERTOIRE_MISSED_WINDOW_DAYS);
+    logRatings("e4 e5", "Nf3", 2, first);
+    logRatings("e4 e5 Nf3 Nc6", "Bc4", 2, new Date(first.getTime() + 1));
+    logRatings("e4 e5 Nf3 Nc6 Bc4 Nf6", "d3", 2, T0);
+    // A rating after the start is not one of the 30 days before it.
+    logRatings("e4 e5 Nf3 Nc6 Bc4 Be7", "d3", 2, new Date(T0.getTime() + 1));
+
+    expect(mostMissedOf(id)).toEqual(["Nc6 Bc4", "Nf6 d3"]);
+  });
+
+  it("counts only misses of repertoire cards: no right rating, no found card's miss, no other move's", () => {
+    const id = addVariation("Wide", WIDE_ROWS);
+    addCards(WIDE_ROWS);
+    const recently = daysBefore(2);
+    logRatings("", "e4", 2, recently, { grade: GRADE.Good });
+    logRatings("e4 e5", "Nf3", 2, recently, { grade: GRADE.Hard });
+    logRatings("e4 e5 Nf3 Nc6", "Bc4", 2, recently, { cardKind: "found" });
+    // One miss each of two moves is no move missed twice.
+    logRatings("e4 e5 Nf3 Nc6 Bc4 Bc5", "d3", 1, recently);
+    logRatings("e4 e5 Nf3 Nc6 Bc4 Nf6", "d3", 1, recently);
+    logRatings("e4 e5 Nf3 Nc6 Bc4 Be7", "d3", 2, recently);
+
+    expect(mostMissedOf(id)).toEqual(["Be7 d3"]);
+  });
+
+  it("serves at most the ten most missed, cutting by the misses and not by the line", () => {
+    const id = addVariation("Wide", WIDE_ROWS);
+    addCards(WIDE_ROWS);
+    const inLineOrder = [
+      "start e4",
+      "e5 Nf3",
+      "Nc6 Bc4",
+      ...WIDE_REPLIES.map(([reply]) => `${reply} d3`),
+    ];
+    // The later a move comes in the line the more it was missed, from two misses up.
+    const moves = listRepertoireDrillMoves(db, id).sort(
+      (a, b) => b.reach - a.reach || a.ply - b.ply,
+    );
+    moves.forEach((move, index) => {
+      logRatings(
+        move.line.join(" "),
+        move.san,
+        REPERTOIRE_MISSED_MIN_MISSES + index,
+        daysBefore(1),
+      );
+    });
+    expect(moves.map(label)).toEqual(inLineOrder);
+
+    const served = mostMissedOf(id);
+    expect(served).toHaveLength(REPERTOIRE_MISSED_SIZE);
+    expect(served).toEqual(inLineOrder.slice(2).reverse());
+  });
+
+  it("serves a move two variations share once, under the misses of its one card", () => {
+    const { classical, pianissimo } = addPartingVariations();
+    const recently = daysBefore(3);
+    logRatings("", "e4", 2, recently);
+    logRatings(`${BC4_LINE} Bc5`, "c3", 2, recently);
+    logRatings(`${BC4_LINE} Bc5`, "d3", 3, recently);
+    const units = [classical, pianissimo].map((id) => ({
+      variation: findDrillRepertoire(db, id) as NonNullable<ReturnType<typeof findDrillRepertoire>>,
+      moves: listRepertoireDrillMoves(db, id),
+    }));
+
+    const served = selectRepertoireDrillMoves(
+      mergeRepertoireUnitMoves(units),
+      "missed",
+      now,
+      readRepertoireMissCounts(db, now),
+    );
+
+    expect(served.map(label)).toEqual(["Bc5 d3", "start e4", "Bc5 c3"]);
+  });
+
+  it("keeps a right first attempt on a card that is not due off its schedule and the log, and rates a miss Again", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, () => false);
+    logRatings("", "e4", 2, daysBefore(2));
+    logRatings("e4 e5", "Nf3", 2, daysBefore(3));
+    const service = boot();
+    let state = await start(service, id, "missed");
+    expect(drillOf(state)).toMatchObject({ scope: "missed", moves_left: 2 });
+    const e4Before = cardOf("", "e4");
+    const loggedBefore = drillReviewCount();
+
+    state = await play(service, state, "e4");
+    expect(cardOf("", "e4")).toEqual(e4Before);
+    expect(drillReviewCount()).toBe(loggedBefore);
+    expect(drillOf(state)).toMatchObject({ moves_right: 1, moves_wrong: 0 });
+
+    state = await play(service, state, "a3");
+    expect(cardOf("e4 e5", "Nf3")).toMatchObject({
+      interval_hours: 10 / 60,
+      fsrs_state: 3,
+      lapses: 1,
+      reviews: 3,
+    });
+    expect(drillReviewCount()).toBe(loggedBefore + 1);
+    expect(db.prepare("SELECT * FROM drill_reviews ORDER BY id DESC LIMIT 1").get()).toMatchObject({
+      card_kind: "repertoire",
+      card_key: repertoireCardKey(placeOf("e4 e5", "Nf3")),
+      reviewed_at: T0.toISOString(),
+      grade: GRADE.Again,
+    });
+    expect(drillOf(state)).toMatchObject({ moves_right: 1, moves_wrong: 1 });
+  });
+
+  it("refuses a most missed drill of a level with no such move with empty_queue, leaving a run in progress as it was", async () => {
+    const { classical } = addPartingVariations();
+    addVariation(MIESES, SCANDINAVIAN_ROWS, SCANDINAVIAN_GROUP);
+    logRatings("", "e4", 1, daysBefore(2));
+    logRatings("e4 e5", "Nf3", 2, daysBefore(31));
+    const service = boot();
+    const running = await start(service, classical, "due");
+
+    for (const level of ["variation", "group", "side"] as const) {
+      await expect(startAt(service, classical, "missed", level)).rejects.toMatchObject({
+        code: "empty_queue",
+        message: `no repertoire move was missed ${REPERTOIRE_MISSED_MIN_MISSES} times or more in the last ${REPERTOIRE_MISSED_WINDOW_DAYS} days`,
+      });
+    }
+
+    expect(training(service.current()).activity_id).toBe(running.activity_id);
+    expect(runEnds()).toEqual([{ ended_reason: null, ended_at: null }]);
+  });
+
+  it("counts, at every level, the moves a most missed drill of that level serves, the most missed first", async () => {
+    const { classical, pianissimo } = addPartingVariations();
+    const scandinavian = addVariation(MIESES, SCANDINAVIAN_ROWS, SCANDINAVIAN_GROUP);
+    addCard("e4 d5", "exd5", FUTURE);
+    const recently = daysBefore(4);
+    logRatings("", "e4", 3, recently);
+    logRatings("e4 e5", "Nf3", 2, recently);
+    logRatings(`${BC4_LINE} Bc5`, "c3", 4, recently);
+    logRatings(`${BC4_LINE} Bc5`, "d3", 1, recently);
+    logRatings("e4 d5", "exd5", 5, recently);
+    const misses = readRepertoireMissCounts(db, now);
+    const countOf = (ids: number[]): number | undefined =>
+      repertoireScopeCounts(
+        mergeRepertoireUnitMoves(
+          ids.map((id) => ({
+            variation: findDrillRepertoire(db, id) as NonNullable<
+              ReturnType<typeof findDrillRepertoire>
+            >,
+            moves: listRepertoireDrillMoves(db, id),
+          })),
+        ),
+        now,
+        misses,
+      ).missed;
+    const service = boot();
+    const left = async (id: number, level: RepertoireLevel): Promise<number> =>
+      drillOf(await startAt(service, id, "missed", level)).moves_left;
+
+    // 4.d3 was missed once, so it is in none of them; 2.exd5 is in the side's alone.
+    expect([countOf([classical]), await left(classical, "variation")]).toEqual([3, 3]);
+    expect(drawnLabels(classical)).toEqual(["Bc5 c3", "start e4", "e5 Nf3"]);
+    expect([countOf([pianissimo]), await left(pianissimo, "variation")]).toEqual([2, 2]);
+    expect([countOf([classical, pianissimo]), await left(classical, "group")]).toEqual([3, 3]);
+    expect([countOf([classical, pianissimo, scandinavian]), await left(classical, "side")]).toEqual(
+      [4, 4],
+    );
+  });
+
+  it("refuses the missed scope for the drill of the positions from the games, with nothing written", async () => {
+    const service = boot();
+
+    expect(await code(service.startTraining({ mode: "found", scope: "missed" }))).toBe(
+      "invalid_command",
+    );
+
+    expect(runEnds()).toEqual([]);
   });
 });
 
@@ -2312,7 +2580,7 @@ describe("a drill over the units found in games", () => {
     }));
     const offered = repertoireScopeCounts(mergeRepertoireUnitMoves(units), now);
     // 2.e5 is known and not due, so it is in all and not in due.
-    expect(offered).toEqual({ recommended: 2, due: 2, all: 3 });
+    expect(offered).toEqual({ recommended: 2, due: 2, all: 3, missed: 0 });
     for (const scope of ["recommended", "due", "all"] as const) {
       expect(await foundLeft(service, scope)).toBe(offered[scope]);
     }
@@ -2899,6 +3167,7 @@ describe("a repertoire drill of a Black unit", () => {
         recommended: 4,
         due: 4,
         all: 4,
+        missed: 0,
       });
     });
 
@@ -2912,6 +3181,7 @@ describe("a repertoire drill of a Black unit", () => {
         recommended: 4,
         due: 4,
         all: 4,
+        missed: 0,
       });
     });
 
@@ -2925,6 +3195,7 @@ describe("a repertoire drill of a Black unit", () => {
         recommended: 3,
         due: 3,
         all: 4,
+        missed: 0,
       });
     });
 
