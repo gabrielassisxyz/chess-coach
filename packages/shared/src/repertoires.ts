@@ -60,6 +60,12 @@ export const RepertoireFiguresSchema = z.object({
 });
 export type RepertoireFigures = z.infer<typeof RepertoireFiguresSchema>;
 
+// Where a unit came from: `generated` for a unit the app's builder walked, which is every unit
+// stored before the column existed, and `pgn` for a unit read from a PGN file. A unit read from a
+// file stores no engine figure for its moves, so a reader of those figures has to tell the two apart.
+export const RepertoireOriginSchema = z.enum(["generated", "pgn"]);
+export type RepertoireOrigin = z.infer<typeof RepertoireOriginSchema>;
+
 // `points`, `root` and `branch` say what the unit was built with and from, and a rebuild posts them
 // again: `points` is null for a unit built before they were stored, `root` is the SAN list a unit of
 // another opening starts from and null for a variation of the Italian, `branch` is the line a
@@ -70,12 +76,13 @@ export type RepertoireFigures = z.infer<typeof RepertoireFiguresSchema>;
 // a branch point, "2.exd5" for a unit of another opening. It is null for a variation that is neither
 // the first of its group nor built at a branch point, and for a first variation whose White move
 // after the naming line is not stored yet. The server always sends the figures, `line`, `points`,
-// `root` and `branch`; a fixture need not carry them.
+// `root`, `branch` and `origin`; a fixture need not carry them.
 export const RepertoireSummarySchema = z.object({
   id: z.number().int().positive(),
   side: z.enum(["white", "black"]),
   group_name: z.string(),
   variation_name: z.string(),
+  origin: RepertoireOriginSchema.optional(),
   moves: RepertoireScopeCountsSchema,
   ...RepertoireFiguresSchema.partial().shape,
   line: z.string().nullable().optional(),

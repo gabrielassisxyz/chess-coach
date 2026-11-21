@@ -18,7 +18,7 @@ import {
 import { type Clock, systemClock } from "../clock.js";
 import type { Database } from "../db/open.js";
 import { listDrillRepertoires, listRepertoireDrillMoves } from "../db/repertoire-cards.js";
-import { findRepertoireBuild, listMetOpenings } from "../db/repertoires.js";
+import { findRepertoireBuild, findRepertoireOrigin, listMetOpenings } from "../db/repertoires.js";
 import {
   listRepertoireBranches,
   NO_REPERTOIRE_BRANCH_BOOK,
@@ -171,6 +171,7 @@ export function registerRepertoireRoutes(
           side: variation.side,
           group_name: variation.group_name,
           variation_name: variation.variation_name,
+          origin: findRepertoireOrigin(db, variation.id),
           moves: repertoireScopeCounts(moves, now, introducedInWindow),
           ...figures,
           line: repertoireVariationLine(db, variation, build.branch, firstIds.has(variation.id)),

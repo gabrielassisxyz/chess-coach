@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Database, openDatabase } from "./open.js";
 import {
   createRepertoireVariation,
+  findRepertoireOrigin,
   insertRepertoireOwnMove,
   listWhiteMovesLackingIdea,
   type NewRepertoireOwnMove,
@@ -99,6 +100,21 @@ describe("the sources a stored move may have", () => {
     expect([...CoverageSourceSchema.options].sort()).toEqual(
       Object.keys(SOURCES_OF_THE_UNION).sort(),
     );
+  });
+});
+
+describe("findRepertoireOrigin", () => {
+  it("reads generated for a unit stored without an origin, and pgn for one stored with it", () => {
+    const built = newUnit("Built");
+    const imported = newUnit("Imported");
+    db.prepare("UPDATE repertoires SET origin = 'pgn' WHERE id = ?").run(imported);
+
+    expect(findRepertoireOrigin(db, built)).toBe("generated");
+    expect(findRepertoireOrigin(db, imported)).toBe("pgn");
+  });
+
+  it("reads generated for a unit that is not stored, as every unit was before the column", () => {
+    expect(findRepertoireOrigin(db, 9999)).toBe("generated");
   });
 });
 

@@ -240,7 +240,9 @@
   `origin` yet, and each must before it takes an imported unit. A row's `source` is typed once, in
   `RepertoireMoveSource` (`setup`, `explorer`, `engine`, `mainline`, `game`, `pgn`), and
   `CoverageSourceSchema` in shared names the same six; `db/repertoire-origin.test.ts` fails when the
-  two differ. The column itself has no check.
+  two differ. The column itself has no check. `GET /api/repertoires` returns `origin` on each entry of
+  `repertoires[]` (`findRepertoireOrigin`), optional in the schema as `points` is, so a fixture need
+  not carry it.
 - **Card scheduling:** every card the app schedules is scheduled by FSRS-6 through `ts-fsrs`, pinned at
   exactly 5.4.2 and imported by `packages/server/src/srs/fsrs.ts` alone, which `srs/fsrs.test.ts` enforces.
   That is the review cards of the Due cards desk (`srs_cards`), the opening repertoire's move cards

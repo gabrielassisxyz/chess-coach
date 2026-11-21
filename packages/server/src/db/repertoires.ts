@@ -1,3 +1,4 @@
+import type { RepertoireOrigin } from "@chess-coach/shared";
 import type { Database } from "./open.js";
 import { deleteRepertoireCardsNoVariationPlays } from "./repertoire-cards.js";
 import { endTrainingRun } from "./training.js";
@@ -738,6 +739,17 @@ export function findRepertoireBuild(db: Database, repertoireId: number): StoredR
     points,
     branch: row.branch_san === null ? null : (JSON.parse(row.branch_san) as string[]),
   };
+}
+
+/**
+ * Where a variation came from, read back from its row. A unit nobody stored reads as generated,
+ * which is what every unit was before the column existed.
+ */
+export function findRepertoireOrigin(db: Database, repertoireId: number): RepertoireOrigin {
+  const row = db.prepare("SELECT origin FROM repertoires WHERE id = ?").get(repertoireId) as
+    | { origin: RepertoireOrigin }
+    | undefined;
+  return row?.origin ?? "generated";
 }
 
 /** Gives one variation the points and branch of another: what a rebuild's new rows were built with. */
