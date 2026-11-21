@@ -388,6 +388,23 @@ describe("5. one row for a position and move, and two answers to one position", 
     expect(tied.map(rowText)).not.toContain("reply d4 Nf6 Bf4 d5 e3 e6");
   });
 
+  it("keeps the earlier of two lines of equal reach that divide through different reply counts", () => {
+    // The same three Black moves in opposite orders reach one position. One line passes a position
+    // with 7 stored replies and then one with 5, the other 5 and then 7, so both have reach 1 in
+    // 70, which a chain of float divisions rounds apart.
+    const fillers = ["b6", "c6", "d6", "e6", "f6", "b5"];
+    const alternatives = (number: number, count: number): string =>
+      fillers
+        .slice(0, count)
+        .map((san) => `(${number}... ${san})`)
+        .join(" ");
+    const sevenThenFive = `1. Nf3 a6 2. Ng1 h6 ${alternatives(2, 6)} 3. Nf3 g6 ${alternatives(3, 4)} 4. Ng1 *`;
+    const fiveThenSeven = `1. Nf3 g6 2. Ng1 h6 ${alternatives(2, 4)} 3. Nf3 a6 ${alternatives(3, 6)} 4. Ng1 *`;
+    const rows = movesOf(read(`${sevenThenFive}\n\n${fiveThenSeven}`));
+    expect(rowAt(rows, "own Nf3 a6 Ng1 h6 Nf3 g6 Ng1").reach).toBe(1 / 70);
+    expect(rows.map(rowText)).not.toContain("own Nf3 g6 Ng1 h6 Nf3 a6 Ng1");
+  });
+
   it("returns the same game read twice as one set of rows", () => {
     const once = read("1. d4 d5 2. Bf4 *");
     const twice = read("1. d4 d5 2. Bf4 *\n\n1. d4 d5 2. Bf4 *");
@@ -496,9 +513,9 @@ describe("6. reach, without and with weights", () => {
 
   it.each<[string, string]>([
     ["no header at all", ""],
-    ["no reach column", "loss_cp\tline\n3\t1. d4\n"],
-    ["no loss_cp column", "reach\tline\n0.5\t1. d4\n"],
-    ["no line column", "reach\tloss_cp\n0.5\t3\n"],
+    ["a header without reach and no row", "loss_cp\tline\n"],
+    ["a header without loss_cp and no row", "reach\tline\n"],
+    ["a header without line and no row", "reach\tloss_cp\n"],
     ["a reach that is no number", "reach\tloss_cp\tline\nhalf\t3\t1. d4\n"],
     ["a reach over 1", "reach\tloss_cp\tline\n1.5\t3\t1. d4\n"],
     ["a loss that is no number", "reach\tloss_cp\tline\n0.5\t\t1. d4\n"],
@@ -543,11 +560,11 @@ describe("7. reasons and the comments that are not one", () => {
   it.each<[string, string]>([
     ["after a reply", "1. e4 e5 {on the reply} 2. Nf3 *"],
     ["before the first move", "{an introduction} 1. e4 e5 *"],
-    ["right after a variation opens", "1. e4 e5 ({inside} 1... c5) 2. Nf3 *"],
-    ["right after a variation closes", "1. e4 e5 (1... c5) {after} 2. Nf3 *"],
+    ["right after a variation opens", "1. e4 ({inside} 1. e4 e5) 1... e5 2. Nf3 *"],
+    ["right after a variation closes", "1. e4 e5 (1... c5 2. Nf3) {after} 2. Nf3 *"],
     ["to the end of the line with ;", "1. e4 ; why\ne5 *"],
-    ["after the result", "1. e4 e5 * {after the game}"],
-    ["between a move number and its move", "1. {between} e4 e5 *"],
+    ["after the result", "1. e4 e5 2. Nf3 * {after the game}"],
+    ["between a move number and its move", "1. e4 e5 2. Nf3 2... {between} Nc6 *"],
   ])("counts a comment %s as ignored and stores no reason", (_name, pgn) => {
     const result = read(pgn);
     expect(countsOf(result)).toMatchObject({ comments_ignored: 1, reasons: 0 });
