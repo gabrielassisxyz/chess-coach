@@ -330,7 +330,7 @@ const gamesReviewedAgainstUnit = (db: Database, repertoireId: number): number[] 
 // side or the units found in games), would serve rows that are gone, from a merge that no longer
 // exists. Only a drill's queue holds repertoire rows; a card or a puzzle id in another run can carry
 // the same number.
-function openRunsOfRepertoireUnit(db: Database, repertoireId: number): number[] {
+export function openRunsOfRepertoireUnit(db: Database, repertoireId: number): number[] {
   const rows = db
     .prepare(
       `SELECT r.id FROM training_runs r
