@@ -27,6 +27,7 @@ import {
   createRepertoireVariation,
   insertRepertoireOwnMove,
   REPERTOIRE_REBUILD_GROUP_SUFFIX,
+  type RepertoireSide,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { endRunsLeftOpenAtStart } from "../db/training.js";
@@ -138,9 +139,19 @@ function keyAfter(lineText: string, san: string): string {
   return positionKey(board.fen());
 }
 
-function addVariation(name: string, rows: FixtureRow[], groupName = "Italian Game"): number {
+// The student's move sits where the line before it ends on the opponent's: an even length for White,
+// an odd one for Black, whose own moves follow White's first.
+const isStudentMove = (side: RepertoireSide, lineText: string): boolean =>
+  (lineOf(lineText).length % 2 === 0) === (side === "white");
+
+function addVariation(
+  name: string,
+  rows: FixtureRow[],
+  groupName = "Italian Game",
+  side: RepertoireSide = "white",
+): number {
   const { id } = createRepertoireVariation(db, {
-    side: "white",
+    side,
     groupName,
     variationName: name,
   });
@@ -159,7 +170,7 @@ function addVariation(name: string, rows: FixtureRow[], groupName = "Italian Gam
       share: null,
       source: "explorer" as const,
     };
-    if (line.length % 2 === 1) upsertRepertoireReply(db, row);
+    if (!isStudentMove(side, lineText)) upsertRepertoireReply(db, row);
     else insertRepertoireOwnMove(db, { ...row, cpLoss: 0, evalCp: 30, results: null });
   }
   return id;
@@ -208,14 +219,16 @@ function setCardInterval(lineText: string, san: string, intervalHours: number): 
   ).run(intervalHours, place.positionKey, place.uci);
 }
 
-// A card on every White move of the rows, due unless `due` says otherwise.
+// A card on every move of the student's in the rows, White's unless `side` says Black's, due unless
+// `due` says otherwise.
 function addCards(
   rows: FixtureRow[],
   due: (lineText: string, san: string) => boolean = () => true,
   lastRight = true,
+  side: RepertoireSide = "white",
 ): void {
   for (const [lineText, san] of rows) {
-    if (lineOf(lineText).length % 2 === 1) continue;
+    if (!isStudentMove(side, lineText)) continue;
     addCard(lineText, san, due(lineText, san) ? PAST : FUTURE, lastRight);
   }
 }
@@ -2763,5 +2776,456 @@ describe("showing a line drill move's stored idea after the answer", () => {
     state = await play(service, state, "c3");
     expect(drillOf(state).answered).toEqual({ san: "c3", idea: "Prepare d4." });
     expect(firstAttempts()).toEqual([]);
+  });
+});
+
+// A Black unit answers two first moves of White's, each continued: the Caro-Kann against 1.e4 and the
+// Slav against 1.d4. White's moves are the ones the drill plays for the student, Black's the ones it
+// asks, so a student's move sits where the line before it has an odd length.
+const BLACK_ROWS: FixtureRow[] = [
+  ["", "e4", 0.6],
+  ["e4", "c6", 0.6],
+  ["e4 c6", "d4", 0.6],
+  ["e4 c6 d4", "d5", 0.6],
+  ["", "d4", 0.4],
+  ["d4", "d5", 0.4],
+  ["d4 d5", "c4", 0.4],
+  ["d4 d5 c4", "c6", 0.4],
+];
+
+// 1...d5 against 1.d4 and 2...d5 against 1.e4 c6 2.d4 end on the same two plies, so a move is named
+// by the whole line that reaches it.
+const BLACK_MOVE_LINES = ["e4 c6", "e4 c6 d4 d5", "d4 d5", "d4 d5 c4 c6"];
+
+const addBlackUnit = (rows: FixtureRow[] = BLACK_ROWS): number =>
+  addVariation("Caro-Kann and Slav", rows, "Black repertoire", "black");
+
+const addBlackCards = (rows: FixtureRow[] = BLACK_ROWS): void =>
+  addCards(rows, () => true, true, "black");
+
+const pathLabel = (move: RepertoireDrillMove): string => [...move.line, move.san].join(" ");
+
+const servedLines = (id: number, scope: RepertoireScope): string[] =>
+  selectRepertoireDrillMoves(listRepertoireDrillMoves(db, id), scope, now, introducedToday()).map(
+    pathLabel,
+  );
+
+function fenAfter(sans: string[]): string {
+  const board = new Chess();
+  for (const san of sans) board.move(san);
+  return board.fen();
+}
+
+describe("a repertoire drill of a Black unit", () => {
+  it("starts with White's first move on the board and Black's first move to find, the board turned to Black", async () => {
+    const id = addBlackUnit();
+    const service = boot();
+    const state = await start(service, id, "all");
+
+    expect(state.orientation).toBe("black");
+    expect(state.turn).toBe("black");
+    expect(state.fen).toBe(fenAfter(["e4"]));
+    expect(lineSan(state)).toEqual(["e4"]);
+    expect(whoPlayed(state)).toEqual(["reply"]);
+    expect(state.last_move).toEqual({ from: "e2", to: "e4" });
+    expect(state.status).toBe("prompt");
+    expect(state.input_enabled).toBe(true);
+    expect(state.item).toMatchObject({
+      kind: "repertoire",
+      repertoire_id: id,
+      position_in_queue: 1,
+    });
+    // A new move is shown with its answer: the move asked is Black's first, 1...c6 against 1.e4,
+    // and not 1...d5, which answers the other first move of the unit and has less reach.
+    expect(drillOf(state)).toMatchObject({
+      first_pass: true,
+      answer: { uci: "c7c6", san: "c6" },
+      moves_left: 1,
+    });
+    const run = db.prepare("SELECT color FROM training_runs").get();
+    expect(run).toEqual({ color: "black" });
+  });
+
+  it("answers in a frame the page accepts, as a Black drill started by start_training", async () => {
+    const id = addBlackUnit();
+    addBlackCards();
+    const app = buildApp({
+      hub: {
+        coach: new FakeCoach(db),
+        activity: boot(),
+        db,
+        allowedOrigins: ["http://localhost:5173"],
+      },
+    });
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    try {
+      const frames: { type: string; state?: unknown }[] = [];
+      const socket = await app.injectWS(
+        "/api/ws",
+        { headers: { origin: "http://localhost:5173", host: "localhost:5173" } },
+        { onInit: (ws) => ws.on("message", (data) => frames.push(JSON.parse(data.toString()))) },
+      );
+      socket.send(
+        JSON.stringify({
+          type: "start_training",
+          command_id: "c1",
+          mode: "repertoire",
+          repertoire_id: id,
+          scope: "all",
+        }),
+      );
+      let frame: unknown;
+      for (let i = 0; i < 200 && frame === undefined; i++) {
+        frame = frames.find((event) => event.type === "activity" && event.state);
+        if (frame === undefined) await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const event = ServerEventSchema.parse(frame);
+      if (event.type !== "activity") throw new Error(`expected activity, got ${event.type}`);
+      const state = training(event.state);
+      expect(state.orientation).toBe("black");
+      expect(state.item).toMatchObject({ kind: "repertoire", repertoire_id: id });
+      expect(lineSan(state)).toEqual(["e4"]);
+      expect(drillOf(state)).toMatchObject({ scope: "all", moves_left: 4 });
+      socket.terminate();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("plays White's move between two asked moves, then starts the next pass from move 1 with the other first move", async () => {
+    const id = addBlackUnit();
+    addBlackCards();
+    const service = boot();
+    let state = await start(service, id, "all");
+    expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null, moves_left: 4 });
+
+    state = await play(service, state, "c6");
+    // The server played White's 2.d4 for the student's opponent and stopped on 2...d5.
+    expect(lineSan(state)).toEqual(["e4", "c6", "d4"]);
+    expect(whoPlayed(state)).toEqual(["reply", "student", "reply"]);
+    expect(state.fen).toBe(fenAfter(["e4", "c6", "d4"]));
+    expect(state.last_move).toEqual({ from: "d2", to: "d4" });
+    expect(state.turn).toBe("black");
+    expect(state.status).toBe("in_progress");
+    expect(state.input_enabled).toBe(true);
+
+    state = await play(service, state, "d5");
+    expect(lineSan(state)).toEqual(["e4", "c6", "d4", "d5"]);
+    expect(state.status).toBe("solved");
+    expect(state.input_enabled).toBe(false);
+    expect(progressOf(state)).toEqual({
+      pass: [1, 2],
+      outcomes: ["solved", "pending"],
+      left: 2,
+      right: 2,
+      wrong: 0,
+    });
+
+    // The first line is done: the next pass starts from the starting position, the server plays the
+    // other White first move and Black is asked again.
+    state = await next(service, state);
+    expect(state.item).toMatchObject({ position_in_queue: 2 });
+    expect(lineSan(state)).toEqual(["d4"]);
+    expect(whoPlayed(state)).toEqual(["reply"]);
+    expect(state.fen).toBe(fenAfter(["d4"]));
+    expect(state.orientation).toBe("black");
+    expect(state.status).toBe("prompt");
+
+    state = await play(service, state, "d5");
+    expect(lineSan(state)).toEqual(["d4", "d5", "c4"]);
+    expect(whoPlayed(state)).toEqual(["reply", "student", "reply"]);
+    state = await play(service, state, "c6");
+    expect(state.status).toBe("solved");
+    state = await next(service, state);
+    expect(drillOf(state).result).toEqual({ practised: 4, first_try_right: 4 });
+  });
+
+  it("keeps the position open on a wrong try at a Black move, and brings the missed move back from move 1", async () => {
+    const id = addBlackUnit();
+    addBlackCards();
+    const service = boot();
+    let state = await start(service, id, "all");
+    state = await play(service, state, "Nf6");
+    expect(state.input_enabled).toBe(true);
+    expect(state.fen).toBe(fenAfter(["e4"]));
+    expect(state.last_try).toMatchObject({ san: "Nf6", correct: false });
+    expect(state.wrong_tries).toEqual([{ ply: 1, uci: "g8f6", san: "Nf6" }]);
+    state = await play(service, state, "c6");
+    state = await play(service, state, "d5");
+    expect(state.status).toBe("failed");
+    state = await next(service, state);
+    state = await play(service, state, "d5");
+    state = await play(service, state, "c6");
+    state = await next(service, state);
+
+    // The round is over; 1...c6 comes back with White's first move played for the student.
+    expect(state.item).toMatchObject({ position_in_queue: 3 });
+    expect(lineSan(state)).toEqual(["e4"]);
+    expect(drillOf(state)).toMatchObject({ moves_left: 1, moves_wrong: 1 });
+    state = await play(service, state, "c6");
+    // Only the missed move is asked again, so the pass ends on it.
+    expect(lineSan(state)).toEqual(["e4", "c6"]);
+    expect(state.status).toBe("solved");
+    state = await next(service, state);
+    expect(drillOf(state).result).toEqual({ practised: 4, first_try_right: 3 });
+  });
+
+  describe("rating the first move of the line", () => {
+    const stored = {
+      fsrs_state: 2 as const,
+      stability: 1,
+      difficulty: 2.1181,
+      learning_step: 0,
+      lapses: 0,
+      interval_hours: 24,
+      last_reviewed_at: new Date(Date.parse(PAST) - 24 * HOUR_MS).toISOString(),
+      next_review_at: PAST,
+    };
+    // One review: the schedule the card had, moved once by the grade, as a White move's is.
+    const reviewed = (grade: 1 | 3) => ({ ...review(stored, grade, T0), reviews: 3 });
+
+    // What the student does first at 1...c6; the miss is then played out with the right move, which
+    // rates nothing more.
+    it.each([
+      {
+        how: "a wrong try",
+        grade: 1 as const,
+        first: async (service: ActivityService, state: TrainingActivity) =>
+          play(service, state, "Nf6"),
+        playsRightAfter: true,
+      },
+      {
+        how: "a hint",
+        grade: 1 as const,
+        first: async (service: ActivityService, state: TrainingActivity) =>
+          training(await service.trainingHint(state.activity_id)),
+        playsRightAfter: true,
+      },
+      {
+        how: "a shown solution",
+        grade: 1 as const,
+        first: async (service: ActivityService, state: TrainingActivity) =>
+          training(await service.trainingShowSolution(state.activity_id)),
+        playsRightAfter: true,
+      },
+      {
+        how: "a right first attempt",
+        grade: 3 as const,
+        first: async (service: ActivityService, state: TrainingActivity) =>
+          play(service, state, "c6"),
+        playsRightAfter: false,
+      },
+    ])(
+      "rates 1...c6 with grade $grade after $how, once, and writes its first attempt",
+      async ({ grade, first, playsRightAfter }) => {
+        const id = addBlackUnit();
+        addBlackCards();
+        const service = boot();
+        let state = await start(service, id, "all");
+        state = await first(service, state);
+        if (playsRightAfter) state = await play(service, state, "c6");
+
+        expect(loggedDrillGrades()).toEqual([grade]);
+        expect(cardOf("e4", "c6")).toEqual(reviewed(grade));
+        expect(firstAttempts()).toEqual([attemptOf("e4", "c6", id, grade === 3 ? 1 : 0)]);
+        // Only that first move was rated: the others still hold the card they were given.
+        expect(cardOf("e4 c6 d4", "d5")).toMatchObject({ reviews: 2, interval_hours: 24 });
+      },
+    );
+
+    it("rates a later Black move of the line by its own first attempt, missed or right", async () => {
+      const id = addBlackUnit();
+      addBlackCards();
+      const service = boot();
+      let state = await start(service, id, "all");
+      state = await play(service, state, "c6");
+      state = await play(service, state, "Nf6");
+      state = await play(service, state, "d5");
+      state = await next(service, state);
+      state = await play(service, state, "d5");
+      state = await play(service, state, "c6");
+
+      expect(loggedDrillGrades()).toEqual([3, 1, 3, 3]);
+      expect(firstAttempts()).toEqual([
+        attemptOf("e4", "c6", id, 1),
+        attemptOf("e4 c6 d4", "d5", id, 0),
+        attemptOf("d4", "d5", id, 1),
+        attemptOf("d4 d5 c4", "c6", id, 1),
+      ]);
+    });
+  });
+
+  describe("the moves each scope serves", () => {
+    it("serves only the move the pacing admits for all, due and recommended while none has a card", () => {
+      const id = addBlackUnit();
+      // Both first moves of Black's answer the start, so they are siblings and the likelier, 1...c6
+      // against 1.e4, goes first; its follow-up and the other line wait behind it.
+      for (const scope of ["all", "due", "recommended"] as const) {
+        expect(servedLines(id, scope)).toEqual(["e4 c6"]);
+      }
+      expect(
+        repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday()),
+      ).toEqual({
+        recommended: 1,
+        due: 1,
+        all: 1,
+      });
+    });
+
+    it("lets the pacing admit the next moves of the line as the cards of those before it appear", () => {
+      const id = addBlackUnit();
+      // 1...c6 is known but short of stable: its follow-up enters, and the other first move waits
+      // behind its sibling.
+      addCard("e4", "c6", PAST, true, { intervalHours: 24 });
+      expect(servedLines(id, "all")).toEqual(["e4 c6", "e4 c6 d4 d5"]);
+      expect(servedLines(id, "due")).toEqual(["e4 c6", "e4 c6 d4 d5"]);
+
+      setCardInterval("e4", "c6", STABLE_HOURS);
+      expect(servedLines(id, "all")).toEqual(["e4 c6", "e4 c6 d4 d5", "d4 d5"]);
+    });
+
+    it("serves every move of the unit for all and due, and for recommended, once every move has a card that is due", () => {
+      const id = addBlackUnit();
+      addBlackCards();
+      expect(servedLines(id, "all")).toEqual(BLACK_MOVE_LINES);
+      expect(servedLines(id, "due")).toEqual(BLACK_MOVE_LINES);
+      expect(servedLines(id, "recommended")).toEqual(BLACK_MOVE_LINES);
+      expect(
+        repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday()),
+      ).toEqual({
+        recommended: 4,
+        due: 4,
+        all: 4,
+      });
+    });
+
+    it("serves a move that is not due for all alone, as it does for a White move", () => {
+      const id = addBlackUnit();
+      addCards(BLACK_ROWS, (lineText) => lineText !== "d4 d5 c4", true, "black");
+      expect(servedLines(id, "all")).toEqual(BLACK_MOVE_LINES);
+      expect(servedLines(id, "due")).toEqual(BLACK_MOVE_LINES.slice(0, 3));
+      expect(servedLines(id, "recommended")).toEqual(BLACK_MOVE_LINES.slice(0, 3));
+      expect(
+        repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday()),
+      ).toEqual({
+        recommended: 3,
+        due: 3,
+        all: 4,
+      });
+    });
+
+    it("serves every move of a wide Black unit for all and due, and the first ten for recommended", () => {
+      // 1...c6 against 1.e4, then 2...d5 against eleven second moves of White's: twelve moves of
+      // Black's, the likelier second move first.
+      const seconds = ["d4", "Nc3", "Nf3", "c4", "Bc4", "g3", "d3", "b3", "Qe2", "f4", "Ne2"];
+      const rows: FixtureRow[] = [
+        ["", "e4", 1],
+        ["e4", "c6", 1],
+        ...seconds.flatMap((white, index): FixtureRow[] => [
+          ["e4 c6", white, 1 - index * 0.05],
+          [`e4 c6 ${white}`, "d5", 1 - index * 0.05],
+        ]),
+      ];
+      const id = addBlackUnit(rows);
+      addBlackCards(rows);
+      const order = ["e4 c6", ...seconds.map((white) => `e4 c6 ${white} d5`)];
+
+      expect(servedLines(id, "all")).toEqual(order);
+      expect(servedLines(id, "due")).toEqual(order);
+      // The limit is pinned as the number ten, not as the constant the drill reads it from.
+      expect(order).toHaveLength(12);
+      expect(servedLines(id, "recommended")).toEqual(order.slice(0, 10));
+    });
+
+    it("starts a drill on exactly the moves the counts offered for each scope", async () => {
+      const id = addBlackUnit();
+      addBlackCards();
+      const service = boot();
+      for (const scope of ["recommended", "due", "all"] as const) {
+        expect(drillOf(await start(service, id, scope)).moves_left).toBe(4);
+      }
+    });
+  });
+
+  describe("at the level of a side", () => {
+    it("drills the Black units alone from a Black unit, and the White ones alone from a White unit", async () => {
+      const black = addBlackUnit();
+      addBlackCards();
+      const white = addVariation("Classical", ITALIAN_ROWS);
+      addCards(ITALIAN_ROWS);
+      const service = boot();
+
+      const blackDrill = await startAt(service, black, "all", "side");
+      expect(drillOf(blackDrill)).toMatchObject({ level: "side", moves_left: 4 });
+      expect(blackDrill.orientation).toBe("black");
+      expect(lineSan(blackDrill)).toEqual(["e4"]);
+
+      const whiteDrill = await startAt(service, white, "all", "side");
+      expect(drillOf(whiteDrill)).toMatchObject({ level: "side", moves_left: 6 });
+      expect(whiteDrill.orientation).toBe("white");
+      expect(lineSan(whiteDrill)).toEqual([]);
+    });
+  });
+});
+
+describe("a repertoire drill of a White unit that starts 1.d4", () => {
+  // The London System: 1.d4 d5 2.Bf4 Nf6 3.e3, three moves of White's.
+  const LONDON_ROWS: FixtureRow[] = [
+    ["", "d4", 1],
+    ["d4", "d5", 1],
+    ["d4 d5", "Bf4", 1],
+    ["d4 d5 Bf4", "Nf6", 1],
+    ["d4 d5 Bf4 Nf6", "e3", 1],
+  ];
+  const addLondon = (): number => addVariation("London System", LONDON_ROWS, "London System");
+
+  it("asks 1.d4 first, at ply 1 from the starting position, with the board turned to White", async () => {
+    const id = addLondon();
+    const first = listRepertoireDrillMoves(db, id)[0];
+    expect(first).toMatchObject({ san: "d4", uci: "d2d4", ply: 1, line: [] });
+
+    const service = boot();
+    const state = await start(service, id, "all");
+    expect(state.orientation).toBe("white");
+    expect(state.turn).toBe("white");
+    expect(state.fen).toBe(new Chess().fen());
+    expect(state.moves).toEqual([]);
+    expect(state.last_move).toBeNull();
+    expect(state.status).toBe("prompt");
+    expect(state.input_enabled).toBe(true);
+    expect(drillOf(state)).toMatchObject({ first_pass: true, answer: { uci: "d2d4", san: "d4" } });
+    const run = db.prepare("SELECT color FROM training_runs").get();
+    expect(run).toEqual({ color: "white" });
+  });
+
+  it("plays Black's replies between the asked moves of the line and solves it", async () => {
+    const id = addLondon();
+    addCards(LONDON_ROWS);
+    const service = boot();
+    let state = await start(service, id, "all");
+    expect(drillOf(state)).toMatchObject({ first_pass: false, moves_left: 3 });
+
+    state = await play(service, state, "d4");
+    expect(lineSan(state)).toEqual(["d4", "d5"]);
+    state = await play(service, state, "Bf4");
+    expect(lineSan(state)).toEqual(["d4", "d5", "Bf4", "Nf6"]);
+    state = await play(service, state, "e3");
+    expect(lineSan(state)).toEqual(["d4", "d5", "Bf4", "Nf6", "e3"]);
+    expect(whoPlayed(state)).toEqual(["student", "reply", "student", "reply", "student"]);
+    expect(state.status).toBe("solved");
+    state = await next(service, state);
+    expect(drillOf(state).result).toEqual({ practised: 3, first_try_right: 3 });
+  });
+
+  it("rates 1.d4 on its first attempt, Good when right and Again after a wrong try", async () => {
+    const id = addLondon();
+    addCards(LONDON_ROWS);
+    const service = boot();
+    let state = await start(service, id, "all");
+    state = await play(service, state, "e4");
+    state = await play(service, state, "d4");
+    expect(loggedDrillGrades()).toEqual([1]);
+    expect(firstAttempts()).toEqual([attemptOf("", "d4", id, 0)]);
+    expect(cardOf("", "d4")).toMatchObject({ fsrs_state: 3, lapses: 1, reviews: 3 });
   });
 });
