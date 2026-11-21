@@ -111,6 +111,17 @@ export function repertoireRebuildCopySql(groupColumn: string): string {
   return `(${groupColumn} LIKE '%${REPERTOIRE_REBUILD_GROUP_SUFFIX}')`;
 }
 
+/**
+ * The SQL condition that the unit whose origin is in `originColumn` was walked by the generator.
+ * Every query through which the app picks units by itself, to write reasons into them, review games
+ * against them, rebuild them or name them as the unit of an opening, takes this: a line read from a
+ * PGN file is the student's, and only importing its file again changes it. Drills and listings do
+ * not take it, since an imported unit is practised like any other.
+ */
+export function repertoireGeneratedSql(originColumn: string): string {
+  return `(${originColumn} = 'generated')`;
+}
+
 /** A White move with no idea yet, carrying what its text is written from. */
 export interface RepertoireIdeaTarget {
   id: number;
@@ -125,7 +136,9 @@ export interface RepertoireIdeaTarget {
 }
 
 // The oldest of the group: a rerun must land on the variation it built, even if the data has moved
-// since and today's answer to 3...Bc5 would be named differently.
+// since and today's answer to 3...Bc5 would be named differently. Only the generator's own: a rebuild,
+// the Italian's branch list and the review's fallback unit must never land on an imported one, whose
+// id may be the lower.
 export function findFirstRepertoireVariation(
   db: Database,
   side: RepertoireSide,
@@ -133,7 +146,9 @@ export function findFirstRepertoireVariation(
 ): RepertoireRow | undefined {
   return db
     .prepare(
-      "SELECT id, side, group_name, variation_name FROM repertoires WHERE side = ? AND group_name = ? ORDER BY id LIMIT 1",
+      `SELECT id, side, group_name, variation_name FROM repertoires
+       WHERE side = ? AND group_name = ? AND ${repertoireGeneratedSql("origin")}
+       ORDER BY id LIMIT 1`,
     )
     .get(side, groupName) as RepertoireRow | undefined;
 }
@@ -519,7 +534,8 @@ export function raiseRepertoireOwnMoveReach(
 
 // Shallowest plies first: a run cut short by the subscription's limit leaves the moves the student
 // meets earliest with an idea already, and a rerun carries on from the rest. A move with no stored
-// evaluation, as one read from a PGN file has none, is no target: the text is written from it.
+// evaluation, as one read from a PGN file has none, is no target: the text is written from it. An
+// imported unit is left out whole, whatever its rows hold: its reasons are the student's to write.
 export function listWhiteMovesLackingIdea(db: Database): RepertoireIdeaTarget[] {
   const rows = db
     .prepare(
@@ -527,6 +543,7 @@ export function listWhiteMovesLackingIdea(db: Database): RepertoireIdeaTarget[] 
        FROM repertoire_positions p JOIN repertoires r ON r.id = p.repertoire_id
        WHERE r.side = 'white' AND p.kind = 'own' AND p.idea IS NULL
          AND NOT ${repertoireRebuildCopySql("r.group_name")}
+         AND ${repertoireGeneratedSql("r.origin")}
        ORDER BY p.repertoire_id, p.ply, p.id`,
     )
     .all() as Array<{
@@ -605,7 +622,8 @@ export interface MetOpeningRow {
 
 // A unit built from a root stores the root's last move, Black's, as the last of its setup rows. The
 // Italian's own setup ends on a White move, so it never matches a Black departure. The oldest unit
-// wins if two ever share a root.
+// wins if two ever share a root. An imported unit is no unit of a root, and takes none from the
+// generator's, whatever its id.
 function unitsByLastRootMove(db: Database): Map<string, number> {
   const rows = db
     .prepare(
@@ -613,6 +631,7 @@ function unitsByLastRootMove(db: Database): Map<string, number> {
        FROM repertoire_positions p JOIN repertoires r ON r.id = p.repertoire_id
        WHERE r.side = 'white' AND p.kind = 'reply' AND p.source = 'setup'
          AND NOT ${repertoireRebuildCopySql("r.group_name")}
+         AND ${repertoireGeneratedSql("r.origin")}
          AND p.ply = (SELECT MAX(q.ply) FROM repertoire_positions q
                       WHERE q.repertoire_id = p.repertoire_id AND q.source = 'setup')
        ORDER BY p.repertoire_id`,
@@ -786,13 +805,16 @@ export interface RepertoireUnitRoot {
  * The units of a side that games can be compared with, oldest first, each with its setup rows as the
  * root. A run cut short at the start stores only the start of its root, which would claim every game
  * that begins the same way, so a unit counts once a run got past its setup. A unit with no setup row
- * has no root to match.
+ * has no root to match. An imported unit is never compared with a game, whatever rows it stores: a
+ * review would add a reply and an answer the engine chose into the student's own line.
  */
 export function listRepertoireUnitRoots(db: Database, side: RepertoireSide): RepertoireUnitRoot[] {
   const units = db
     .prepare(
       `SELECT id, side, group_name, variation_name FROM repertoires
-       WHERE side = ? AND NOT ${repertoireRebuildCopySql("group_name")} ORDER BY id`,
+       WHERE side = ? AND NOT ${repertoireRebuildCopySql("group_name")}
+         AND ${repertoireGeneratedSql("origin")}
+       ORDER BY id`,
     )
     .all(side) as RepertoireRow[];
   const setup = db.prepare(

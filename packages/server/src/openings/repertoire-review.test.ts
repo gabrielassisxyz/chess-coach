@@ -27,6 +27,7 @@ import {
 import {
   createRepertoireVariation,
   deleteRepertoireGroupVariations,
+  findFirstRepertoireVariation,
   findRepertoireOwnMove,
   insertRepertoireOwnMove,
   listMetOpenings,
@@ -1026,6 +1027,82 @@ describe("a game that reaches the root of another unit", () => {
       [italian, repertoireId],
       [scandinavian, scandinavianId],
     ]);
+  });
+});
+
+// A unit read from a PGN file is the student's own line: no game is compared with it, and no lookup
+// the app makes by itself lands on it. These units store setup rows, as a generated one does, so that
+// the origin alone is what keeps them out; an imported unit with none would be skipped by accident.
+describe("an imported unit", () => {
+  function importUnit(groupName: string, variationName: string, line: string[], rootPlies: number) {
+    const id = createUnit(groupName, variationName);
+    seedLine(line, 0.4, line.length, { id, rootPlies });
+    db.prepare("UPDATE repertoires SET origin = 'pgn' WHERE id = ?").run(id);
+    return id;
+  }
+
+  it("is not compared with a game that follows it: no review names it, no row is added and no card is rated", async () => {
+    seedRepertoire();
+    const importedId = importUnit("Scandinavian Defense", "Imported line", SCANDINAVIAN_LINE, 2);
+    // With these answers a unit that took the game would add 3...Nf6 and 4.d4 to itself.
+    explorer
+      .write(AFTER_EXD5, EXPLORER_RATINGS, { Qxd5: 6000, Nf6: 3000, c6: 100 }, 10000)
+      .write([...AFTER_EXD5, "Nf6"], ITALIAN_WHITE_RATINGS, { d4: 700, c4: 50 }, 1000);
+    engine.write(
+      [...AFTER_EXD5, "Nf6"],
+      [
+        ["d2d4", 30],
+        ["c2c4", 10],
+      ],
+    );
+    const rowsBefore = positionsOf().filter((row) => row.repertoire_id === importedId);
+    const id = addGame([...AFTER_EXD5, "Nf6", "d4"]);
+
+    const result = await reviewRepertoireGame(deps(), id);
+
+    expect(result).toMatchObject({
+      outcome: "not_reached",
+      repertoireId,
+      passed: 0,
+      failed: 0,
+      added: 0,
+    });
+    expect(reviewsOf().filter((row) => row.repertoire_id === importedId)).toEqual([]);
+    expect(positionsOf().filter((row) => row.repertoire_id === importedId)).toEqual(rowsBefore);
+    expect(cardsOf()).toEqual([]);
+    expect(loggedGrades()).toEqual([]);
+  });
+
+  it("is not the variation that the lookups of a group find, whatever its id", () => {
+    db.prepare("DELETE FROM repertoires").run();
+    const importedId = importUnit("Italian Game", "Imported line", MAIN_LINE, 5);
+    repertoireId = createUnit("Italian Game", "Classical Variation (4.c3)");
+
+    expect(importedId).toBeLessThan(repertoireId);
+    expect(findFirstRepertoireVariation(db, "white", "Italian Game")).toMatchObject({
+      id: repertoireId,
+      variation_name: "Classical Variation (4.c3)",
+    });
+  });
+
+  it("is not named the unit of a root met in games, whatever its id", async () => {
+    seedRepertoire();
+    await reviewRepertoireGame(deps(), addGame(AFTER_EXD5));
+    const importedId = importUnit("Scandinavian Defense", "Imported line", SCANDINAVIAN_LINE, 2);
+    const met = (repertoire: number | null) => [
+      {
+        root: SCANDINAVIAN,
+        openingName: "Scandinavian Defense",
+        games: 1,
+        repertoireId: repertoire,
+      },
+    ];
+
+    expect(listMetOpenings(db)).toEqual(met(null));
+
+    const generatedId = seedScandinavian();
+    expect(importedId).toBeLessThan(generatedId);
+    expect(listMetOpenings(db)).toEqual(met(generatedId));
   });
 });
 
