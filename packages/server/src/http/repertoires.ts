@@ -12,7 +12,6 @@ import {
   foundRepertoireIdsOf,
   mergeRepertoireUnitMoves,
   type RepertoireUnitMoves,
-  repertoireIntroductionsInWindow,
   repertoireScopeCounts,
 } from "../activity/repertoire-session.js";
 import { type Clock, systemClock } from "../clock.js";
@@ -86,7 +85,6 @@ function groupSummaries(
   db: Database,
   entries: readonly UnitWithFigures[],
   now: Date,
-  introducedInWindow: number,
 ): RepertoireGroupSummary[] {
   const firsts = firstUnitsOfGroups(entries.map((entry) => entry.unit));
   return firsts.map((first) => {
@@ -97,7 +95,6 @@ function groupSummaries(
       moves: repertoireScopeCounts(
         mergeRepertoireUnitMoves(members.map((member) => member.unit)),
         now,
-        introducedInWindow,
       ),
       ...groupFigures(db, members, now),
       line: repertoireGroupLine(db, first.variation),
@@ -105,18 +102,13 @@ function groupSummaries(
   });
 }
 
-function sideSummaries(
-  units: readonly RepertoireUnitMoves[],
-  now: Date,
-  introducedInWindow: number,
-): RepertoireSideSummary[] {
+function sideSummaries(units: readonly RepertoireUnitMoves[], now: Date): RepertoireSideSummary[] {
   const sides = [...new Set(units.map((unit) => unit.variation.side))];
   return sides.map((side) => ({
     side,
     moves: repertoireScopeCounts(
       mergeRepertoireUnitMoves(units.filter((unit) => unit.variation.side === side)),
       now,
-      introducedInWindow,
     ),
   }));
 }
@@ -127,10 +119,9 @@ function foundSummary(
   units: readonly RepertoireUnitMoves[],
   foundIds: ReadonlySet<number>,
   now: Date,
-  introducedInWindow: number,
 ): RepertoireFoundSummary {
   const found = units.filter((unit) => foundIds.has(unit.variation.id));
-  return { moves: repertoireScopeCounts(mergeRepertoireUnitMoves(found), now, introducedInWindow) };
+  return { moves: repertoireScopeCounts(mergeRepertoireUnitMoves(found), now) };
 }
 
 // The counts come from the same selection the drill makes, so the menu never promises a number of
@@ -151,7 +142,6 @@ export function registerRepertoireRoutes(
 
   app.get("/api/repertoires", async (): Promise<RepertoiresResponse> => {
     const now = clock.now();
-    const introducedInWindow = repertoireIntroductionsInWindow(db, now);
     const units = listDrillRepertoires(db).map(
       (variation): RepertoireUnitMoves => ({
         variation,
@@ -172,7 +162,7 @@ export function registerRepertoireRoutes(
           group_name: variation.group_name,
           variation_name: variation.variation_name,
           origin: findRepertoireOrigin(db, variation.id),
-          moves: repertoireScopeCounts(moves, now, introducedInWindow),
+          moves: repertoireScopeCounts(moves, now),
           ...figures,
           line: repertoireVariationLine(db, variation, build.branch, firstIds.has(variation.id)),
           points: build.points,
@@ -180,9 +170,9 @@ export function registerRepertoireRoutes(
           branch: build.branch,
         };
       }),
-      groups: groupSummaries(db, entries, now, introducedInWindow),
-      sides: sideSummaries(units, now, introducedInWindow),
-      found: foundSummary(units, foundRepertoireIdsOf(met), now, introducedInWindow),
+      groups: groupSummaries(db, entries, now),
+      sides: sideSummaries(units, now),
+      found: foundSummary(units, foundRepertoireIdsOf(met), now),
       met: met.map((opening) => ({
         root: opening.root,
         opening_name: opening.openingName,

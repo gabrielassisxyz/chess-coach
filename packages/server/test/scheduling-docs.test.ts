@@ -70,6 +70,15 @@ describe("the documentation of how cards are scheduled", () => {
     expect(runs).toContain("fresh exposure");
   });
 
+  it("says in the Repertoire drill entry that a move with no card is due as soon as it is stored, and names no pacing", () => {
+    const drill = flat(/- \*\*Repertoire drill:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "");
+
+    expect(drill).toContain("A move with no card is new and due as soon as it is stored");
+    expect(drill).toContain("the scopes select from every move of the level");
+    expect(drill).not.toContain("REPERTOIRE_SIBLING_STABLE_HOURS");
+    expect(drill).not.toMatch(/sibling|held back/i);
+  });
+
   it("names the grades as the desk's suggestion and the drills' ratings, never a quality", () => {
     expect(agents).toContain("`suggested_grade`");
     expect(agents).not.toContain("suggested quality");
