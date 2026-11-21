@@ -10,6 +10,7 @@ import { Chess, type Move } from "chess.js";
 import Fastify from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
+import { insertDrillReview, repertoireCardKey } from "../db/drill-reviews.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { insertRepertoireFirstAttempt } from "../db/repertoire-cards.js";
 import {
@@ -24,6 +25,7 @@ import { CachedExplorer } from "../openings/explorer-client.js";
 import { positionKey } from "../openings/from-games.js";
 import { parseRepertoireBranchBook } from "../openings/from-repertoire.js";
 import { parseOpeningTable } from "../openings/names.js";
+import { GRADE } from "../srs/fsrs.js";
 import { type RepertoireRebuildState, registerRepertoireRoutes } from "./repertoires.js";
 
 // The route reads the system clock, so a card is due or not by a wide margin either way.
@@ -157,7 +159,7 @@ describe("GET /api/repertoires", () => {
       repertoires: [],
       groups: [],
       sides: [],
-      found: { moves: { recommended: 0, due: 0, all: 0 } },
+      found: { moves: { recommended: 0, due: 0, all: 0, missed: 0 } },
       met: [],
       branches: [],
       rebuilding_id: null,
@@ -313,9 +315,9 @@ describe("GET /api/repertoires at the group and side levels", () => {
     const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
 
     expect(body.repertoires.map((entry) => entry.moves)).toEqual([
-      { recommended: 3, due: 3, all: 4 },
-      { recommended: 3, due: 3, all: 4 },
-      { recommended: 1, due: 1, all: 2 },
+      { recommended: 3, due: 3, all: 4, missed: 0 },
+      { recommended: 3, due: 3, all: 4, missed: 0 },
+      { recommended: 1, due: 1, all: 2, missed: 0 },
     ]);
     // 4.c3 and 4.d3 answer one position, and a drill over both serves both of them.
     expect(body.groups).toMatchObject([
@@ -330,7 +332,9 @@ describe("GET /api/repertoires at the group and side levels", () => {
         moves: { recommended: 1, due: 1, all: 2 },
       },
     ]);
-    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 5, due: 5, all: 6 } }]);
+    expect(body.sides).toEqual([
+      { side: "white", moves: { recommended: 5, due: 5, all: 6, missed: 0 } },
+    ]);
   });
 
   // Black's replies to 3.Bc4 that White answers with 4.d3: the same position gives White thirty
@@ -353,7 +357,7 @@ describe("GET /api/repertoires at the group and side levels", () => {
       repliesAnsweredByD3(27).map((reply) => [reply, "d3"]),
     );
 
-    const thirty = { recommended: 10, due: 30, all: 30 };
+    const thirty = { recommended: 10, due: 30, all: 30, missed: 0 };
     const counts = async () => {
       const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
       return {
@@ -370,12 +374,16 @@ describe("GET /api/repertoires at the group and side levels", () => {
     addVariation("Short", [["Bc5", "c3"]]);
     addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
     expect(await counts()).toEqual({
-      variations: [thirty, { recommended: 4, due: 4, all: 4 }, { recommended: 2, due: 2, all: 2 }],
-      groups: [
-        { recommended: 10, due: 31, all: 31 },
-        { recommended: 2, due: 2, all: 2 },
+      variations: [
+        thirty,
+        { recommended: 4, due: 4, all: 4, missed: 0 },
+        { recommended: 2, due: 2, all: 2, missed: 0 },
       ],
-      sides: [{ recommended: 10, due: 32, all: 32 }],
+      groups: [
+        { recommended: 10, due: 31, all: 31, missed: 0 },
+        { recommended: 2, due: 2, all: 2, missed: 0 },
+      ],
+      sides: [{ recommended: 10, due: 32, all: 32, missed: 0 }],
     });
   });
 });
@@ -729,23 +737,30 @@ describe("GET /api/repertoires at the found level", () => {
     const body = await bodyOf();
 
     // 1.e4 is in all and not in due; 2.exd5 and 2.e5 have no card, so both are new and due.
-    expect(body.found).toEqual({ moves: { recommended: 2, due: 2, all: 3 } });
+    expect(body.found).toEqual({ moves: { recommended: 2, due: 2, all: 3, missed: 0 } });
     expect(body.repertoires.find((entry) => entry.id === scandinavian)?.moves).toEqual({
       recommended: 1,
       due: 1,
       all: 2,
+      missed: 0,
     });
     // The side's drill also holds the Italian's three moves, which the found drill never serves.
-    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 5, due: 5, all: 6 } }]);
+    expect(body.sides).toEqual([
+      { side: "white", moves: { recommended: 5, due: 5, all: 6, missed: 0 } },
+    ]);
   });
 
   it("counts nothing for a unit no met opening names, and nothing before any game was met", async () => {
     addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
-    expect((await bodyOf()).found).toEqual({ moves: { recommended: 0, due: 0, all: 0 } });
+    expect((await bodyOf()).found).toEqual({
+      moves: { recommended: 0, due: 0, all: 0, missed: 0 },
+    });
 
     // A game that met an opening with no unit built from it names no unit either.
     addReviewedGame(["e4", "Nf6", "e5"], { leftPly: 2 }, italian);
-    expect((await bodyOf()).found).toEqual({ moves: { recommended: 0, due: 0, all: 0 } });
+    expect((await bodyOf()).found).toEqual({
+      moves: { recommended: 0, due: 0, all: 0, missed: 0 },
+    });
   });
 
   it("starts counting a unit once a met opening names it, and stops when none does", async () => {
@@ -795,6 +810,95 @@ function addVariationWithTwoGaps(): number {
   addReplyWithoutAnswer(id, [...SETUP, "Nf6", "d3"], "d5", 0.45);
   return id;
 }
+
+describe("GET /api/repertoires and the moves missed most", () => {
+  const DAY = 24 * 3_600_000;
+  const bodyOf = async () => RepertoiresResponseSchema.parse((await getRepertoires()).json());
+
+  // A miss is a rating of Again in the log of drill reviews, written by the drill and the game review.
+  function logMisses(line: string[], san: string, times: number, daysAgo = 3): void {
+    const cardKey = repertoireCardKey(placeOf(line, san));
+    for (let index = 0; index < times; index++) {
+      insertDrillReview(db, {
+        cardKind: "repertoire",
+        cardKey,
+        reviewedAt: new Date(Date.now() - daysAgo * DAY).toISOString(),
+        grade: GRADE.Again,
+      });
+    }
+  }
+
+  // Two Italian variations and the Scandinavian, whose 1.e4 is the same move; a game that met the
+  // Scandinavian makes it a unit found in games. White's moves: 1.e4 in all three, 2.Nf3 and 3.Bc4
+  // in both Italians, 4.c3 and 4.d3 one each, and 2.exd5.
+  function addMissedFixture(): { classical: number; pianissimo: number; scandinavian: number } {
+    gameCount = 0;
+    const classical = addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+    const pianissimo = addVariation("Giuoco Pianissimo (4.d3)", [["Bc5", "d3"]]);
+    const scandinavian = addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
+    addReviewedGame(["e4", "d5", "exd5"], { leftPly: 2 }, classical);
+    logMisses([], "e4", 3);
+    logMisses(["e4", "e5"], "Nf3", 2);
+    logMisses([...SETUP, "Bc5"], "c3", 4);
+    // Missed once, so it is in no count.
+    logMisses([...SETUP, "Bc5"], "d3", 1);
+    logMisses(["e4", "d5"], "exd5", 5);
+    return { classical, pianissimo, scandinavian };
+  }
+
+  it("counts the moves missed twice or more in the last 30 days at the variation, opening, colour and found levels", async () => {
+    const { classical, pianissimo, scandinavian } = addMissedFixture();
+
+    const body = await bodyOf();
+
+    const missedOf = (id: number) =>
+      body.repertoires.find((entry) => entry.id === id)?.moves.missed;
+    // 1.e4, 2.Nf3 and 4.c3 for the Classical, 1.e4 and 2.Nf3 for the Pianissimo, 1.e4 and 2.exd5.
+    expect([classical, pianissimo, scandinavian].map(missedOf)).toEqual([3, 2, 2]);
+    // The two Italians share 1.e4 and 2.Nf3, which one card holds, so the opening counts them once.
+    expect(body.groups?.map((group) => [group.group_name, group.moves.missed])).toEqual([
+      ["Italian Game", 3],
+      ["Scandinavian Defense", 2],
+    ]);
+    expect(body.sides).toMatchObject([{ side: "white", moves: { missed: 4 } }]);
+    // The found drill holds the Scandinavian alone, which a game met, and not the Italians.
+    expect(body.found?.moves.missed).toBe(2);
+  });
+
+  it("leaves out a move missed twice 31 days ago and never since, which the clock of the request decides", async () => {
+    addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+    logMisses([], "e4", 2, 31);
+    logMisses(["e4", "e5"], "Nf3", 1, 2);
+
+    const body = await bodyOf();
+
+    expect(body.repertoires[0]?.moves.missed).toBe(0);
+    expect(body.sides?.[0]?.moves.missed).toBe(0);
+  });
+
+  it("reads the log of reviews once for the whole answer, however many variations, openings and cards it counts", async () => {
+    addMissedFixture();
+    let reads = 0;
+    const prepare = db.prepare.bind(db);
+    vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+      const statement = prepare(sql);
+      if (!sql.includes("drill_reviews")) return statement;
+      for (const method of ["all", "get", "iterate", "run"] as const) {
+        const run = statement[method].bind(statement);
+        statement[method] = ((...args: unknown[]) => {
+          reads += 1;
+          return run(...args);
+        }) as never;
+      }
+      return statement;
+    }) as never);
+
+    const body = await bodyOf();
+
+    expect(body.repertoires).toHaveLength(3);
+    expect(reads).toBe(1);
+  });
+});
 
 describe("GET /api/repertoires/:id/coverage", () => {
   it("returns the covered share, the gaps with their lines and the largest gap", async () => {
@@ -1037,10 +1141,10 @@ describe("GET /api/repertoires: the numbers of the Openings page", () => {
     const { repertoires, groups } = await bodyOf();
 
     const own = (id: number) => repertoires.find((entry) => entry.id === id)?.moves;
-    expect(own(pianissimo)).toEqual({ recommended: 1, due: 1, all: 4 });
-    expect(own(twoKnights)).toEqual({ recommended: 2, due: 2, all: 4 });
+    expect(own(pianissimo)).toEqual({ recommended: 1, due: 1, all: 4, missed: 0 });
+    expect(own(twoKnights)).toEqual({ recommended: 2, due: 2, all: 4, missed: 0 });
     const italian = groups?.find((entry) => entry.group_name === "Italian Game");
-    expect(italian?.moves).toEqual({ recommended: 2, due: 2, all: 5 });
+    expect(italian?.moves).toEqual({ recommended: 2, due: 2, all: 5, missed: 0 });
   });
 
   it("gives an opening of one variation the numbers of that variation", async () => {

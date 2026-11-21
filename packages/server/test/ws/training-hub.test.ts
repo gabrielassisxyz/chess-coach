@@ -695,6 +695,18 @@ describe("training over the socket", () => {
     expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: "c3" });
     expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 1 });
 
+    // The most missed scope is the line drill's: a drill of positions from games has none.
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "c3b",
+        mode: "found",
+        scope: "missed",
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: "c3b" });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM training_runs").get()).toEqual({ n: 1 });
+
     socket.send(
       JSON.stringify({
         type: "start_training",

@@ -10,7 +10,12 @@ import {
 } from "./activity.js";
 import { FoundPositionPhaseSchema, MAX_FOUND_POSITION_ID_LENGTH } from "./found-positions.js";
 import { MAX_OPENING_FAMILY_LENGTH, OpeningTagSchema } from "./openings.js";
-import { RepertoireLevelSchema, RepertoireScopeSchema } from "./repertoires.js";
+import {
+  FOUND_DRILL_SCOPES,
+  FoundDrillScopeSchema,
+  RepertoireLevelSchema,
+  RepertoireScopeSchema,
+} from "./repertoires.js";
 
 // The wire contract between server and browser. Every frame is validated on arrival by the side
 // that receives it; a schema sits beside each type so the two cannot drift apart.
@@ -323,7 +328,8 @@ export const UndoCommandSchema = z.object({
 // student's games (`found`) may name one opening, a full name matching it exactly and a family
 // matching every variation of it. A puzzle queue may name one Lichess opening tag instead of a
 // motif. The other modes ignore `opening`.
-// A drill of the positions from the student's games (`found`) cannot start without a scope, and
+// A drill of the positions from the student's games (`found`) cannot start without a scope, which
+// is one of the three it has (`recommended`, `due`, `all`: `missed` belongs to the line drill), and
 // `color`, `phase`, `position` (the id the From my games list gives) and `opening` narrow it;
 // the other modes ignore `phase` and `position`, and all but the opening drill and a puzzle queue
 // ignore `opening`.
@@ -374,6 +380,17 @@ export const StartTrainingCommandSchema = StartTrainingFieldsSchema.superRefine(
         code: "custom",
         path: ["scope"],
         message: "a drill of the positions from your games needs a scope",
+      });
+    }
+    if (
+      command.mode === "found" &&
+      command.scope !== undefined &&
+      !FoundDrillScopeSchema.safeParse(command.scope).success
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["scope"],
+        message: `a drill of the positions from your games takes one of ${FOUND_DRILL_SCOPES.join(", ")}`,
       });
     }
     if (

@@ -195,6 +195,7 @@ export const rebuildLineOnServer: RebuildLine = (target, points) =>
 export const SCOPE_LABEL: Record<RepertoireScope, string> = {
   recommended: "Recommended",
   due: "Everything due",
+  missed: "Most missed",
   all: "All moves",
 };
 

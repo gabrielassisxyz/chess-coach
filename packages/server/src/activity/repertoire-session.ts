@@ -14,6 +14,8 @@ import { Chess, type Move } from "chess.js";
 import { type Clock, systemClock } from "../clock.js";
 import type { TrainingSummaryNotification } from "../coach/notify.js";
 import { appendChatMessage } from "../db/chat.js";
+import { countRepertoireMisses, repertoireCardKey } from "../db/drill-reviews.js";
+import type { Database } from "../db/open.js";
 import {
   findDrillRepertoire,
   findRepertoireCard,
@@ -54,6 +56,13 @@ import type { PracticeRunPort, TrainingDeps } from "./training.js";
 
 /** The `recommended` scope serves at most this many due moves, the likeliest first. */
 export const REPERTOIRE_RECOMMENDED_SIZE = 10;
+/** A move is one of the most missed once its card was missed this many times in the window. */
+export const REPERTOIRE_MISSED_MIN_MISSES = 2;
+/** The days before the drill starts that the `missed` scope counts misses over. */
+export const REPERTOIRE_MISSED_WINDOW_DAYS = 30;
+/** The `missed` scope serves at most this many moves, the most missed first. */
+export const REPERTOIRE_MISSED_SIZE = 10;
+const REPERTOIRE_MISSED_WINDOW_MS = REPERTOIRE_MISSED_WINDOW_DAYS * 24 * 3_600_000;
 /** A wrong try this close to the engine's best earns a warning, naming any other opening it reached. */
 export const REPERTOIRE_FLAG_CP = 50;
 /** How long a try waits for the engine before it stays a plain miss. */
@@ -164,16 +173,49 @@ export function compareRepertoireLineOrder(a: RepertoireDrillMove, b: Repertoire
   );
 }
 
+/** How many times each card was missed in the window of the `missed` scope, by `repertoireCardKey`. */
+export type RepertoireMissCounts = ReadonlyMap<string, number>;
+
+const NO_REPERTOIRE_MISSES: RepertoireMissCounts = new Map();
+
+/**
+ * The misses of every card in the 30 days before `now`, in one read of the log. A listing that
+ * counts the `missed` scope at several levels reads it once and hands it to each of them.
+ */
+export function readRepertoireMissCounts(db: Database, now: Date): RepertoireMissCounts {
+  return countRepertoireMisses(db, {
+    after: new Date(now.getTime() - REPERTOIRE_MISSED_WINDOW_MS),
+    upTo: now,
+  });
+}
+
+// Due does not matter here: drilling a move that is not due cannot push its next review away, since
+// a right first attempt on a card not yet due keeps its schedule and a miss rates it Again whatever
+// the date. The most missed first, and moves missed as often in line order.
+function mostMissedRepertoireMoves<T extends RepertoireDrillMove>(
+  moves: readonly T[],
+  misses: RepertoireMissCounts,
+): T[] {
+  const missesOf = (move: T): number => misses.get(repertoireCardKey(move)) ?? 0;
+  return moves
+    .filter((move) => missesOf(move) >= REPERTOIRE_MISSED_MIN_MISSES)
+    .sort((a, b) => missesOf(b) - missesOf(a) || compareRepertoireLineOrder(a, b))
+    .slice(0, REPERTOIRE_MISSED_SIZE);
+}
+
 /**
  * The moves a drill of this scope serves, in line order. A move with no card is due, so every scope
  * draws on every move of the level and nothing is held back; `recommended` is the likeliest ten of
- * the due ones.
+ * the due ones. `missed` is the ten moves missed most often, due or not, in the order of their
+ * misses; the drill itself still walks them along their lines.
  */
 export function selectRepertoireDrillMoves<T extends RepertoireDrillMove>(
   moves: readonly T[],
   scope: RepertoireScope,
   now: Date,
+  misses: RepertoireMissCounts = NO_REPERTOIRE_MISSES,
 ): T[] {
+  if (scope === "missed") return mostMissedRepertoireMoves(moves, misses);
   const ordered = [...moves].sort(compareRepertoireLineOrder);
   if (scope === "all") return ordered;
   const due = ordered.filter((move) => isRepertoireMoveDue(move, now));
@@ -184,10 +226,23 @@ export function selectRepertoireDrillMoves<T extends RepertoireDrillMove>(
 export function repertoireScopeCounts(
   moves: readonly RepertoireDrillMove[],
   now: Date,
+  misses: RepertoireMissCounts = NO_REPERTOIRE_MISSES,
 ): RepertoireScopeCounts {
   const due = moves.filter((move) => isRepertoireMoveDue(move, now)).length;
-  return { recommended: Math.min(due, REPERTOIRE_RECOMMENDED_SIZE), due, all: moves.length };
+  return {
+    recommended: Math.min(due, REPERTOIRE_RECOMMENDED_SIZE),
+    due,
+    all: moves.length,
+    missed: selectRepertoireDrillMoves(moves, "missed", now, misses).length,
+  };
 }
+
+const EMPTY_REPERTOIRE_DRILL: Record<RepertoireScope, string> = {
+  all: "this repertoire holds no move yet",
+  due: "no repertoire move is due",
+  recommended: "no repertoire move is due",
+  missed: `no repertoire move was missed ${REPERTOIRE_MISSED_MIN_MISSES} times or more in the last ${REPERTOIRE_MISSED_WINDOW_DAYS} days`,
+};
 
 export interface RepertoirePassPlan {
   /** The SAN moves from the starting position through the last move the pass asks. */
@@ -443,12 +498,9 @@ export class RepertoireSession implements PracticeRunPort {
         `repertoire ${repertoireId} is not among the openings found in your games`,
       );
     }
-    const moves = selectRepertoireDrillMoves(mergeRepertoireUnitMoves(units), scope, now);
-    if (moves.length === 0) {
-      const what =
-        scope === "all" ? "this repertoire holds no move yet" : "no repertoire move is due";
-      throw new ActivityError("empty_queue", what);
-    }
+    const misses = scope === "missed" ? readRepertoireMissCounts(deps.db, now) : undefined;
+    const moves = selectRepertoireDrillMoves(mergeRepertoireUnitMoves(units), scope, now, misses);
+    if (moves.length === 0) throw new ActivityError("empty_queue", EMPTY_REPERTOIRE_DRILL[scope]);
     const states = moves.map(
       (move): DrillMoveState => ({
         move,
