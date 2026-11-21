@@ -170,6 +170,17 @@ sentence in the error tone with Try again, and an empty colour a sentence in its
 the five cells wrap to two columns, the head's buttons go under the title, every control is 44 px
 and nothing scrolls sideways. M1 and M2 still find no matches.
 
+The Practice column was re-checked on rows 8, 9, 14, 17 and 19, and the Phone column on row 19, for
+the Most missed entry of the train menu, on the Openings page and on the line page, against the
+markup and `practice-openings.css`; the cells were not measured in a browser. The entry is one more
+`train__item` between Everything due and All moves, so it takes the same 32 px row, the 14 px label
+and the 12 px mono count, sits in the same panel on `--surface-raised` with `--border-strong`, and
+takes the one focus ring and, under 900 px, the same 44 px row. It is left out of the menu, not
+disabled, while its count is 0 or absent. A button with nothing recommended is still one outlined
+button, except while moves were missed: then it keeps the split shape, a primary "Train all moves"
+and its chevron, so the menu can be reached when nothing is due. The change adds no colour, no
+shadow and no style rule, so M1 and M2 still find no matches.
+
 The Practice column was re-checked on rows 6, 8, 9, 10, 14, 15, 16, 17 and 19, and the Phone column
 on row 19, for the Overview's Puzzles by weakness card and Puzzle themes section, against the markup,
 `practice-hub.css` and the measures `test/practice-themes.test.tsx` reads off the stylesheet; the

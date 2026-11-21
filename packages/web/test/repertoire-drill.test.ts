@@ -195,6 +195,9 @@ describe("what the hub and the coach say", () => {
     expect(startFailureText("repertoire", "all", "empty_queue", null)).toBe(
       "This opening holds no move yet.",
     );
+    expect(startFailureText("repertoire", "missed", "empty_queue", null)).toBe(
+      "No move of this opening has been missed often enough lately. Choose All moves to practise it anyway.",
+    );
     expect(
       startFailureText("repertoire", "all", "not_in_training", "training is not available"),
     ).toContain("Training could not start.");

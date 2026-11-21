@@ -11,7 +11,9 @@ import type { FastifyInstance } from "fastify";
 import {
   foundRepertoireIdsOf,
   mergeRepertoireUnitMoves,
+  type RepertoireMissCounts,
   type RepertoireUnitMoves,
+  readRepertoireMissCounts,
   repertoireScopeCounts,
 } from "../activity/repertoire-session.js";
 import { type Clock, systemClock } from "../clock.js";
@@ -85,6 +87,7 @@ function groupSummaries(
   db: Database,
   entries: readonly UnitWithFigures[],
   now: Date,
+  misses: RepertoireMissCounts,
 ): RepertoireGroupSummary[] {
   const firsts = firstUnitsOfGroups(entries.map((entry) => entry.unit));
   return firsts.map((first) => {
@@ -95,6 +98,7 @@ function groupSummaries(
       moves: repertoireScopeCounts(
         mergeRepertoireUnitMoves(members.map((member) => member.unit)),
         now,
+        misses,
       ),
       ...groupFigures(db, members, now),
       line: repertoireGroupLine(db, first.variation),
@@ -102,13 +106,18 @@ function groupSummaries(
   });
 }
 
-function sideSummaries(units: readonly RepertoireUnitMoves[], now: Date): RepertoireSideSummary[] {
+function sideSummaries(
+  units: readonly RepertoireUnitMoves[],
+  now: Date,
+  misses: RepertoireMissCounts,
+): RepertoireSideSummary[] {
   const sides = [...new Set(units.map((unit) => unit.variation.side))];
   return sides.map((side) => ({
     side,
     moves: repertoireScopeCounts(
       mergeRepertoireUnitMoves(units.filter((unit) => unit.variation.side === side)),
       now,
+      misses,
     ),
   }));
 }
@@ -119,13 +128,15 @@ function foundSummary(
   units: readonly RepertoireUnitMoves[],
   foundIds: ReadonlySet<number>,
   now: Date,
+  misses: RepertoireMissCounts,
 ): RepertoireFoundSummary {
   const found = units.filter((unit) => foundIds.has(unit.variation.id));
-  return { moves: repertoireScopeCounts(mergeRepertoireUnitMoves(found), now) };
+  return { moves: repertoireScopeCounts(mergeRepertoireUnitMoves(found), now, misses) };
 }
 
 // The counts come from the same selection the drill makes, so the menu never promises a number of
-// moves that starting the drill would not serve. `met` lists the openings the student's games
+// moves that starting the drill would not serve. The misses behind the `missed` count are read from
+// the log once for the whole answer, whatever the number of cards and levels. `met` lists the openings the student's games
 // reached outside the stored line, each with the unit built from it, if any, `found` counts the
 // drill of those units together, and `branches` lists the positions where the book offers White
 // another move to build a variation from. The coverage of a variation is read from its stored moves
@@ -142,6 +153,7 @@ export function registerRepertoireRoutes(
 
   app.get("/api/repertoires", async (): Promise<RepertoiresResponse> => {
     const now = clock.now();
+    const misses = readRepertoireMissCounts(db, now);
     const units = listDrillRepertoires(db).map(
       (variation): RepertoireUnitMoves => ({
         variation,
@@ -162,7 +174,7 @@ export function registerRepertoireRoutes(
           group_name: variation.group_name,
           variation_name: variation.variation_name,
           origin: findRepertoireOrigin(db, variation.id),
-          moves: repertoireScopeCounts(moves, now),
+          moves: repertoireScopeCounts(moves, now, misses),
           ...figures,
           line: repertoireVariationLine(db, variation, build.branch, firstIds.has(variation.id)),
           points: build.points,
@@ -170,9 +182,9 @@ export function registerRepertoireRoutes(
           branch: build.branch,
         };
       }),
-      groups: groupSummaries(db, entries, now),
-      sides: sideSummaries(units, now),
-      found: foundSummary(units, foundRepertoireIdsOf(met), now),
+      groups: groupSummaries(db, entries, now, misses),
+      sides: sideSummaries(units, now, misses),
+      found: foundSummary(units, foundRepertoireIdsOf(met), now, misses),
       met: met.map((opening) => ({
         root: opening.root,
         opening_name: opening.openingName,

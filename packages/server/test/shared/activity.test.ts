@@ -242,6 +242,7 @@ describe("start_training for the positions from the student's games", () => {
     ["no scope", { mode: "found" }],
     ["no scope with filters", { mode: "found", color: "white", phase: "opening" }],
     ["another scope", { mode: "found", scope: "weekly" }],
+    ["the line drill's missed scope", { mode: "found", scope: "missed" }],
     ["another colour", { mode: "found", scope: "all", color: "green" }],
     ["another phase", { mode: "found", scope: "all", phase: "late" }],
     ["an empty position", { mode: "found", scope: "all", position: "" }],
@@ -255,6 +256,12 @@ describe("start_training for the positions from the student's games", () => {
     expect(start({ mode: "found" }).error?.issues).toMatchObject([{ path: ["scope"] }]);
   });
 
+  it("names the scope in the error when the line drill's missed scope is asked of it", () => {
+    expect(start({ mode: "found", scope: "missed" }).error?.issues).toMatchObject([
+      { path: ["scope"], message: expect.stringContaining("recommended, due, all") },
+    ]);
+  });
+
   it("leaves the other modes as they were, with no scope needed", () => {
     for (const fields of [
       { mode: "srs" },
@@ -262,6 +269,8 @@ describe("start_training for the positions from the student's games", () => {
       { mode: "openings", color: "white" },
       { mode: "repertoire", repertoire_id: 3 },
       { mode: "repertoire", repertoire_id: 3, scope: "due", level: "group" },
+      { mode: "repertoire", repertoire_id: 3, scope: "missed" },
+      { mode: "repertoire", repertoire_id: 3, scope: "missed", level: "side" },
     ]) {
       expect(start(fields).success).toBe(true);
     }

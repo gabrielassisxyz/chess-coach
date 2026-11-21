@@ -133,11 +133,11 @@ describe("GET /api/repertoires with a White and a Black unit", () => {
     expect(body.sides).toHaveLength(2);
     expect(body.sides?.find((entry) => entry.side === "white")).toEqual({
       side: "white",
-      moves: { recommended: 2, due: 2, all: 3 },
+      moves: { recommended: 2, due: 2, all: 3, missed: 0 },
     });
     expect(body.sides?.find((entry) => entry.side === "black")).toEqual({
       side: "black",
-      moves: { recommended: 3, due: 3, all: 4 },
+      moves: { recommended: 3, due: 3, all: 4, missed: 0 },
     });
   });
 

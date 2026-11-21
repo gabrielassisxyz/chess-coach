@@ -14,6 +14,7 @@ import type {
   WrongTry,
 } from "@chess-coach/shared";
 import {
+  FoundDrillScopeSchema,
   isFixedPracticeMotif,
   LICHESS_PRACTICE_MOTIFS,
   MIX_PRACTICE_MOTIF,
@@ -334,10 +335,18 @@ function foundDrillQueueOf(deps: TrainingDeps, input: TrainingInput): QueueEntry
   if (input.scope === undefined) {
     throw new ActivityError("empty_queue", "choose which positions from your games to drill");
   }
+  // The command schema refuses the line drill's `missed` first; this is for a caller that skips it.
+  const scope = FoundDrillScopeSchema.safeParse(input.scope);
+  if (!scope.success) {
+    throw new ActivityError(
+      "invalid_command",
+      `a drill of the positions from your games has no scope ${input.scope}`,
+    );
+  }
   const { color, phase, position, opening } = input;
   const listed = listListedFoundPositions(deps.db, { color, phase, position, opening });
   const now = (deps.clock ?? systemClock).now();
-  const queue = selectFoundDrillPositions(listed, input.scope, now);
+  const queue = selectFoundDrillPositions(listed, scope.data, now);
   if (queue.length === 0) {
     const what = position === undefined ? "no position from your games is" : "no such position is";
     throw new ActivityError("empty_queue", `${what} in this drill`);

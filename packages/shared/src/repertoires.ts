@@ -1,10 +1,18 @@
 import { z } from "zod";
 
 // Which moves of a repertoire a line drill serves: `recommended` the due moves most likely to
-// arise, at most ten; `due` every due move; `all` every move, due or not. A new move is due.
-export const REPERTOIRE_SCOPES = ["recommended", "due", "all"] as const;
+// arise, at most ten; `due` every due move; `all` every move, due or not; `missed` the moves the
+// student missed most in the last 30 days, at most ten, due or not. A new move is due.
+export const REPERTOIRE_SCOPES = ["recommended", "due", "all", "missed"] as const;
 export const RepertoireScopeSchema = z.enum(REPERTOIRE_SCOPES);
 export type RepertoireScope = z.infer<typeof RepertoireScopeSchema>;
+
+// The scopes of the drill of positions from the student's games. `missed` is the line drill's rule
+// over its own moves and this drill has none, so it keeps its own list instead of taking the line
+// drill's, and a command that asks it for `missed` is refused.
+export const FOUND_DRILL_SCOPES = ["recommended", "due", "all"] as const;
+export const FoundDrillScopeSchema = z.enum(FOUND_DRILL_SCOPES);
+export type FoundDrillScope = z.infer<typeof FoundDrillScopeSchema>;
 
 // Where a line drill draws its moves from: one variation, every variation of that variation's
 // group, every unit of its side, which the hub calls White openings, or every unit built from an
@@ -14,11 +22,14 @@ export const REPERTOIRE_LEVELS = ["variation", "group", "side", "found"] as cons
 export const RepertoireLevelSchema = z.enum(REPERTOIRE_LEVELS);
 export type RepertoireLevel = z.infer<typeof RepertoireLevelSchema>;
 
-// How many moves a drill of each scope would serve right now.
+// How many moves a drill of each scope would serve right now. The server always sends `missed`; a
+// fixture, or a server that predates the scope, may leave it out, and the menu then offers no Most
+// missed entry.
 export const RepertoireScopeCountsSchema = z.object({
   recommended: z.number().int().nonnegative(),
   due: z.number().int().nonnegative(),
   all: z.number().int().nonnegative(),
+  missed: z.number().int().nonnegative().optional(),
 });
 export type RepertoireScopeCounts = z.infer<typeof RepertoireScopeCountsSchema>;
 
