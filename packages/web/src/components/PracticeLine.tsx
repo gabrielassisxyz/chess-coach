@@ -11,7 +11,7 @@ import {
   stylePointsLeftText,
   stylePointsText,
 } from "../state/repertoires-api.js";
-import { PracticeLineCoverage } from "./PracticeLineCoverage.js";
+import { PracticeImportedLineCoverage, PracticeLineCoverage } from "./PracticeLineCoverage.js";
 import { StylePointRows } from "./RepertoireMenu.js";
 import { TrainButton, type TrainControls } from "./TrainButton.js";
 
@@ -189,11 +189,28 @@ function LineStyleCard({
   );
 }
 
+// The style card of a line read from a PGN file. It was never built with points and cannot be built
+// again, so it keeps no control: the one sentence says where the line came from and how it changes.
+function ImportedStyleCard() {
+  const titleId = useId();
+  return (
+    <section className="line-card line-style" aria-labelledby={titleId}>
+      <h3 className="line-card__title" id={titleId}>
+        Style of this line
+      </h3>
+      <p className="line-card__note">
+        Imported from a PGN file. To change this line, import the file again.
+      </p>
+    </section>
+  );
+}
+
 export interface PracticeLineProps {
   // The variation as the list gave it; undefined once the list no longer holds it.
   variation: RepertoireSummary | undefined;
   // False for a variation the server could not tell from the first of its group, see
-  // `rebuildNamesLine`: rebuilding it would walk another line.
+  // `rebuildNamesLine`: rebuilding it would walk another line. An imported line is never asked
+  // about it, since its page draws no rebuild.
   rebuildable: boolean;
   // The variation a rebuild is walking, whether the list says so or this page sent it.
   rebuildingId: number | null;
@@ -244,20 +261,29 @@ export function PracticeLine({
         />
       </header>
       <LineTiles variation={variation} />
-      <PracticeLineCoverage
-        key={`${variation.id}:${rebuild.endings}`}
-        repertoireId={variation.id}
-        fetchCoverage={fetchCoverage}
-      />
-      <LineStyleCard
-        variation={variation}
-        rebuildable={rebuildable}
-        rebuilding={rebuildingId === variation.id}
-        outcome={ended}
-        onRebuild={(points) => {
-          void rebuild.start(variation, points);
-        }}
-      />
+      {variation.origin === "pgn" ? (
+        <>
+          <PracticeImportedLineCoverage />
+          <ImportedStyleCard />
+        </>
+      ) : (
+        <>
+          <PracticeLineCoverage
+            key={`${variation.id}:${rebuild.endings}`}
+            repertoireId={variation.id}
+            fetchCoverage={fetchCoverage}
+          />
+          <LineStyleCard
+            variation={variation}
+            rebuildable={rebuildable}
+            rebuilding={rebuildingId === variation.id}
+            outcome={ended}
+            onRebuild={(points) => {
+              void rebuild.start(variation, points);
+            }}
+          />
+        </>
+      )}
     </section>
   );
 }

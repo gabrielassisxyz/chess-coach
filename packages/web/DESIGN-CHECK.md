@@ -311,6 +311,20 @@ solved or with the solution shown, and on nothing else: a review card and a line
 drill keep Analyse alone, which then takes the whole row as before. Under 900 px both buttons are
 44 px targets by the rule the card's buttons already follow. M1 and M2 still find no matches.
 
+The Practice column was re-checked on rows 5, 8, 9, 14, 15 and 17, and the Phone column on row 19,
+for the page of an imported line, the one a variation read from a PGN file opens on the Openings
+page, against the markup, `practice-openings.css` and `test/practice-line.test.tsx`; the cells were
+not measured in a browser. The page keeps its breadcrumb, its title, its Train button and its five
+tiles, the Coverage tile holding the no-value dash. The two cards under the tiles stay the same
+8 px panels with a 16 px title at 500, and each holds one 12 px note in the secondary text in place
+of what it holds for a built line: `Coverage is not measured for an imported line.` under Coverage
+and `Imported from a PGN file. To change this line, import the file again.` under Style of this
+line. Both are quiet sentences by Rule 15, since nothing failed and nothing waits on the student, so
+neither takes the error tone, a status role, a Try again, a stepper or a rebuild button, and the
+card keeps its title where it has no control. It adds no rule to a stylesheet and no colour. Under
+900 px the notes wrap inside their cards, and the Train button stays a 44 px target as before. M1
+and M2 still find no matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph

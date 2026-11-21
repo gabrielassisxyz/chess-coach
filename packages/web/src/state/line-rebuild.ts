@@ -62,11 +62,14 @@ export function useLineRebuild(
 // A rebuild names the variation by the root or the branch it was built from, and posting neither
 // rebuilds the first variation of the Italian. So a variation with neither is rebuildable only when
 // it is that one, the oldest of its group; a variation stored before its branch was recorded would
-// otherwise walk the first one again under points meant for it.
+// otherwise walk the first one again under points meant for it. A line read from a PGN file has
+// neither and is often the oldest of its group, but the builder never made it, so it is not
+// rebuildable at all: its file is the source of its moves.
 export function rebuildNamesLine(
   variation: RepertoireSummary,
   group: readonly RepertoireSummary[],
 ): boolean {
+  if (variation.origin === "pgn") return false;
   if (variation.root != null || variation.branch != null) return true;
   return group.every((other) => other.id >= variation.id);
 }

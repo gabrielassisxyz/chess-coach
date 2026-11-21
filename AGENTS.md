@@ -217,7 +217,12 @@
   with Try again, for any other refusal and for a lost connection. A variation that names neither a
   `root` nor a `branch` is the first Italian variation only if it is the oldest of its group; any
   other was stored before its branch was recorded, and a rebuild posted for it would walk the first
-  one under points meant for it, so its button stays disabled and the page says why. "Edit line"
+  one under points meant for it, so its button stays disabled and the page says why. A variation
+  whose `origin` is `pgn` was read from a file and not built here, so `rebuildNamesLine` is false
+  for it in any place of its group, its style card holds the one sentence "Imported from a PGN file.
+  To change this line, import the file again." with no stepper and no rebuild button, its Coverage
+  card holds "Coverage is not measured for an imported line." and the page sends no coverage request
+  for it; its Train button, its tiles and its row on the list work as for any line. "Edit line"
   is not built, since the owner removed it from the design. The stylesheet is
   `styles/practice-openings.css`.
 - **Lichess puzzles:** `zstdcat lichess_db_puzzle.csv.zst | pnpm --filter @chess-coach/server import:lichess-puzzles`
