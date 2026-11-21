@@ -1,0 +1,657 @@
+{
+  "moves": [
+    {
+      "kind": "own",
+      "ply": 1,
+      "line_san": [],
+      "move_uci": "d2d4",
+      "move_san": "d4",
+      "reach": 1.0,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 2,
+      "line_san": ["d4"],
+      "move_uci": "d7d5",
+      "move_san": "d5",
+      "reach": 0.25,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 2,
+      "line_san": ["d4"],
+      "move_uci": "g8f6",
+      "move_san": "Nf6",
+      "reach": 0.25,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 2,
+      "line_san": ["d4"],
+      "move_uci": "e7e6",
+      "move_san": "e6",
+      "reach": 0.25,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 2,
+      "line_san": ["d4"],
+      "move_uci": "c7c5",
+      "move_san": "c5",
+      "reach": 0.25,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 3,
+      "line_san": ["d4", "Nf6"],
+      "move_uci": "c1f4",
+      "move_san": "Bf4",
+      "reach": 0.25,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 3,
+      "line_san": ["d4", "e6"],
+      "move_uci": "c1f4",
+      "move_san": "Bf4",
+      "reach": 0.25,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 3,
+      "line_san": ["d4", "d5"],
+      "move_uci": "c1f4",
+      "move_san": "Bf4",
+      "reach": 0.25,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 4,
+      "line_san": ["d4", "Nf6", "Bf4"],
+      "move_uci": "d7d5",
+      "move_san": "d5",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 4,
+      "line_san": ["d4", "Nf6", "Bf4"],
+      "move_uci": "e7e6",
+      "move_san": "e6",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 4,
+      "line_san": ["d4", "e6", "Bf4"],
+      "move_uci": "d7d5",
+      "move_san": "d5",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 4,
+      "line_san": ["d4", "e6", "Bf4"],
+      "move_uci": "g8f6",
+      "move_san": "Nf6",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 5,
+      "line_san": ["d4", "Nf6", "Bf4", "e6"],
+      "move_uci": "e2e3",
+      "move_san": "e3",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 5,
+      "line_san": ["d4", "Nf6", "Bf4", "d5"],
+      "move_uci": "e2e3",
+      "move_san": "e3",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 5,
+      "line_san": ["d4", "e6", "Bf4", "d5"],
+      "move_uci": "e2e3",
+      "move_san": "e3",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 6,
+      "line_san": ["d4", "Nf6", "Bf4", "e6", "e3"],
+      "move_uci": "d7d5",
+      "move_san": "d5",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 6,
+      "line_san": ["d4", "e6", "Bf4", "d5", "e3"],
+      "move_uci": "g8f6",
+      "move_san": "Nf6",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 7,
+      "line_san": ["d4", "Nf6", "Bf4", "e6", "e3", "d5"],
+      "move_uci": "g1f3",
+      "move_san": "Nf3",
+      "reach": 0.125,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 4,
+      "line_san": ["d4", "d5", "Bf4"],
+      "move_uci": "g8f6",
+      "move_san": "Nf6",
+      "reach": 0.08333333333333333,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 4,
+      "line_san": ["d4", "d5", "Bf4"],
+      "move_uci": "c7c5",
+      "move_san": "c5",
+      "reach": 0.08333333333333333,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 4,
+      "line_san": ["d4", "d5", "Bf4"],
+      "move_uci": "b8c6",
+      "move_san": "Nc6",
+      "reach": 0.08333333333333333,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 5,
+      "line_san": ["d4", "d5", "Bf4", "c5"],
+      "move_uci": "e2e3",
+      "move_san": "e3",
+      "reach": 0.08333333333333333,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 5,
+      "line_san": ["d4", "d5", "Bf4", "Nc6"],
+      "move_uci": "e2e3",
+      "move_san": "e3",
+      "reach": 0.08333333333333333,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 6,
+      "line_san": ["d4", "d5", "Bf4", "Nc6", "e3"],
+      "move_uci": "g8f6",
+      "move_san": "Nf6",
+      "reach": 0.08333333333333333,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 7,
+      "line_san": ["d4", "d5", "Bf4", "Nc6", "e3", "Nf6"],
+      "move_uci": "g1f3",
+      "move_san": "Nf3",
+      "reach": 0.08333333333333333,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 6,
+      "line_san": ["d4", "Nf6", "Bf4", "d5", "e3"],
+      "move_uci": "e7e6",
+      "move_san": "e6",
+      "reach": 0.0625,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 6,
+      "line_san": ["d4", "d5", "Bf4", "c5", "e3"],
+      "move_uci": "b8c6",
+      "move_san": "Nc6",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 6,
+      "line_san": ["d4", "d5", "Bf4", "c5", "e3"],
+      "move_uci": "c5d4",
+      "move_san": "cxd4",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 6,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3"],
+      "move_uci": "c7c5",
+      "move_san": "c5",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 7,
+      "line_san": ["d4", "d5", "Bf4", "c5", "e3", "cxd4"],
+      "move_uci": "e3d4",
+      "move_san": "exd4",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 7,
+      "line_san": ["d4", "d5", "Bf4", "c5", "e3", "Nc6"],
+      "move_uci": "c2c3",
+      "move_san": "c3",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 7,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "c5"],
+      "move_uci": "c2c3",
+      "move_san": "c3",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 8,
+      "line_san": ["d4", "d5", "Bf4", "c5", "e3", "cxd4", "exd4"],
+      "move_uci": "b8c6",
+      "move_san": "Nc6",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 8,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "c5", "c3"],
+      "move_uci": "b8c6",
+      "move_san": "Nc6",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 9,
+      "line_san": ["d4", "d5", "Bf4", "c5", "e3", "cxd4", "exd4", "Nc6"],
+      "move_uci": "c2c3",
+      "move_san": "c3",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 9,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "c5", "c3", "Nc6"],
+      "move_uci": "b1d2",
+      "move_san": "Nd2",
+      "reach": 0.041666666666666664,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 8,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3"],
+      "move_uci": "f8d6",
+      "move_san": "Bd6",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 8,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3"],
+      "move_uci": "c7c5",
+      "move_san": "c5",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 8,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3"],
+      "move_uci": "f8e7",
+      "move_san": "Be7",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 9,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "c5"],
+      "move_uci": "c2c3",
+      "move_san": "c3",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 9,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Be7"],
+      "move_uci": "f1d3",
+      "move_san": "Bd3",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 9,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6"],
+      "move_uci": "f4g3",
+      "move_san": "Bg3",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 10,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "c5", "c3"],
+      "move_uci": "b8c6",
+      "move_san": "Nc6",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 10,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Be7", "Bd3"],
+      "move_uci": "e8g8",
+      "move_san": "O-O",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 11,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "c5", "c3", "Nc6"],
+      "move_uci": "b1d2",
+      "move_san": "Nbd2",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 11,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Be7", "Bd3", "O-O"],
+      "move_uci": "e1g1",
+      "move_san": "O-O",
+      "reach": 0.013888888888888888,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 10,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3"],
+      "move_uci": "e8g8",
+      "move_san": "O-O",
+      "reach": 0.004629629629629629,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 10,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3"],
+      "move_uci": "d6g3",
+      "move_san": "Bxg3",
+      "reach": 0.004629629629629629,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 10,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3"],
+      "move_uci": "b8c6",
+      "move_san": "Nc6",
+      "reach": 0.004629629629629629,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 11,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3", "Bxg3"],
+      "move_uci": "h2g3",
+      "move_san": "hxg3",
+      "reach": 0.004629629629629629,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 11,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3", "Nc6"],
+      "move_uci": "c2c3",
+      "move_san": "c3",
+      "reach": 0.004629629629629629,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 11,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3", "O-O"],
+      "move_uci": "f1d3",
+      "move_san": "Bd3",
+      "reach": 0.004629629629629629,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 12,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3", "Bxg3", "hxg3"],
+      "move_uci": "e8g8",
+      "move_san": "O-O",
+      "reach": 0.004629629629629629,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 13,
+      "line_san": [
+        "d4",
+        "d5",
+        "Bf4",
+        "Nf6",
+        "e3",
+        "e6",
+        "Nf3",
+        "Bd6",
+        "Bg3",
+        "Bxg3",
+        "hxg3",
+        "O-O"
+      ],
+      "move_uci": "f1d3",
+      "move_san": "Bd3",
+      "reach": 0.004629629629629629,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 12,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3", "O-O", "Bd3"],
+      "move_uci": "c7c5",
+      "move_san": "c5",
+      "reach": 0.0023148148148148147,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 12,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3", "O-O", "Bd3"],
+      "move_uci": "b8c6",
+      "move_san": "Nc6",
+      "reach": 0.0023148148148148147,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 13,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3", "O-O", "Bd3", "Nc6"],
+      "move_uci": "c2c3",
+      "move_san": "c3",
+      "reach": 0.0023148148148148147,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 13,
+      "line_san": ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "Bd6", "Bg3", "O-O", "Bd3", "c5"],
+      "move_uci": "c2c3",
+      "move_san": "c3",
+      "reach": 0.0023148148148148147,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "reply",
+      "ply": 14,
+      "line_san": [
+        "d4",
+        "d5",
+        "Bf4",
+        "Nf6",
+        "e3",
+        "e6",
+        "Nf3",
+        "Bd6",
+        "Bg3",
+        "O-O",
+        "Bd3",
+        "c5",
+        "c3"
+      ],
+      "move_uci": "b8c6",
+      "move_san": "Nc6",
+      "reach": 0.0023148148148148147,
+      "reason": null,
+      "cp_loss": null
+    },
+    {
+      "kind": "own",
+      "ply": 15,
+      "line_san": [
+        "d4",
+        "d5",
+        "Bf4",
+        "Nf6",
+        "e3",
+        "e6",
+        "Nf3",
+        "Bd6",
+        "Bg3",
+        "O-O",
+        "Bd3",
+        "c5",
+        "c3",
+        "Nc6"
+      ],
+      "move_uci": "b1d2",
+      "move_san": "Nbd2",
+      "reach": 0.0023148148148148147,
+      "reason": null,
+      "cp_loss": null
+    }
+  ],
+  "counts": {
+    "games": 1,
+    "own_moves": 28,
+    "replies": 32,
+    "reasons": 0,
+    "comments_ignored": 0,
+    "unanswered_replies": 1,
+    "deepest_ply": 15,
+    "weights_matched": 0,
+    "weights_unmatched": 0
+  }
+}

@@ -1,0 +1,24 @@
+[Event "black fixture, main lines"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "Repertoire"]
+[Result "*"]
+
+1. e4 (1. d4 d5 2. c4 e6) 1... c6 2. d4 (2. Nf3 d5 3. e5 Bg4 4. h3 Bh5 5. Be2
+e6) 2... d5 3. Nc3 (3. e5 Bf5 4. Nf3 e6 5. Be2 c5 6. O-O Nc6) (3. exd5 cxd5 4.
+c4 Nf6 5. Nc3 (5. Nf3 Nc6 6. Nc3 Bg4) 5... e6 6. Nf3 Be7) 3... dxe4 4. Nxe4 Bf5
+5. Ng3 Bg6 6. h4 h6 7. Nf3 Nd7 8. h5 Bh7 9. Bd3 Bxd3 10. Qxd3 e6 *
+
+[Event "black fixture, lines added by hand"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "Repertoire"]
+[Result "*"]
+
+1. e4 c6 2. d4 d5 3. e5 (3. Nd2 dxe4 4. Nxe4 Bf5 5. Ng3 (5. Bc4) 5... Bg6 6. h4
+h6 7. Nf3 Nd7) 3... Bf5 4. Nf3 e6 5. Be2 c5 6. O-O Nc6 7. c3 (7. Nc3 cxd4 8.
+Nxd4 Nge7) 7... Nge7 8. Na3 cxd4 9. cxd4 Bg4 *
