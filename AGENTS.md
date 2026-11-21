@@ -240,9 +240,23 @@
   and `NewRepertoireOwnMove` and the rows `listWhiteMovesLackingIdea` reads type both as `number |
   null`. Storing 0 for a move nobody measured was rejected, since a reader would average it as if it
   were measured; filling both with the engine at import was rejected, since nothing reads them on an
-  imported unit. `listWhiteMovesLackingIdea` leaves out a move with no evaluation, so the idea writer
-  never meets one. The coverage figure (`cp_loss ?? 0`), the game review and the rebuild do not read
-  `origin` yet, and each must before it takes an imported unit. A row's `source` is typed once, in
+  imported unit. `listWhiteMovesLackingIdea` leaves out a move with no evaluation. Every selection the
+  app makes by itself leaves an imported unit out by `origin`, through `repertoireGeneratedSql`
+  (`db/repertoires.ts`), and not by the missing `setup` rows, which an imported unit lacks only by
+  accident: the idea writer (`listWhiteMovesLackingIdea`, the unit left out whole whatever its rows
+  hold, since its reasons are the student's to write), the game review (`listRepertoireUnitRoots`: a
+  game that follows an imported unit adds no reply and no engine answer to it, rates none of its
+  cards and is written against the Italian as not reached), the rebuild, the Italian's branch list and
+  the review's fallback unit (`findFirstRepertoireVariation`) and the unit a met opening names
+  (`unitsByLastRootMove`). A file lists only the replies it answers and no explorer share, so a
+  coverage walk would read it as complete: in `GET /api/repertoires` `covered_percent` is null for an
+  imported variation and for an opening whose variations are all imported, an opening that also holds
+  generated variations walks those alone, and the moves, attempts and games are still counted for
+  every unit; `GET /api/repertoires/:id/coverage` answers 409 `imported_unit` for an imported unit
+  before it reads any of its rows. Drills and listings take an imported unit like any other. The
+  lookup by name (`findRepertoireVariationByName`) takes every unit, since a name must stay unique in
+  its group whatever the origin; `findRepertoireVariationPlaying`, which only names who holds a branch
+  choice of the Italian, is not guarded yet. A row's `source` is typed once, in
   `RepertoireMoveSource` (`setup`, `explorer`, `engine`, `mainline`, `game`, `pgn`), and
   `CoverageSourceSchema` in shared names the same six; `db/repertoire-origin.test.ts` fails when the
   two differ. The column itself has no check. `GET /api/repertoires` returns `origin` on each entry of

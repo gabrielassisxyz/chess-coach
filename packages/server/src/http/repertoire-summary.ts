@@ -12,12 +12,19 @@ import { countRepertoireFirstAttemptsInWindow } from "../db/repertoire-cards.js"
 import {
   countRepertoireGamesInLine,
   findRepertoireAnswerAfter,
+  findRepertoireOrigin,
   type RepertoireRow,
   repertoireSetupLine,
 } from "../db/repertoires.js";
 import { repertoireNamingLineOf } from "../openings/from-repertoire.js";
 import { repertoireCoveredPercent } from "../openings/repertoire-coverage.js";
 import { ITALIAN_SETUP_SAN } from "../openings/repertoire-root.js";
+
+// An imported unit stores only the replies it answers and no explorer share for the rest, so a walk
+// over it reads as complete: its coverage would be a figure nobody measured. It stays out of the walk
+// when its opening has other variations too, and an opening of imported units alone has no coverage.
+const generatedIdsOf = (db: Database, repertoireIds: readonly number[]): number[] =>
+  repertoireIds.filter((id) => findRepertoireOrigin(db, id) === "generated");
 
 // A first attempt and a reviewed game each belong to one variation, so the counts of an opening are
 // the sums of its variations' and nothing is counted twice. Two numbers are not sums: the caller
@@ -43,7 +50,7 @@ function figuresOver(
     moves_total: movesTotal,
     remembered_30d: remembered,
     in_line: inLine,
-    covered_percent: repertoireCoveredPercent(db, repertoireIds),
+    covered_percent: repertoireCoveredPercent(db, generatedIdsOf(db, repertoireIds)),
   };
 }
 

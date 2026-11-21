@@ -204,11 +204,21 @@ export function registerRepertoireRoutes(
     };
   });
 
+  // An imported unit lists only the replies it answers, so a walk would call it complete: it is
+  // refused before any row is read, and the answer says why instead of passing for a missing unit.
   app.get(
     "/api/repertoires/:id/coverage",
     async (request, reply): Promise<RepertoireCoverage | undefined> => {
       const id = Number((request.params as { id: string }).id);
-      const coverage = Number.isSafeInteger(id) && id > 0 ? repertoireCoverage(db, id) : null;
+      const isRowId = Number.isSafeInteger(id) && id > 0;
+      if (isRowId && findRepertoireOrigin(db, id) === "pgn") {
+        await reply.code(409).send({
+          error: "imported_unit",
+          message: "an imported unit lists only the replies it answers, so it has no coverage",
+        });
+        return undefined;
+      }
+      const coverage = isRowId ? repertoireCoverage(db, id) : null;
       if (!coverage) {
         await reply
           .code(404)

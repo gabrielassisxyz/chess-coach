@@ -257,6 +257,36 @@ describe("generateRepertoireIdeas", () => {
     expect(session.prompts.some((prompt) => prompt.includes("Move to explain: 4.d3"))).toBe(false);
   });
 
+  it("writes no idea on a move of an imported unit, nor asks for one", async () => {
+    // The imported moves carry an evaluation, so that only the unit's origin keeps them out of the
+    // run: a move with no evaluation is already left out for that reason alone.
+    const [built, imported] = ["Built", "Imported"].map(
+      (variationName) =>
+        createRepertoireVariation(db, { side: "white", groupName: "London System", variationName })
+          .id,
+    ) as [number, number];
+    db.prepare("UPDATE repertoires SET origin = 'pgn' WHERE id = ?").run(imported);
+    for (const unit of [built, imported]) {
+      insertRepertoireOwnMove(db, ownMove(unit, [], "d4", "d2d4", 20));
+      insertRepertoireOwnMove(db, ownMove(unit, ["d4", "d5"], "Bf4", "c1f4", 25));
+    }
+    const ideasOf = (unit: number): number =>
+      (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS written FROM repertoire_positions WHERE repertoire_id = ? AND idea IS NOT NULL",
+          )
+          .get(unit) as { written: number }
+      ).written;
+    const session = always(GOOD_IDEA);
+
+    const result = await generateRepertoireIdeas(db, session);
+
+    expect(result).toEqual({ considered: 2, generated: 2, rejected: 0, empty: 0 });
+    expect([ideasOf(built), ideasOf(imported)]).toEqual([2, 0]);
+    expect(session.prompts.some((prompt) => prompt.includes("Variation: Imported"))).toBe(false);
+  });
+
   it("generates nothing on a rerun, and leaves a stored text as it is", async () => {
     seedRepertoires();
     await generateRepertoireIdeas(db, always(GOOD_IDEA));
