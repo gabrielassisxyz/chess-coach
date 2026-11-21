@@ -252,6 +252,160 @@ export const RepertoireCoverageSchema = z.object({
 });
 export type RepertoireCoverage = z.infer<typeof RepertoireCoverageSchema>;
 
+// ---------------------------------------------------------------- importing a PGN repertoire
+
+// The reader's own bound on the PGN text and on the weights text, so a request that passes this
+// schema is never refused for size one step later.
+export const REPERTOIRE_IMPORT_MAX_TEXT_BYTES = 500_000;
+export const REPERTOIRE_IMPORT_MAX_NAME_LENGTH = 120;
+
+const utf8ByteLength = (text: string): number => new TextEncoder().encode(text).length;
+
+const importNameSchema = z.string().trim().min(1).max(REPERTOIRE_IMPORT_MAX_NAME_LENGTH);
+
+// The body of POST /api/repertoires/import-pgn. Strict, so a misspelt `dry_run` is refused instead
+// of running as a real import. `group` and `variation` are stored as trimmed.
+export const ImportPgnRequestSchema = z.strictObject({
+  side: z.enum(["white", "black"]),
+  group: importNameSchema,
+  variation: importNameSchema,
+  pgn: z
+    .string()
+    .refine(
+      (text) => text.length > 0 && utf8ByteLength(text) <= REPERTOIRE_IMPORT_MAX_TEXT_BYTES,
+      `the pgn is 1 to ${REPERTOIRE_IMPORT_MAX_TEXT_BYTES} bytes`,
+    ),
+  weights: z
+    .string()
+    .refine(
+      (text) => utf8ByteLength(text) <= REPERTOIRE_IMPORT_MAX_TEXT_BYTES,
+      `the weights are at most ${REPERTOIRE_IMPORT_MAX_TEXT_BYTES} bytes`,
+    )
+    .optional(),
+  dry_run: z.boolean().default(false),
+});
+export type ImportPgnRequest = z.input<typeof ImportPgnRequestSchema>;
+
+const nonNegativeInt = z.number().int().nonnegative();
+
+// What the reader found in the file, as it counts it.
+export const ImportPgnCountsSchema = z.object({
+  games: nonNegativeInt,
+  own_moves: nonNegativeInt,
+  replies: nonNegativeInt,
+  reasons: nonNegativeInt,
+  comments_ignored: nonNegativeInt,
+  unanswered_replies: nonNegativeInt,
+  deepest_ply: nonNegativeInt,
+  weights_matched: nonNegativeInt,
+  weights_unmatched: nonNegativeInt,
+});
+export type ImportPgnCounts = z.infer<typeof ImportPgnCountsSchema>;
+
+// A reason that went with a row the file no longer holds, so the student can write it back.
+export const ImportedRemovedReasonSchema = z.object({
+  line: z.array(z.string()),
+  move: z.string(),
+  text: z.string(),
+});
+export type ImportedRemovedReason = z.infer<typeof ImportedRemovedReasonSchema>;
+
+// What a sync changed, or would change on a dry run. `repertoire_id` of a dry run that creates the
+// unit is the id the unit would take, which is stored nowhere.
+export const ImportPgnSummarySchema = z.object({
+  repertoire_id: z.number().int().positive(),
+  created: z.boolean(),
+  own_added: nonNegativeInt,
+  own_removed: nonNegativeInt,
+  own_kept: nonNegativeInt,
+  replies_added: nonNegativeInt,
+  replies_removed: nonNegativeInt,
+  replies_kept: nonNegativeInt,
+  reasons_from_file: nonNegativeInt,
+  reasons_kept: nonNegativeInt,
+  cards_deleted: nonNegativeInt,
+  reasons_removed: z.array(ImportedRemovedReasonSchema),
+});
+export type ImportPgnSummary = z.infer<typeof ImportPgnSummarySchema>;
+
+export const ImportPgnResponseSchema = z.object({
+  dry_run: z.boolean(),
+  counts: ImportPgnCountsSchema,
+  summary: ImportPgnSummarySchema,
+});
+export type ImportPgnResponse = z.infer<typeof ImportPgnResponseSchema>;
+
+// One problem the reader found, with where: the list the route answers a bad file with, as the
+// reader returns it.
+const readerErrorBase = { message: z.string() };
+export const ImportPgnReaderErrorSchema = z.discriminatedUnion("code", [
+  z.object({ code: z.literal("too_large"), ...readerErrorBase }),
+  z.object({ code: z.literal("not_from_start"), ...readerErrorBase, game: nonNegativeInt }),
+  z.object({
+    code: z.literal("invalid_pgn"),
+    ...readerErrorBase,
+    game: nonNegativeInt.nullable(),
+    line: nonNegativeInt,
+  }),
+  z.object({
+    code: z.literal("illegal_move"),
+    ...readerErrorBase,
+    game: nonNegativeInt,
+    line: nonNegativeInt,
+    move: z.string(),
+    line_san: z.array(z.string()),
+  }),
+  z.object({
+    code: z.literal("two_answers"),
+    ...readerErrorBase,
+    position_key: z.string(),
+    answers: z.tuple([
+      z.object({ game: nonNegativeInt, line_san: z.array(z.string()), move_san: z.string() }),
+      z.object({ game: nonNegativeInt, line_san: z.array(z.string()), move_san: z.string() }),
+    ]),
+  }),
+  z.object({
+    code: z.literal("invalid_weights"),
+    ...readerErrorBase,
+    line: nonNegativeInt.nullable(),
+  }),
+  z.object({ code: z.literal("no_moves"), ...readerErrorBase }),
+]);
+export type ImportPgnReaderError = z.infer<typeof ImportPgnReaderErrorSchema>;
+
+// The answer to a file the reader refused: at most 20 problems, and nothing was written.
+export const ImportPgnInvalidResponseSchema = z.object({
+  error: z.literal("invalid_pgn"),
+  message: z.string(),
+  errors: z.array(ImportPgnReaderErrorSchema).min(1).max(20),
+});
+export type ImportPgnInvalidResponse = z.infer<typeof ImportPgnInvalidResponseSchema>;
+
+// What deleting an imported line removed, or would remove on a dry run.
+export const DeleteImportedSummarySchema = z.object({
+  repertoire_id: z.number().int().positive(),
+  own_removed: nonNegativeInt,
+  replies_removed: nonNegativeInt,
+  reasons_removed: z.array(ImportedRemovedReasonSchema),
+  cards_deleted: nonNegativeInt,
+  cards_kept: nonNegativeInt,
+});
+export type DeleteImportedSummary = z.infer<typeof DeleteImportedSummarySchema>;
+
+export const DeleteImportedResponseSchema = z.object({
+  dry_run: z.boolean(),
+  summary: DeleteImportedSummarySchema,
+});
+export type DeleteImportedResponse = z.infer<typeof DeleteImportedResponseSchema>;
+
+// The body of any refusal of the two routes: the code is the one the sync, the delete or the
+// request check gave, and the message says what to change.
+export const RepertoireImportRefusalSchema = z.object({
+  error: z.string().min(1),
+  message: z.string(),
+});
+export type RepertoireImportRefusal = z.infer<typeof RepertoireImportRefusalSchema>;
+
 // "3...Bc5 4.d3": moves written the way the book writes them, counted from the ply the first one is
 // played at (0 for White's first move). White's moves carry their number; a Black move carries its
 // number and three dots only where it opens the text, since White's number before it says the rest.

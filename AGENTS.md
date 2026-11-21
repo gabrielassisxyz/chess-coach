@@ -237,7 +237,7 @@
 - **Deleting a unit:** `pnpm --filter @chess-coach/server delete:repertoire-unit -- --group "King's Pawn Game: McConnell Defense" [--dry-run]` removes the unit the hub's Add built from 1.e4 e5 2.Nf3 Qf6 through `deleteRepertoireUnit` (`db/repertoires.ts`), in one transaction: its positions, game reviews and drill first attempts through the cascade, the cards of its White moves that no other unit stores, and every open run whose queue holds one of its rows or whose current item names it, ended as `discarded`. Once that commits, the games whose review went are reviewed again against the units left, with no message to the coach. It prints the unit, its setup line and the counts; it refuses with exit 1 and writes nothing unless the group holds exactly one variation, rooted at e4 e5 Nf3 Qf6; `--dry-run` runs the delete, prints the same and rolls it back. The group is the book's whole name for the root position, so `King's Pawn Game` alone is refused with the stored groups listed. It never migrates: a database whose applied migrations are not exactly the checkout's is refused, so it runs after the server has started from that checkout. Run it on a copy first, and with no drill of the unit on the board: the delete ends that run's row, but the drill the server holds in memory would go on serving rows that are gone.
 - **Repertoire origin:** `repertoires.origin` says where a unit came from, `generated` for a unit the
   builder walked (every unit stored before migration 035, and the column's default) and `pgn` for a
-  unit read from a PGN file; nothing writes a `pgn` unit yet. A White move of an imported unit has no
+  unit read from a PGN file, which only the PGN import writes (see Imported repertoire). A White move of an imported unit has no
   engine figures, so `repertoire_positions.cp_loss` and `eval_cp` are nullable for an `own` row too:
   035 rebuilt the table to drop the two checks that required them (SQLite cannot drop a table check),
   and `NewRepertoireOwnMove` and the rows `listWhiteMovesLackingIdea` reads type both as `number |
@@ -265,6 +265,73 @@
   two differ. The column itself has no check. `GET /api/repertoires` returns `origin` on each entry of
   `repertoires[]` (`findRepertoireOrigin`), optional in the schema as `points` is, so a fixture need
   not carry it.
+- **Imported repertoire:** `POST /api/repertoires/import-pgn` makes the imported line named by `side`,
+  `group` and `variation` equal to a PGN text, and `DELETE /api/repertoires/:id` removes one
+  (`http/repertoire-import.ts`, with the request and response schemas in shared `repertoires.ts`). The
+  import reads the text with `readPgnRepertoire` (`openings/pgn-repertoire.ts`) and writes it with
+  `syncImportedRepertoireUnit`, the delete uses `deleteImportedRepertoireUnit` (both in
+  `db/repertoire-import.ts`, each one transaction). It runs inside the server and not as a script because
+  the refusal `drill_open` is checked in the same transaction as the write, which a second process beside
+  the server cannot do for a drill held in memory.
+  The body is strict: `side` is `white` or `black`, `group` and `variation` are 1 to 120 characters after
+  trimming and are stored trimmed, `pgn` is 1 to 500,000 bytes, `weights` (the generator's tab-separated
+  text, which the reader reads as it reads it) is at most 500,000 bytes and `dry_run` is a boolean, false
+  when absent; anything else answers 400 `invalid_request` and reads nothing, so a misspelt `dryrun` is
+  refused instead of running as a real import. The body limit is 2 MiB, which Fastify enforces with its own
+  413 before the handler runs, and a body that is not JSON gets Fastify's own 400. Both routes write, so
+  both obey the socket's Origin and Host rule: a request whose Origin or Host is not allowed answers 403
+  `origin_not_allowed` before its body is read and writes nothing; `CHESS_COACH_ALLOWED_ORIGINS` governs
+  them (`AppOptions.allowedOrigins`, the same list when absent), and the Host must be the allowed origin's
+  too, so a call straight to the server's port sends both headers. A file the reader refuses answers 400
+  `invalid_pgn` with `errors`, the reader's list as it returns it (at most 20, each with its `code`:
+  `not_from_start`, `invalid_pgn`, `illegal_move`, `two_answers`, `invalid_weights` or `no_moves`, and its
+  details; the reader's `too_large` never arrives, since the body check stops a text that big first) and
+  writes nothing. A refusal of the sync answers 409 with its code and message and writes nothing:
+  `not_imported` (the named line was built by the app), `group_taken` (the group holds a line built by the
+  app, and an imported line needs a group of its own), `invalid_name` (a name ending in ` (rebuilding)`,
+  which names a rebuild's working copy), `empty` (the file holds no move of the student's side) and
+  `drill_open` (a drill is using the line). A success answers 200 `{dry_run, counts, summary}`: `counts` is
+  the reader's (`games`, `own_moves`, `replies`, `reasons`, `comments_ignored`, `unanswered_replies`,
+  `deepest_ply`, `weights_matched`, `weights_unmatched`) and `summary` the sync's (`repertoire_id`,
+  `created`, the `own_` and `replies_` `added`, `removed` and `kept`, `reasons_from_file`, `reasons_kept`,
+  `cards_deleted` and `reasons_removed`); `GET /api/repertoires` then lists the unit with `origin: "pgn"`,
+  its side and `moves_total` equal to its `own` moves.
+  A second import of the same names makes the stored line equal to the new file and changes only what the
+  file changed. A move still in the file keeps its row, its schedule and its stored reason, and a file
+  that gives no reason for it leaves the stored one; a move the file dropped leaves the drill, with its
+  reason returned in `summary.reasons_removed` so the student can write it back; a new move arrives as new
+  and due; a card goes only when no other line stores its position and move, and every rating stays in
+  `drill_reviews`. `dry_run: true` does all of it and rolls it back, so its summary is the one the real run
+  gives (for a line it would create, `repertoire_id` is the id it would take, stored nowhere). Send the
+  same file with `dry_run: true` and read the summary before the first import into a database that
+  matters. An imported unit is left alone by the idea writer, the game review, the rebuild and the
+  coverage figure (see Repertoire origin).
+  `DELETE /api/repertoires/:id` answers 200 `{dry_run, summary}` (`own_removed`, `replies_removed`,
+  `reasons_removed`, `cards_deleted`, `cards_kept`): the unit goes with its moves and the cards no other
+  line stores. `?dry_run=true` answers the same summary and deletes nothing; a `dry_run` other than `true`
+  or `false`, any other query key and an id that is not a positive whole number answer 400
+  `invalid_request`. An id no line has answers 404 `not_found`, a line the app built 409 `not_imported` and
+  a line a drill uses 409 `drill_open`. An import made by mistake is undone with it, and one that replaced
+  good moves with bad ones by importing the right file again. The events are `repertoire.import` (the
+  names, `dry_run`, the reader's counts, the sync's counts and `duration_ms`), `repertoire.import_refused`
+  (the `code`, and for a bad file the codes of its problems) and `repertoire.import_deleted` (the unit's id
+  and counts); none carries the PGN text or a reason written in it. To send a file, with the dev server
+  up and `london.pgn` holding White's London (drop `dry_run` to import for real):
+
+  ```sh
+  jq -n --rawfile pgn london.pgn \
+    '{side: "white", group: "London System", variation: "Main line", pgn: $pgn, dry_run: true}' |
+    curl -sS -X POST http://127.0.0.1:3210/api/repertoires/import-pgn \
+      -H 'Content-Type: application/json' -H 'Origin: http://localhost:5173' -H 'Host: localhost:5173' \
+      --data-binary @-
+  ```
+
+  The same two headers go on a delete:
+
+  ```sh
+  curl -sS -X DELETE 'http://127.0.0.1:3210/api/repertoires/42?dry_run=true' \
+    -H 'Origin: http://localhost:5173' -H 'Host: localhost:5173'
+  ```
 - **Card scheduling:** every card the app schedules is scheduled by FSRS-6 through `ts-fsrs`, pinned at
   exactly 5.4.2 and imported by `packages/server/src/srs/fsrs.ts` alone, which `srs/fsrs.test.ts` enforces.
   That is the review cards of the Due cards desk (`srs_cards`), the opening repertoire's move cards
@@ -776,7 +843,7 @@
   `coach.conversation_reset`, `coach.stream_closed`,
   `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
   `coach.permission_resolved`, `training.item_served`, `training.answer`, `training.runs_left` (the runs a server start ended), `srs.rated`,
-  `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `openings.rebuild_copy_removed`, `import_lichess.progress`, `import_lichess.done`,
+  `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `openings.rebuild_copy_removed`, `repertoire.import`, `repertoire.import_refused`, `repertoire.import_deleted`, `import_lichess.progress`, `import_lichess.done`,
   `explorer.failed`, `eval_cache.hit`, `eval_cache.miss`, `eval_cache.unavailable`,
   `eval_cache.failed`, `eval_queue.added`, `eval_queue.done`, `eval_queue.failed`, `*.listener_failed`, and `client.*` for what
   the browser reports through `POST /api/client-log` (uncaught errors, socket drops and
