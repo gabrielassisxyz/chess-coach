@@ -3132,8 +3132,9 @@ describe("a repertoire drill of a Black unit", () => {
 
       expect(servedLines(id, "all")).toEqual(order);
       expect(servedLines(id, "due")).toEqual(order);
-      expect(servedLines(id, "recommended")).toEqual(order.slice(0, REPERTOIRE_RECOMMENDED_SIZE));
-      expect(order).toHaveLength(REPERTOIRE_RECOMMENDED_SIZE + 2);
+      // The limit is pinned as the number ten, not as the constant the drill reads it from.
+      expect(order).toHaveLength(12);
+      expect(servedLines(id, "recommended")).toEqual(order.slice(0, 10));
     });
 
     it("starts a drill on exactly the moves the counts offered for each scope", async () => {
