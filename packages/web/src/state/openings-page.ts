@@ -162,7 +162,7 @@ export interface TrainButtonModel {
 
 export const TRAIN_ALL_MOVES_TEXT = "Train all moves";
 
-// Most missed sits between the two scopes it is drawn from and is offered only when a drill of it
+// Most missed sits between Everything due and All moves and is offered only when a drill of it
 // would serve a move: a count of 0, or none sent, leaves it out.
 function trainMenuOf(counts: RepertoireScopeCounts): TrainMenuEntry[] {
   const missed = counts.missed ?? 0;
