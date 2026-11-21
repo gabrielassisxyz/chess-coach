@@ -166,14 +166,6 @@ export function deleteRepertoireCardsNoVariationPlays(
   return sweep;
 }
 
-/** How many cards were first shown after `since` (an ISO time), in any variation and any drill. */
-export function countRepertoireCardsIntroducedSince(db: Database, since: string): number {
-  const row = db
-    .prepare("SELECT COUNT(*) AS introduced FROM repertoire_cards WHERE introduced_at > ?")
-    .get(since) as { introduced: number };
-  return row.introduced;
-}
-
 export function findRepertoireCard(
   db: Database,
   move: { positionKey: string; uci: string },
@@ -256,8 +248,8 @@ const REPERTOIRE_FIRST_ATTEMPT_WINDOW_MS = 30 * 24 * 3_600_000;
 
 /**
  * The first attempts the drill rated under a variation in the 30 days before `at`, and how many of
- * them were right. An attempt at `at` counts and one exactly 30 days earlier does not, as
- * `countRepertoireCardsIntroducedSince` reads its window; a variation with none is 0 of 0.
+ * them were right. An attempt at `at` counts and one exactly 30 days earlier does not; a variation
+ * with none is 0 of 0.
  */
 export function countRepertoireFirstAttemptsInWindow(
   db: Database,

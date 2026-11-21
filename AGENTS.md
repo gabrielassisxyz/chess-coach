@@ -528,16 +528,18 @@
   neither gains the rule.
 - **Repertoire drill:** `start_training {mode: "repertoire", repertoire_id, scope}` runs a stored
   variation as passes from move 1 (`activity/repertoire-session.ts`): the server plays Black and every
-  White move not asked, and stops on the moves still to find. `recommended` takes at most 10 due moves,
-  the highest reach first, `due` every due move and `all` every move; a move with no card is new and
-  due. A new move is first shown with its answer and rated on a later pass; otherwise only the first
-  attempt rates it (FSRS in `repertoire_cards`, one card per position and move across variations: Good
-  for a right first attempt and Again for a miss, which a wrong try, a hint or a shown solution all
-  are), and a miss comes back on a later pass until it is right first time. In `all`, a move not due
-  keeps its schedule when right. A new move is held back while a sibling's card has an `interval_hours`
-  under 72 (`REPERTOIRE_SIBLING_STABLE_HOURS`), which a move answered Good each time crosses at its
-  third review, after 10 minutes and 2 days, with 11 days. A wrong try within 50 cp of the engine's best that reaches another named opening
-  carries that name. After each asked move is answered, the drill carries its stored idea in `answered`
+  White move not asked, and stops on the moves still to find. A move with no card is new and due as
+  soon as it is stored, and the scopes select from every move of the level: `recommended` takes at
+  most 10 due moves, the highest reach first, `due` every due move and `all` every move. Nothing
+  paces new moves, so there is no limit per day and no move waits for another; how much new material
+  to take in a day is the student's, by how many batches they run. `repertoire_cards.introduced_at`
+  is still written when a card is created, and nothing acts on it. A new move is first shown with
+  its answer and rated on a later pass; otherwise only the first attempt rates it (FSRS in
+  `repertoire_cards`, one card per position and move across variations: Good for a right first
+  attempt and Again for a miss, which a wrong try, a hint or a shown solution all are), and a miss
+  comes back on a later pass until it is right first time. In `all`, a move not due keeps its
+  schedule when right. A wrong try within 50 cp of the engine's best that reaches another named
+  opening carries that name. After each asked move is answered, the drill carries its stored idea in `answered`
   and the Practice column shows it as Why with the move number. `GET /api/repertoires` lists each variation with what each scope would serve.
   A `level` on the command widens the drill from that repertoire to every variation of its group
   (`group`) or every unit of its side (`side`, the Openings page's "Train all" button of a colour); without one it is the

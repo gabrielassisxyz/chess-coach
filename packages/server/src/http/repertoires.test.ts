@@ -92,40 +92,13 @@ const ownMoveStored = (repertoireId: number, key: string): boolean =>
     )
     .get(repertoireId, key) !== undefined;
 
-interface CardOptions {
-  introducedAt?: string;
-  intervalHours?: number;
-}
-
-function addCard(line: string[], san: string, nextReviewAt: string, card: CardOptions = {}): void {
+function addCard(line: string[], san: string, nextReviewAt: string): void {
   const place = placeOf(line, san);
   db.prepare(
     `INSERT INTO repertoire_cards (position_key, move_uci, introduced_at, next_review_at,
        interval_hours)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(
-    place.positionKey,
-    place.uci,
-    card.introducedAt ?? LONG_AGO,
-    nextReviewAt,
-    card.intervalHours ?? 0,
-  );
-}
-
-function setCardInterval(line: string[], san: string, intervalHours: number): void {
-  const place = placeOf(line, san);
-  db.prepare(
-    "UPDATE repertoire_cards SET interval_hours = ? WHERE position_key = ? AND move_uci = ?",
-  ).run(intervalHours, place.positionKey, place.uci);
-}
-
-// A card on every White move that has none, as a student who has met them all has: none is new, so
-// none waits.
-function addCardsForEveryMove(): void {
-  db.prepare(
-    `INSERT OR IGNORE INTO repertoire_cards (position_key, move_uci, introduced_at, next_review_at)
-     SELECT DISTINCT position_key, move_uci, ?, ? FROM repertoire_positions WHERE kind = 'own'`,
-  ).run(LONG_AGO, LONG_AGO);
+     VALUES (?, ?, ?, ?, 0)`,
+  ).run(place.positionKey, place.uci, LONG_AGO, nextReviewAt);
 }
 
 async function getRepertoires() {
@@ -148,7 +121,6 @@ describe("GET /api/repertoires", () => {
     // A move both variations play has one card, so it is due, or not, in both at once.
     addCard(["e4", "e5", "Nf3", "Nc6"], "Bc4", FAR_AHEAD);
     addCard([], "e4", LONG_AGO);
-    addCardsForEveryMove();
 
     const response = await getRepertoires();
     expect(response.statusCode).toBe(200);
@@ -202,27 +174,6 @@ describe("GET /api/repertoires", () => {
     expect(body.repertoires.find((entry) => entry.id === id)).toMatchObject({
       side: "black",
       group_name: "Caro-Kann Defense",
-    });
-  });
-
-  it("holds every new move back once six cards were introduced with two sibling groups new", async () => {
-    const classical = addVariation("Classical Variation (4.c3)", [
-      ["Bc5", "c3", "Nf6", "d4"],
-      ["Nf6", "d3"],
-    ]);
-    const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
-    const stableRecent = { introducedAt: hourAgo, intervalHours: 72 };
-    for (const [line, san] of [...SETUP_CARDS, [[...SETUP, "Bc5"], "c3"] as [string[], string]]) {
-      addCard(line, san, LONG_AGO, stableRecent);
-    }
-    addCard(["d4", "d5"], "c4", LONG_AGO, stableRecent);
-    addCard(["d4", "d5", "c4", "e6"], "Nc3", LONG_AGO, stableRecent);
-
-    const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
-    expect(body.repertoires.find((entry) => entry.id === classical)?.moves).toEqual({
-      recommended: 4,
-      due: 4,
-      all: 4,
     });
   });
 });
@@ -353,12 +304,11 @@ describe("GET /api/repertoires at the group and side levels", () => {
     addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
     addVariation("Giuoco Pianissimo (4.d3)", [["Bc5", "d3"]]);
     addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
-    // 1.e4 opens all three units and has one card, not due, so every level leaves it out alike.
+    // 1.e4 opens all three units and has one card, not due, so every level leaves it out of due alike.
     addCard([], "e4", FAR_AHEAD);
-    // 2.Nf3 and 3.Bc4 are known, stable and due: 4.c3, 4.d3 and 2.exd5 are the new moves.
-    const stable = { intervalHours: 72 };
-    addCard(["e4", "e5"], "Nf3", LONG_AGO, stable);
-    addCard(["e4", "e5", "Nf3", "Nc6"], "Bc4", LONG_AGO, stable);
+    // 2.Nf3 and 3.Bc4 are known and due: 4.c3, 4.d3 and 2.exd5 are new, so they are due too.
+    addCard(["e4", "e5"], "Nf3", LONG_AGO);
+    addCard(["e4", "e5", "Nf3", "Nc6"], "Bc4", LONG_AGO);
 
     const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
 
@@ -367,12 +317,12 @@ describe("GET /api/repertoires at the group and side levels", () => {
       { recommended: 3, due: 3, all: 4 },
       { recommended: 1, due: 1, all: 2 },
     ]);
-    // 4.c3 and 4.d3 answer one position, so a drill over both takes one of them and the other waits.
+    // 4.c3 and 4.d3 answer one position, and a drill over both serves both of them.
     expect(body.groups).toMatchObject([
       {
         side: "white",
         group_name: "Italian Game",
-        moves: { recommended: 3, due: 3, all: 4 },
+        moves: { recommended: 4, due: 4, all: 5 },
       },
       {
         side: "white",
@@ -380,38 +330,52 @@ describe("GET /api/repertoires at the group and side levels", () => {
         moves: { recommended: 1, due: 1, all: 2 },
       },
     ]);
-    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 4, due: 4, all: 5 } }]);
+    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 5, due: 5, all: 6 } }]);
   });
 
-  it("holds 2.exd5 back for 2.Nf3, its sibling, only at the level that covers both openings", async () => {
-    const italian = addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
-    addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
-    addCard([], "e4", LONG_AGO);
-    addCard(["e4", "e5"], "Nf3", LONG_AGO, { intervalHours: 24 });
-    addCard(["e4", "e5", "Nf3", "Nc6"], "Bc4", LONG_AGO);
-    addCard(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"], "c3", LONG_AGO);
+  // Black's replies to 3.Bc4 that White answers with 4.d3: the same position gives White thirty
+  // moves of its own when each reply has an answer.
+  function repliesAnsweredByD3(count: number): string[] {
+    const board = new Chess();
+    for (const san of SETUP) board.move(san);
+    const answered = board.moves().filter((reply) => {
+      const after = new Chess(board.fen());
+      after.move(reply);
+      return after.moves().includes("d3");
+    });
+    return answered.slice(0, count);
+  }
+
+  it("counts a variation of thirty new moves as ten recommended and thirty due and all, at every level", async () => {
+    // The setup's three moves and 4.d3 against twenty-seven replies: thirty moves, none with a card.
+    addVariation(
+      "Fan",
+      repliesAnsweredByD3(27).map((reply) => [reply, "d3"]),
+    );
+
+    const thirty = { recommended: 10, due: 30, all: 30 };
     const counts = async () => {
       const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
       return {
-        italian: body.repertoires.find((entry) => entry.id === italian)?.moves,
-        scandinavian: body.groups?.find((group) => group.group_name === "Scandinavian Defense")
-          ?.moves,
-        side: body.sides?.[0]?.moves,
+        variations: body.repertoires.map((entry) => entry.moves),
+        groups: body.groups?.map((group) => group.moves),
+        sides: body.sides?.map((side) => side.moves),
       };
     };
+    expect(await counts()).toEqual({ variations: [thirty], groups: [thirty], sides: [thirty] });
 
-    // 2.Nf3 is shown but not stable: the side's drill leaves 2.exd5 out, its own opening does not.
+    // A second variation of the opening and a unit of another one add their own new moves to the
+    // levels that cover them, a move they share with the first counted once: 4.c3 is one more move
+    // for the Italian and 2.exd5 one for the side.
+    addVariation("Short", [["Bc5", "c3"]]);
+    addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
     expect(await counts()).toEqual({
-      italian: { recommended: 4, due: 4, all: 4 },
-      scandinavian: { recommended: 2, due: 2, all: 2 },
-      side: { recommended: 4, due: 4, all: 4 },
-    });
-
-    setCardInterval(["e4", "e5"], "Nf3", 72);
-    expect(await counts()).toEqual({
-      italian: { recommended: 4, due: 4, all: 4 },
-      scandinavian: { recommended: 2, due: 2, all: 2 },
-      side: { recommended: 5, due: 5, all: 5 },
+      variations: [thirty, { recommended: 4, due: 4, all: 4 }, { recommended: 2, due: 2, all: 2 }],
+      groups: [
+        { recommended: 10, due: 31, all: 31 },
+        { recommended: 2, due: 2, all: 2 },
+      ],
+      sides: [{ recommended: 10, due: 32, all: 32 }],
     });
   });
 });
@@ -421,9 +385,6 @@ describe("GET /api/repertoires and a rebuild's copy", () => {
 
   it("lists no repertoire, group or side count of the copy, which answers 3...Bc5 with a move of its own", async () => {
     addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
-    addCardsForEveryMove();
-    // A stable sibling holds no new move back, so the copy's 4.d3 would count wherever it was read.
-    setCardInterval([...SETUP, "Bc5"], "c3", 72);
     const before = RepertoiresResponseSchema.parse((await getRepertoires()).json());
     // A rebuild halfway through: 4.d3 is a move the unit does not play, so it would add to any count.
     addVariation("Giuoco Pianissimo (4.d3)", [["Bc5", "d3"]], COPY_GROUP);
@@ -450,66 +411,6 @@ describe("GET /api/repertoires and a rebuild's copy", () => {
     rebuilding.unitId = null;
     expect(await read()).toBeNull();
     await app.close();
-  });
-});
-
-const SETUP_CARDS: [string[], string][] = [
-  [[], "e4"],
-  [["e4", "e5"], "Nf3"],
-  [["e4", "e5", "Nf3", "Nc6"], "Bc4"],
-];
-
-describe("GET /api/repertoires pacing of new moves", () => {
-  const AFTER_BC5 = [...SETUP, "Bc5"];
-  const AFTER_NF6 = [...SETUP, "Nf6"];
-  let classical: number;
-
-  const classicalCounts = async () => {
-    const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
-    return body.repertoires.find((entry) => entry.id === classical)?.moves;
-  };
-
-  beforeEach(() => {
-    classical = addVariation("Classical Variation (4.c3)", [
-      ["Bc5", "c3", "Nf6", "d4"],
-      ["Nf6", "d3"],
-    ]);
-  });
-
-  it("leaves out a new move while a sibling is short of stable or an earlier move of its line is new", async () => {
-    for (const [line, san] of SETUP_CARDS) addCard(line, san, LONG_AGO);
-    // 4.c3 leads its sibling 4.d3, and 5.d4 below it waits for 4.c3 to be shown.
-    expect(await classicalCounts()).toEqual({ recommended: 4, due: 4, all: 4 });
-
-    // 4.d3 is shown, not due and not stable: 4.c3 waits for it, and so does 5.d4.
-    addCard(AFTER_NF6, "d3", FAR_AHEAD, { intervalHours: 24 });
-    expect(await classicalCounts()).toEqual({ recommended: 3, due: 3, all: 4 });
-
-    setCardInterval(AFTER_NF6, "d3", 72);
-    expect(await classicalCounts()).toEqual({ recommended: 4, due: 4, all: 5 });
-
-    // Shown once, 4.c3 only has to be known for 5.d4 to enter.
-    addCard(AFTER_BC5, "c3", LONG_AGO);
-    expect(await classicalCounts()).toEqual({ recommended: 5, due: 5, all: 6 });
-  });
-
-  it("leaves out the new moves the day's limit holds back, counting only cards introduced in the last 24 hours", async () => {
-    const hoursAgo = (hours: number): string =>
-      new Date(Date.now() - hours * 3_600_000).toISOString();
-    const known = [...SETUP_CARDS, [AFTER_BC5, "c3"] as [string[], string]];
-    for (const [line, san] of known) {
-      addCard(line, san, LONG_AGO, { introducedAt: hoursAgo(1), intervalHours: 72 });
-    }
-    // Four cards in the last day leave room for 5.d4, the likelier of the two new moves.
-    expect(await classicalCounts()).toEqual({ recommended: 5, due: 5, all: 5 });
-
-    // A fifth, which is 4.d3 and not due, leaves none: 5.d4 waits, though nothing else holds it.
-    addCard(AFTER_NF6, "d3", FAR_AHEAD, { introducedAt: hoursAgo(1), intervalHours: 72 });
-    expect(await classicalCounts()).toEqual({ recommended: 4, due: 4, all: 5 });
-
-    // Introduced more than a day ago, the five leave room again.
-    db.prepare("UPDATE repertoire_cards SET introduced_at = ?").run(hoursAgo(25));
-    expect(await classicalCounts()).toEqual({ recommended: 5, due: 5, all: 6 });
   });
 });
 
@@ -799,7 +700,6 @@ describe("GET /api/repertoires met openings", () => {
 });
 
 describe("GET /api/repertoires at the found level", () => {
-  const stable = { intervalHours: 72 };
   let italian: number;
 
   beforeEach(() => {
@@ -821,23 +721,22 @@ describe("GET /api/repertoires at the found level", () => {
   it("counts the moves of the units the met openings name, a shared move once and none of the Italian's", async () => {
     const { scandinavian } = addFoundUnits();
     // 1.e4 is in every unit and has one card, not due; the Italian's other moves are known and due.
-    addCard([], "e4", FAR_AHEAD, stable);
-    addCard(["e4", "e5"], "Nf3", LONG_AGO, stable);
-    addCard([...SETUP.slice(0, 4)], "Bc4", LONG_AGO, stable);
-    addCard([...SETUP, "Bc5"], "c3", LONG_AGO, stable);
+    addCard([], "e4", FAR_AHEAD);
+    addCard(["e4", "e5"], "Nf3", LONG_AGO);
+    addCard([...SETUP.slice(0, 4)], "Bc4", LONG_AGO);
+    addCard([...SETUP, "Bc5"], "c3", LONG_AGO);
 
     const body = await bodyOf();
 
-    // 1.e4 is in all and not in due, and the new 2.e5 is the likelier of two new siblings: 2.exd5
-    // waits for it in this drill, though its own unit would serve it.
-    expect(body.found).toEqual({ moves: { recommended: 1, due: 1, all: 2 } });
+    // 1.e4 is in all and not in due; 2.exd5 and 2.e5 have no card, so both are new and due.
+    expect(body.found).toEqual({ moves: { recommended: 2, due: 2, all: 3 } });
     expect(body.repertoires.find((entry) => entry.id === scandinavian)?.moves).toEqual({
       recommended: 1,
       due: 1,
       all: 2,
     });
     // The side's drill also holds the Italian's three moves, which the found drill never serves.
-    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 4, due: 4, all: 5 } }]);
+    expect(body.sides).toEqual([{ side: "white", moves: { recommended: 5, due: 5, all: 6 } }]);
   });
 
   it("counts nothing for a unit no met opening names, and nothing before any game was met", async () => {
@@ -852,31 +751,10 @@ describe("GET /api/repertoires at the found level", () => {
   it("starts counting a unit once a met opening names it, and stops when none does", async () => {
     addRootedUnit(["e4", "d5"], "Scandinavian Defense", "exd5");
     const gameId = addReviewedGame(["e4", "d5", "exd5"], { leftPly: 2 }, italian);
-    expect((await bodyOf()).found?.moves.all).toBe(1);
+    expect((await bodyOf()).found?.moves.all).toBe(2);
 
     db.prepare("DELETE FROM repertoire_game_reviews WHERE game_id = ?").run(gameId);
     expect((await bodyOf()).found?.moves.all).toBe(0);
-  });
-
-  it("leaves out a new move the day's limit holds back, counting the Italian's cards in it", async () => {
-    addFoundUnits();
-    const hoursAgo = (hours: number): string =>
-      new Date(Date.now() - hours * 3_600_000).toISOString();
-    // Five cards in the last day, in the Italian and in no unit at all, leave no room for 2.e5.
-    const known: [string[], string][] = [
-      [[], "e4"],
-      [["e4", "e5"], "Nf3"],
-      [SETUP.slice(0, 4), "Bc4"],
-      [[...SETUP, "Bc5"], "c3"],
-      [[...SETUP, "Bc5"], "d3"],
-    ];
-    for (const [line, san] of known) {
-      addCard(line, san, LONG_AGO, { introducedAt: hoursAgo(1), intervalHours: 72 });
-    }
-    expect((await bodyOf()).found).toEqual({ moves: { recommended: 1, due: 1, all: 1 } });
-
-    db.prepare("UPDATE repertoire_cards SET introduced_at = ?").run(hoursAgo(25));
-    expect((await bodyOf()).found).toEqual({ moves: { recommended: 2, due: 2, all: 2 } });
   });
 });
 

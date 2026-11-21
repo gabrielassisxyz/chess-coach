@@ -110,11 +110,13 @@ async function getRepertoires() {
   return RepertoiresResponseSchema.parse(response.json());
 }
 
-// White's unit has no card, so only 1.d4 is new and may enter. Black's has a card on each of its four
-// moves, one of them not due, so its counts differ from White's in all three figures.
+// White's unit has a card on 2.Bf4 that is not due, and its other two moves are new and due. Black's
+// has a card on each of its four moves, one of them not due, so its counts differ from White's in
+// all three figures.
 function addBothSides(): { white: number; black: number } {
   const white = addUnit("white", "London System", "London System (2.Bf4)", [LONDON_LINE]);
   const black = addUnit("black", "Black repertoire", "Caro-Kann and Slav", BLACK_LINES);
+  addCard(["d4", "d5"], "Bf4", FAR_AHEAD);
   addCard(["e4"], "c6", LONG_AGO);
   addCard(["e4", "c6", "d4"], "d5", LONG_AGO);
   addCard(["d4"], "d5", LONG_AGO);
@@ -131,7 +133,7 @@ describe("GET /api/repertoires with a White and a Black unit", () => {
     expect(body.sides).toHaveLength(2);
     expect(body.sides?.find((entry) => entry.side === "white")).toEqual({
       side: "white",
-      moves: { recommended: 1, due: 1, all: 1 },
+      moves: { recommended: 2, due: 2, all: 3 },
     });
     expect(body.sides?.find((entry) => entry.side === "black")).toEqual({
       side: "black",
@@ -147,7 +149,7 @@ describe("GET /api/repertoires with a White and a Black unit", () => {
     expect(body.repertoires.find((entry) => entry.id === white)).toMatchObject({
       side: "white",
       group_name: "London System",
-      moves: { recommended: 1, due: 1, all: 1 },
+      moves: { recommended: 2, due: 2, all: 3 },
     });
     expect(body.repertoires.find((entry) => entry.id === black)).toMatchObject({
       side: "black",
@@ -161,7 +163,7 @@ describe("GET /api/repertoires with a White and a Black unit", () => {
     });
     expect(body.groups?.find((entry) => entry.side === "white")).toMatchObject({
       group_name: "London System",
-      moves: { recommended: 1, due: 1, all: 1 },
+      moves: { recommended: 2, due: 2, all: 3 },
     });
   });
 

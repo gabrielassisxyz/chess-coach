@@ -46,7 +46,6 @@ import {
   REPERTOIRE_NO_IDEA,
   REPERTOIRE_RECOMMENDED_SIZE,
   type RepertoireTryJudge,
-  repertoireIntroductionsInWindow,
   repertoireScopeCounts,
   repertoireTryJudge,
   selectRepertoireDrillMoves,
@@ -57,9 +56,6 @@ const T0 = new Date("2026-11-01T12:00:00.000Z");
 const PAST = "2026-10-01T00:00:00.000Z";
 const FUTURE = "2026-12-01T00:00:00.000Z";
 const HOUR_MS = 3_600_000;
-// The interval from which a sibling's card stops holding a new move back. The tests pin the number,
-// not the constant the code reads it from, so changing that constant fails them.
-const STABLE_HOURS = 72;
 let now = T0;
 const clock: Clock = { now: () => now };
 
@@ -212,13 +208,6 @@ function addCard(
   );
 }
 
-function setCardInterval(lineText: string, san: string, intervalHours: number): void {
-  const place = placeOf(lineText, san);
-  db.prepare(
-    "UPDATE repertoire_cards SET interval_hours = ? WHERE position_key = ? AND move_uci = ?",
-  ).run(intervalHours, place.positionKey, place.uci);
-}
-
 // A card on every move of the student's in the rows, White's unless `side` says Black's, due unless
 // `due` says otherwise.
 function addCards(
@@ -231,6 +220,17 @@ function addCards(
     if (!isStudentMove(side, lineText)) continue;
     addCard(lineText, san, due(lineText, san) ? PAST : FUTURE, lastRight);
   }
+}
+
+// The Italian rows with a card, not due, on every White move but 4.c3: the one move a drill of the
+// unit shows with its answer, so a test of that first pass has one move to follow.
+function addCardsAllButC3(): void {
+  const isC3 = (lineText: string, san: string): boolean =>
+    lineText === "e4 e5 Nf3 Nc6 Bc4 Bc5" && san === "c3";
+  addCards(
+    ITALIAN_ROWS.filter(([lineText, san]) => !isC3(lineText, san)),
+    () => false,
+  );
 }
 
 interface CardRow {
@@ -487,9 +487,6 @@ const code = async (run: Promise<unknown>): Promise<string> => {
 
 const label = (move: RepertoireDrillMove): string => `${move.line.at(-1) ?? "start"} ${move.san}`;
 
-// The number a drill and the menu both read: every card shown in the last day, in any unit.
-const introducedToday = (): number => repertoireIntroductionsInWindow(db, now);
-
 // White's move in the wide fixture, by the number of moves played before it.
 const WIDE_ANSWERS: Record<number, string> = { 0: "e4", 2: "Nf3", 4: "Bc4", 6: "d3" };
 
@@ -538,8 +535,7 @@ function progressOf(state: TrainingActivity): DrillProgress {
 describe("choosing the moves of a repertoire drill", () => {
   it("serves every move for all, every due move for due and at most ten for recommended, in line order", () => {
     const id = addVariation("Wide", WIDE_ROWS);
-    // Every move has a card, with the nine 4.d3 siblings all short of stable: a move with a card is
-    // served as it always was, and none of them waits.
+    // Every move has a card, and every card is due but 3.Bc4's.
     addCards(WIDE_ROWS, (lineText, san) => !(lineText === "e4 e5 Nf3 Nc6" && san === "Bc4"));
     const moves = listRepertoireDrillMoves(db, id);
     const order = [
@@ -550,7 +546,7 @@ describe("choosing the moves of a repertoire drill", () => {
     ];
 
     const served = (scope: RepertoireScope): string[] =>
-      selectRepertoireDrillMoves(moves, scope, now, introducedToday()).map(label);
+      selectRepertoireDrillMoves(moves, scope, now).map(label);
 
     expect(served("all")).toEqual(order);
     const due = order.filter((move) => move !== "Nc6 Bc4");
@@ -582,245 +578,174 @@ describe("choosing the moves of a repertoire drill", () => {
 const BC4_LINE = "e4 e5 Nf3 Nc6 Bc4";
 const SETUP_LABELS = ["start e4", "e5 Nf3", "Nc6 Bc4"];
 
-// The setup, then the answers to 3...Bc5 and 3...Nf6, which are siblings, and under 4.c3 the answers
-// to 4...Nf6 and 4...d6, a second pair of siblings whose line runs through 4.c3.
-const PACED_ROWS: FixtureRow[] = [
+// The setup, then the answers to 3...Bc5 and 3...Nf6: two moves to one position that differ only in
+// the reply before them.
+const SIBLING_ROWS: FixtureRow[] = [
   ...SETUP_ROWS,
   [BC4_LINE, "Bc5", 0.6],
   [BC4_LINE, "Nf6", 0.4],
   [`${BC4_LINE} Bc5`, "c3", 0.6],
   [`${BC4_LINE} Nf6`, "d3", 0.4],
-  [`${BC4_LINE} Bc5 c3`, "Nf6", 0.3],
-  [`${BC4_LINE} Bc5 c3 Nf6`, "d4", 0.3],
-  [`${BC4_LINE} Bc5 c3`, "d6", 0.2],
-  [`${BC4_LINE} Bc5 c3 d6`, "d4", 0.2],
 ];
 
-// Three answers to 3.Bc4, stored the least likely first so that storage order is not reach order.
-const THREE_SIBLING_ROWS: FixtureRow[] = [
-  ...SETUP_ROWS,
-  [BC4_LINE, "h6", 0.2],
-  [`${BC4_LINE} h6`, "d3", 0.2],
-  [BC4_LINE, "Nf6", 0.3],
-  [`${BC4_LINE} Nf6`, "d3", 0.3],
-  [BC4_LINE, "Bc5", 0.5],
-  [`${BC4_LINE} Bc5`, "c3", 0.5],
+// Black's replies to 3.Bc4, the likeliest first. White answers each with 4.d3, which is legal
+// against every one of them.
+const FAN_REPLIES = [
+  "Bc5",
+  "Nf6",
+  "Be7",
+  "d6",
+  "h6",
+  "a6",
+  "g6",
+  "Qe7",
+  "Na5",
+  "Rb8",
+  "Qf6",
+  "Qg5",
+  "Qh4",
+  "Ke7",
+  "Bd6",
+  "Ba3",
+  "Nh6",
+  "Nge7",
+  "a5",
+  "b6",
+  "b5",
+  "d5",
+  "f6",
+  "f5",
+  "g5",
+  "h5",
+  "Nb8",
+];
+
+// The setup and 4.d3 against the first `replies` of FAN_REPLIES: 3 + `replies` moves of White's, each
+// reply less likely than the one before it. The rows are stored the least likely first, so that
+// storage order is not line order.
+function addFanUnit(replies: number): number {
+  const answered = FAN_REPLIES.slice(0, replies).map((reply, index): FixtureRow[] => [
+    [BC4_LINE, reply, 0.9 - index * 0.03],
+    [`${BC4_LINE} ${reply}`, "d3", 0.9 - index * 0.03],
+  ]);
+  return addVariation("Fan", [...SETUP_ROWS, ...answered.reverse().flat()]);
+}
+
+// What a drill of the fan unit serves, in line order: the setup, then 4.d3 against each reply.
+const fanLabels = (replies: number): string[] => [
+  ...SETUP_LABELS,
+  ...FAN_REPLIES.slice(0, replies).map((reply) => `${reply} d3`),
 ];
 
 const servedBy = (id: number, scope: RepertoireScope): string[] =>
-  selectRepertoireDrillMoves(listRepertoireDrillMoves(db, id), scope, now, introducedToday()).map(
-    label,
-  );
+  selectRepertoireDrillMoves(listRepertoireDrillMoves(db, id), scope, now).map(label);
 
 // What each scope serves and what the menu counts, from literal lists. The counts are the sizes of
-// those lists, so a waiting move left out of one and left in the other fails here.
+// those lists, so a move left out of one and left in the other fails here.
 function expectServed(id: number, due: string[], all: string[]): void {
   expect(servedBy(id, "due")).toEqual(due);
-  expect(servedBy(id, "recommended")).toEqual(due);
+  expect(servedBy(id, "recommended")).toEqual(due.slice(0, 10));
   expect(servedBy(id, "all")).toEqual(all);
-  expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday())).toEqual({
-    recommended: due.length,
+  expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now)).toEqual({
+    recommended: Math.min(due.length, 10),
     due: due.length,
     all: all.length,
   });
 }
 
-// The setup is known and not due, so a due drill serves only the moves under test.
-function addPacedUnit(): number {
-  const id = addVariation("Paced", PACED_ROWS);
-  addCards(SETUP_ROWS, () => false);
-  return id;
+// The moves the newest run was drawn with, in the order it holds them, named as `label` names them.
+function drawnLabels(id: number): string[] {
+  const run = db.prepare("SELECT items_json FROM training_runs ORDER BY id DESC LIMIT 1").get() as {
+    items_json: string;
+  };
+  const labelOfRow = new Map(listRepertoireDrillMoves(db, id).map((m) => [m.rowId, label(m)]));
+  return (JSON.parse(run.items_json) as { id: number }[]).map((item) => {
+    return labelOfRow.get(item.id) as string;
+  });
 }
 
-describe("pacing the new moves of a repertoire", () => {
-  it.each([
-    { hours: 24, enters: false },
-    { hours: STABLE_HOURS - 1, enters: false },
-    { hours: STABLE_HOURS, enters: true },
-    { hours: 168, enters: true },
-  ])(
-    "with the sibling's card at $hours hours, serves 4.c3 in every scope: $enters",
-    ({ hours, enters }) => {
-      const id = addPacedUnit();
-      addCard(`${BC4_LINE} Nf6`, "d3", PAST, true, { intervalHours: hours });
-      const due = enters ? ["Bc5 c3", "Nf6 d3"] : ["Nf6 d3"];
-      expectServed(id, due, [...SETUP_LABELS, ...due]);
-    },
-  );
+describe("a move with no card is due as soon as it is stored", () => {
+  it("serves all thirty moves of a new unit for all and for due, and the likeliest ten for recommended", async () => {
+    const id = addFanUnit(27);
+    const order = fanLabels(27);
+    expect(order).toHaveLength(30);
 
-  // Under FSRS a move answered Good each time falls due after 10 minutes, then 2 days, then 11: it
-  // crosses the 72 hours that hold its siblings back at its third review, as the ladder's 4, 24 and
-  // 72 hours did.
-  it("lets a new sibling in at the third Good review of the move before it, not before", async () => {
-    const id = addPacedUnit();
-    // 4.d3 is shown and never rated, so it is a New card due now.
-    addCard(`${BC4_LINE} Nf6`, "d3", PAST, true, { intervalHours: 0 });
-    const service = boot();
-    const sibling = "Bc5 c3";
-    const d3Hours = (): number | undefined => cardOf(`${BC4_LINE} Nf6`, "d3")?.interval_hours;
-    const rateD3Good = async (): Promise<void> => {
-      await play(service, await start(service, id, "due"), "d3");
-    };
-    expect(servedBy(id, "all")).not.toContain(sibling);
-
-    await rateD3Good();
-    expect(d3Hours()).toBeCloseTo(10 / 60, 9);
-    expect(servedBy(id, "all")).not.toContain(sibling);
-
-    now = new Date(now.getTime() + 10 * 60_000);
-    await rateD3Good();
-    expect(d3Hours()).toBeCloseTo(48, 9);
-    expect(servedBy(id, "all")).not.toContain(sibling);
-
-    now = new Date(now.getTime() + 48 * HOUR_MS);
-    await rateD3Good();
-    expect(d3Hours()).toBeCloseTo(264, 9);
-    expect(servedBy(id, "all")).toContain(sibling);
-    expect(loggedDrillGrades()).toEqual([3, 3, 3]);
-  });
-
-  it("serves only the likeliest of three new siblings, whatever order they were stored in", () => {
-    const id = addVariation("Three", THREE_SIBLING_ROWS);
-    addCards(SETUP_ROWS, () => false);
-    expectServed(id, ["Bc5 c3"], [...SETUP_LABELS, "Bc5 c3"]);
-  });
-
-  it("brings the next sibling in once the one before it is stable, the likeliest first", () => {
-    const id = addVariation("Three", THREE_SIBLING_ROWS);
-    addCards(SETUP_ROWS, () => false);
-    const stable = { intervalHours: STABLE_HOURS };
-    addCard(`${BC4_LINE} Bc5`, "c3", PAST, true, stable);
-    expectServed(id, ["Bc5 c3", "Nf6 d3"], [...SETUP_LABELS, "Bc5 c3", "Nf6 d3"]);
-
-    // 4.d3 is shown, but short of stable, so 3...h6's answer still waits behind it.
-    addCard(`${BC4_LINE} Nf6`, "d3", PAST, true, { intervalHours: 24 });
-    expectServed(id, ["Bc5 c3", "Nf6 d3"], [...SETUP_LABELS, "Bc5 c3", "Nf6 d3"]);
-
-    setCardInterval(`${BC4_LINE} Nf6`, "d3", STABLE_HOURS);
-    const all = [...SETUP_LABELS, "Bc5 c3", "Nf6 d3", "h6 d3"];
-    expectServed(id, ["Bc5 c3", "Nf6 d3", "h6 d3"], all);
-  });
-
-  it("holds a new move back while an earlier move of its own line is new, and no other new move does", () => {
-    const id = addPacedUnit();
-    // 4.c3 leads its siblings; both 5.d4 below it wait for it to be shown.
-    expectServed(id, ["Bc5 c3"], [...SETUP_LABELS, "Bc5 c3"]);
-
-    // Shown once, 4.c3 only has to be known: the moves under it enter, the likelier first, while
-    // the new 4.d3 beside it waits for it to be stable and holds nothing back.
-    addCard(`${BC4_LINE} Bc5`, "c3", PAST, false, { intervalHours: 0 });
-    expectServed(id, ["Bc5 c3", "Nf6 d4"], [...SETUP_LABELS, "Bc5 c3", "Nf6 d4"]);
-  });
-
-  it("looks at every earlier move of the line, not only the one before it", () => {
-    const id = addVariation("Paced", PACED_ROWS);
-    addCard("e4 e5", "Nf3", FUTURE);
-    addCard("e4 e5 Nf3 Nc6", "Bc4", FUTURE);
-    // 1.e4 is the one new move; 2.Nf3 and 3.Bc4 are known, yet every answer below them waits for it.
-    expectServed(id, ["start e4"], ["start e4", "e5 Nf3", "Nc6 Bc4"]);
-  });
-
-  it("starts a drill on exactly the moves the counts offered for its scope", async () => {
-    const id = addPacedUnit();
-    addCard(`${BC4_LINE} Nf6`, "d3", PAST, true, { intervalHours: 24 });
-    const service = boot();
-    // The setup and 4.d3 are served; the waiting 4.c3 and both 5.d4 are in no scope.
-    const offered = { recommended: 1, due: 1, all: 4 };
-    expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday())).toEqual(
-      offered,
-    );
-    for (const scope of ["recommended", "due", "all"] as const) {
-      expect(drillOf(await start(service, id, scope)).moves_left).toBe(offered[scope]);
-    }
-  });
-
-  it("introduces a new unit one move a session, the earliest of its line first, then waits out the day", async () => {
-    const id = addVariation("Classical", ITALIAN_ROWS);
-    const service = boot();
-    for (const san of ["e4", "Nf3", "Bc4", "c3", "d4"]) {
-      let state = await start(service, id, "recommended");
-      expect(drillOf(state)).toMatchObject({ first_pass: true, answer: { san }, moves_left: 1 });
-      // The first pass shows the move and the second asks it again, which is what rates it.
-      state = await next(service, await play(service, state, san));
-      state = await next(service, await play(service, state, san));
-      expect(drillOf(state).result).toEqual({ practised: 1, first_try_right: 1 });
-    }
-
-    // 4.d3 waits for 4.c3, its sibling, to be stable, and then for the day's five to pass.
-    expect(servedBy(id, "all")).not.toContain("Nf6 d3");
-    setCardInterval(`${BC4_LINE} Bc5`, "c3", STABLE_HOURS);
-    expect(servedBy(id, "all")).not.toContain("Nf6 d3");
-    now = new Date(T0.getTime() + 25 * HOUR_MS);
-    expect(servedBy(id, "all")).toContain("Nf6 d3");
-  });
-
-  describe("the limit of new moves in a day", () => {
-    // Setup, 4.c3 and the 5.d4 against 4...d6 are known and stable, so two new moves are free to
-    // enter: 4.d3, the likelier, and the 5.d4 against 4...Nf6.
-    const KNOWN_MOVES = [
-      { line: "", san: "e4", label: "start e4" },
-      { line: "e4 e5", san: "Nf3", label: "e5 Nf3" },
-      { line: "e4 e5 Nf3 Nc6", san: "Bc4", label: "Nc6 Bc4" },
-      { line: `${BC4_LINE} Bc5`, san: "c3", label: "Bc5 c3" },
-      { line: `${BC4_LINE} Bc5 c3 d6`, san: "d4", label: "d6 d4" },
-    ];
-    const LINE_ORDER = ["start e4", "e5 Nf3", "Nc6 Bc4", "Bc5 c3", "Nf6 d3", "Nf6 d4", "d6 d4"];
-
-    // One card per entry of `hoursAgo`, introduced that long before now, on the first moves of
-    // KNOWN_MOVES.
-    function addUnitKnownSince(hoursAgo: number[]): { id: number; known: string[] } {
-      const id = addVariation("Limited", PACED_ROWS);
-      const known = KNOWN_MOVES.slice(0, hoursAgo.length);
-      for (const [index, move] of known.entries()) {
-        const hours = hoursAgo[index] as number;
-        addCard(move.line, move.san, FUTURE, true, {
-          intervalHours: STABLE_HOURS,
-          introducedAt: new Date(T0.getTime() - hours * HOUR_MS).toISOString(),
-        });
-      }
-      return { id, known: known.map((move) => move.label) };
-    }
-
-    it.each([
-      { introduced: [1, 1, 1, 1], enters: ["Nf6 d3"] },
-      { introduced: [1, 1, 1, 1, 1], enters: [] },
-      { introduced: [23, 23, 23, 23, 25], enters: ["Nf6 d3"] },
-      { introduced: [25, 25, 25, 25, 25], enters: ["Nf6 d3", "Nf6 d4"] },
-    ])(
-      "with cards introduced $introduced hours ago, serves $enters of the new moves",
-      ({ introduced, enters }) => {
-        const { id, known } = addUnitKnownSince(introduced);
-        const all = LINE_ORDER.filter((move) => known.includes(move) || enters.includes(move));
-        expectServed(id, enters, all);
-      },
-    );
-
-    // No move of the Italian's, so a drill of it covers none of the day's cards.
-    const QUEENS_GAMBIT_ROWS: FixtureRow[] = [
-      ["", "d4", 1],
-      ["d4", "d5", 1],
-      ["d4 d5", "c4", 1],
-    ];
-
-    it("counts the cards of every unit, so a drill of another unit serves no new move past the limit", async () => {
-      addUnitKnownSince([1, 1, 1, 1, 1]);
-      const queens = addVariation("Queen's Gambit", QUEENS_GAMBIT_ROWS, "Queen's Pawn Game");
-      const service = boot();
-
-      for (const scope of ["recommended", "due", "all"] as const) {
-        await expect(start(service, queens, scope)).rejects.toMatchObject({ code: "empty_queue" });
-      }
-      expect(
-        repertoireScopeCounts(listRepertoireDrillMoves(db, queens), now, introducedToday()),
-      ).toEqual({ recommended: 0, due: 0, all: 0 });
-
-      // A day on, the five have left the window and 1.d4 enters.
-      now = new Date(T0.getTime() + 25 * HOUR_MS);
-      expect(drillOf(await start(service, queens, "due"))).toMatchObject({
-        answer: { san: "d4" },
-        moves_left: 1,
-      });
+    expectServed(id, order, order);
+    expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now)).toEqual({
+      recommended: 10,
+      due: 30,
+      all: 30,
     });
+
+    const service = boot();
+    for (const [scope, served] of [
+      ["all", 30],
+      ["due", 30],
+      ["recommended", 10],
+    ] as const) {
+      expect(drillOf(await start(service, id, scope)).moves_left).toBe(served);
+      expect(drawnLabels(id)).toEqual(order.slice(0, served));
+    }
+  });
+
+  it("serves a new move together with the new moves that lead to it", () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    const all = [...SETUP_LABELS, "Bc5 c3", "Nf6 d3", "Nf6 d4"];
+    expectServed(id, all, all);
+  });
+
+  it("serves two new answers to one position, after two different replies, in one drill of due", async () => {
+    const id = addVariation("Siblings", SIBLING_ROWS);
+    addCards(SETUP_ROWS, () => false);
+    expectServed(id, ["Bc5 c3", "Nf6 d3"], [...SETUP_LABELS, "Bc5 c3", "Nf6 d3"]);
+
+    const service = boot();
+    let state = await start(service, id, "due");
+    expect(drillOf(state)).toMatchObject({
+      first_pass: true,
+      answer: { san: "c3" },
+      moves_left: 2,
+    });
+    state = await next(service, await play(service, state, "c3"));
+    expect(drillOf(state)).toMatchObject({
+      first_pass: true,
+      answer: { san: "d3" },
+      moves_left: 2,
+    });
+  });
+
+  it("serves a new answer beside a sibling whose card is short of stable", () => {
+    const id = addVariation("Siblings", SIBLING_ROWS);
+    addCards(SETUP_ROWS, () => false);
+    addCard(`${BC4_LINE} Nf6`, "d3", PAST, true, { intervalHours: 24 });
+    expectServed(id, ["Bc5 c3", "Nf6 d3"], [...SETUP_LABELS, "Bc5 c3", "Nf6 d3"]);
+  });
+
+  it("serves the new moves of a unit however many cards were shown in the last hour", async () => {
+    const id = addFanUnit(15);
+    const hourAgo = new Date(T0.getTime() - HOUR_MS).toISOString();
+    // The setup and 4.d3 against the nine likeliest replies: twelve cards shown in the last hour,
+    // none due, so the six moves left are the only ones a drill of due has.
+    const shown: [string, string][] = [
+      ["", "e4"],
+      ["e4 e5", "Nf3"],
+      ["e4 e5 Nf3 Nc6", "Bc4"],
+      ...FAN_REPLIES.slice(0, 9).map((reply): [string, string] => [`${BC4_LINE} ${reply}`, "d3"]),
+    ];
+    for (const [lineText, san] of shown) {
+      addCard(lineText, san, FUTURE, true, { introducedAt: hourAgo });
+    }
+    const shownLastHour = db
+      .prepare("SELECT COUNT(*) AS n FROM repertoire_cards WHERE introduced_at > ?")
+      .get(new Date(T0.getTime() - 2 * HOUR_MS).toISOString()) as { n: number };
+    expect(shownLastHour.n).toBe(12);
+
+    const newMoves = FAN_REPLIES.slice(9, 15).map((reply) => `${reply} d3`);
+    expectServed(id, newMoves, fanLabels(15));
+
+    const service = boot();
+    expect(drillOf(await start(service, id, "due")).moves_left).toBe(6);
+    expect(drawnLabels(id)).toEqual(newMoves);
   });
 });
 
@@ -969,8 +894,8 @@ describe("a repertoire drill", () => {
 
   it("shows a new move with its answer on its first pass and rates it only on a later one", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
-    // The setup is known, so 4.c3 is the one new move a recommended drill takes.
-    addCards(SETUP_ROWS, () => false);
+    // Every other move is known and not due, so 4.c3 is the one move a recommended drill takes.
+    addCardsAllButC3();
     const afterBc5 = "e4 e5 Nf3 Nc6 Bc4 Bc5";
     const service = boot();
     let state = await start(service, id, "recommended");
@@ -1472,8 +1397,8 @@ describe("recording the first attempts of a repertoire drill", () => {
 
   it("writes no row for a move shown with its answer, and one when a later pass rates it", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
-    // The setup is known, so 4.c3 is the one new move a recommended drill takes.
-    addCards(SETUP_ROWS, () => false);
+    // Every other move is known and not due, so 4.c3 is the one move a recommended drill takes.
+    addCardsAllButC3();
     const service = boot();
     let state = await start(service, id, "recommended");
     expect(drillOf(state).first_pass).toBe(true);
@@ -2030,10 +1955,9 @@ describe("merging the moves of several variations", () => {
     ]);
   });
 
-  // The pacing reads the moves a drill covers: where two variations answer one position
-  // differently, the answers are siblings in a drill over both, and a drill over one never sees the
-  // other's.
-  it("paces the answers of two variations to one position as siblings only where a drill covers both", () => {
+  // Where two variations answer one position differently, a drill over both serves both answers and
+  // a drill over one serves its own.
+  it("serves the new answers of two variations to one position together where a drill covers both", () => {
     const classical = addVariation(CLASSICAL, CLASSICAL_ROWS);
     const pianissimo = addVariation(PIANISSIMO, PIANISSIMO_ROWS);
     addCards(SETUP_ROWS, () => false);
@@ -2041,30 +1965,18 @@ describe("merging the moves of several variations", () => {
       variation: findDrillRepertoire(db, id) as NonNullable<ReturnType<typeof findDrillRepertoire>>,
       moves: listRepertoireDrillMoves(db, id),
     }));
-    const dueInGroup = (): string[][] =>
-      selectRepertoireDrillMoves(
-        mergeRepertoireUnitMoves(units),
-        "due",
-        now,
-        introducedToday(),
-      ).map((move) => [label(move), move.variation.variation_name]);
 
-    // Both new at equal reach: the older variation's 4.c3 enters and 4.d3 waits.
-    expect(dueInGroup()).toEqual([["Bc5 c3", CLASSICAL]]);
-    expect(servedBy(pianissimo, "due")).toEqual(["Bc5 d3"]);
-
-    // 4.c3 shown but not stable: 4.d3 waits in the group, while its own variation still serves it.
-    addCard("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3", PAST, true, { intervalHours: 24 });
-    for (const unit of units) unit.moves = listRepertoireDrillMoves(db, unit.variation.id);
-    expect(dueInGroup()).toEqual([["Bc5 c3", CLASSICAL]]);
-    expect(servedBy(pianissimo, "due")).toEqual(["Bc5 d3"]);
-
-    setCardInterval("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3", STABLE_HOURS);
-    for (const unit of units) unit.moves = listRepertoireDrillMoves(db, unit.variation.id);
-    expect(dueInGroup()).toEqual([
+    expect(
+      selectRepertoireDrillMoves(mergeRepertoireUnitMoves(units), "due", now).map((move) => [
+        label(move),
+        move.variation.variation_name,
+      ]),
+    ).toEqual([
       ["Bc5 c3", CLASSICAL],
       ["Bc5 d3", PIANISSIMO],
     ]);
+    expect(servedBy(classical, "due")).toEqual(["Bc5 c3"]);
+    expect(servedBy(pianissimo, "due")).toEqual(["Bc5 d3"]);
   });
 });
 
@@ -2178,12 +2090,11 @@ describe("a drill over a group or a side", () => {
 describe("a rebuild's copy of a unit", () => {
   const AFTER_BC5_TEXT = "e4 e5 Nf3 Nc6 Bc4 Bc5";
 
-  // The unit answers 3...Bc5 with 4.c3, every card due and the sibling of 4.d3 stable, so nothing
-  // holds a new 4.d3 back; the copy a rebuild is walking already answers 4.d3, which has no card.
+  // The unit answers 3...Bc5 with 4.c3 and every card is due; the copy a rebuild is walking already
+  // answers 4.d3, which has no card.
   function addUnitAndCopy(): { classical: number; copy: number } {
     const classical = addVariation(CLASSICAL, CLASSICAL_ROWS);
     addCards(CLASSICAL_ROWS);
-    setCardInterval(AFTER_BC5_TEXT, "c3", STABLE_HOURS);
     const copy = addVariation(
       PIANISSIMO,
       PIANISSIMO_ROWS,
@@ -2235,15 +2146,16 @@ describe("a rebuild's copy of a unit", () => {
     }
   });
 
-  it("makes no card from a move only the copy stores, so the day's new moves never count one", async () => {
+  it("makes no card from a move only the copy stores", async () => {
     const { classical, copy } = addUnitAndCopy();
     // Nothing of the unit is due: the copy's new 4.d3 would be the one move a side drill serves.
     db.prepare("UPDATE repertoire_cards SET next_review_at = ?").run(FUTURE);
+    const cardsBefore = db.prepare("SELECT COUNT(*) AS n FROM repertoire_cards").get();
     const service = boot();
     expect(await code(startAt(service, classical, "due", "side"))).toBe("empty_queue");
     expect(await code(startAt(service, copy, "all", "variation"))).toBe("empty_queue");
     expect(cardOf(AFTER_BC5_TEXT, "d3")).toBeUndefined();
-    expect(introducedToday()).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM repertoire_cards").get()).toEqual(cardsBefore);
   });
 });
 
@@ -2327,10 +2239,9 @@ describe("a drill over the units found in games", () => {
     alekhine = addFoundUnit(ALEKHINE_MODERN, ALEKHINE_ROWS, ALEKHINE_GROUP, 2);
     addMetGame(["e4", "d5", "exd5"], 2, italian);
     addMetGame(["e4", "Nf6", "e5"], 2, italian);
-    // 1.e4 and 2.exd5 are known and stable, 2.e5 is new: its sibling 2.exd5 has a card that no
-    // longer holds it back.
-    addCard("", "e4", PAST, true, { intervalHours: STABLE_HOURS });
-    addCard("e4 d5", "exd5", PAST, true, { intervalHours: STABLE_HOURS });
+    // 1.e4 and 2.exd5 are known and due, and 2.e5 has no card, so it is new and due too.
+    addCard("", "e4", PAST);
+    addCard("e4 d5", "exd5", PAST);
   });
 
   const foundLeft = async (service: ActivityService, scope: RepertoireScope): Promise<number> =>
@@ -2393,13 +2304,13 @@ describe("a drill over the units found in games", () => {
   });
 
   it("serves exactly the moves the counts offered for its scope, whichever unit it starts from", async () => {
-    addCard("e4 Nf6", "e5", FUTURE, true, { intervalHours: STABLE_HOURS });
+    addCard("e4 Nf6", "e5", FUTURE);
     const service = boot();
     const units = [scandinavian, alekhine].map((id) => ({
       variation: findDrillRepertoire(db, id) as NonNullable<ReturnType<typeof findDrillRepertoire>>,
       moves: listRepertoireDrillMoves(db, id),
     }));
-    const offered = repertoireScopeCounts(mergeRepertoireUnitMoves(units), now, introducedToday());
+    const offered = repertoireScopeCounts(mergeRepertoireUnitMoves(units), now);
     // 2.e5 is known and not due, so it is in all and not in due.
     expect(offered).toEqual({ recommended: 2, due: 2, all: 3 });
     for (const scope of ["recommended", "due", "all"] as const) {
@@ -2411,60 +2322,16 @@ describe("a drill over the units found in games", () => {
   it("refuses a found drill started from a unit that is not found in games", async () => {
     const service = boot();
     expect(await code(startAt(service, italian, "all", "found"))).toBe("empty_queue");
-    // The Italian's own level still serves its moves: 1.e4 and 2.Nf3, with 3.Bc4 and 4.c3 behind
-    // the new 2.Nf3.
-    expect(drillOf(await startAt(service, italian, "all", "variation")).moves_left).toBe(2);
+    // The Italian's own level still serves its moves: 1.e4, 2.Nf3, 3.Bc4 and 4.c3.
+    expect(drillOf(await startAt(service, italian, "all", "variation")).moves_left).toBe(4);
   });
 
   it("serves nothing for a found drill while no unit was built from a met opening", async () => {
     db.prepare("DELETE FROM repertoire_game_reviews").run();
     const service = boot();
     expect(await code(startAt(service, scandinavian, "all", "found"))).toBe("empty_queue");
-    // The side's drill still covers the three units: 1.e4, 2.exd5 and one of the new sibling moves.
-    expect(drillOf(await startAt(service, scandinavian, "all", "side")).moves_left).toBe(3);
-  });
-
-  it("paces the new moves of two found units as siblings, one at a time", async () => {
-    const service = boot();
-    // 2.e5 is new and its sibling 2.exd5 holds a stable card: 2.e5 enters.
-    expect(await foundLeft(service, "due")).toBe(3);
-
-    // Shown but not stable, 2.e5 holds back every other new sibling, though 2.exd5 has its card.
-    db.prepare("DELETE FROM repertoire_cards").run();
-    addCard("", "e4", PAST, true, { intervalHours: STABLE_HOURS });
-    addCard("e4 Nf6", "e5", PAST, true, { intervalHours: 24 });
-    expect(await foundLeft(service, "all")).toBe(2);
-    // 2.exd5 is new and waits for 2.e5: the likeliest sibling is the one with the card.
-    expect(await foundLeft(service, "due")).toBe(2);
-
-    setCardInterval("e4 Nf6", "e5", STABLE_HOURS);
-    expect(await foundLeft(service, "due")).toBe(3);
-  });
-
-  it("counts the cards of every unit toward the day's limit, the Italian's included", async () => {
-    const hourAgo = new Date(T0.getTime() - HOUR_MS).toISOString();
-    // 1.e4 is the found units' card too: four cards from the Italian's unit and one of another line
-    // fill the day, so no new move of the found units enters until a day has passed.
-    for (const [line, san] of [
-      ["", "e4"],
-      ["e4 e5", "Nf3"],
-      ["e4 e5 Nf3 Nc6", "Bc4"],
-      ["e4 e5 Nf3 Nc6 Bc4 Bc5", "c3"],
-      ["e4 e5 Nf3 Nc6 Bc4 Bc5", "d3"],
-    ] as const) {
-      db.prepare("DELETE FROM repertoire_cards WHERE position_key = ? AND move_uci = ?").run(
-        placeOf(line, san).positionKey,
-        placeOf(line, san).uci,
-      );
-      addCard(line, san, PAST, true, { intervalHours: STABLE_HOURS, introducedAt: hourAgo });
-    }
-    const service = boot();
-    expect(introducedToday()).toBe(5);
-    expect(await foundLeft(service, "all")).toBe(2);
-
-    now = new Date(T0.getTime() + 25 * HOUR_MS);
-    expect(introducedToday()).toBe(0);
-    expect(await foundLeft(service, "all")).toBe(3);
+    // The side's drill still covers the three units: 1.e4, 2.Nf3, 3.Bc4, 4.c3, 2.exd5 and 2.e5.
+    expect(drillOf(await startAt(service, scandinavian, "all", "side")).moves_left).toBe(6);
   });
 
   it("starts from the start_training command's found level, in a frame the page accepts", async () => {
@@ -2518,7 +2385,7 @@ describe("a drill over the units found in games", () => {
 describe("pinning the line drill rules that stayed green under mutation", () => {
   it("keeps a new move's answer and first pass flag after a wrong try on its first pass", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
-    addCards(SETUP_ROWS, () => false);
+    addCardsAllButC3();
     const service = boot();
     let state = await start(service, id, "recommended");
     expect(drillOf(state)).toMatchObject({ first_pass: true, answer: { san: "c3" } });
@@ -2561,37 +2428,6 @@ describe("pinning the line drill rules that stayed green under mutation", () => 
     expect(drillOf(state).opening_name).toBe("Italian Game");
   });
 
-  it("serves no new move in any scope once six cards were introduced with two sibling groups new", async () => {
-    const id = addVariation("Paced", PACED_ROWS);
-    const hourAgo = new Date(T0.getTime() - HOUR_MS).toISOString();
-    const stableRecent = { intervalHours: STABLE_HOURS, introducedAt: hourAgo };
-    for (const [lineText, san] of [
-      ["", "e4"],
-      ["e4 e5", "Nf3"],
-      ["e4 e5 Nf3 Nc6", "Bc4"],
-      ["e4 e5 Nf3 Nc6 Bc4 Bc5", "c3"],
-      ["e4 e5 Nf3 Nc6 Bc4 Bc5 c3 d6", "d4"],
-    ] as [string, string][]) {
-      addCard(lineText, san, FUTURE, true, stableRecent);
-    }
-    addCard("d4 d5", "c4", FUTURE, true, stableRecent);
-    expect(introducedToday()).toBe(6);
-
-    expect(servedBy(id, "all")).not.toContain("Nf6 d3");
-    expect(servedBy(id, "all")).not.toContain("Nf6 d4");
-    expect(servedBy(id, "due")).toEqual([]);
-    expect(servedBy(id, "recommended")).toEqual([]);
-    expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday())).toEqual(
-      { recommended: 0, due: 0, all: 5 },
-    );
-
-    const service = boot();
-    for (const scope of ["recommended", "due"] as const) {
-      await expect(start(service, id, scope)).rejects.toMatchObject({ code: "empty_queue" });
-    }
-    expect(drillOf(await start(service, id, "all")).moves_left).toBe(5);
-  });
-
   it("asks the move the pass's line plays where two variations part in one position", async () => {
     const d4Rows: FixtureRow[] = [
       ...SETUP_ROWS,
@@ -2608,7 +2444,7 @@ describe("pinning the line drill rules that stayed green under mutation", () => 
     const classical = addVariation("ClassicalD4", d4Rows);
     addVariation("PianissimoD3", d3Rows);
     addCards(SETUP_ROWS, () => false);
-    addCard(`${BC4_LINE} Bc5`, "c3", FUTURE, true, { intervalHours: STABLE_HOURS });
+    addCard(`${BC4_LINE} Bc5`, "c3", FUTURE);
     addCard(`${BC4_LINE} Bc5 c3 Nf6`, "d4", PAST);
     addCard(`${BC4_LINE} Bc5`, "d3", PAST);
 
@@ -2765,7 +2601,7 @@ describe("showing a line drill move's stored idea after the answer", () => {
 
   it("carries the new move's idea when it is shown with its answer", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
-    addCards(SETUP_ROWS, () => false);
+    addCardsAllButC3();
     const afterBc5 = "e4 e5 Nf3 Nc6 Bc4 Bc5";
     setIdea(afterBc5, "c3", "Prepare d4.");
     const service = boot();
@@ -2806,9 +2642,7 @@ const addBlackCards = (rows: FixtureRow[] = BLACK_ROWS): void =>
 const pathLabel = (move: RepertoireDrillMove): string => [...move.line, move.san].join(" ");
 
 const servedLines = (id: number, scope: RepertoireScope): string[] =>
-  selectRepertoireDrillMoves(listRepertoireDrillMoves(db, id), scope, now, introducedToday()).map(
-    pathLabel,
-  );
+  selectRepertoireDrillMoves(listRepertoireDrillMoves(db, id), scope, now).map(pathLabel);
 
 function fenAfter(sans: string[]): string {
   const board = new Chess();
@@ -2840,7 +2674,7 @@ describe("a repertoire drill of a Black unit", () => {
     expect(drillOf(state)).toMatchObject({
       first_pass: true,
       answer: { uci: "c7c6", san: "c6" },
-      moves_left: 1,
+      moves_left: 4,
     });
     const run = db.prepare("SELECT color FROM training_runs").get();
     expect(run).toEqual({ color: "black" });
@@ -3056,32 +2890,16 @@ describe("a repertoire drill of a Black unit", () => {
   });
 
   describe("the moves each scope serves", () => {
-    it("serves only the move the pacing admits for all, due and recommended while none has a card", () => {
+    it("serves every move of a unit with no card for all, due and recommended", () => {
       const id = addBlackUnit();
-      // Both first moves of Black's answer the start, so they are siblings and the likelier, 1...c6
-      // against 1.e4, goes first; its follow-up and the other line wait behind it.
       for (const scope of ["all", "due", "recommended"] as const) {
-        expect(servedLines(id, scope)).toEqual(["e4 c6"]);
+        expect(servedLines(id, scope)).toEqual(BLACK_MOVE_LINES);
       }
-      expect(
-        repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday()),
-      ).toEqual({
-        recommended: 1,
-        due: 1,
-        all: 1,
+      expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now)).toEqual({
+        recommended: 4,
+        due: 4,
+        all: 4,
       });
-    });
-
-    it("lets the pacing admit the next moves of the line as the cards of those before it appear", () => {
-      const id = addBlackUnit();
-      // 1...c6 is known but short of stable: its follow-up enters, and the other first move waits
-      // behind its sibling.
-      addCard("e4", "c6", PAST, true, { intervalHours: 24 });
-      expect(servedLines(id, "all")).toEqual(["e4 c6", "e4 c6 d4 d5"]);
-      expect(servedLines(id, "due")).toEqual(["e4 c6", "e4 c6 d4 d5"]);
-
-      setCardInterval("e4", "c6", STABLE_HOURS);
-      expect(servedLines(id, "all")).toEqual(["e4 c6", "e4 c6 d4 d5", "d4 d5"]);
     });
 
     it("serves every move of the unit for all and due, and for recommended, once every move has a card that is due", () => {
@@ -3090,9 +2908,7 @@ describe("a repertoire drill of a Black unit", () => {
       expect(servedLines(id, "all")).toEqual(BLACK_MOVE_LINES);
       expect(servedLines(id, "due")).toEqual(BLACK_MOVE_LINES);
       expect(servedLines(id, "recommended")).toEqual(BLACK_MOVE_LINES);
-      expect(
-        repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday()),
-      ).toEqual({
+      expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now)).toEqual({
         recommended: 4,
         due: 4,
         all: 4,
@@ -3105,9 +2921,7 @@ describe("a repertoire drill of a Black unit", () => {
       expect(servedLines(id, "all")).toEqual(BLACK_MOVE_LINES);
       expect(servedLines(id, "due")).toEqual(BLACK_MOVE_LINES.slice(0, 3));
       expect(servedLines(id, "recommended")).toEqual(BLACK_MOVE_LINES.slice(0, 3));
-      expect(
-        repertoireScopeCounts(listRepertoireDrillMoves(db, id), now, introducedToday()),
-      ).toEqual({
+      expect(repertoireScopeCounts(listRepertoireDrillMoves(db, id), now)).toEqual({
         recommended: 3,
         due: 3,
         all: 4,
