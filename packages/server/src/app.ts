@@ -16,6 +16,7 @@ import {
 } from "./http/openings.js";
 import { registerProgressRoutes } from "./http/progress.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
+import { registerRepertoireImportRoutes } from "./http/repertoire-import.js";
 import { type RepertoireRebuildState, registerRepertoireRoutes } from "./http/repertoires.js";
 import { registerRoutineRoutes } from "./http/routine.js";
 import { type Log, silentLog } from "./log.js";
@@ -31,6 +32,7 @@ import {
 import { NO_OPENING_NAMES, type OpeningNames } from "./openings/names.js";
 import type { RepertoireIdeasResult } from "./openings/repertoire-ideas.js";
 import { type HubOptions, MAX_FRAME_BYTES, registerHub } from "./ws/hub.js";
+import { allowedOriginsFrom } from "./ws/origin.js";
 
 export interface Readiness {
   ready: boolean;
@@ -41,6 +43,11 @@ export interface AppOptions {
   readiness?: () => Readiness;
   hub?: HubOptions;
   db?: Database;
+  /**
+   * The origins a request that changes the repertoire must come from, which are the socket's:
+   * `CHESS_COACH_ALLOWED_ORIGINS`, or the dev server's two, when absent.
+   */
+  allowedOrigins?: readonly string[];
   /** Names the opening of each game from its positions; without it no game carries one. */
   openingNames?: OpeningNames;
   /** The book's branch points in the Italian, which the openings menu offers new variations at. */
@@ -129,6 +136,11 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       names: options.openingNames ?? NO_OPENING_NAMES,
       book: options.repertoireBranches ?? NO_REPERTOIRE_BRANCH_BOOK,
       rebuilding,
+    });
+    registerRepertoireImportRoutes(app, {
+      db: options.db,
+      allowedOrigins: options.allowedOrigins ?? allowedOriginsFrom(),
+      log,
     });
     registerRoutineRoutes(app, options.db);
     if (options.importer) {
