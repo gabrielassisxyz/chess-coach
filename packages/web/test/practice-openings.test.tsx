@@ -11,6 +11,8 @@ import {
   PracticeOpenings,
   type PracticeOpeningsProps,
 } from "../src/components/PracticeOpenings.js";
+import type { ServerApi } from "../src/hooks/useServer.js";
+import { Practice } from "../src/screens/Practice.js";
 import {
   figureValuesOf,
   openingMetaText,
@@ -19,6 +21,9 @@ import {
   trainButtonOf,
 } from "../src/state/openings-page.js";
 import { NONE } from "../src/state/practice.js";
+import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
+import { initialChatState } from "../src/state/transcript.js";
+import { openPracticePage } from "./practice-fixtures.js";
 
 afterEach(cleanup);
 
@@ -757,6 +762,181 @@ describe("the page's view of the answer", () => {
     });
   });
 });
+
+// A Black opening as a stored Black unit lists it: the Caro-Kann against 1.e4, with one variation.
+const caroKann: RepertoireSummary = {
+  id: 8,
+  side: "black",
+  group_name: "Caro-Kann Defense",
+  variation_name: "Advance Variation (3.e5)",
+  moves: { recommended: 3, due: 4, all: 6 },
+  moves_total: 6,
+  remembered_30d: { right: 3, of: 4 },
+  in_line: { stayed: 5, of: 8 },
+  covered_percent: null,
+  line: null,
+};
+const caroKannGroup: RepertoireGroupSummary = {
+  side: "black",
+  group_name: "Caro-Kann Defense",
+  moves: { recommended: 3, due: 4, all: 6 },
+  moves_total: 6,
+  remembered_30d: { right: 3, of: 4 },
+  in_line: { stayed: 5, of: 8 },
+  covered_percent: null,
+  line: "1.e4 c6",
+};
+const sicilianGroup: RepertoireGroupSummary = {
+  side: "black",
+  group_name: "Sicilian Defense",
+  moves: { recommended: 4, due: 6, all: 12 },
+  moves_total: 12,
+  remembered_30d: { right: 0, of: 0 },
+  in_line: { stayed: 0, of: 0 },
+  covered_percent: null,
+  line: "1.e4 c5",
+};
+
+// Only Black holds a stored opening, so every card on the page is a Black one.
+const blackOnly = (overrides: Partial<RepertoiresResponse> = {}): RepertoiresResponse =>
+  answer({
+    repertoires: [caroKann],
+    groups: [caroKannGroup],
+    sides: [{ side: "black", moves: { recommended: 3, due: 4, all: 6 } }],
+    ...overrides,
+  });
+
+describe("a Black opening", () => {
+  it("draws a card with its five cells and a Train button in the Black section, and no sentence that says Black has no line", async () => {
+    renderPage(blackOnly());
+    const black = await section("Black");
+    const opening = within(black).getByRole("article", { name: "Caro-Kann Defense" });
+    expect(within(opening).getByText("1 variation · 1.e4 c6")).toBeTruthy();
+    expect(cardCells(opening)).toEqual([
+      ["Moves", "6"],
+      ["Due now", "4"],
+      ["Remembered, 30 days", "75%"],
+      ["In line · 5 of 8 games", ""],
+      ["Coverage", NONE],
+    ]);
+    expect(
+      within(opening).getByRole("button", { name: "Train 3, Caro-Kann Defense" }).textContent,
+    ).toBe("Train 3");
+    expect(within(black).getByText("1 opening · 4 due")).toBeTruthy();
+    expect(within(black).queryByText(/No Black line yet/)).toBeNull();
+    expect(screen.queryByText(/No Black line yet/)).toBeNull();
+    expect(within(black).queryByRole("button", { name: "Add an opening…" })).toBeNull();
+    // White holds none and says so, whatever Black holds.
+    expect(within(await section("White")).getByText("No opening is stored yet.")).toBeTruthy();
+  });
+
+  it("starts the drill of that unit from the card's Train, from its row's and from the menu of the card", async () => {
+    const { onStart } = renderPage(blackOnly());
+    const opening = await card("Caro-Kann Defense");
+    fireEvent.click(within(opening).getByRole("button", { name: "Train 3, Caro-Kann Defense" }));
+    expect(onStart).toHaveBeenLastCalledWith(8, "recommended", "group");
+
+    fireEvent.click(
+      within(opening).getByRole("button", { name: "More ways to train, Caro-Kann Defense" }),
+    );
+    fireEvent.click(within(opening).getByRole("button", { name: "All moves 6" }));
+    expect(onStart).toHaveBeenLastCalledWith(8, "all", "group");
+
+    fireEvent.click(within(opening).getByRole("button", { name: "Caro-Kann Defense" }));
+    expect(cellsOf(opening.querySelector(".opening-row__cells"))).toEqual([
+      ["Moves", "6"],
+      ["Due now", "4"],
+      ["Remembered, 30 days", "75%"],
+      ["In line · 5 of 8 games", ""],
+      ["Coverage", NONE],
+    ]);
+    fireEvent.click(
+      within(opening).getByRole("button", { name: "Train 3, Advance Variation (3.e5)" }),
+    );
+    // A variation names no level, so the call carries two arguments.
+    expect(onStart).toHaveBeenLastCalledWith(8, "recommended");
+    expect(onStart.mock.lastCall).toHaveLength(2);
+  });
+
+  it("offers Train all for the colour once Black holds two openings, started from the first variation of the side", async () => {
+    const { onStart } = renderPage(
+      blackOnly({
+        repertoires: [caroKann, sicilian],
+        groups: [caroKannGroup, sicilianGroup],
+        sides: [{ side: "black", moves: { recommended: 7, due: 10, all: 18 } }],
+      }),
+    );
+    const black = await section("Black");
+    expect(within(black).getByText("2 openings · 10 due")).toBeTruthy();
+    fireEvent.click(
+      within(black).getByRole("button", { name: "Train all · 7, every Black opening" }),
+    );
+    expect(onStart).toHaveBeenLastCalledWith(8, "recommended", "side");
+  });
+
+  it("sends start_training for that unit as a repertoire drill when the hub's Openings page presses the card's Train", async () => {
+    const send = vi.fn(() => true);
+    const pending = () => new Promise<never>(() => {});
+    render(
+      <Practice
+        server={hubServer(send)}
+        fetchProgress={pending}
+        fetchRepertoires={pending}
+        fetchRepertoireList={async () => blackOnly()}
+        fetchOpeningPuzzles={pending}
+        fetchRatingHistory={pending}
+        fetchFoundPositions={pending}
+        fetchThemeStats={pending}
+        fetchOpeningsPlayed={pending}
+        fetchHealth={pending}
+      />,
+    );
+    openPracticePage("Openings");
+    const opening = await card("Caro-Kann Defense");
+    fireEvent.click(within(opening).getByRole("button", { name: "Train 3, Caro-Kann Defense" }));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenLastCalledWith({
+      type: "start_training",
+      mode: "repertoire",
+      repertoire_id: 8,
+      scope: "recommended",
+      level: "group",
+    });
+  });
+});
+
+// The hub reads the page it opens from the browser's storage, which would open the next test on it.
+afterEach(() => {
+  window.localStorage.removeItem(PRACTICE_PAGE_STORAGE_KEY);
+});
+
+function hubServer(send: ServerApi["send"]): ServerApi {
+  return {
+    items: [],
+    permissions: [],
+    lastError: null,
+    errorCount: 0,
+    lastErrorCode: null,
+    turn: "idle",
+    localCount: 0,
+    cardsCreated: {},
+    coachMessages: 0,
+    lastMessageAt: null,
+    tab: "play",
+    conversations: initialChatState.conversations,
+    newConversation: vi.fn(() => true),
+    practiceReplyPending: false,
+    practiceEndedItem: null,
+    analysis: null,
+    reconnectAttempt: 0,
+    activity: null,
+    connection: "connected",
+    say: vi.fn(() => true),
+    approve: vi.fn(),
+    dismissError: vi.fn(),
+    send,
+  };
+}
 
 describe("its stylesheet", () => {
   const read = (path: string): string => readFileSync(join(import.meta.dirname, path), "utf8");
