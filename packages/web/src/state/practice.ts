@@ -281,6 +281,9 @@ export function startFailureText(
 ): string {
   // A repertoire start carries its scope where a puzzle start carries its motif.
   if (code === "empty_queue" && mode === "repertoire") {
+    if (motif === "missed") {
+      return "No move of this opening has been missed often enough lately. Choose All moves to practise it anyway.";
+    }
     return motif === "all"
       ? "This opening holds no move yet."
       : "No move of this opening is due right now. Choose All moves to practise it anyway.";
