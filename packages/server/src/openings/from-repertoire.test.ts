@@ -541,6 +541,7 @@ describe("the repertoire tables", () => {
       "points_soundness",
       "points_learnability",
       "branch_san",
+      "origin",
     ]);
     expect(columnsOf("repertoire_positions")).toEqual([
       "id",
@@ -661,16 +662,20 @@ describe("the repertoire tables", () => {
     ]);
   });
 
+  // A move read from a PGN file carries neither figure, so the table asks for neither.
   it.each([
     { missing: "centipawn loss", cpLoss: null, evalCp: 25 },
     { missing: "evaluation", cpLoss: 10, evalCp: null },
   ])(
-    "refuses a White move without its $missing and allows a reply without either",
+    "allows a White move without its $missing, and a reply without either",
     ({ cpLoss, evalCp }) => {
       const { id } = italianVariation("A");
-      expect(() => insertRawPosition(id, "own", cpLoss, evalCp)).toThrow(/CHECK/);
+      insertRawPosition(id, "own", cpLoss, evalCp);
       insertRawPosition(id, "reply", null, null);
-      expect(rowsOf(db).map((row) => row.kind)).toEqual(["reply"]);
+      expect(rowsOf(db).map((row) => [row.kind, row.cp_loss, row.eval_cp])).toEqual([
+        ["own", cpLoss, evalCp],
+        ["reply", null, null],
+      ]);
     },
   );
 

@@ -1,13 +1,16 @@
+import type { RepertoireOrigin } from "@chess-coach/shared";
 import type { Database } from "./open.js";
 import { deleteRepertoireCardsNoVariationPlays } from "./repertoire-cards.js";
 import { endTrainingRun } from "./training.js";
 
 export type RepertoireSide = "white" | "black";
 /**
- * How a move entered a variation: fixed by the opening, popular in the explorer, the engine's, or
- * a reply stored past the coverage goal because it is the most played one there.
+ * How a move entered a variation: fixed by the opening, popular in the explorer, the engine's, a
+ * reply stored past the coverage goal because it is the most played one there, added by a game the
+ * student played, or read from a PGN file. The column has no check, so this union is the one list of
+ * the values; `CoverageSourceSchema` in shared names the same six, and a test holds them together.
  */
-export type RepertoireMoveSource = "setup" | "explorer" | "engine" | "mainline";
+export type RepertoireMoveSource = "setup" | "explorer" | "engine" | "mainline" | "game" | "pgn";
 
 export interface RepertoireRow {
   id: number;
@@ -63,9 +66,10 @@ export interface RepertoireResultCounts {
 }
 
 export interface NewRepertoireOwnMove extends NewRepertoireMove {
-  cpLoss: number;
-  /** The position after the move, in centipawns from White's side; a mate is 10000. */
-  evalCp: number;
+  /** Centipawns lost against the engine's best; null for a move no engine measured, as one read from a PGN file. */
+  cpLoss: number | null;
+  /** The position after the move, in centipawns from White's side; a mate is 10000. Null where no engine measured it. */
+  evalCp: number | null;
   /** How deep the engine looked for `evalCp` and `cpLoss`; null, or left out, when it is not known. */
   evalDepth?: number | null;
   results: RepertoireResultCounts | null;
@@ -514,7 +518,8 @@ export function raiseRepertoireOwnMoveReach(
 }
 
 // Shallowest plies first: a run cut short by the subscription's limit leaves the moves the student
-// meets earliest with an idea already, and a rerun carries on from the rest.
+// meets earliest with an idea already, and a rerun carries on from the rest. A move with no stored
+// evaluation, as one read from a PGN file has none, is no target: the text is written from it.
 export function listWhiteMovesLackingIdea(db: Database): RepertoireIdeaTarget[] {
   const rows = db
     .prepare(
@@ -531,17 +536,23 @@ export function listWhiteMovesLackingIdea(db: Database): RepertoireIdeaTarget[] 
     line_san: string;
     move_san: string;
     move_uci: string;
-    eval_cp: number;
+    eval_cp: number | null;
   }>;
-  return rows.map((row) => ({
-    id: row.id,
-    variationName: row.variation_name,
-    ply: row.ply,
-    line: JSON.parse(row.line_san) as string[],
-    san: row.move_san,
-    uci: row.move_uci,
-    evalCp: row.eval_cp,
-  }));
+  return rows.flatMap((row) =>
+    row.eval_cp === null
+      ? []
+      : [
+          {
+            id: row.id,
+            variationName: row.variation_name,
+            ply: row.ply,
+            line: JSON.parse(row.line_san) as string[],
+            san: row.move_san,
+            uci: row.move_uci,
+            evalCp: row.eval_cp,
+          },
+        ],
+  );
 }
 
 // Never overwrites: a text already stored stays, whoever wrote it. Returns whether this call wrote.
@@ -728,6 +739,17 @@ export function findRepertoireBuild(db: Database, repertoireId: number): StoredR
     points,
     branch: row.branch_san === null ? null : (JSON.parse(row.branch_san) as string[]),
   };
+}
+
+/**
+ * Where a variation came from, read back from its row. A unit nobody stored reads as generated,
+ * which is what every unit was before the column existed.
+ */
+export function findRepertoireOrigin(db: Database, repertoireId: number): RepertoireOrigin {
+  const row = db.prepare("SELECT origin FROM repertoires WHERE id = ?").get(repertoireId) as
+    | { origin: RepertoireOrigin }
+    | undefined;
+  return row?.origin ?? "generated";
 }
 
 /** Gives one variation the points and branch of another: what a rebuild's new rows were built with. */

@@ -21,6 +21,17 @@ function databaseBefore027(): BetterSqlite3.Database {
   return opened;
 }
 
+// The migrations up to and including 027, so that a column a later one adds to repertoires is not
+// read as 027's doing.
+function migrationsThrough027(): string {
+  const dir = join(tmp, "through-027");
+  mkdirSync(dir);
+  for (const name of readdirSync(defaultMigrationsDir)) {
+    if (name < "028") cpSync(join(defaultMigrationsDir, name), join(dir, name));
+  }
+  return dir;
+}
+
 const variations = (): unknown[] => db.prepare("SELECT * FROM repertoires ORDER BY id").all();
 
 interface ColumnInfo {
@@ -59,7 +70,7 @@ describe("027_repertoire_points_and_branch", () => {
     const before = variations();
     expect(before).toHaveLength(2);
 
-    expect(runMigrations(db, defaultMigrationsDir)).toContain(
+    expect(runMigrations(db, migrationsThrough027())).toContain(
       "027_repertoire_points_and_branch.sql",
     );
 
@@ -75,7 +86,7 @@ describe("027_repertoire_points_and_branch", () => {
 
   it("adds four nullable columns at the end and changes no other column", () => {
     const before = columnsOfRepertoires();
-    runMigrations(db, defaultMigrationsDir);
+    runMigrations(db, migrationsThrough027());
     const after = columnsOfRepertoires();
     const nullable = { notnull: 0, dflt_value: null };
     expect(after.slice(0, before.length)).toEqual(before);

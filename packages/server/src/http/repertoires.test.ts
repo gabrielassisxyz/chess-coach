@@ -269,6 +269,62 @@ describe("GET /api/repertoires: what each unit was built with and from", () => {
   });
 });
 
+// A unit as an import of a PGN file stores it: marked `pgn`, its moves from the file and none of
+// them carrying a centipawn loss or an evaluation.
+function addImportedUnit(): number {
+  const line = ["d4", "d5", "Bf4", "Nf6", "e3"];
+  const { id } = createRepertoireVariation(db, {
+    side: "white",
+    groupName: "London System",
+    variationName: "Main line",
+  });
+  db.prepare("UPDATE repertoires SET origin = 'pgn' WHERE id = ?").run(id);
+  line.forEach((san, index) => {
+    const row = {
+      repertoireId: id,
+      ...placeOf(line.slice(0, index), san),
+      ply: index + 1,
+      line: line.slice(0, index),
+      reach: 1,
+      openingName: null,
+      san,
+      share: null,
+      source: "pgn" as const,
+    };
+    if (index % 2 === 1) upsertRepertoireReply(db, row);
+    else insertRepertoireOwnMove(db, { ...row, cpLoss: null, evalCp: null, results: null });
+  });
+  return id;
+}
+
+describe("GET /api/repertoires: where each unit came from", () => {
+  it("returns generated for a unit the builder stored and pgn for one read from a file", async () => {
+    const built = addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+    const imported = addImportedUnit();
+
+    const response = await getRepertoires();
+
+    expect(response.statusCode).toBe(200);
+    const listed = RepertoiresResponseSchema.parse(response.json()).repertoires;
+    expect(listed.map(({ id, origin }) => ({ id, origin }))).toEqual([
+      { id: built, origin: "generated" },
+      { id: imported, origin: "pgn" },
+    ]);
+  });
+
+  it("lists a unit whose moves carry no figures with its moves counted", async () => {
+    const imported = addImportedUnit();
+
+    const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
+
+    expect(body.repertoires.find((entry) => entry.id === imported)).toMatchObject({
+      side: "white",
+      group_name: "London System",
+      moves_total: 3,
+    });
+  });
+});
+
 describe("GET /api/repertoires at the group and side levels", () => {
   it("counts each group and each side with a move two variations share counted once", async () => {
     addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
