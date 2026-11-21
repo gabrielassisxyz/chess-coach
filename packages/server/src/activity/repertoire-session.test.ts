@@ -816,6 +816,16 @@ describe("the most missed moves of a repertoire drill", () => {
     expect(mostMissedOf(id)).toEqual(["Be7 d3", "Nc6 Bc4", "start e4", "h6 d3"]);
   });
 
+  it("breaks a tie in misses by line order, whatever order the moves are stored in", () => {
+    // The fan unit stores its rows the least likely first, so the order of storage is not line order.
+    const id = addFanUnit(4);
+    for (const reply of ["Be7", "Bc5", "d6"]) {
+      logRatings(`${BC4_LINE} ${reply}`, "d3", 2, daysBefore(2));
+    }
+
+    expect(mostMissedOf(id)).toEqual(["Bc5 d3", "Be7 d3", "d6 d3"]);
+  });
+
   it("leaves out a move missed twice 31 days ago and never since, and one missed once", () => {
     const id = addVariation("Wide", WIDE_ROWS);
     addCards(WIDE_ROWS);

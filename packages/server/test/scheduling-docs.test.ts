@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  REPERTOIRE_MISSED_MIN_MISSES,
+  REPERTOIRE_MISSED_SIZE,
+  REPERTOIRE_MISSED_WINDOW_DAYS,
+} from "../src/activity/repertoire-session.js";
 
 const repositoryRoot = join(import.meta.dirname, "../../..");
 const read = (...path: string[]): string => readFileSync(join(repositoryRoot, ...path), "utf8");
@@ -77,6 +82,28 @@ describe("the documentation of how cards are scheduled", () => {
     expect(drill).toContain("the scopes select from every move of the level");
     expect(drill).not.toContain("REPERTOIRE_SIBLING_STABLE_HOURS");
     expect(drill).not.toMatch(/sibling|held back/i);
+  });
+
+  it("says in the Repertoire drill entry what the missed scope serves, in which order and how many, with the numbers of its constants", () => {
+    const drill = flat(/- \*\*Repertoire drill:\*\*[\s\S]*?(?=\n- \*\*)/.exec(agents)?.[0] ?? "");
+
+    expect(drill).toContain("`missed` the moves the student missed most");
+    expect(drill).toContain(
+      `its card has ${REPERTOIRE_MISSED_MIN_MISSES} or more rows in \`drill_reviews\``,
+    );
+    expect(drill).toContain("`card_kind = 'repertoire'`, `grade = 1`");
+    expect(drill).toContain(`within the ${REPERTOIRE_MISSED_WINDOW_DAYS} days before the start`);
+    expect(drill).toContain("ordered by that count descending and then by line order");
+    expect(drill).toContain(`at most ${REPERTOIRE_MISSED_SIZE} (`);
+    for (const name of [
+      "REPERTOIRE_MISSED_MIN_MISSES",
+      "REPERTOIRE_MISSED_WINDOW_DAYS",
+      "REPERTOIRE_MISSED_SIZE",
+    ]) {
+      expect(drill).toContain(`\`${name}\``);
+    }
+    expect(drill).toContain("a right first attempt on a card not yet due keeps its schedule");
+    expect(drill).toContain("refused with `empty_queue` before any run is written or replaced");
   });
 
   it("names the grades as the desk's suggestion and the drills' ratings, never a quality", () => {

@@ -2815,6 +2815,107 @@ describe("the train buttons at each level", () => {
       level: "side",
     });
   });
+
+  // The same listing with moves missed twice or more lately at each level.
+  const missedListing = (): RepertoiresResponse =>
+    levelListing({
+      repertoires: levelDrills.map((entry) =>
+        entry.id === 4 ? { ...entry, moves: { ...entry.moves, missed: 3 } } : entry,
+      ),
+      groups: [
+        {
+          side: "white",
+          group_name: "Italian Game",
+          moves: { recommended: 10, due: 18, all: 45, missed: 6 },
+        },
+        {
+          side: "white",
+          group_name: "Scandinavian Defense",
+          moves: { recommended: 4, due: 6, all: 12 },
+        },
+      ],
+      sides: [{ side: "white", moves: { recommended: 10, due: 22, all: 55, missed: 9 } }],
+    });
+
+  // A start in flight disables every button of the page, so each entry is pressed on a page of its own.
+  async function pressMostMissed(
+    chevron: (white: HTMLElement) => Promise<HTMLElement>,
+    entry: string,
+  ): Promise<ServerApi> {
+    const server = api(null);
+    const view = render(
+      <Practice server={server} {...hubProps} fetchRepertoireList={async () => missedListing()} />,
+    );
+    openPracticePage("Openings");
+    const white = await whiteOpenings();
+    fireEvent.click(await chevron(white));
+    fireEvent.click(await screen.findByRole("button", { name: entry }));
+    view.unmount();
+    return server;
+  }
+
+  it("sends Most missed from a colour, an opening and a variation with the level and id the other entries send", async () => {
+    const side = await pressMostMissed(
+      async (white) =>
+        within(white).getByRole("button", { name: "More ways to train, every White opening" }),
+      "Most missed 9",
+    );
+    expect(side.send).toHaveBeenLastCalledWith({
+      type: "start_training",
+      mode: "repertoire",
+      repertoire_id: 3,
+      scope: "missed",
+      level: "side",
+    });
+
+    const group = await pressMostMissed(
+      async (white) =>
+        within(await within(white).findByRole("article", { name: "Italian Game" })).getByRole(
+          "button",
+          { name: "More ways to train, Italian Game" },
+        ),
+      "Most missed 6",
+    );
+    expect(group.send).toHaveBeenLastCalledWith({
+      type: "start_training",
+      mode: "repertoire",
+      repertoire_id: 3,
+      scope: "missed",
+      level: "group",
+    });
+
+    const variation = await pressMostMissed(async (white) => {
+      const italian = await within(white).findByRole("article", { name: "Italian Game" });
+      fireEvent.click(within(italian).getByRole("button", { name: "Italian Game" }));
+      return within(italian).getByRole("button", { name: `More ways to train, ${PIANISSIMO}` });
+    }, "Most missed 3");
+    expect(variation.send).toHaveBeenLastCalledWith({
+      type: "start_training",
+      mode: "repertoire",
+      repertoire_id: 4,
+      scope: "missed",
+    });
+  });
+
+  it("explains a refused Most missed start as no move missed often enough, not as nothing due", async () => {
+    const server = api(null);
+    const props = { ...hubProps, fetchRepertoireList: async () => missedListing() };
+    const view = render(<Practice server={server} {...props} />);
+    openPracticePage("Openings");
+    const italian = await screen.findByRole("article", { name: "Italian Game" });
+    fireEvent.click(
+      within(italian).getByRole("button", { name: "More ways to train, Italian Game" }),
+    );
+    fireEvent.click(within(italian).getByRole("button", { name: "Most missed 6" }));
+
+    view.rerender(
+      <Practice server={{ ...server, errorCount: 1, lastErrorCode: "empty_queue" }} {...props} />,
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("has been missed often enough lately");
+    expect(alert.textContent).not.toContain("is due right now");
+  });
 });
 
 const EVANS = "Evans Gambit (4.b4)";
