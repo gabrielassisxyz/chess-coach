@@ -144,6 +144,16 @@ function CoverageCard({ children }: { children: ReactNode }) {
   );
 }
 
+// A line read from a PGN file stores no engine figure for the walk to read, so its coverage is not
+// measured: the card says so and asks the server for nothing.
+export function PracticeImportedLineCoverage() {
+  return (
+    <CoverageCard>
+      <p className="line-card__note">Coverage is not measured for an imported line.</p>
+    </CoverageCard>
+  );
+}
+
 // What the line covers, read from its stored moves when its page opens, and again after each
 // rebuild: the page remounts this card then, so it never shows moves a rebuild has replaced.
 export function PracticeLineCoverage({

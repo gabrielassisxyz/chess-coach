@@ -83,6 +83,25 @@ const scandinavian: RepertoireSummary = {
   branch: null,
 };
 
+// A line read from a PGN file: no root, no branch and no points, and the oldest of its group, which
+// is what made the generated line that posts neither look rebuildable.
+const imported: RepertoireSummary = {
+  id: 12,
+  side: "white",
+  group_name: "London System",
+  variation_name: "London System: Main Line",
+  origin: "pgn",
+  moves: { recommended: 4, due: 6, all: 30 },
+  moves_total: 30,
+  remembered_30d: { right: 3, of: 5 },
+  in_line: { stayed: 2, of: 4 },
+  covered_percent: null,
+  line: null,
+  points: null,
+  root: null,
+  branch: null,
+};
+
 const italianGroup: RepertoireGroupSummary = {
   side: "white",
   group_name: "Italian Game",
@@ -956,6 +975,134 @@ describe("a line that cannot be told from the first of its group", () => {
   });
 });
 
+describe("the page of a line imported from a PGN file", () => {
+  const IMPORTED_STYLE_TEXT =
+    "Imported from a PGN file. To change this line, import the file again.";
+  const IMPORTED_COVERAGE_TEXT = "Coverage is not measured for an imported line.";
+  const NOT_REBUILDABLE_SENTENCE =
+    "This line was stored before its branch was recorded, so it cannot be rebuilt from here.";
+
+  const londonGroup: RepertoireGroupSummary = {
+    side: "white",
+    group_name: "London System",
+    moves: { recommended: 4, due: 6, all: 30 },
+  };
+  const listedImported = (): RepertoiresResponse =>
+    answer({ repertoires: [imported], groups: [londonGroup] });
+  const openImported = (props: Partial<PracticeOpeningsProps> = {}) =>
+    renderLine({ listed: listedImported(), open: imported.id, props });
+
+  // Lets the effects of the page that just drew run, so that a request they would send is sent.
+  const settled = (): Promise<void> => act(async () => {});
+
+  it("is never rebuildable from here, in whatever place of its group, and nothing changes for a generated line", () => {
+    const newer: RepertoireSummary = { ...imported, id: 15 };
+    expect(rebuildNamesLine(imported, [imported])).toBe(false);
+    expect(rebuildNamesLine(imported, [imported, newer])).toBe(false);
+    expect(rebuildNamesLine(newer, [imported, newer])).toBe(false);
+
+    const generated: RepertoireSummary = { ...imported, origin: "generated" };
+    const newerGenerated: RepertoireSummary = { ...generated, id: 15 };
+    expect(rebuildNamesLine(generated, [generated])).toBe(true);
+    expect(rebuildNamesLine({ ...imported, origin: undefined }, [imported])).toBe(true);
+    expect(rebuildNamesLine(newerGenerated, [generated, newerGenerated])).toBe(false);
+  });
+
+  it("says in the style card that the line came from a PGN file, with no steppers, no rebuild and none of the builder's sentences", async () => {
+    const rebuildLine = vi.fn<RebuildLine>(async () => ({ truncated: false }));
+    openImported({ rebuildLine });
+    const page = await pageOf(imported.variation_name);
+    await settled();
+    const card = styleOf(page);
+
+    expect(card.textContent).toBe(`Style of this line${IMPORTED_STYLE_TEXT}`);
+    expect(pointsOf(card)).toEqual([]);
+    expect(within(card).queryAllByRole("button")).toEqual([]);
+    expect(within(page).queryByRole("button", { name: /^Rebuild/ })).toBeNull();
+    expect(within(page).queryAllByRole("button", { name: /points for/ })).toEqual([]);
+    const text = page.textContent ?? "";
+    expect(text).not.toContain(NOT_REBUILDABLE_SENTENCE);
+    expect(text).not.toContain("built before style points");
+    expect(text).not.toContain("Changing the points changes the moves only after a rebuild.");
+    expect(text).not.toContain("left to place");
+    expect(rebuildLine).not.toHaveBeenCalled();
+  });
+
+  it("says in the Coverage card that coverage is not measured for it, with no loading, no failure and no way to try again", async () => {
+    openImported();
+    const page = await pageOf(imported.variation_name);
+    await settled();
+    const card = coverageOf(page);
+
+    expect(card.textContent).toBe(`Coverage${IMPORTED_COVERAGE_TEXT}`);
+    expect(within(card).queryAllByRole("button")).toEqual([]);
+    expect(within(card).queryByRole("alert")).toBeNull();
+    const text = page.textContent ?? "";
+    expect(text).not.toContain("Nothing is stored for this variation yet.");
+    expect(text).not.toContain("Loading the coverage.");
+    expect(text).not.toContain("The coverage could not be loaded.");
+  });
+
+  it("asks the server for no coverage, whether the page opens at once or from its row in the list", async () => {
+    const direct = openImported();
+    await pageOf(imported.variation_name);
+    await settled();
+    expect(direct.fetchCoverage).not.toHaveBeenCalled();
+    cleanup();
+
+    const fromList = renderLine({ listed: listedImported(), open: null });
+    const london = await screen.findByRole("article", { name: "London System" });
+    fireEvent.click(within(london).getByRole("button", { name: "London System" }));
+    fireEvent.click(within(london).getByRole("button", { name: imported.variation_name }));
+    await pageOf(imported.variation_name);
+    await settled();
+    expect(fromList.fetchCoverage).not.toHaveBeenCalled();
+  });
+
+  it("keeps its Train button and its five tiles working as for any line, the coverage tile holding the dash", async () => {
+    const { onStart } = openImported();
+    const page = await pageOf(imported.variation_name);
+    expect(tilesOf(page)).toEqual([
+      ["Moves in the line", "30"],
+      ["Due now", "6"],
+      ["Remembered in 30 days", "3 of 5"],
+      ["In line", "2 of 4 games"],
+      ["Coverage", NONE],
+    ]);
+    expect(page.querySelector(".line-page__line")).toBeNull();
+    fireEvent.click(
+      within(page).getByRole("button", { name: `Train 4, ${imported.variation_name}` }),
+    );
+    expect(onStart).toHaveBeenCalledWith(12, "recommended");
+  });
+
+  it("leaves a line marked generated, and one with no origin, with its style card, its rebuild and its coverage", async () => {
+    const rebuildLine = vi.fn<RebuildLine>(async () => ({ truncated: false }));
+    const generated: RepertoireSummary = { ...pianissimo, origin: "generated" };
+    const { fetchCoverage } = renderLine({
+      listed: answer({ repertoires: [generated, twoKnights] }),
+      props: { rebuildLine },
+    });
+    const page = await pageOf();
+    const card = styleOf(page);
+    expect(card.querySelector(".line-style__built")?.textContent).toBe("built with 2 · 2 · 2");
+    expect(pointsOf(card)).toEqual(["2", "2", "2"]);
+    expect(isDisabled(rebuildButton(card))).toBe(false);
+    expect(await within(coverageOf(page)).findByText(/^expected score/)).toBeTruthy();
+    expect(fetchCoverage).toHaveBeenCalledTimes(1);
+    expect(fetchCoverage).toHaveBeenCalledWith(4);
+    expect(card.textContent).not.toContain(IMPORTED_STYLE_TEXT);
+    expect(page.textContent).not.toContain(IMPORTED_COVERAGE_TEXT);
+
+    fireEvent.click(rebuildButton(card));
+    await within(card).findByText("The line is rebuilt.");
+    expect(rebuildLine).toHaveBeenCalledWith(
+      { root: null, branch: null },
+      { effectiveness: 2, soundness: 2, learnability: 2 },
+    );
+  });
+});
+
 describe("a page opened while the line is being rebuilt", () => {
   it("shows the being-rebuilt line and the rebuild out of reach when the list names the variation", async () => {
     const { onStart } = renderLine({ listed: answer({ rebuilding_id: 4 }) });
@@ -1245,6 +1392,25 @@ describe("what the project records about the page", () => {
           text.includes("page of one line"),
       );
     expect(paragraph).toBeDefined();
+    expect(paragraph).toContain("Phone column");
+    expect(paragraph).toContain("M1 and M2");
+    expect(paragraph).toContain("test/practice-line.test.tsx");
+  });
+
+  it("records the two sentences of an imported line's page in the Practice column of the design check", () => {
+    const check = record("../DESIGN-CHECK.md");
+    const paragraph = check
+      .split("\n\n")
+      .map((text) => text.replace(/\s+/g, " "))
+      .find(
+        (text) =>
+          text.startsWith("The Practice column was re-checked") && text.includes("imported line"),
+      );
+    expect(paragraph).toBeDefined();
+    expect(paragraph).toContain(
+      "Imported from a PGN file. To change this line, import the file again.",
+    );
+    expect(paragraph).toContain("Coverage is not measured for an imported line.");
     expect(paragraph).toContain("Phone column");
     expect(paragraph).toContain("M1 and M2");
     expect(paragraph).toContain("test/practice-line.test.tsx");
