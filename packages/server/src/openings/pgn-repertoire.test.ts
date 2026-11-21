@@ -182,7 +182,7 @@ describe("2. reading the text into one tree", () => {
 
   it("reads a text with a byte order mark and CRLF line ends as the same text", () => {
     const text = '[Event "a"]\n\n1. e4 {why} e5 ; note\n2. Nf3 *';
-    const windows = `﻿${text.replaceAll("\n", "\r\n")}`;
+    const windows = `${String.fromCharCode(0xfeff)}${text.replaceAll("\n", "\r\n")}`;
     expect(read(windows)).toEqual(read(text));
   });
 

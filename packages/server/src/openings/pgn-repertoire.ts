@@ -92,7 +92,10 @@ const START_KEY = positionKey(new Chess().fen());
 type PgnToken = { line: number } & (
   | { kind: "header"; name: string }
   | { kind: "comment"; text: string; braced: boolean }
-  | { kind: "open" | "close" | "word" | "error"; text: string }
+  | { kind: "open" }
+  | { kind: "close" }
+  | { kind: "word"; text: string }
+  | { kind: "error"; text: string }
 );
 
 // Alternatives in priority order, the group that matched naming the token. The last one takes any
@@ -124,8 +127,8 @@ function tokenOf(groups: Record<string, string | undefined>, line: number): PgnT
     return { kind: "comment", text: groups.brace, braced: true, line };
   if (groups.semi !== undefined) return { kind: "comment", text: groups.semi, braced: false, line };
   if (groups.tag !== undefined) return { kind: "header", name: groups.tag, line };
-  if (groups.open !== undefined) return { kind: "open", text: "(", line };
-  if (groups.close !== undefined) return { kind: "close", text: ")", line };
+  if (groups.open !== undefined) return { kind: "open", line };
+  if (groups.close !== undefined) return { kind: "close", line };
   if (groups.word !== undefined) return { kind: "word", text: groups.word, line };
   if (groups.stray === undefined) return null;
   const message = STRAY_MESSAGES[groups.stray] ?? "an unexpected character";
@@ -133,8 +136,7 @@ function tokenOf(groups: Record<string, string | undefined>, line: number): PgnT
 }
 
 // Yields a token as soon as it is read, so a problem further on never hides what came before it.
-function* scanPgn(source: string): Generator<PgnToken> {
-  const text = source.replace(/^﻿/, "");
+function* scanPgn(text: string): Generator<PgnToken> {
   const pattern = new RegExp(PGN_TOKEN);
   let line = 1;
   while (pattern.lastIndex < text.length) {
@@ -464,7 +466,7 @@ function readWeights(text: string): WeightsTable {
       table.errors.push({ code: "invalid_weights", message, line });
     }
   };
-  const lines = text.replace(/^﻿/, "").split("\n");
+  const lines = text.split("\n");
   const headerAt = lines.findIndex((line) => line.trim() !== "");
   const names = (lines[headerAt] ?? "").split("\t").map((name) => name.trim());
   const missing = (["reach", "loss_cp", "line"] as const).filter((name) => !names.includes(name));
