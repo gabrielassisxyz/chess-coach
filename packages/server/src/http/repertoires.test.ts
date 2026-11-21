@@ -323,6 +323,29 @@ describe("GET /api/repertoires: where each unit came from", () => {
       moves_total: 3,
     });
   });
+
+  it("gives an imported unit and its opening no covered share, though their moves and attempts are counted", async () => {
+    const built = addVariation("Classical Variation (4.c3)", [["Bc5", "c3"]]);
+    const imported = addImportedUnit();
+    insertRepertoireFirstAttempt(
+      db,
+      { ...placeOf([], "d4"), repertoireId: imported, correct: true },
+      new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    );
+
+    const body = RepertoiresResponseSchema.parse((await getRepertoires()).json());
+
+    const unit = body.repertoires.find((entry) => entry.id === imported);
+    const opening = body.groups?.find((entry) => entry.group_name === "London System");
+    for (const figures of [unit, opening]) {
+      expect(figures).toMatchObject({
+        moves_total: 3,
+        remembered_30d: { right: 1, of: 1 },
+        covered_percent: null,
+      });
+    }
+    expect(body.repertoires.find((entry) => entry.id === built)?.covered_percent).toBe(100);
+  });
 });
 
 describe("GET /api/repertoires at the group and side levels", () => {
@@ -940,6 +963,22 @@ describe("GET /api/repertoires/:id/coverage", () => {
         message: "no such repertoire",
       });
     }
+  });
+
+  it("answers 409 for an imported unit, which lists only the replies it answers, and reads none of its rows", async () => {
+    addVariationWithGap();
+    const imported = addImportedUnit();
+    const app = buildApp({ db });
+    const prepared = vi.spyOn(db, "prepare");
+
+    const response = await getCoverage(app, imported);
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "imported_unit", message: expect.any(String) });
+    expect(RepertoireCoverageSchema.safeParse(response.json()).success).toBe(false);
+    expect(
+      prepared.mock.calls.filter(([sql]) => String(sql).includes("repertoire_positions")),
+    ).toEqual([]);
   });
 
   it("serves the coverage without asking the network, the explorer or the engine", async () => {
