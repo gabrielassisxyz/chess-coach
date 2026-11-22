@@ -6,8 +6,10 @@ import type { Database } from "../db/open.js";
 import { rateRepertoireCardFromGame } from "../db/repertoire-cards.js";
 import {
   findFirstRepertoireVariation,
+  listImportedRepertoireUnits,
   listRepertoireUnitRoots,
   type RepertoireRow,
+  type RepertoireSide,
   repertoireCounts,
 } from "../db/repertoires.js";
 import type { Searcher } from "../engine/uci.js";
@@ -32,10 +34,13 @@ import {
   type GameVerdict,
   type GameWalk,
   gameVerdictOf,
+  type ImportedUnitForWalk,
+  importedGameVerdictOf,
   type RootedUnit,
   repertoireLookupOf,
   repertoireStartPly,
   walkGameAgainstRepertoire,
+  walkLongestFollowedImportedUnit,
   walkLongestFollowedUnit,
 } from "./repertoire-review-walk.js";
 
@@ -118,12 +123,21 @@ interface ReviewUnit extends RootedUnit {
   run: GameReviewRun;
 }
 
-/** What a game is compared with: the units whose root it can reach, and the Italian where it reaches none. */
+interface ImportedReviewEntry extends ImportedUnitForWalk {
+  run: GameReviewRun;
+}
+
+/**
+ * What a game is compared with: imported units per colour first, then generated units with the
+ * Italian fallback where no imported unit followed the student's first move.
+ */
 interface GameReviewRoster {
-  /** Shared by every unit, so a run counts its requests and cache hits together. */
+  db: Database;
+  /** Shared by every generated unit, so a run counts its requests and cache hits together. */
   explorer: CachedExplorer;
-  fallback: GameReviewRun;
+  fallback: GameReviewRun | null;
   units: ReviewUnit[];
+  imported: Record<RepertoireSide, ImportedReviewEntry[]>;
 }
 
 function planOfVerdict(
@@ -207,6 +221,36 @@ async function planGameReview(
     ...plan,
     outcome: unanswered ? "reply_not_stored" : plan.outcome,
     addition,
+    notification,
+  };
+}
+
+function planImportedGameReview(
+  run: GameReviewRun,
+  game: GameRecord,
+  moves: readonly MoveRecord[],
+  walk: GameWalk,
+): GameReviewPlan {
+  const verdict = importedGameVerdictOf(walk);
+  const plan = planOfVerdict(run, walk, verdict, moves);
+  const notification = run.deps.notifications
+    ? repertoireReviewNotice({
+        gameId: game.id,
+        group: run.variation.group_name,
+        variation: run.variation.variation_name,
+        origin: "pgn",
+        moves,
+        followed: walk.followed,
+        openingName: plan.openingName,
+        verdict,
+        addition: null,
+        names: run.sources.names,
+      })
+    : null;
+  return {
+    ...plan,
+    outcome: verdict.kind === "reply_missing" ? "reply_not_stored" : plan.outcome,
+    addition: null,
     notification,
   };
 }
@@ -340,24 +384,32 @@ function writeGameReview(
   })();
 }
 
-// Compares one graded game with the unit it reached and applies what it shows, once: the student's
-// moves that match are rated as passed, the move they replaced is rated as failed, and a Black
-// reply the unit lacks is stored with White's answer. Only the unit chosen is planned and written:
-// choosing is a walk over stored rows, where a plan asks the explorer and the engine. A game that
-// reaches no unit's root is written against the Italian, as not reached. Null when it was reviewed
-// before, which keeps the row of a game graded before its unit existed as it was.
+// Compares one graded game with the imported units of the colour played first (read-only), then
+// falls back to the generated units and the Italian when no imported unit followed at least the
+// student's first move. Null when reviewed before, or when no imported unit matched and no
+// generated fallback exists.
 async function reviewGameWithin(
   roster: GameReviewRoster,
   gameId: number,
 ): Promise<GameReviewResult | null> {
-  const { fallback } = roster;
-  const { db } = fallback.deps;
+  const { db } = roster;
   const game = getGame(db, gameId);
   if (!game || isGameReviewed(db, gameId)) return null;
+  const moves = listMoves(db, gameId);
+  const importedMatch = walkLongestFollowedImportedUnit(
+    moves,
+    roster.imported[game.playerColor],
+    game.playerColor,
+  );
+  if (importedMatch) {
+    const plan = planImportedGameReview(importedMatch.unit.run, game, moves, importedMatch.walk);
+    return writeGameReview(importedMatch.unit.run, game, plan);
+  }
+  const { fallback } = roster;
+  if (!fallback) return null;
   if (game.playerColor !== fallback.variation.side) {
     return writeGameReview(fallback, game, otherSidePlan());
   }
-  const moves = listMoves(db, gameId);
   const chosen = walkLongestFollowedUnit(moves, roster.units);
   const run = chosen?.unit.run ?? fallback;
   const walk = chosen?.walk ?? walkGameAgainstRepertoire(moves, run.sources.lookup);
@@ -407,11 +459,17 @@ function tally(summary: GameReviewSummary, result: GameReviewResult): void {
   if (result.notified) summary.notified += 1;
 }
 
-// Nothing to compare with until the generator has stored the Italian and its first move: it is where
-// a game that reaches no other unit is written, and the games the Black side plays.
+// Nothing to compare with until either an imported unit or the generated Italian holds moves.
 function beginRun(deps: GameReviewDeps): GameReviewRoster | null {
   const italian = findFirstRepertoireVariation(deps.db, "white", REPERTOIRE_GROUP_ITALIAN);
-  if (!italian || repertoireCounts(deps.db, italian.id).total === 0) return null;
+  const hasFallback = italian !== undefined && repertoireCounts(deps.db, italian.id).total > 0;
+  const nonEmptyImported = (side: RepertoireSide): RepertoireRow[] =>
+    listImportedRepertoireUnits(deps.db, side).filter(
+      (unit) => repertoireCounts(deps.db, unit.id).total > 0,
+    );
+  const importedWhite = nonEmptyImported("white");
+  const importedBlack = nonEmptyImported("black");
+  if (!hasFallback && importedWhite.length === 0 && importedBlack.length === 0) return null;
   const explorer = new CachedExplorer(deps.fetcher, deps.cacheDir, deps.explorerClock);
   const runOf = (variation: RepertoireRow): GameReviewRun => ({
     deps,
@@ -424,11 +482,26 @@ function beginRun(deps: GameReviewDeps): GameReviewRoster | null {
     },
     startPly: repertoireStartPly(deps.db, variation.id),
   });
-  const units = listRepertoireUnitRoots(deps.db, "white").map(({ repertoire, root }) => {
+  const importedEntryOf = (repertoire: RepertoireRow): ImportedReviewEntry => {
     const run = runOf(repertoire);
-    return { id: repertoire.id, root, lookup: run.sources.lookup, run };
-  });
-  return { explorer, fallback: runOf(italian), units };
+    return { id: repertoire.id, lookup: run.sources.lookup, run };
+  };
+  const units = hasFallback
+    ? listRepertoireUnitRoots(deps.db, "white").map(({ repertoire, root }) => {
+        const run = runOf(repertoire);
+        return { id: repertoire.id, root, lookup: run.sources.lookup, run };
+      })
+    : [];
+  return {
+    db: deps.db,
+    explorer,
+    fallback: hasFallback ? runOf(italian) : null,
+    units,
+    imported: {
+      white: importedWhite.map(importedEntryOf),
+      black: importedBlack.map(importedEntryOf),
+    },
+  };
 }
 
 /** Reviews one game; null when it was reviewed before or the repertoire is not built yet. */

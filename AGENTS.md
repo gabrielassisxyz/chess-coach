@@ -247,11 +247,19 @@
   app makes by itself leaves an imported unit out by `origin`, through `repertoireGeneratedSql`
   (`db/repertoires.ts`), and not by the missing `setup` rows, which an imported unit lacks only by
   accident: the idea writer (`listWhiteMovesLackingIdea`, the unit left out whole whatever its rows
-  hold, since its reasons are the student's to write), the game review (`listRepertoireUnitRoots`: a
-  game that follows an imported unit adds no reply and no engine answer to it, rates none of its
-  cards and is written against the Italian as not reached), the rebuild, the Italian's branch list and
+  hold, since its reasons are the student's to write), the generated-unit list of the game review
+  (`listRepertoireUnitRoots`), the rebuild, the Italian's branch list and
   the review's fallback unit (`findFirstRepertoireVariation`) and the unit a met opening names
-  (`unitsByLastRootMove`). A file lists only the replies it answers and no explorer share, so a
+  (`unitsByLastRootMove`). Game reviews compare each unreviewed graded game against the imported
+  units of the colour played first (`listImportedRepertoireUnits`,
+  `walkLongestFollowedImportedUnit`), with no ply limit, choosing the unit with the most followed
+  plies (lowest id on a tie) once it follows at least the student's first move (ply 1 for White,
+  ply 2 for Black): the review is read-only (no reply or answer added, no explorer or engine call),
+  rates followed moves as Good and a departed move as Again, writes `departed` on another stored
+  `own` move, `reply_not_stored` on an opponent move where the position stores other replies, or
+  `in_book` otherwise, notifies the coach with `origin: "pgn"`, and runs even when no generated unit
+  exists. Games that follow the student's first move of no imported unit fall through to the
+  generated units and the Italian fallback. A file lists only the replies it answers and no explorer share, so a
   coverage walk would read it as complete: in `GET /api/repertoires` `covered_percent` is null for an
   imported variation and for an opening whose variations are all imported, an opening that also holds
   generated variations walks those alone, and the moves, attempts and games are still counted for

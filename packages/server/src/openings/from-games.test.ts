@@ -10,6 +10,7 @@ import { composeServer } from "../compose.js";
 import { type PlayerColor, setGrading } from "../db/games.js";
 import { type Database, openDatabase } from "../db/open.js";
 import { insertGeneratedPuzzle, recordPuzzleAttempt } from "../db/puzzles.js";
+import { syncImportedRepertoireUnit } from "../db/repertoire-import.js";
 import { createRepertoireVariation } from "../db/repertoires.js";
 import { type Classification, classifyCpLoss } from "../engine/evaluate.js";
 import { applyUci } from "../engine/moves.js";
@@ -23,6 +24,8 @@ import { ReviewDesk } from "../srs/review.js";
 import { generateOpeningPuzzles, positionKey, puzzleId } from "./from-games.js";
 import { NO_REPERTOIRE_BRANCH_BOOK } from "./from-repertoire.js";
 import { NO_OPENING_NAMES, parseOpeningTable } from "./names.js";
+import { readPgnRepertoire } from "./pgn-repertoire.js";
+import { reviewRepertoireGame } from "./repertoire-review.js";
 
 const WHITE_ONE =
   '[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O 9. h3 Nb8 10. d4 Nbd7 1-0';
@@ -382,6 +385,50 @@ describe("generateOpeningPuzzles: which positions are found", () => {
     addReview(importGame(pgn, color, "game"), outcome, leftPly);
     await generateOpeningPuzzles(db, new FakeEngine());
     expect(foundRows()).toEqual([]);
+  });
+
+  it("stores the position after the opponent leaves an imported White line at ply 29 or earlier with from_departure set", async () => {
+    const parsed = readPgnRepertoire("1. d4 d5 2. Bf4 Nc6 3. e3 *", "white");
+    if (!parsed.moves) throw new Error("expected London fixture PGN to parse");
+    const synced = syncImportedRepertoireUnit(
+      db,
+      { side: "white", group: "London System", variation: "Main lines" },
+      parsed.moves,
+      DAY(1),
+      false,
+    );
+    expect(synced.ok).toBe(true);
+
+    const game = importGame(
+      '[Result "1-0"]\n\n1. d4 d5 2. Bf4 c5 3. e3 Nc6 4. c3 Nf6 1-0',
+      "white",
+      "london-departure",
+    );
+    const engine = new FakeEngine();
+    const explorerClock = new FakeClock();
+    const reviewed = await reviewRepertoireGame(
+      {
+        db,
+        engine,
+        fetcher: new FakeExplorer(explorerClock),
+        cacheDir: join(tmp, "explorer-cache"),
+        explorerClock,
+        names: NO_OPENING_NAMES,
+      },
+      game,
+    );
+    expect(reviewed).toMatchObject({ gameId: game, outcome: "reply_not_stored" });
+
+    await generateOpeningPuzzles(db, engine);
+    const departure = moveAt(game, 4).fen_after;
+    expect(foundRows().map((row) => row.id)).toEqual([idOf(departure)]);
+    expect(foundAt(departure)).toMatchObject({
+      from_departure: 1,
+      from_mistake: 0,
+      from_repeat: 0,
+      game_id: game,
+      ply: 5,
+    });
   });
 
   it("finds mistakes and repeats in Black games and stores them for Black", async () => {

@@ -24,6 +24,7 @@ import {
   rateRepertoireCardFromGame,
   saveRepertoireCardReview,
 } from "../db/repertoire-cards.js";
+import { syncImportedRepertoireUnit } from "../db/repertoire-import.js";
 import {
   createRepertoireVariation,
   deleteRepertoireGroupVariations,
@@ -32,6 +33,7 @@ import {
   insertRepertoireOwnMove,
   listMetOpenings,
   REPERTOIRE_REBUILD_GROUP_SUFFIX,
+  type RepertoireSide,
   upsertRepertoireReply,
 } from "../db/repertoires.js";
 import { classifyCpLoss, type PlayerMoveEvaluation } from "../engine/evaluate.js";
@@ -48,6 +50,7 @@ import {
 import { positionKey } from "./from-games.js";
 import { REPERTOIRE_SEARCH_CAP_MS } from "./from-repertoire.js";
 import { parseOpeningTable } from "./names.js";
+import { readPgnRepertoire } from "./pgn-repertoire.js";
 import {
   type GameReviewDeps,
   reviewRepertoireGame,
@@ -216,6 +219,7 @@ function forwardLines(fen: string): SearchResult["lines"] {
 class ScriptedRepertoireLookup implements RepertoireLookup {
   private readonly own = new Map<string, GameReviewStoredMove>();
   private readonly replies = new Set<string>();
+  private readonly replyPositions = new Set<string>();
 
   constructor(line: string[]) {
     for (const step of stepsOf(line)) {
@@ -229,6 +233,7 @@ class ScriptedRepertoireLookup implements RepertoireLookup {
         });
       } else {
         this.replies.add(`${step.keyBefore}|${step.uci}`);
+        this.replyPositions.add(step.keyBefore);
       }
     }
   }
@@ -239,6 +244,10 @@ class ScriptedRepertoireLookup implements RepertoireLookup {
 
   hasReplyAt(key: string, uci: string): boolean {
     return this.replies.has(`${key}|${uci}`);
+  }
+
+  hasAnyReplyAt(key: string): boolean {
+    return this.replyPositions.has(key);
   }
 }
 
@@ -1030,10 +1039,27 @@ describe("a game that reaches the root of another unit", () => {
   });
 });
 
-// A unit read from a PGN file is the student's own line: no game is compared with it, and no lookup
-// the app makes by itself lands on it. These units store setup rows, as a generated one does, so that
-// the origin alone is what keeps them out; an imported unit with none would be skipped by accident.
+// A unit read from a PGN file is the student's own line: reviews compare games against it
+// read-only (never adding rows or calling the explorer or engine), while generated-only lookups
+// still exclude it by origin.
 describe("an imported unit", () => {
+  const LONDON_LINE = [
+    "d4",
+    "d5",
+    "Bf4",
+    "Nc6",
+    "e3",
+    "e6",
+    "Nf3",
+    "Bd6",
+    "Bg3",
+    "Nf6",
+    "Nbd2",
+    "O-O",
+    "Bd3",
+  ];
+  const CARO_KANN_LINE = ["e4", "c6", "d4", "d5", "Nc3", "dxe4"];
+
   function importUnit(groupName: string, variationName: string, line: string[], rootPlies: number) {
     const id = createUnit(groupName, variationName);
     seedLine(line, 0.4, line.length, { id, rootPlies });
@@ -1041,36 +1067,455 @@ describe("an imported unit", () => {
     return id;
   }
 
-  it("is not compared with a game that follows it: no review names it, no row is added and no card is rated", async () => {
-    seedRepertoire();
-    const importedId = importUnit("Scandinavian Defense", "Imported line", SCANDINAVIAN_LINE, 2);
-    // With these answers a unit that took the game would add 3...Nf6 and 4.d4 to itself.
-    explorer
-      .write(AFTER_EXD5, EXPLORER_RATINGS, { Qxd5: 6000, Nf6: 3000, c6: 100 }, 10000)
-      .write([...AFTER_EXD5, "Nf6"], ITALIAN_WHITE_RATINGS, { d4: 700, c4: 50 }, 1000);
-    engine.write(
-      [...AFTER_EXD5, "Nf6"],
-      [
-        ["d2d4", 30],
-        ["c2c4", 10],
-      ],
+  function importPgnUnit(
+    side: RepertoireSide,
+    group: string,
+    variation: string,
+    pgn: string,
+  ): number {
+    const parsed = readPgnRepertoire(pgn, side);
+    if (!parsed.moves) throw new Error(`fixture PGN failed: ${JSON.stringify(parsed.errors)}`);
+    const synced = syncImportedRepertoireUnit(
+      db,
+      { side, group, variation },
+      parsed.moves,
+      START_TIME,
+      false,
     );
-    const rowsBefore = positionsOf().filter((row) => row.repertoire_id === importedId);
-    const id = addGame([...AFTER_EXD5, "Nf6", "d4"]);
+    if (!synced.ok) throw new Error(`fixture sync failed: ${synced.code}: ${synced.message}`);
+    return synced.summary.repertoire_id;
+  }
 
-    const result = await reviewRepertoireGame(deps(), id);
+  it("reviews the London departure with six Good grades, one Again grade and no added moves", async () => {
+    seedRepertoire();
+    const londonId = importPgnUnit(
+      "white",
+      "London System",
+      "Main lines",
+      "1. d4 d5 2. Bf4 Nc6 3. e3 e6 4. Nf3 Bd6 5. Bg3 Nf6 6. Nbd2 O-O 7. Bd3 *",
+    );
+    const positionsBefore = positionsOf();
+    const gameId = addGame([...LONDON_LINE.slice(0, 12), "c3", "Re8"]);
+
+    const result = await reviewRepertoireGame(deps(), gameId);
 
     expect(result).toMatchObject({
-      outcome: "not_reached",
-      repertoireId,
-      passed: 0,
-      failed: 0,
+      gameId,
+      repertoireId: londonId,
+      outcome: "departed",
+      passed: 6,
+      failed: 1,
       added: 0,
+      notified: true,
     });
-    expect(reviewsOf().filter((row) => row.repertoire_id === importedId)).toEqual([]);
-    expect(positionsOf().filter((row) => row.repertoire_id === importedId)).toEqual(rowsBefore);
-    expect(cardsOf()).toEqual([]);
-    expect(loggedGrades()).toEqual([]);
+    expect(reviewOf(gameId)).toMatchObject({
+      repertoire_id: londonId,
+      outcome: "departed",
+      followed_plies: 12,
+      passed_moves: 6,
+      left_ply: 13,
+      left_position_key: keyOf(LONDON_LINE.slice(0, 12)),
+      left_san: "c3",
+      left_uci: "c2c3",
+      expected_san: "Bd3",
+      expected_uci: "f1d3",
+      added_reply_id: null,
+      added_answer_id: null,
+    });
+    const grades = loggedGrades();
+    expect(grades.filter((row) => row.grade === 3)).toHaveLength(6);
+    expect(grades.filter((row) => row.grade === 1)).toHaveLength(1);
+    expect(grades.at(-1)).toEqual({
+      key: `${keyOf(LONDON_LINE.slice(0, 12))} f1d3`,
+      grade: 1,
+    });
+    expect(positionsOf()).toEqual(positionsBefore);
+    expect(explorer.calls).toEqual([]);
+    expect(engine.requests).toEqual([]);
+  });
+
+  it("records in_book, departed and reply_not_stored for a White imported unit without mutating it", async () => {
+    seedRepertoire();
+    const londonId = importPgnUnit(
+      "white",
+      "London System",
+      "Main lines",
+      "1. d4 d5 2. Bf4 Nc6 3. e3 *",
+    );
+    const positionsBefore = positionsOf();
+
+    // Game continues past the end of the stored line (no replies stored after 3. e3) -> in_book.
+    const inBookGame = addGame(["d4", "d5", "Bf4", "Nc6", "e3", "e6", "Nf3"]);
+    // Student departs at 2. c4 where 2. Bf4 is stored -> departed.
+    const departedGame = addGame(["d4", "d5", "c4", "e6"]);
+    // Opponent departs at 2... c5 where 2... Nc6 is stored -> reply_not_stored.
+    const replyMissingGame = addGame(["d4", "d5", "Bf4", "c5", "e3"]);
+
+    const summary = await reviewRepertoireGames(deps());
+
+    expect(summary.outcomes).toMatchObject({
+      in_book: 1,
+      departed: 1,
+      reply_not_stored: 1,
+      reply_added: 0,
+      not_reached: 0,
+      other_side: 0,
+    });
+    expect(summary.addedPositions).toBe(0);
+    expect(reviewOf(inBookGame)).toMatchObject({
+      repertoire_id: londonId,
+      outcome: "in_book",
+      followed_plies: 5,
+      passed_moves: 3,
+      left_ply: null,
+      left_position_key: null,
+      left_san: null,
+      left_uci: null,
+      expected_san: null,
+      expected_uci: null,
+      added_reply_id: null,
+      added_answer_id: null,
+    });
+    expect(reviewOf(departedGame)).toMatchObject({
+      repertoire_id: londonId,
+      outcome: "departed",
+      followed_plies: 2,
+      passed_moves: 1,
+      left_ply: 3,
+      left_san: "c4",
+      left_uci: "c2c4",
+      expected_san: "Bf4",
+      expected_uci: "c1f4",
+      added_reply_id: null,
+      added_answer_id: null,
+    });
+    expect(reviewOf(replyMissingGame)).toMatchObject({
+      repertoire_id: londonId,
+      outcome: "reply_not_stored",
+      followed_plies: 3,
+      passed_moves: 2,
+      left_ply: 4,
+      left_position_key: keyOf(["d4", "d5", "Bf4"]),
+      left_san: "c5",
+      left_uci: "c7c5",
+      expected_san: null,
+      expected_uci: null,
+      added_reply_id: null,
+      added_answer_id: null,
+    });
+    expect(positionsOf()).toEqual(positionsBefore);
+    expect(explorer.calls).toEqual([]);
+    expect(engine.requests).toEqual([]);
+  });
+
+  it("reviews a Black game against an imported Black unit across all three outcomes instead of other_side", async () => {
+    seedRepertoire();
+    const caroId = importPgnUnit(
+      "black",
+      "Caro-Kann Defense",
+      "Main lines",
+      "1. e4 c6 2. d4 d5 3. Nc3 dxe4 *",
+    );
+    const positionsBefore = positionsOf();
+
+    // Continues past 3... dxe4 (no replies stored after ply 6) -> in_book.
+    const inBookGame = addGame([...CARO_KANN_LINE, "Nxe4", "Bf5"], { color: "black" });
+    // Student plays 3... Bf5 where 3... dxe4 is stored -> departed.
+    const departedGame = addGame(["e4", "c6", "d4", "d5", "Nc3", "Bf5"], { color: "black" });
+    // Opponent plays 3. e5 where 3. Nc3 is stored -> reply_not_stored.
+    const replyMissingGame = addGame(["e4", "c6", "d4", "d5", "e5", "Bf5"], { color: "black" });
+    // Black plays 1... e5 (did not follow student's first move 1... c6) -> falls through to other_side.
+    const otherGame = addGame(["e4", "e5", "Nf3", "Nc6"], { color: "black" });
+
+    const summary = await reviewRepertoireGames(deps());
+
+    expect(summary.outcomes).toMatchObject({
+      in_book: 1,
+      departed: 1,
+      reply_not_stored: 1,
+      other_side: 1,
+    });
+    expect(reviewOf(inBookGame)).toMatchObject({
+      repertoire_id: caroId,
+      outcome: "in_book",
+      followed_plies: 6,
+      passed_moves: 3,
+      left_ply: null,
+      expected_san: null,
+      added_reply_id: null,
+      added_answer_id: null,
+    });
+    expect(reviewOf(departedGame)).toMatchObject({
+      repertoire_id: caroId,
+      outcome: "departed",
+      followed_plies: 5,
+      passed_moves: 2,
+      left_ply: 6,
+      left_san: "Bf5",
+      left_uci: "c8f5",
+      expected_san: "dxe4",
+      expected_uci: "d5e4",
+      added_reply_id: null,
+      added_answer_id: null,
+    });
+    expect(reviewOf(replyMissingGame)).toMatchObject({
+      repertoire_id: caroId,
+      outcome: "reply_not_stored",
+      followed_plies: 4,
+      passed_moves: 2,
+      left_ply: 5,
+      left_san: "e5",
+      left_uci: "e4e5",
+      expected_san: null,
+      expected_uci: null,
+      added_reply_id: null,
+      added_answer_id: null,
+    });
+    expect(reviewOf(otherGame)).toMatchObject({
+      repertoire_id: repertoireId,
+      outcome: "other_side",
+      followed_plies: 0,
+      passed_moves: 0,
+    });
+    expect(cardAt(["e4"], "c6")).toMatchObject({ reviews: 1 });
+    expect(cardAt(["e4", "c6", "d4"], "d5")).toMatchObject({ reviews: 1 });
+    // 3... dxe4 was passed in the first game (learning step 1), then missed in the second -> back to step 0.
+    expect(cardAt(["e4", "c6", "d4", "d5", "Nc3"], "dxe4")).toMatchObject({
+      reviews: 2,
+      fsrs_state: 1,
+      learning_step: 0,
+      interval_hours: 1 / 60,
+    });
+    expect(loggedGrades()).toEqual([
+      { key: `${keyOf(["e4"])} c7c6`, grade: 3 },
+      { key: `${keyOf(["e4", "c6", "d4"])} d7d5`, grade: 3 },
+      { key: `${keyOf(["e4", "c6", "d4", "d5", "Nc3"])} d5e4`, grade: 3 },
+      { key: `${keyOf(["e4", "c6", "d4", "d5", "Nc3"])} d5e4`, grade: 1 },
+    ]);
+    expect(positionsOf()).toEqual(positionsBefore);
+    expect(explorer.calls).toEqual([]);
+    expect(engine.requests).toEqual([]);
+  });
+
+  it("picks the imported unit with the most followed plies and breaks ties by lowest id", async () => {
+    seedRepertoire();
+    const londonId = importPgnUnit(
+      "white",
+      "London System",
+      "Main lines",
+      "1. d4 d5 2. Bf4 Nf6 3. e3 *",
+    );
+    const englundId = importPgnUnit(
+      "white",
+      "Englund Gambit",
+      "Against 1...e5",
+      "1. d4 e5 2. dxe5 Nc6 3. Nf3 *",
+    );
+    const secondLondonId = importPgnUnit(
+      "white",
+      "London System",
+      "Side lines",
+      "1. d4 d5 2. Bf4 c5 3. e3 *",
+    );
+    expect(londonId).toBeLessThan(englundId);
+    expect(englundId).toBeLessThan(secondLondonId);
+
+    const englundGame = addGame(["d4", "e5", "dxe5", "Nc6", "Nf3"]);
+    const sideLineGame = addGame(["d4", "d5", "Bf4", "c5", "e3"]);
+    // Ties between londonId and secondLondonId at 3 followed plies (1. d4 d5 2. Bf4) -> lowest id wins.
+    const tiedGame = addGame(["d4", "d5", "Bf4", "e6", "e3"]);
+
+    await reviewRepertoireGames(deps());
+
+    expect(reviewOf(englundGame)).toMatchObject({
+      repertoire_id: englundId,
+      outcome: "in_book",
+      followed_plies: 5,
+    });
+    expect(reviewOf(sideLineGame)).toMatchObject({
+      repertoire_id: secondLondonId,
+      outcome: "in_book",
+      followed_plies: 5,
+    });
+    expect(reviewOf(tiedGame)).toMatchObject({
+      repertoire_id: londonId,
+      outcome: "reply_not_stored",
+      followed_plies: 3,
+      left_ply: 4,
+      left_san: "e6",
+    });
+  });
+
+  it("walks an imported unit past ply 30 with no ply limit", async () => {
+    db.prepare("DELETE FROM repertoires").run();
+    const line36 = deepLine(36);
+    const unitId = importPgnUnit(
+      "white",
+      "Deep Opening",
+      "Past ply 30",
+      `${line36.map((san, index) => (index % 2 === 0 ? `${index / 2 + 1}. ${san}` : san)).join(" ")} *`,
+    );
+
+    const inBookGame = addGame(line36);
+    // Diverge at ply 35 (White's 18th move) with another legal move.
+    const boardBefore35 = new Chess(fenOf(line36.slice(0, 34)));
+    const altWhite = boardBefore35.moves({ verbose: true }).find((move) => move.san !== line36[34]);
+    if (!altWhite) throw new Error("expected an alternative move at ply 35");
+    const departedGame = addGame([...line36.slice(0, 34), altWhite.san]);
+
+    // Diverge at ply 32 (Black's 16th move) with another legal reply.
+    const boardBefore32 = new Chess(fenOf(line36.slice(0, 31)));
+    const altBlack = boardBefore32.moves({ verbose: true }).find((move) => move.san !== line36[31]);
+    if (!altBlack) throw new Error("expected an alternative reply at ply 32");
+    const replyMissingGame = addGame([...line36.slice(0, 31), altBlack.san]);
+
+    await reviewRepertoireGames(deps());
+
+    expect(reviewOf(inBookGame)).toMatchObject({
+      repertoire_id: unitId,
+      outcome: "in_book",
+      followed_plies: 36,
+      passed_moves: 18,
+      left_ply: null,
+    });
+    expect(reviewOf(departedGame)).toMatchObject({
+      repertoire_id: unitId,
+      outcome: "departed",
+      followed_plies: 34,
+      passed_moves: 17,
+      left_ply: 35,
+      left_san: altWhite.san,
+      expected_san: line36[34],
+    });
+    expect(reviewOf(replyMissingGame)).toMatchObject({
+      repertoire_id: unitId,
+      outcome: "reply_not_stored",
+      followed_plies: 31,
+      passed_moves: 16,
+      left_ply: 32,
+      left_san: altBlack.san,
+      expected_san: null,
+    });
+  });
+
+  it("runs in a database with no generated unit at all and leaves non-matching games unreviewed", async () => {
+    db.prepare("DELETE FROM repertoires").run();
+    const londonId = importPgnUnit("white", "London System", "Main lines", "1. d4 d5 2. Bf4 *");
+    const caroId = importPgnUnit("black", "Caro-Kann Defense", "Main lines", "1. e4 c6 2. d4 d5 *");
+
+    const londonGame = addGame(["d4", "d5", "Bf4"]);
+    const caroGame = addGame(["e4", "c6", "d4", "d5"], { color: "black" });
+    const unrelatedWhite = addGame(["e4", "e5", "Nf3", "Nc6"]);
+    const unrelatedBlack = addGame(["e4", "e5", "Nf3", "Nc6"], { color: "black" });
+
+    const summary = await reviewRepertoireGames(deps());
+
+    expect(summary.reviewed).toBe(2);
+    expect(summary.outcomes).toMatchObject({ in_book: 2 });
+    expect(reviewOf(londonGame)).toMatchObject({
+      repertoire_id: londonId,
+      outcome: "in_book",
+      followed_plies: 3,
+      passed_moves: 2,
+    });
+    expect(reviewOf(caroGame)).toMatchObject({
+      repertoire_id: caroId,
+      outcome: "in_book",
+      followed_plies: 4,
+      passed_moves: 2,
+    });
+    expect(reviewOf(unrelatedWhite)).toBeUndefined();
+    expect(reviewOf(unrelatedBlack)).toBeUndefined();
+    expect(explorer.calls).toEqual([]);
+    expect(engine.requests).toEqual([]);
+  });
+
+  it("leaves games that follow no imported unit on the exact existing generated path", async () => {
+    seedRepertoire();
+    const italianBefore = addGame(MAIN_LINE);
+    const sicilianBefore = addGame(["e4", "c5", "Nf3", "d6"]);
+    await reviewRepertoireGames(deps());
+    const expectedItalian = reviewOf(italianBefore);
+    const expectedSicilian = reviewOf(sicilianBefore);
+
+    // Re-run in a clean state with imported White and Black units present alongside the Italian.
+    db.prepare("DELETE FROM repertoire_game_reviews").run();
+    db.prepare("DELETE FROM repertoire_cards").run();
+    db.prepare("DELETE FROM drill_reviews").run();
+    importPgnUnit("white", "London System", "Main lines", "1. d4 d5 2. Bf4 *");
+    importPgnUnit("black", "Caro-Kann Defense", "Main lines", "1. e4 c6 2. d4 d5 *");
+
+    await reviewRepertoireGames(deps());
+
+    expect(reviewOf(italianBefore)).toEqual(expectedItalian);
+    expect(reviewOf(sicilianBefore)).toEqual(expectedSicilian);
+  });
+
+  it("does not review a game again once it already has a review row", async () => {
+    db.prepare("DELETE FROM repertoires").run();
+    importPgnUnit("white", "London System", "Main lines", "1. d4 d5 2. Bf4 Nc6 3. e3 *");
+    const gameId = addGame(["d4", "d5", "c4", "e6"]);
+
+    expect((await reviewRepertoireGames(deps())).reviewed).toBe(1);
+    const afterFirst = snapshot();
+    const gradesAfterFirst = loggedGrades();
+    const noticesAfterFirst = noticesOf();
+
+    expect((await reviewRepertoireGames(deps())).reviewed).toBe(0);
+    expect(await reviewRepertoireGame(deps(), gameId)).toBeNull();
+    expect(snapshot()).toEqual(afterFirst);
+    expect(loggedGrades()).toEqual(gradesAfterFirst);
+    expect(noticesOf()).toEqual(noticesAfterFirst);
+  });
+
+  it("writes coach notifications naming the imported unit without saying the repertoire changed", async () => {
+    db.prepare("DELETE FROM repertoires").run();
+    importPgnUnit("white", "London System", "Main lines", "1. d4 d5 2. Bf4 Nc6 3. e3 *");
+    importPgnUnit("black", "Caro-Kann Defense", "Main lines", "1. e4 c6 2. d4 d5 3. Nc3 dxe4 *");
+
+    addGame(["d4", "d5", "Bf4", "Nc6", "e3"]);
+    addGame(["d4", "d5", "c4", "e6"]);
+    addGame(["e4", "c6", "d4", "d5", "e5", "Bf5"], { color: "black" });
+
+    await reviewRepertoireGames(deps());
+
+    const notices = noticesOf();
+    expect(notices).toEqual([
+      expect.objectContaining({
+        group: "London System",
+        variation: "Main lines",
+        origin: "pgn",
+        outcome: "in_book",
+        followed_to: { ply: 5, san: "e3" },
+      }),
+      expect.objectContaining({
+        group: "London System",
+        variation: "Main lines",
+        origin: "pgn",
+        outcome: "departed",
+        played: { ply: 3, san: "c4" },
+        expected: { ply: 3, san: "Bf4" },
+      }),
+      expect.objectContaining({
+        group: "Caro-Kann Defense",
+        variation: "Main lines",
+        origin: "pgn",
+        outcome: "reply_not_stored",
+        reply: { ply: 5, san: "e5" },
+      }),
+    ]);
+    const rendered = notices.map((notice) => renderNotifications([notice as CoachNotification]));
+    expect(rendered[0]).toContain("London System");
+    expect(rendered[0]).toContain("Main lines");
+    expect(rendered[0]).toContain("stayed in the line");
+    expect(rendered[1]).toContain("2. c4");
+    expect(rendered[1]).toContain("2. Bf4");
+    expect(rendered[2]).toContain("Caro-Kann Defense");
+    expect(rendered[2]).toContain("3. e5");
+    expect(rendered[2]).toContain("no answer to");
+    for (const text of rendered) {
+      expect(text).not.toMatch(/was added|repertoire changed/i);
+    }
   });
 
   it("is not the variation that the lookups of a group find, whatever its id", () => {
