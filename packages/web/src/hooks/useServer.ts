@@ -44,6 +44,7 @@ export interface ServerApi extends ChatState, TabChat {
   newConversation(): boolean;
   approve(requestId: string, allow: boolean): void;
   dismissError(): void;
+  markNoteSaved?(anchorKey: string): void;
   send(command: DistributiveOmit<ActivityCommand, "command_id">): boolean;
 }
 
@@ -187,9 +188,23 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
 
   const dismissError = useCallback(() => dispatch({ type: "dismiss_error" }), []);
 
+  const markNoteSaved = useCallback(
+    (anchorKey: string) => dispatch({ type: "mark_note_saved", anchorKey }),
+    [],
+  );
+
   const send = useCallback(
-    (command: DistributiveOmit<ActivityCommand, "command_id">): boolean =>
-      sendCommand((command_id) => ({ ...command, command_id })),
+    (command: DistributiveOmit<ActivityCommand, "command_id">): boolean => {
+      let sentId: string | undefined;
+      const sent = sendCommand((command_id) => {
+        sentId = command_id;
+        return { ...command, command_id };
+      });
+      if (sent && command.type === "ask_coach_about_item") {
+        dispatch({ type: "local_ask_idea", ...(sentId ? { commandId: sentId } : {}) });
+      }
+      return sent;
+    },
     [sendCommand],
   );
 
@@ -203,6 +218,7 @@ export function useServer(options: UseServerOptions = {}): ServerApi {
     newConversation,
     approve,
     dismissError,
+    markNoteSaved,
     send,
   };
 }

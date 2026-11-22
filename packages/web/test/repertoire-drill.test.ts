@@ -226,7 +226,9 @@ describe("the answered idea", () => {
 
   it("draws nothing before any move is answered, and shows a fallback body when no note is stored", () => {
     expect(lineOf({})).toBeNull();
-    expect(lineOf({ drill: { answered: { san: "c3", idea: null, asked: false } } })).toEqual({
+    expect(
+      lineOf({ drill: { answered: { position_id: 1, san: "c3", idea: null, asked: false } } }),
+    ).toEqual({
       title: "Why 4.c3",
       body: "No note for this move yet.",
       asked: false,
@@ -235,7 +237,9 @@ describe("the answered idea", () => {
 
   it("words the answered move with its number, idea and asked state", () => {
     expect(
-      lineOf({ drill: { answered: { san: "c3", idea: "Prepare d4.", asked: true } } }),
+      lineOf({
+        drill: { answered: { position_id: 1, san: "c3", idea: "Prepare d4.", asked: true } },
+      }),
     ).toEqual({
       title: "Why 4.c3",
       body: "Prepare d4.",
@@ -247,7 +251,7 @@ describe("the answered idea", () => {
     expect(
       lineOf({
         sans: ["e4", "e5"],
-        drill: { answered: { san: "Nf3", idea: "Develop.", asked: false } },
+        drill: { answered: { position_id: 2, san: "Nf3", idea: "Develop.", asked: false } },
       }),
     ).toEqual({ title: "Why 2.Nf3", body: "Develop.", asked: false });
   });

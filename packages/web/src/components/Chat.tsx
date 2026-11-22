@@ -15,7 +15,7 @@ import { coachStateWords, DEFAULT_COACH_IDLE, isConversationStale } from "../sta
 import { lineCardsByAnchor } from "../state/tool-summary.js";
 import type { ChatItem } from "../state/transcript.js";
 import { ApprovalCard } from "./ApprovalCard.js";
-import { CoachLineCards } from "./PracticeCoachActions.js";
+import { CoachLineCards, CoachNoteCard } from "./PracticeCoachActions.js";
 import { ToolCard } from "./ToolCard.js";
 
 // The coach writes Markdown; links would take the student off-site and images
@@ -190,6 +190,11 @@ export function Chat({
   };
 
   const lineCards = lineCardsByAnchor(items);
+  const noteOffers = new Map(
+    server.tab === "practice"
+      ? (server.noteOffers ?? []).map((offer) => [offer.anchorKey, offer] as const)
+      : [],
+  );
   const lastCoachIndex = items.findLastIndex(
     (item) => item.type === "text" && item.role === "assistant",
   );
@@ -244,15 +249,24 @@ export function Chat({
               {contextLine}
             </p>
           ) : null}
-          {server.items.map((item, index) => (
-            <Fragment key={item.key}>
-              <ItemView item={item} />
-              {lineCards.has(item.key) ? (
-                <CoachLineCards cards={lineCards.get(item.key) ?? []} server={server} />
-              ) : null}
-              {index === lastCoachIndex ? actions : null}
-            </Fragment>
-          ))}
+          {server.items.map((item, index) => {
+            const noteOffer = noteOffers.get(item.key);
+            return (
+              <Fragment key={item.key}>
+                <ItemView item={item} />
+                {lineCards.has(item.key) ? (
+                  <CoachLineCards cards={lineCards.get(item.key) ?? []} server={server} />
+                ) : null}
+                {noteOffer ? (
+                  <CoachNoteCard
+                    offer={noteOffer}
+                    onSaved={() => server.markNoteSaved?.(noteOffer.anchorKey)}
+                  />
+                ) : null}
+                {index === lastCoachIndex ? actions : null}
+              </Fragment>
+            );
+          })}
           {lastCoachIndex === -1 ? actions : null}
           {server.permissions.map((request) => (
             <ApprovalCard key={request.requestId} request={request} onAnswer={server.approve} />
