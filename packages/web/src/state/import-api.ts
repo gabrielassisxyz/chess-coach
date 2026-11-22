@@ -12,7 +12,11 @@ export interface ImportApi {
   importChessCom(username: string, uuids: string[]): Promise<ImportResult>;
   /** Imports every finished standard game of the account in the months, in one step. */
   importLichess(username: string, from: string, to: string): Promise<ImportResult>;
-  importPgn(pgn: string, studentColor: "white" | "black" | null): Promise<ImportResult>;
+  importPgn(
+    pgn: string,
+    studentColor: "white" | "black" | null,
+    practice?: boolean,
+  ): Promise<ImportResult>;
   status(): Promise<ImportStatus>;
 }
 
@@ -48,8 +52,12 @@ export const serverImportApi: ImportApi = {
       await requestJson("/api/import/lichess", { username, from, to }),
     );
   },
-  async importPgn(pgn, studentColor) {
-    const body = studentColor ? { pgn, student_color: studentColor } : { pgn };
+  async importPgn(pgn, studentColor, practice = false) {
+    const body = {
+      pgn,
+      ...(studentColor ? { student_color: studentColor } : {}),
+      practice,
+    };
     return ImportResultSchema.parse(await requestJson("/api/import/pgn", body));
   },
   async status() {

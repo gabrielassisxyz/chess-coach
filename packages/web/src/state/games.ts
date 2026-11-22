@@ -128,11 +128,12 @@ export interface Totals {
 }
 
 export function totalsOf(games: GameSummary[]): Totals {
-  const outcomes = games.map(outcomeOf);
-  const accuracies = games.flatMap((game) => (game.accuracy === null ? [] : [game.accuracy]));
+  const counted = games.filter((game) => !game.practice);
+  const outcomes = counted.map(outcomeOf);
+  const accuracies = counted.flatMap((game) => (game.accuracy === null ? [] : [game.accuracy]));
   const mean = accuracies.reduce((sum, value) => sum + value, 0) / (accuracies.length || 1);
   return {
-    games: games.length,
+    games: counted.length,
     won: outcomes.filter((outcome) => outcome === "won").length,
     lost: outcomes.filter((outcome) => outcome === "lost").length,
     drawn: outcomes.filter((outcome) => outcome === "drawn").length,

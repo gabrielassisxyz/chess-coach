@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImportPanel } from "../src/components/ImportPanel.js";
 import type { ConnectionsApi } from "../src/state/connections-api.js";
 import { summaryLabel } from "../src/state/games.js";
-import type { ImportApi } from "../src/state/import-api.js";
+import { type ImportApi, serverImportApi } from "../src/state/import-api.js";
 import { COACH_GAME_SOURCE, idleConnectionsApi, idleImportApi } from "./fixtures.js";
 
 afterEach(cleanup);
@@ -180,9 +180,54 @@ describe("ImportPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Import PGN" }));
     await waitFor(() => expect(importPgn).toHaveBeenCalledTimes(2));
     expect(importPgn.mock.calls).toEqual([
-      ["1. e4 e5 1-0", null],
-      ["1. e4 e5 1-0", "black"],
+      ["1. e4 e5 1-0", null, false],
+      ["1. e4 e5 1-0", "black", false],
     ]);
+  });
+
+  it("shows an unchecked Practice game box with its hint under You played and sends practice", async () => {
+    const importPgn = vi.fn(async () => ({ imported: 1, skipped: 0 }));
+    render(<ImportPanel onChanged={() => {}} api={apiWith({ importPgn })} />);
+    const checkbox = screen.getByRole("checkbox", { name: "Practice game" }) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    const hint = screen.getByText("Not counted in your statistics.");
+    expect(checkbox.getAttribute("aria-describedby")).toBe(hint.id);
+
+    const sideSelect = screen.getByLabelText("You played");
+    expect(
+      sideSelect.compareDocumentPosition(checkbox) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Paste a PGN"), { target: { value: "1. e4 e5 0-1" } });
+    fireEvent.change(sideSelect, { target: { value: "white" } });
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Import PGN" }));
+    await screen.findByText("Imported the game.");
+    expect(importPgn).toHaveBeenCalledWith("1. e4 e5 0-1", "white", true);
+  });
+
+  it("sends practice in the JSON body of POST /api/import/pgn", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ imported: 1, skipped: 0 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await serverImportApi.importPgn("1. e4 e5 0-1", "white", true);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/import/pgn",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ pgn: "1. e4 e5 0-1", student_color: "white", practice: true }),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

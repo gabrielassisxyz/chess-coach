@@ -102,7 +102,10 @@ export function GamesTable({ games, totals, onOpen }: GamesTableProps) {
                 <td>
                   <span className="games__opponent">
                     <span className="games__name">{opponentLabel(game)}</span>
-                    <span className="games__tag">{SOURCE_TAG[game.source]}</span>
+                    <span className="games__tags">
+                      <span className="games__tag">{SOURCE_TAG[game.source]}</span>
+                      {game.practice ? <span className="games__tag">Practice</span> : null}
+                    </span>
                   </span>
                 </td>
                 <td className="games__side">{capitalised(game.player_color)}</td>
