@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type ActivityState,
-  REPERTOIRE_IDEA_MAX_LENGTH,
   RepertoireImportRefusalSchema,
   SaveRepertoireIdeaResponseSchema,
   type TrainingActivity,
@@ -198,7 +197,7 @@ describe("PUT /api/repertoires/positions/:id/idea", () => {
       variationName: "Main line",
     });
     const id = addOwnMove(unit.id, [], "d4");
-    const exact = "a".repeat(REPERTOIRE_IDEA_MAX_LENGTH);
+    const exact = "a".repeat(500);
 
     const response = await putIdea(id, { idea: `  ${exact}  ` });
 
@@ -236,7 +235,7 @@ describe("PUT /api/repertoires/positions/:id/idea", () => {
     ["a non-string idea", { idea: 42 }],
     ["an empty idea", { idea: "" }],
     ["a blank idea", { idea: "   \n\t " }],
-    ["an idea over 500 characters", { idea: "x".repeat(REPERTOIRE_IDEA_MAX_LENGTH + 1) }],
+    ["an idea of 501 characters", { idea: "x".repeat(501) }],
     ["a null body", null],
     ["an array body", ["Develop."]],
   ])("refuses %s with 400 invalid_request and writes nothing", async (_what, payload) => {

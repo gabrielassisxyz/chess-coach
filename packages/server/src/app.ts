@@ -44,7 +44,7 @@ export interface Readiness {
 export interface AppOptions {
   readiness?: () => Readiness;
   hub?: HubOptions;
-  /** Refreshed when a repertoire move's note is saved; falls back to `hub.activity` when absent. */
+  /** Refreshed when a repertoire move's note is saved; without it a save changes only the database. */
   activity?: Pick<ActivityService, "refreshRepertoireIdea">;
   db?: Database;
   /**
@@ -142,11 +142,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       rebuilding,
     });
     const allowedOrigins = options.allowedOrigins ?? allowedOriginsFrom();
-    const ideaActivity =
-      options.activity ??
-      (options.hub?.activity as
-        | Partial<Pick<ActivityService, "refreshRepertoireIdea">>
-        | undefined);
+    const { activity } = options;
     registerRepertoireImportRoutes(app, {
       db: options.db,
       allowedOrigins,
@@ -155,10 +151,10 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     registerRepertoireIdeaRoute(app, {
       db: options.db,
       allowedOrigins,
-      ...(ideaActivity?.refreshRepertoireIdea
+      ...(activity
         ? {
             onSaved: ({ positionKey, uci, idea }) =>
-              ideaActivity.refreshRepertoireIdea?.(positionKey, uci, idea),
+              activity.refreshRepertoireIdea(positionKey, uci, idea),
           }
         : {}),
       log,
