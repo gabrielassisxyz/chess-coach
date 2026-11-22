@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   type ActivityState,
   type RepertoireDrill,
+  RepertoireHintSchema,
   type RepertoireLevel,
   type RepertoireScope,
   ServerEventSchema,
@@ -48,7 +49,6 @@ import {
   REPERTOIRE_MISSED_MIN_MISSES,
   REPERTOIRE_MISSED_SIZE,
   REPERTOIRE_MISSED_WINDOW_DAYS,
-  REPERTOIRE_NO_IDEA,
   REPERTOIRE_RECOMMENDED_SIZE,
   type RepertoireTryJudge,
   readRepertoireMissCounts,
@@ -1191,19 +1191,21 @@ describe("a repertoire drill", () => {
     expect(loggedDrillGrades()).toEqual([3]);
   });
 
-  it("leaves the position open after a wrong try, with no text and no limit, and keeps every try", async () => {
+  it("leaves the position open after wrong tries, raising the hint at the third and fourth, and keeps every try", async () => {
     const id = addVariation("Classical", ITALIAN_ROWS);
     addCard("", "e4", PAST);
+    setIdea("", "e4", "Take the centre and free the bishop.");
     const service = boot();
     let state = await start(service, id, "due");
-    for (const san of ["a3", "b3", "c3", "d3", "h3", "g3"]) {
+    const expectedKinds = ["none", "none", "piece", "move", "move", "move"] as const;
+    for (const [index, san] of ["a3", "b3", "c3", "d3", "h3", "g3"].entries()) {
       state = await play(service, state, san);
       expect(state.input_enabled).toBe(true);
       expect(state.status).toBe("prompt");
       expect(state.last_try).toMatchObject({ san, correct: false });
       expect(drillOf(state)).toMatchObject({
         answer: null,
-        hint: { kind: "none" },
+        hint: { kind: expectedKinds[index] },
         flagged_opening: null,
         flagged_sound: false,
       });
@@ -1217,29 +1219,206 @@ describe("a repertoire drill", () => {
     expect(tries.at(-1)).toEqual({ ply: 0, uci: "e2e4", correct: 1 });
   });
 
-  it("answers the first hint with the stored idea or a fixed sentence, the second with the move", async () => {
+  it("answers the first hint with the piece square and hint_square, then the second with the move", async () => {
+    expect(RepertoireHintSchema.safeParse({ kind: "none" }).success).toBe(true);
+    expect(RepertoireHintSchema.safeParse({ kind: "piece", square: "e2" }).success).toBe(true);
+    expect(RepertoireHintSchema.safeParse({ kind: "move", uci: "e2e4", san: "e4" }).success).toBe(
+      true,
+    );
+    expect(RepertoireHintSchema.safeParse({ kind: "idea", text: "Take the centre." }).success).toBe(
+      false,
+    );
+
     const id = addVariation("Classical", ITALIAN_ROWS);
-    addCard("", "e4", PAST);
-    addCard("e4 e5", "Nf3", PAST);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4" || san === "Nf3");
     setIdea("", "e4", "Take the centre and free the bishop.");
+    setIdea("e4 e5", "Nf3", "Develop and attack e5.");
     const service = boot();
     let state = await start(service, id, "due");
+    expect(state.hint_square).toBeNull();
+
     state = training(await service.trainingHint(state.activity_id));
-    expect(drillOf(state).hint).toEqual({
-      kind: "idea",
-      text: "Take the centre and free the bishop.",
-    });
+    expect(drillOf(state).hint).toEqual({ kind: "piece", square: "e2" });
+    expect(state.hint_square).toBe("e2");
+    expect(drillOf(state).answered).toBeNull();
+
     state = training(await service.trainingHint(state.activity_id));
     expect(drillOf(state).hint).toEqual({ kind: "move", uci: "e2e4", san: "e4" });
+    expect(state.hint_square).toBeNull();
+    expect(drillOf(state).answered).toEqual({
+      san: "e4",
+      idea: "Take the centre and free the bishop.",
+    });
+
     state = await play(service, state, "e4");
+    expect(state.hint_square).toBeNull();
+    expect(drillOf(state).hint).toEqual({ kind: "none" });
+
     state = training(await service.trainingHint(state.activity_id));
-    expect(drillOf(state).hint).toEqual({ kind: "idea", text: REPERTOIRE_NO_IDEA });
+    expect(drillOf(state).hint).toEqual({ kind: "piece", square: "g1" });
+    expect(state.hint_square).toBe("g1");
+    // Answering directly after a piece hint clears the marked square.
+    state = await play(service, state, "Nf3");
+    expect(state.hint_square).toBeNull();
+    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: "Develop and attack e5." });
+
     expect(cardOf("", "e4")).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
     expect(cardOf("e4 e5", "Nf3")).toMatchObject({
       fsrs_state: 3,
       lapses: 1,
       interval_hours: 10 / 60,
     });
+  });
+
+  it("raises the hint to piece on the third wrong try and to move on the fourth, recording hinted without re-rating", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    setIdea("", "e4", "Take the centre and free the bishop.");
+    const itemHinted = (): number =>
+      (
+        db.prepare("SELECT hinted FROM training_items ORDER BY id DESC LIMIT 1").get() as {
+          hinted: number;
+        }
+      ).hinted;
+
+    const service = boot();
+    let state = await start(service, id, "due");
+
+    state = await play(service, state, "a3");
+    expect(drillOf(state).hint).toEqual({ kind: "none" });
+    expect(state.hint_square).toBeNull();
+    expect(drillOf(state).answered).toBeNull();
+    expect(itemHinted()).toBe(0);
+    const cardAfterFirstWrong = cardOf("", "e4");
+    expect(cardAfterFirstWrong).toMatchObject({
+      fsrs_state: 3,
+      lapses: 1,
+      interval_hours: 10 / 60,
+    });
+    expect(loggedDrillGrades()).toEqual([1]);
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+
+    state = await play(service, state, "b3");
+    expect(drillOf(state).hint).toEqual({ kind: "none" });
+    expect(state.hint_square).toBeNull();
+    expect(drillOf(state).answered).toBeNull();
+    expect(itemHinted()).toBe(0);
+
+    state = await play(service, state, "c3");
+    expect(drillOf(state).hint).toEqual({ kind: "piece", square: "e2" });
+    expect(state.hint_square).toBe("e2");
+    expect(drillOf(state).answered).toBeNull();
+    expect(itemHinted()).toBe(1);
+    expect(cardOf("", "e4")).toEqual(cardAfterFirstWrong);
+    expect(loggedDrillGrades()).toEqual([1]);
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+
+    state = await play(service, state, "d3");
+    expect(drillOf(state).hint).toEqual({ kind: "move", uci: "e2e4", san: "e4" });
+    expect(state.hint_square).toBeNull();
+    expect(drillOf(state).answered).toEqual({
+      san: "e4",
+      idea: "Take the centre and free the bishop.",
+    });
+    expect(itemHinted()).toBe(1);
+    expect(cardOf("", "e4")).toEqual(cardAfterFirstWrong);
+    expect(loggedDrillGrades()).toEqual([1]);
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+
+    state = await play(service, state, "e4");
+    expect(state.status).toBe("failed");
+    expect(state.hint_square).toBeNull();
+  });
+
+  it("raises a pressed piece hint to move on a single wrong try without changing the rating", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    setIdea("", "e4", "Take the centre.");
+    const service = boot();
+    let state = await start(service, id, "due");
+
+    state = training(await service.trainingHint(state.activity_id));
+    expect(drillOf(state).hint).toEqual({ kind: "piece", square: "e2" });
+    expect(state.hint_square).toBe("e2");
+    expect(drillOf(state).answered).toBeNull();
+    const cardAfterHint = cardOf("", "e4");
+
+    state = await play(service, state, "a3");
+    expect(drillOf(state).hint).toEqual({ kind: "move", uci: "e2e4", san: "e4" });
+    expect(state.hint_square).toBeNull();
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: "Take the centre." });
+    expect(cardOf("", "e4")).toEqual(cardAfterHint);
+    expect(loggedDrillGrades()).toEqual([1]);
+    expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
+  });
+
+  it("counts wrong tries per asked move, not across earlier moves of the same pass", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4" || san === "Nf3");
+    const service = boot();
+    let state = await start(service, id, "due");
+
+    // Two wrong tries on 1.e4, then right.
+    state = await play(service, state, "a3");
+    state = await play(service, state, "b3");
+    expect(drillOf(state).hint).toEqual({ kind: "none" });
+    state = await play(service, state, "e4");
+    expect(lineSan(state)).toEqual(["e4", "e5"]);
+
+    // On 2.Nf3, the count starts from zero: two wrong tries keep hint none, third marks g1.
+    state = await play(service, state, "a3");
+    expect(drillOf(state).hint).toEqual({ kind: "none" });
+    expect(state.hint_square).toBeNull();
+    state = await play(service, state, "b3");
+    expect(drillOf(state).hint).toEqual({ kind: "none" });
+    expect(state.hint_square).toBeNull();
+    state = await play(service, state, "c3");
+    expect(drillOf(state).hint).toEqual({ kind: "piece", square: "g1" });
+    expect(state.hint_square).toBe("g1");
+    state = await play(service, state, "d3");
+    expect(drillOf(state).hint).toEqual({ kind: "move", uci: "g1f3", san: "Nf3" });
+    expect(state.hint_square).toBeNull();
+  });
+
+  it("raises no hint on a first showing, whether by wrong tries or by the hint command", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCardsAllButC3();
+    const afterBc5 = "e4 e5 Nf3 Nc6 Bc4 Bc5";
+    setIdea(afterBc5, "c3", "Prepare d4.");
+    const itemHinted = (): number =>
+      (
+        db.prepare("SELECT hinted FROM training_items ORDER BY id DESC LIMIT 1").get() as {
+          hinted: number;
+        }
+      ).hinted;
+
+    const service = boot();
+    let state = await start(service, id, "recommended");
+    expect(drillOf(state)).toMatchObject({
+      first_pass: true,
+      answer: { uci: "c2c3", san: "c3" },
+      hint: { kind: "none" },
+    });
+
+    // Pressing hint on a first showing does nothing.
+    state = training(await service.trainingHint(state.activity_id));
+    expect(drillOf(state).hint).toEqual({ kind: "none" });
+    expect(state.hint_square).toBeNull();
+    expect(itemHinted()).toBe(0);
+
+    // Four wrong tries on a first showing raise no hint and keep first_pass intact.
+    for (const san of ["a3", "b3", "d3", "h3"]) {
+      state = await play(service, state, san);
+      expect(drillOf(state)).toMatchObject({
+        first_pass: true,
+        answer: { uci: "c2c3", san: "c3" },
+        hint: { kind: "none" },
+      });
+      expect(state.hint_square).toBeNull();
+      expect(itemHinted()).toBe(0);
+    }
+    expect(firstAttempts()).toEqual([]);
+    expect(loggedDrillGrades()).toEqual([]);
   });
 
   it("warns on any sound try, naming another opening when known, and leaves a blunder plain", async () => {
