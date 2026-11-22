@@ -345,6 +345,17 @@ under You played with its 12 px secondary-text hint (`--text-2`, `--text-xs`) li
 it carries no extra colour, radius or shadow and pairs cleanly under the opponent name on a phone.
 M1 and M2 still find no matches.
 
+The Games column was re-checked on rows 3, 6, 8, 9, 10, 12, 14, 16, 17 and 19, and the Phone column
+on row 19, for the repertoire review strip on an opened game, against `OpenGame.tsx`, `games.css`
+and `test/open-game-review.test.tsx`; the cells were not measured in a browser. The strip sits above
+the move list as one 8 px panel on `--surface-1` with a hairline `--border`, 12 px padding and 8 px
+gaps, never nested inside another card and carrying no colour beyond the neutral tokens. Its title
+and revealed answer use `--text-1` at 12 px and 600 weight, its sentences and optional note use
+`--text-2` at 12 px with the note capped at `--measure` and wrapping anywhere, and its buttons reuse
+`.button` (4 px radius, shared `button:focus-visible` ring, stacked in one column for the 220 px
+left rail and 44 px tall under 900 px). With no review, no strip is drawn. M1 and M2 still find no
+matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph

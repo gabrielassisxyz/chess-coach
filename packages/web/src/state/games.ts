@@ -154,6 +154,11 @@ export function plyLabel(ply: number, san: string): string {
   return `${Math.ceil(ply / 2)}${ply % 2 === 1 ? ". " : "…"}${san}`;
 }
 
+// Compact move notation for the repertoire review strip: "7.Bd3" for White, "4...h6" for Black.
+export function repertoireMoveLabel(ply: number, san: string): string {
+  return `${Math.ceil(ply / 2)}${ply % 2 === 1 ? "." : "..."}${san}`;
+}
+
 export function playedAt(game: Pick<GameSummary, "played_at" | "started_at">): string {
   return game.played_at ?? game.started_at;
 }

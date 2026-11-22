@@ -346,6 +346,61 @@
   font-size: var(--text-xs);
 }
 
+.games__repertoire {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.games__repertoire-title {
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: var(--leading-label);
+}
+
+.games__repertoire-line {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-label);
+}
+
+.games__repertoire-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.games__repertoire-reveal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.games__repertoire-answer {
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: var(--leading-label);
+}
+
+.games__repertoire-note {
+  margin: 0;
+  max-width: var(--measure);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  overflow-wrap: anywhere;
+}
+
 .games__moves {
   flex: 1;
   min-height: 0;
