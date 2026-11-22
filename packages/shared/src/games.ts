@@ -56,6 +56,27 @@ export type GameListResponse = z.infer<typeof GameListResponseSchema>;
 export const GameMoveSchema = ActivityMoveSchema.extend({ fen_after: z.string() });
 export type GameMove = z.infer<typeof GameMoveSchema>;
 
+// Where a game left the matched repertoire unit, when it did not stay in book throughout.
+export const GameRepertoireLeftSchema = z.object({
+  ply: z.number().int().positive(),
+  by: z.enum(["student", "opponent"]),
+  played_san: z.string(),
+  line_san: z.string().nullable(),
+  line_note: z.string().nullable(),
+  stored_replies: z.array(z.string()),
+});
+export type GameRepertoireLeft = z.infer<typeof GameRepertoireLeftSchema>;
+
+export const GameRepertoireReviewSchema = z.object({
+  repertoire_id: z.number().int().positive(),
+  group_name: z.string(),
+  variation_name: z.string(),
+  outcome: z.enum(["in_book", "departed", "reply_not_stored", "reply_added"]),
+  followed_plies: z.number().int().nonnegative(),
+  left: GameRepertoireLeftSchema.nullable(),
+});
+export type GameRepertoireReview = z.infer<typeof GameRepertoireReviewSchema>;
+
 export const GameDetailSchema = GameSummarySchema.omit({
   move_count: true,
   accuracy: true,
@@ -64,6 +85,8 @@ export const GameDetailSchema = GameSummarySchema.omit({
   finished_at: z.string().nullable(),
   initial_fen: z.string(),
   moves: z.array(GameMoveSchema),
+  // Optional on input so fixtures that predate the field still parse as null.
+  repertoire_review: GameRepertoireReviewSchema.nullable().default(null),
 });
 export type GameDetail = z.input<typeof GameDetailSchema>;
 
