@@ -2,15 +2,19 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ThemeStatsResponse, TrainingActivity } from "@chess-coach/shared";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BoardFactory } from "../src/components/Board.js";
+import { type BoardFactory, MOVE_PAUSE_MS } from "../src/components/Board.js";
 import { Practice } from "../src/screens/Practice.js";
+import { ANIMATION_MS, BOARD_PREFS_STORAGE_KEY } from "../src/state/board-prefs.js";
 import { PRACTICE_PAGE_STORAGE_KEY } from "../src/state/practice-page.js";
 import {
   CLASSICAL_VARIATION,
+  ITALIAN_APPROACH,
   italianRepertoire,
   openPracticePage,
   progressOf,
+  type RepertoireActivityOptions,
   repertoireActivity,
   repertoireAnswer,
   repertoireList,
@@ -40,10 +44,20 @@ const hubProps = {
   }),
 };
 
-const seen: { fen?: string; drawable?: { autoShapes?: unknown[] } }[] = [];
+const seen: {
+  fen?: string;
+  drawable?: { autoShapes?: unknown[] };
+  events?: { move?: (from: string, to: string) => void };
+}[] = [];
+let onBoardMove: ((from: string, to: string) => void) | undefined;
 const spyBoard: BoardFactory = (_element, config) => {
   seen.push(config as (typeof seen)[number]);
-  return { set: (next: (typeof seen)[number]) => seen.push(next), destroy: vi.fn() } as never;
+  onBoardMove = config.events?.move as typeof onBoardMove;
+  return {
+    set: (next: (typeof seen)[number]) => seen.push(next),
+    getFen: () => "",
+    destroy: vi.fn(),
+  } as never;
 };
 
 const IDEA = "Prepare d4 and keep the bishop on the a2 g8 diagonal.";
@@ -450,6 +464,280 @@ describe("a move that is new", () => {
     );
     expect(screen.queryByRole("button", { name: /Ask for/ })).toBeNull();
     expect(stateCard().textContent).toContain(IDEA);
+  });
+});
+
+describe("when the answer arrow is drawn", () => {
+  beforeEach(() => {
+    seen.length = 0;
+    onBoardMove = undefined;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const wait = (ms: number): void => {
+    act(() => {
+      vi.advanceTimersByTime(ms);
+    });
+  };
+
+  function afterMoves(sans: string[]): string {
+    const board = new Chess();
+    for (const san of sans) board.move(san);
+    return board.fen();
+  }
+
+  function answeredLine(
+    extraSans: string[],
+    drill: RepertoireActivityOptions["drill"],
+  ): TrainingActivity {
+    const activity = repertoireActivity({
+      sans: [...ITALIAN_APPROACH, ...extraSans],
+      training: {
+        status: "in_progress",
+        last_try: { uci: "c2c3", san: "c3", correct: true },
+      },
+      ...(drill ? { drill } : {}),
+    });
+    const moves = (activity.moves ?? []).map((move, index) =>
+      index === ITALIAN_APPROACH.length ? { ...move, by: "student" as const } : move,
+    );
+    return { ...activity, moves };
+  }
+
+  it("withholds the next move's arrow during the move pause and while the reply animates, then draws it", () => {
+    const first = repertoireActivity({
+      drill: { first_pass: true, answer: { uci: "c2c3", san: "c3" } },
+    });
+    const { server, rerender } = renderDrill(first);
+    expect(arrows()).toEqual([{ orig: "c2", dest: "c3", brush: "green" }]);
+
+    act(() => onBoardMove?.("c2", "c3"));
+    expect(server.send).toHaveBeenCalledWith({ type: "try_move", uci: "c2c3", activity_id: 6 });
+
+    const next = answeredLine(["c3", "Nf6"], {
+      first_pass: true,
+      answer: { uci: "d2d4", san: "d4" },
+    });
+    const afterC3 = afterMoves([...ITALIAN_APPROACH, "c3"]);
+    rerender(
+      <Practice
+        server={serverApi(next, { tab: "practice" })}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+
+    expect(seen.at(-1)?.fen).toBe(afterC3);
+    expect(arrows()).toEqual([]);
+
+    wait(MOVE_PAUSE_MS - 1);
+    expect(seen.at(-1)?.fen).toBe(afterC3);
+    expect(arrows()).toEqual([]);
+
+    wait(1);
+    expect(seen.at(-1)?.fen).toBe(next.fen);
+    expect(arrows()).toEqual([]);
+
+    wait(ANIMATION_MS.normal - 1);
+    expect(arrows()).toEqual([]);
+
+    wait(1);
+    expect(arrows()).toEqual([{ orig: "d2", dest: "d4", brush: "green" }]);
+  });
+
+  it("keeps the arrow absent across every step of a multi-step pause before the asked position", () => {
+    const first = repertoireActivity({
+      drill: { first_pass: true, answer: { uci: "c2c3", san: "c3" } },
+    });
+    const { rerender } = renderDrill(first);
+    act(() => onBoardMove?.("c2", "c3"));
+
+    const next = answeredLine(["c3", "Nf6", "d4", "exd4"], {
+      first_pass: true,
+      answer: { uci: "c3d4", san: "cxd4" },
+    });
+    const afterC3 = afterMoves([...ITALIAN_APPROACH, "c3"]);
+    const afterNf6 = afterMoves([...ITALIAN_APPROACH, "c3", "Nf6"]);
+    const afterD4 = afterMoves([...ITALIAN_APPROACH, "c3", "Nf6", "d4"]);
+    rerender(
+      <Practice
+        server={serverApi(next, { tab: "practice" })}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+
+    expect(seen.at(-1)?.fen).toBe(afterC3);
+    expect(arrows()).toEqual([]);
+
+    wait(MOVE_PAUSE_MS);
+    expect(seen.at(-1)?.fen).toBe(afterNf6);
+    expect(arrows()).toEqual([]);
+
+    wait(MOVE_PAUSE_MS);
+    expect(seen.at(-1)?.fen).toBe(afterD4);
+    expect(arrows()).toEqual([]);
+
+    wait(MOVE_PAUSE_MS);
+    expect(seen.at(-1)?.fen).toBe(next.fen);
+    expect(arrows()).toEqual([]);
+
+    wait(ANIMATION_MS.normal);
+    expect(arrows()).toEqual([{ orig: "c3", dest: "d4", brush: "green" }]);
+  });
+
+  it.each(["normal", "fast"] as const)(
+    "waits for the %s board animation at the start of a new pass before drawing the arrow",
+    (animation) => {
+      window.localStorage.setItem(BOARD_PREFS_STORAGE_KEY, JSON.stringify({ animation }));
+      const ended = repertoireActivity({
+        sans: [...ITALIAN_APPROACH, "c3"],
+        training: { status: "solved", input_enabled: false, legal_moves: [] },
+      });
+      const { rerender } = renderDrill(ended);
+
+      const nextPass = repertoireActivity({
+        sans: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"],
+        training: {
+          served_at: "2026-03-01T00:01:00.000Z",
+          item: { ...ended.item, position_in_queue: 2 },
+        },
+        drill: { first_pass: true, answer: { uci: "d2d3", san: "d3" } },
+      });
+      rerender(
+        <Practice
+          server={serverApi(nextPass, { tab: "practice" })}
+          createBoard={spyBoard}
+          fetchRepertoires={listed}
+        />,
+      );
+
+      expect(seen.at(-1)?.fen).toBe(nextPass.fen);
+      expect(arrows()).toEqual([]);
+
+      wait(ANIMATION_MS[animation] - 1);
+      expect(arrows()).toEqual([]);
+
+      wait(1);
+      expect(arrows()).toEqual([{ orig: "d2", dest: "d3", brush: "green" }]);
+    },
+  );
+
+  it("draws the arrow in the first autoShapes set for a new position when board animation is off", () => {
+    window.localStorage.setItem(BOARD_PREFS_STORAGE_KEY, JSON.stringify({ animation: "off" }));
+    const ended = repertoireActivity({
+      sans: [...ITALIAN_APPROACH, "c3"],
+      training: { status: "solved", input_enabled: false, legal_moves: [] },
+    });
+    const { rerender } = renderDrill(ended);
+
+    const nextPass = repertoireActivity({
+      sans: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"],
+      training: {
+        served_at: "2026-03-01T00:01:00.000Z",
+        item: { ...ended.item, position_in_queue: 2 },
+      },
+      drill: { first_pass: true, answer: { uci: "d2d3", san: "d3" } },
+    });
+    seen.length = 0;
+    rerender(
+      <Practice
+        server={serverApi(nextPass, { tab: "practice" })}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+
+    const firstForNewPass = seen.find((config) => config.fen === nextPass.fen);
+    expect(firstForNewPass?.drawable?.autoShapes).toEqual([
+      { orig: "d2", dest: "d3", brush: "green" },
+    ]);
+
+    // And after a move pause with animation off, the arrow lands in the first set for the reply.
+    const first = repertoireActivity({
+      training: { served_at: "2026-03-01T00:02:00.000Z" },
+      drill: { first_pass: true, answer: { uci: "c2c3", san: "c3" } },
+    });
+    rerender(
+      <Practice
+        server={serverApi(first, { tab: "practice" })}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    act(() => onBoardMove?.("c2", "c3"));
+    const afterReply = {
+      ...answeredLine(["c3", "Nf6"], {
+        first_pass: true,
+        answer: { uci: "d2d4", san: "d4" },
+      }),
+      served_at: "2026-03-01T00:02:00.000Z",
+    };
+    seen.length = 0;
+    rerender(
+      <Practice
+        server={serverApi(afterReply, { tab: "practice" })}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    expect(arrows()).toEqual([]);
+    wait(MOVE_PAUSE_MS - 1);
+    expect(arrows()).toEqual([]);
+    wait(1);
+    const firstForReply = seen.find((config) => config.fen === afterReply.fen);
+    expect(firstForReply?.drawable?.autoShapes).toEqual([
+      { orig: "d2", dest: "d4", brush: "green" },
+    ]);
+  });
+
+  it("applies the same pause and animation rule to the second hint's move arrow", () => {
+    const first = repertoireActivity();
+    const { rerender } = renderDrill(first);
+    act(() => onBoardMove?.("c2", "c3"));
+
+    const hintedAfterPause = answeredLine(["c3", "Nf6"], {
+      first_pass: false,
+      hint: { kind: "move", uci: "d2d4", san: "d4" },
+    });
+    rerender(
+      <Practice
+        server={serverApi(hintedAfterPause, { tab: "practice" })}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    expect(arrows()).toEqual([]);
+    wait(MOVE_PAUSE_MS);
+    expect(seen.at(-1)?.fen).toBe(hintedAfterPause.fen);
+    expect(arrows()).toEqual([]);
+    wait(ANIMATION_MS.normal - 1);
+    expect(arrows()).toEqual([]);
+    wait(1);
+    expect(arrows()).toEqual([{ orig: "d2", dest: "d4", brush: "green" }]);
+
+    // At the start of a new pass with a move hint and animation on, wait for the animation.
+    const nextPassHinted = repertoireActivity({
+      sans: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"],
+      training: {
+        served_at: "2026-03-01T00:01:00.000Z",
+        item: { ...first.item, position_in_queue: 2 },
+      },
+      drill: { first_pass: false, hint: { kind: "move", uci: "d2d3", san: "d3" } },
+    });
+    rerender(
+      <Practice
+        server={serverApi(nextPassHinted, { tab: "practice" })}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    expect(arrows()).toEqual([]);
+    wait(ANIMATION_MS.normal);
+    expect(arrows()).toEqual([{ orig: "d2", dest: "d3", brush: "green" }]);
   });
 });
 

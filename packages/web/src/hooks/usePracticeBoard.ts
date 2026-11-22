@@ -3,6 +3,7 @@ import type { DrawShape } from "@lichess-org/chessground/draw";
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MOVE_PAUSE_MS, type MovePause } from "../components/Board.js";
+import { ANIMATION_MS, readBoardPrefs } from "../state/board-prefs.js";
 import { positionsAlong } from "../state/play.js";
 import { boardOf, trainingView } from "../state/practice.js";
 import {
@@ -343,14 +344,61 @@ export function usePracticeBoard(
 
   const scratchLine = scratch ? (open ? training.exploring.line_san : (local?.sans ?? [])) : null;
   const atTip = !stepping && !local;
+  const activePause = !scratch && !stepping ? pause : null;
+  const activePauseKey = activePause?.key ?? null;
+  const pauseSteps = activePause?.steps.length ?? 0;
+  const animMs = ANIMATION_MS[readBoardPrefs().animation];
+  const hasArrow = atTip && shownUci !== null;
+
+  // Hold the answer arrow off the board while a move pause steps and while chessground animates
+  // into the new position. Adjusted during render so the first update for a new position never
+  // flashes the arrow before the timer starts, and skipped when there is no arrow to reveal.
+  const [arrowWait, setArrowWait] = useState<{
+    fen: string;
+    pauseKey: string | null;
+    waitMs: number;
+    ready: boolean;
+  }>(() => ({
+    fen: activity.fen,
+    pauseKey: activePauseKey,
+    waitMs: 0,
+    ready: true,
+  }));
+  let currentArrowWait = arrowWait;
+  const fenChanged = arrowWait.fen !== activity.fen;
+  const pauseChanged = arrowWait.pauseKey !== activePauseKey;
+  if (fenChanged || (pauseChanged && (!arrowWait.ready || activePauseKey !== null))) {
+    const waitMs = hasArrow && animMs > 0 ? pauseSteps * MOVE_PAUSE_MS + animMs : 0;
+    currentArrowWait = {
+      fen: activity.fen,
+      pauseKey: activePauseKey,
+      waitMs,
+      ready: waitMs === 0,
+    };
+    setArrowWait(currentArrowWait);
+  } else if (pauseChanged) {
+    currentArrowWait = { ...arrowWait, pauseKey: activePauseKey };
+    setArrowWait(currentArrowWait);
+  }
+  useEffect(() => {
+    if (arrowWait.ready || arrowWait.waitMs === 0) return;
+    const timer = setTimeout(
+      () =>
+        setArrowWait((current) => (current === arrowWait ? { ...current, ready: true } : current)),
+      arrowWait.waitMs,
+    );
+    return () => clearTimeout(timer);
+  }, [arrowWait]);
+  const arrowReady = currentArrowWait.ready || animMs === 0;
+
   return {
     activity,
     bothSides: scratch,
     line: atTip && training.gave_up ? training.solution_line : null,
-    pause: !scratch && !stepping ? pause : null,
+    pause: activePause,
     hintSquare: atTip ? training.hint_square : null,
     onDrawChange,
-    answerShapes: atTip ? answerShapes : NO_SHAPES,
+    answerShapes: atTip && arrowReady ? answerShapes : NO_SHAPES,
     orientation: flipped
       ? training.orientation === "white"
         ? "black"

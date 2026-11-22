@@ -125,7 +125,10 @@ function toConfig(
   const drawable = {
     enabled: true,
     visible: true,
-    autoShapes: shapes.map((shape) => convertKnightArrowShape(shape, orientation, palette)),
+    // Shapes belong to the activity's position, not to an earlier pause step.
+    autoShapes: pausing
+      ? []
+      : shapes.map((shape) => convertKnightArrowShape(shape, orientation, palette)),
     brushes: palette,
     eraseOnClick: true,
     ...(onDrawChange ? { onChange: onDrawChange } : {}),
@@ -274,6 +277,7 @@ export function Board({
     activity,
     onMove,
     bothSides,
+    shown,
     hintSquare,
     facing,
     prefs,
@@ -285,6 +289,7 @@ export function Board({
     activity,
     onMove,
     bothSides,
+    shown,
     hintSquare,
     facing,
     prefs,
@@ -316,12 +321,12 @@ export function Board({
       ...toConfig(
         latest.current.activity,
         latest.current.bothSides,
-        null,
+        latest.current.shown,
         latest.current.hintSquare,
         latest.current.facing,
         latest.current.prefs,
         latest.current.shapes,
-        false,
+        latest.current.pausing,
         handleDrawChange.current,
       ),
       draggable: { enabled: false },

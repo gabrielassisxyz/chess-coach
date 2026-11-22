@@ -634,7 +634,10 @@
   expects different moves in two variations asks the one whose line the pass plays. The item's
   `repertoire_id` and `variation_name`, and the drill's `repertoire_id`, name the variation of the
   move in play, and the drill carries the `level`. `GET /api/repertoires` counts the
-  levels from the same merge in `groups` and `sides`; the Openings page draws a button for each.
+  levels from the same merge in `groups` and `sides`; the Openings page draws a button for each. The
+  answer arrow of a new move or a second hint is withheld while a move pause steps through earlier
+  positions and until the board animation into the asked position has finished, drawing in the first
+  update when board animation is off.
 - **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?, opening?}` serves
   the listed rows of `found_positions` (see Openings) as one-move exercises through their `own:`
   puzzles (`activity/found-drill.ts`, `TrainingRun`). The scope is required, and a command without
