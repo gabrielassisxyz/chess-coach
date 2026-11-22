@@ -314,9 +314,10 @@ function OpenActions({ actions }: { actions: PracticeColumnActions }) {
   );
 }
 
-// The hint button is the only way the idea or the move of a repertoire line appears, so there is no
-// View solution beside it; once both were asked there is nothing left to offer. On a first showing
-// with more new moves in the level, a quiet button beside it skips the remaining first showings.
+// The hint button is the only way the piece or the move of a repertoire line appears, so there is
+// no View solution beside it; once the move is shown, or on a first showing, nothing is left to
+// offer. On a first showing with more new moves in the level, a quiet button skips the remaining
+// first showings.
 function DrillOpenActions({
   actions,
   drill,

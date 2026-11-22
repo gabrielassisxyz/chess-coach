@@ -39,17 +39,18 @@ export function itemOpeningOf(training: TrainingActivity): string | null {
 }
 
 // The move the board and the move list show on the current pass: the answer while a move is new,
-// the move once the second hint asked for it, and nothing otherwise.
+// the move once the second hint shows it, and nothing otherwise.
 export function shownMoveOf(drill: RepertoireDrill): ExpectedMove | null {
   if (drill.hint.kind === "move") return { uci: drill.hint.uci, san: drill.hint.san };
   return drill.first_pass ? drill.answer : null;
 }
 
-// One hint button, asked twice: the idea first, then the move. While a move is new its answer is
-// already on screen, so only the idea is left to ask for.
+// One hint button, asked twice: the piece first, then the move. On a first showing the answer and
+// its note are already on screen, so no hint is offered.
 export function hintLabelOf(drill: RepertoireDrill): string | null {
-  if (drill.hint.kind === "none") return "Ask for the idea";
-  if (drill.hint.kind === "idea" && !drill.first_pass) return "Ask for the move";
+  if (drill.first_pass) return null;
+  if (drill.hint.kind === "none") return "Show the piece";
+  if (drill.hint.kind === "piece") return "Show the move";
   return null;
 }
 
@@ -108,10 +109,12 @@ function summaryCard(result: RepertoireDrillResult): StateCard {
 
 const sideWord = (color: "white" | "black"): string => (color === "white" ? "White" : "Black");
 
-// A hint shows on the card under its own title; the idea keeps its text, the move is named.
+// A hint shows on the card under its own title: the piece names its square, the move is named.
 function hintLine(drill: RepertoireDrill): { title: string; body: string } | null {
   const { hint } = drill;
-  if (hint.kind === "idea") return { title: "The idea", body: hint.text };
+  if (hint.kind === "piece") {
+    return { title: "The piece", body: `Look at the piece on ${hint.square}.` };
+  }
   if (hint.kind === "move") return { title: "The move", body: `Play ${hint.san}.` };
   return null;
 }

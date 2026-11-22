@@ -221,11 +221,11 @@ export type QueueOutcome = z.infer<typeof QueueOutcomeSchema>;
 export const FoundNoteSchema = z.object({ san: z.string(), text: z.string() });
 export type FoundNote = z.infer<typeof FoundNoteSchema>;
 
-// What the hints have shown on the current move: the first gives the idea stored on its position,
-// or a fixed sentence saying none is stored, and the second gives the move.
+// What the hints have shown on the current move: the first marks the origin square of the expected
+// move, and the second gives the move.
 export const RepertoireHintSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("none") }),
-  z.object({ kind: z.literal("idea"), text: z.string() }),
+  z.object({ kind: z.literal("piece"), square: SquareSchema }),
   z.object({ kind: z.literal("move"), uci: z.string(), san: z.string() }),
 ]);
 export type RepertoireHint = z.infer<typeof RepertoireHintSchema>;

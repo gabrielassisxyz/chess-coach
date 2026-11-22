@@ -47,6 +47,7 @@ const hubProps = {
 const seen: {
   fen?: string;
   drawable?: { autoShapes?: unknown[] };
+  highlight?: { custom?: Map<string, string> };
   events?: { move?: (from: string, to: string) => void };
 }[] = [];
 let onBoardMove: ((from: string, to: string) => void) | undefined;
@@ -59,8 +60,6 @@ const spyBoard: BoardFactory = (_element, config) => {
     destroy: vi.fn(),
   } as never;
 };
-
-const IDEA = "Prepare d4 and keep the bishop on the a2 g8 diagonal.";
 
 function renderDrill(activity: TrainingActivity, fetchRepertoires = listed) {
   const server = serverApi(activity, { tab: "practice" });
@@ -81,6 +80,7 @@ const moveList = (): HTMLElement => screen.getByRole("list", { name: "Moves" });
 const fact = (key: string): string | undefined =>
   screen.getByTestId(`fact-${key}`).querySelector("dd")?.textContent ?? undefined;
 const arrows = (): unknown[] => seen.at(-1)?.drawable?.autoShapes ?? [];
+const highlightedSquares = (): Map<string, string> => seen.at(-1)?.highlight?.custom ?? new Map();
 
 describe("the openings page on the hub", () => {
   // The page is the hub's Openings page, which each hub here opens on as the page stored last.
@@ -398,7 +398,7 @@ describe("the variation in play", () => {
   it("keeps the name on the screen after a miss, a hint and when the line has ended", () => {
     const states = [
       repertoireActivity({ training: { tries: 1 } }),
-      repertoireActivity({ drill: { hint: { kind: "idea", text: IDEA } } }),
+      repertoireActivity({ drill: { hint: { kind: "piece", square: "c2" } } }),
       repertoireActivity({ training: { status: "solved", input_enabled: false, legal_moves: [] } }),
     ];
     const { rerender } = renderDrill(states[0] as TrainingActivity);
@@ -449,21 +449,21 @@ describe("a move that is new", () => {
     expect(moveList().textContent).not.toContain("c3");
   });
 
-  it("offers the idea on a new move but never the move, which is already shown", () => {
+  it("draws no hint button on a new move while keeping Skip first practice when new moves remain", () => {
     renderDrill(first());
-    expect(screen.getByRole("button", { name: "Ask for the idea" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Show the/ })).toBeNull();
     cleanup();
     renderDrill(
       repertoireActivity({
         drill: {
           first_pass: true,
           answer: { uci: "c2c3", san: "c3" },
-          hint: { kind: "idea", text: IDEA },
+          new_moves: 3,
         },
       }),
     );
-    expect(screen.queryByRole("button", { name: /Ask for/ })).toBeNull();
-    expect(stateCard().textContent).toContain(IDEA);
+    expect(screen.queryByRole("button", { name: /Show the/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Skip first practice" })).toBeTruthy();
   });
 });
 
@@ -876,28 +876,36 @@ describe("a miss", () => {
 });
 
 describe("the hints", () => {
-  it("offers the idea, then the move, and shows each only once asked", () => {
+  it("marks the piece on the board, then shows the move and clears the highlight", () => {
     const { server, rerender } = renderDrill(repertoireActivity());
-    expect(stateCard().textContent).not.toContain(IDEA);
     expect(arrows()).toEqual([]);
-    fireEvent.click(screen.getByRole("button", { name: "Ask for the idea" }));
+    expect(highlightedSquares()).toEqual(new Map());
+    expect(screen.queryByTestId("why-line")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show the piece" }));
     expect(server.send).toHaveBeenCalledWith({ type: "hint", activity_id: 6 });
 
-    const idea = repertoireActivity({ drill: { hint: { kind: "idea", text: IDEA } } });
+    const piece = repertoireActivity({ drill: { hint: { kind: "piece", square: "c2" } } });
     rerender(
       <Practice
-        server={serverApi(idea, { tab: "practice" })}
+        server={serverApi(piece, { tab: "practice" })}
         createBoard={spyBoard}
         fetchRepertoires={listed}
       />,
     );
-    expect(stateCard().textContent).toContain("The idea");
-    expect(stateCard().textContent).toContain(IDEA);
+    expect(stateCard().textContent).toContain("The piece");
+    expect(stateCard().textContent).toContain("Look at the piece on c2.");
+    expect(highlightedSquares()).toEqual(new Map([["c2", "hint"]]));
     expect(arrows()).toEqual([]);
-    expect(screen.queryByText("Ask for the idea")).toBeNull();
+    expect(screen.queryByTestId("why-line")).toBeNull();
+    expect(screen.queryByText("Show the piece")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Ask for the move" }));
-    const move = repertoireActivity({ drill: { hint: { kind: "move", uci: "c2c3", san: "c3" } } });
+    fireEvent.click(screen.getByRole("button", { name: "Show the move" }));
+    const move = repertoireActivity({
+      drill: {
+        hint: { kind: "move", uci: "c2c3", san: "c3" },
+        answered: { san: "c3", idea: "Prepare d4." },
+      },
+    });
     rerender(
       <Practice
         server={serverApi(move, { tab: "practice" })}
@@ -906,9 +914,37 @@ describe("the hints", () => {
       />,
     );
     expect(stateCard().textContent).toContain("Play c3");
+    expect(highlightedSquares()).toEqual(new Map());
     expect(arrows()).toEqual([{ orig: "c2", dest: "c3", brush: "green" }]);
     expect(screen.getByTestId("answer-cell").textContent).toContain("c3");
-    expect(screen.queryByRole("button", { name: /Ask for/ })).toBeNull();
+    expect(screen.getByTestId("why-line").textContent).toContain("Prepare d4.");
+    expect(screen.queryByRole("button", { name: /Show the/ })).toBeNull();
+  });
+
+  it("clears the marked square when the move is answered", () => {
+    const piece = repertoireActivity({ drill: { hint: { kind: "piece", square: "c2" } } });
+    const { rerender } = renderDrill(piece);
+    expect(highlightedSquares()).toEqual(new Map([["c2", "hint"]]));
+
+    const answered = repertoireActivity({
+      sans: [...ITALIAN_APPROACH, "c3"],
+      training: {
+        status: "solved",
+        input_enabled: false,
+        legal_moves: [],
+        last_try: { uci: "c2c3", san: "c3", correct: true },
+        hint_square: null,
+      },
+      drill: { hint: { kind: "none" }, answered: { san: "c3", idea: "Prepare d4." } },
+    });
+    rerender(
+      <Practice
+        server={serverApi(answered, { tab: "practice" })}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    expect(highlightedSquares()).toEqual(new Map());
   });
 
   it("has no View solution, so the hint button is the only way to the move", () => {
@@ -917,10 +953,18 @@ describe("the hints", () => {
     expect(screen.queryByRole("button", { name: "Get a hint" })).toBeNull();
   });
 
-  it("asks for a hint with the h key as it does on a puzzle", () => {
-    const { server } = renderDrill(repertoireActivity());
+  it("follows the hint ladder with the h key from no hint and from a marked piece", () => {
+    const { server, rerender } = renderDrill(repertoireActivity());
     fireEvent.keyDown(window, { key: "h" });
     expect(server.send).toHaveBeenCalledWith({ type: "hint", activity_id: 6 });
+
+    const secondServer = serverApi(
+      repertoireActivity({ drill: { hint: { kind: "piece", square: "c2" } } }),
+      { tab: "practice" },
+    );
+    rerender(<Practice server={secondServer} createBoard={spyBoard} fetchRepertoires={listed} />);
+    fireEvent.keyDown(window, { key: "h" });
+    expect(secondServer.send).toHaveBeenCalledWith({ type: "hint", activity_id: 6 });
   });
 });
 
@@ -939,28 +983,32 @@ describe("a flagged try", () => {
     expect(stateCard().textContent).toContain("It is not the move of this line. Try again.");
   });
 
-  it("keeps an idea the student asked for beside the flag", () => {
+  it("keeps a piece hint beside the flag", () => {
     renderDrill(
       repertoireActivity({
         drill: {
           flagged_opening: "Scotch Game",
           flagged_sound: true,
-          hint: { kind: "idea", text: IDEA },
+          hint: { kind: "piece", square: "c2" },
         },
       }),
     );
     expect(screen.getByText("Good move, but that is the Scotch Game")).toBeTruthy();
-    expect(stateCard().textContent).toContain(IDEA);
+    expect(stateCard().textContent).toContain("Look at the piece on c2.");
   });
 
-  it("keeps an idea the student asked for beside a sound-move warning", () => {
+  it("keeps a move hint beside a sound-move warning", () => {
     renderDrill(
       repertoireActivity({
-        drill: { flagged_opening: null, flagged_sound: true, hint: { kind: "idea", text: IDEA } },
+        drill: {
+          flagged_opening: null,
+          flagged_sound: true,
+          hint: { kind: "move", uci: "c2c3", san: "c3" },
+        },
       }),
     );
     expect(screen.getByText("Good move, but this line plays another move")).toBeTruthy();
-    expect(stateCard().textContent).toContain(IDEA);
+    expect(stateCard().textContent).toContain("Play c3.");
   });
 
   it("drops the warning once the server clears it on the next try", () => {

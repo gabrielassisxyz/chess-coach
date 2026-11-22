@@ -136,6 +136,7 @@ export function repertoireActivity(options: RepertoireActivityOptions = {}): Tra
   });
   const fen = board.fen();
   const last = moves.at(-1);
+  const hintSquare = options.drill?.hint?.kind === "piece" ? options.drill.hint.square : null;
   return {
     kind: "training",
     activity_id: 6,
@@ -164,7 +165,7 @@ export function repertoireActivity(options: RepertoireActivityOptions = {}): Tra
     gave_up: false,
     solution_line: null,
     suggested_grade: null,
-    hint_square: null,
+    hint_square: hintSquare,
     summary: null,
     moves,
     wrong_tries: [],

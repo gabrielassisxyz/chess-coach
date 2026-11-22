@@ -649,6 +649,16 @@
   The answer arrow of a new move or a second hint is withheld while a move pause steps through
   earlier positions and until the board animation into the asked position has finished, drawing
   in the first update when board animation is off.
+  The drill's two hints are `piece` (the origin square of the expected move, also carried in
+  `hint_square` for the board highlight while `answered` stays null, with the button reading
+  "Show the piece" before it) and `move` (the move itself, clearing `hint_square` and setting
+  `answered`, with the button reading "Show the move" while the piece is marked and hidden once
+  the move is shown). The stored idea is never a hint and appears only after the move is answered.
+  Wrong tries raise the hint by themselves on any asked move: the third wrong try on that move
+  raises it to `piece`, and a wrong try made while the hint is `piece` (whether pressed or raised)
+  raises it to `move`, marking the pass missed and hinted without changing the move's rating; the
+  count is per asked move, and on a first showing (`first_pass`) wrong tries raise no hint and no
+  hint button is drawn.
 - **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?, opening?}` serves
   the listed rows of `found_positions` (see Openings) as one-move exercises through their `own:`
   puzzles (`activity/found-drill.ts`, `TrainingRun`). The scope is required, and a command without

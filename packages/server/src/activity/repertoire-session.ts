@@ -69,8 +69,8 @@ export const REPERTOIRE_FLAG_CP = 50;
 export const REPERTOIRE_FLAG_BUDGET_MS = 4000;
 /** How long each of the judge's two searches may take, so the pair ends inside the budget. */
 export const REPERTOIRE_FLAG_SEARCH_CAP_MS = REPERTOIRE_FLAG_BUDGET_MS / 2;
-/** What the first hint says when the position stores no idea. */
-export const REPERTOIRE_NO_IDEA = "No idea is stored for this position yet.";
+/** Wrong tries on one asked move before the drill marks the piece to move. */
+const REPERTOIRE_WRONG_TRIES_FOR_PIECE = 3;
 const REPERTOIRE_START_FEN = new Chess().fen();
 
 export interface RepertoireDrillInput {
@@ -422,12 +422,11 @@ interface StoredDrill {
 
 function repertoireHintOf(ask: DrillAsk | null, asked: DrillMoveState | null): RepertoireHint {
   if (!ask || !asked || ask.hint === 0) return { kind: "none" };
-  if (ask.hint === 1) return { kind: "idea", text: asked.move.idea?.trim() || REPERTOIRE_NO_IDEA };
+  if (ask.hint === 1) return { kind: "piece", square: asked.move.uci.slice(0, 2) };
   return { kind: "move", uci: asked.move.uci, san: asked.move.san };
 }
 
-// The stored idea of a move, trimmed, or null when none is stored. Never the placeholder the
-// first hint shows, so the web can draw nothing for it.
+// The stored idea of a move, trimmed, or null when none is stored.
 function repertoireAnsweredIdeaOf(move: RepertoireDrillMove): string | null {
   const idea = move.idea?.trim();
   return idea ? idea : null;
@@ -535,6 +534,7 @@ export class RepertoireSession implements PracticeRunPort {
     const pass = this.pass;
     const asked = pass.ask ? (this.byRow.get(pass.ask.rowId) ?? null) : null;
     const open = this.result === null && pass.ask !== null;
+    const hint = repertoireHintOf(pass.ask, asked);
     const board = new Chess(pass.fen);
     const last = pass.line.at(-1);
     const lastTry = pass.tries.at(-1);
@@ -570,7 +570,7 @@ export class RepertoireSession implements PracticeRunPort {
       gave_up: false,
       solution_line: null,
       suggested_grade: null,
-      hint_square: null,
+      hint_square: open && hint.kind === "piece" ? hint.square : null,
       summary: this.result
         ? {
             solved: this.result.first_try_right,
@@ -582,11 +582,11 @@ export class RepertoireSession implements PracticeRunPort {
       queue_outcomes: this.queueOutcomes(passesLeft),
       student_rating: currentPuzzleRating(this.deps.db),
       rating_change: null,
-      repertoire: this.drillOf(asked),
+      repertoire: this.drillOf(asked, hint),
     };
   }
 
-  private drillOf(asked: DrillMoveState | null): RepertoireDrill {
+  private drillOf(asked: DrillMoveState | null, hint: RepertoireHint): RepertoireDrill {
     const ask = this.pass.ask;
     const intro = asked?.stage === "intro";
     const count = (keep: (state: DrillMoveState) => boolean): number =>
@@ -598,7 +598,7 @@ export class RepertoireSession implements PracticeRunPort {
       opening_name: this.pass.openingName,
       first_pass: intro,
       answer: intro && asked ? { uci: asked.move.uci, san: asked.move.san } : null,
-      hint: repertoireHintOf(ask, asked),
+      hint,
       flagged_opening: ask?.flagged ?? null,
       flagged_sound: ask?.flaggedSound ?? false,
       answered: this.answered,
@@ -740,25 +740,21 @@ export class RepertoireSession implements PracticeRunPort {
     return { level: this.level, cardsCreated, movesFlipped };
   }
 
-  /** The first call gives the stored idea, the second the move; either fails the move. */
+  /** The first call marks the piece to move, the second shows the move; either fails the move. */
   hint(): void {
     const { ask, state } = this.requireAsk();
+    if (state.stage === "intro") return;
     this.transition(() => {
-      ask.hint = ask.hint === 0 ? 1 : 2;
-      if (ask.hint === 2) {
-        this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
-      }
-      this.missByHint(ask, state);
+      this.raiseHint(ask, state, ask.hint === 0 ? 1 : 2);
     });
   }
 
   /** Shows the move at once, as a second hint would. */
   showSolution(): void {
     const { ask, state } = this.requireAsk();
+    if (state.stage === "intro") return;
     this.transition(() => {
-      ask.hint = 2;
-      this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
-      this.missByHint(ask, state);
+      this.raiseHint(ask, state, 2);
     });
   }
 
@@ -826,6 +822,27 @@ export class RepertoireSession implements PracticeRunPort {
     this.pass.missed = true;
     if (!ask.attempted) this.rateFirstAttempt(state, false);
     ask.attempted = true;
+    if (state.stage === "intro") return;
+    if (ask.hint === 1) {
+      this.raiseHint(ask, state, 2);
+      return;
+    }
+    if (ask.hint === 0 && this.wrongTriesOnCurrentAsk() >= REPERTOIRE_WRONG_TRIES_FOR_PIECE) {
+      this.raiseHint(ask, state, 1);
+    }
+  }
+
+  private wrongTriesOnCurrentAsk(): number {
+    const ply = this.pass.line.length;
+    return this.pass.tries.filter((attempt) => !attempt.correct && attempt.ply === ply).length;
+  }
+
+  private raiseHint(ask: DrillAsk, state: DrillMoveState, level: 1 | 2): void {
+    ask.hint = level;
+    if (level === 2) {
+      this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
+    }
+    this.missByHint(ask, state);
   }
 
   private missByHint(ask: DrillAsk, state: DrillMoveState): void {

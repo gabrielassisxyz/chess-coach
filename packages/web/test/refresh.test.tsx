@@ -258,7 +258,6 @@ describe("browser refresh", () => {
   });
 
   it("restores a repertoire drill mid-pass with its variation, line, hint and wrong tries", async () => {
-    const idea = "Prepare d4 and keep the bishop on the a2 g8 diagonal.";
     const server = refreshInto(
       repertoireActivity({
         training: {
@@ -269,14 +268,15 @@ describe("browser refresh", () => {
             { ply: 6, uci: "b1c3", san: "Nc3" },
           ],
         },
-        drill: { hint: { kind: "idea", text: idea }, moves_left: 5, moves_right: 3 },
+        drill: { hint: { kind: "piece", square: "c2" }, moves_left: 5, moves_right: 3 },
       }),
     );
     expect(server.activity).toMatchObject({
       kind: "training",
       mode: "repertoire",
       tries: 2,
-      repertoire: { hint: { kind: "idea", text: idea } },
+      hint_square: "c2",
+      repertoire: { hint: { kind: "piece", square: "c2" } },
     });
 
     render(<Practice server={server} fetchRepertoires={async () => repertoireList} />);
@@ -284,8 +284,10 @@ describe("browser refresh", () => {
     expect(screen.getByRole("list", { name: "Moves" }).textContent).toContain("Bc4");
     expect(screen.getByTestId("fact-tries").querySelector("dd")?.textContent).toBe("2");
     expect(screen.getByTestId("fact-left").querySelector("dd")?.textContent).toBe("5");
-    expect(document.querySelector(".state-card")?.textContent).toContain(idea);
-    expect(screen.getByRole("button", { name: "Ask for the move" })).toBeTruthy();
+    expect(document.querySelector(".state-card")?.textContent).toContain(
+      "Look at the piece on c2.",
+    );
+    expect(screen.getByRole("button", { name: "Show the move" })).toBeTruthy();
   });
 
   it("restores a finished drill's result and a new move's answer from the bootstrap alone", () => {

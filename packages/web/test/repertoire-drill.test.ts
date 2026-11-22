@@ -33,21 +33,21 @@ describe("variationNameOf", () => {
 });
 
 describe("the hints", () => {
-  it("asks for the idea, then the move, then nothing", () => {
-    expect(hintLabelOf(drillOf())).toBe("Ask for the idea");
-    expect(hintLabelOf(drillOf({ hint: { kind: "idea", text: "x" } }))).toBe("Ask for the move");
+  it("shows the piece, then the move, then nothing", () => {
+    expect(hintLabelOf(drillOf())).toBe("Show the piece");
+    expect(hintLabelOf(drillOf({ hint: { kind: "piece", square: "c2" } }))).toBe("Show the move");
     expect(hintLabelOf(drillOf({ hint: { kind: "move", uci: "c2c3", san: "c3" } }))).toBeNull();
   });
 
-  it("leaves only the idea to ask for while a move is new", () => {
+  it("offers no hint button on a first showing, whose answer and note are already shown", () => {
     const first = { first_pass: true, answer: { uci: "c2c3", san: "c3" } };
-    expect(hintLabelOf(drillOf(first))).toBe("Ask for the idea");
-    expect(hintLabelOf(drillOf({ ...first, hint: { kind: "idea", text: "x" } }))).toBeNull();
+    expect(hintLabelOf(drillOf(first))).toBeNull();
+    expect(hintLabelOf(drillOf({ ...first, hint: { kind: "piece", square: "c2" } }))).toBeNull();
   });
 
   it("shows a move only for a new move or after the second hint", () => {
     expect(shownMoveOf(drillOf())).toBeNull();
-    expect(shownMoveOf(drillOf({ hint: { kind: "idea", text: "x" } }))).toBeNull();
+    expect(shownMoveOf(drillOf({ hint: { kind: "piece", square: "c2" } }))).toBeNull();
     expect(shownMoveOf(drillOf({ first_pass: true, answer: { uci: "c2c3", san: "c3" } }))).toEqual({
       uci: "c2c3",
       san: "c3",
@@ -104,11 +104,11 @@ describe("the state card", () => {
     });
   });
 
-  it("gives the idea, then the move, each under its own title", () => {
-    expect(cardOf({ drill: { hint: { kind: "idea", text: "Prepare d4." } } })).toEqual({
+  it("names the piece square, then the move, each under its own title", () => {
+    expect(cardOf({ drill: { hint: { kind: "piece", square: "c2" } } })).toEqual({
       tone: "neutral",
-      title: "The idea",
-      body: "Prepare d4.",
+      title: "The piece",
+      body: "Look at the piece on c2.",
     });
     expect(cardOf({ drill: { hint: { kind: "move", uci: "c2c3", san: "c3" } } })).toEqual({
       tone: "neutral",
@@ -130,17 +130,29 @@ describe("the state card", () => {
       title: "Good move, but this line plays another move",
       body: "It is not the move of this line. Try again.",
     });
-    const hintedSound = cardOf({
+    const hintedPieceSound = cardOf({
       drill: {
         flagged_opening: null,
         flagged_sound: true,
-        hint: { kind: "idea", text: "Prepare d4." },
+        hint: { kind: "piece", square: "c2" },
       },
     });
-    expect(hintedSound).toEqual({
+    expect(hintedPieceSound).toEqual({
       tone: "neutral",
       title: "Good move, but this line plays another move",
-      body: "Prepare d4.",
+      body: "Look at the piece on c2.",
+    });
+    const hintedMoveOpening = cardOf({
+      drill: {
+        flagged_opening: "Scotch Game",
+        flagged_sound: true,
+        hint: { kind: "move", uci: "c2c3", san: "c3" },
+      },
+    });
+    expect(hintedMoveOpening).toEqual({
+      tone: "neutral",
+      title: "Good move, but that is the Scotch Game",
+      body: "Play c3.",
     });
     const plain = cardOf({
       training: { tries: 2, last_try: { uci: "d2d3", san: "d3", correct: false } },
