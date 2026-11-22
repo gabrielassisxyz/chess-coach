@@ -633,6 +633,34 @@ describe("saving the coach's answer as a repertoire move note (reducer)", () => 
     ]);
   });
 
+  it("keeps the reply in progress when a second turn_start joins the running stream", () => {
+    const state = reduce(
+      activityOf(bd3Drill({ positionId: 77, asked: false })),
+      activityOf(bd3Drill({ positionId: 77, asked: true })),
+      turnStartRow(1),
+      textDeltaEvent(1, "Aims ", 1),
+      textDeltaEvent(2, "at h7.", 1),
+      // Typing in the practice chat while the reply streams makes the server announce another
+      // turn at once; the reply it joins goes on and ends with the first turn's turn_end.
+      turnStartRow(2),
+      textDeltaEvent(3, "The knight ", 1),
+      textDeltaEvent(4, "follows.", 1),
+      turnEndEvent(5, 1),
+    );
+
+    expect(state.noteOffers).toEqual([
+      {
+        anchorKey: "live-3",
+        positionId: 77,
+        moveLabel: "5.Bd3",
+        hadNote: false,
+        replyText: "The knight follows.",
+        saved: false,
+      },
+    ]);
+    expect(state.activeNoteTurn).toBeNull();
+  });
+
   it("handles turn_start arriving before activity asked=true when local_ask_idea armed the request", () => {
     let state = reduce(activityOf(bd3Drill({ positionId: 88, idea: "Old note.", asked: false })));
     state = chatReducer(state, { type: "local_ask_idea", commandId: "c1" });
@@ -660,6 +688,37 @@ describe("saving the coach's answer as a repertoire move note (reducer)", () => 
     ]);
     // No duplicate pending request left behind.
     expect(state.pendingNoteRequests).toEqual([]);
+  });
+
+  it("drops the request the server refused, so the next turn gives no card and the same move can be asked again", () => {
+    let state = reduce(activityOf(bd3Drill({ positionId: 77, asked: false })));
+    state = chatReducer(state, { type: "local_ask_idea", commandId: "c1" });
+    expect(state.pendingNoteRequests).toHaveLength(1);
+    expect(state.lastNoteRequestKey).not.toBeNull();
+
+    state = chatReducer(state, {
+      type: "server",
+      event: {
+        type: "error",
+        code: "already_requested",
+        message: "The coach was already asked.",
+        command_id: "c1",
+      },
+    });
+    expect(state.pendingNoteRequests).toEqual([]);
+    expect(state.lastNoteRequestKey).toBeNull();
+
+    for (const event of [
+      turnStartRow(1),
+      textDeltaEvent(1, "Aims at h7.", 1),
+      turnEndEvent(2, 1),
+    ]) {
+      state = chatReducer(state, { type: "server", event });
+    }
+    expect(state.noteOffers).toEqual([]);
+
+    state = chatReducer(state, { type: "local_ask_idea", commandId: "c2" });
+    expect(state.pendingNoteRequests).toHaveLength(1);
   });
 
   it("gives no card when the turn fails, even after partial text", () => {

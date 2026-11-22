@@ -209,15 +209,14 @@ function applyRow(state: ChatState, tab: CoachTab, entry: TranscriptEntry): Chat
   const activeNoteTurn = state.activeNoteTurn ?? null;
   if (entry.kind === "text" && entry.role === "system" && typeof content?.turn_start === "string") {
     const [first, ...rest] = pendingNoteRequests;
+    // With no request waiting, this is a chat line joining the stream already running, whose
+    // reply is still the one offered when it ends.
     if (first) {
       return {
         ...next,
         pendingNoteRequests: rest,
         activeNoteTurn: { request: first, lastTextKey: null, lastText: null },
       };
-    }
-    if (activeNoteTurn !== null) {
-      return { ...next, activeNoteTurn: null };
     }
   }
   if (entry.kind === "text" && entry.role === "assistant" && activeNoteTurn !== null) {
