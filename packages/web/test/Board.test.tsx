@@ -8,8 +8,9 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { Chess } from "chess.js";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Board, type BoardFactory } from "../src/components/Board.js";
+import { Board, type BoardFactory, MOVE_PAUSE_MS } from "../src/components/Board.js";
 import { logicalKnightShape } from "../src/components/knight-arrow.js";
+import { positionsAlong } from "../src/state/play.js";
 import { boardOf } from "../src/state/practice.js";
 import { legalMovesOf, liveGame, START_FEN } from "./fixtures.js";
 
@@ -332,6 +333,52 @@ describe("Board drawing", () => {
     };
     render(<Board activity={liveGame()} onMove={vi.fn()} createBoard={factory} />);
     act(() => lastConfig.drawable?.onChange?.([{ orig: "e4", dest: "e5", brush: "red" }]));
+  });
+
+  it("withholds app arrows during every step of a move pause and draws them once the final position is shown", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const steps = positionsAlong(START_FEN, ["e2e4", "e7e5", "g1f3"]);
+      const finalStep = steps[2];
+      if (!finalStep) throw new Error("expected three steps");
+      const recorder = new RecordingBoard();
+      const arrow: DrawShape = { orig: "d7", dest: "d5", brush: "green" };
+      render(
+        <Board
+          activity={liveGame({
+            fen: finalStep.fen,
+            turn: "black",
+            last_move: { from: finalStep.from, to: finalStep.to },
+          })}
+          onMove={vi.fn()}
+          pause={{ key: "p1", steps: steps.slice(0, 2) }}
+          shapes={[arrow]}
+          createBoard={recorder.factory}
+        />,
+      );
+
+      expect(recorder.created[0]?.drawable?.autoShapes).toEqual([]);
+      expect(recorder.sets.at(-1)?.fen).toBe(steps[0]?.fen);
+      expect(recorder.sets.at(-1)?.drawable?.autoShapes).toEqual([]);
+
+      act(() => vi.advanceTimersByTime(MOVE_PAUSE_MS - 1));
+      expect(recorder.sets.at(-1)?.fen).toBe(steps[0]?.fen);
+      expect(recorder.sets.at(-1)?.drawable?.autoShapes).toEqual([]);
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(recorder.sets.at(-1)?.fen).toBe(steps[1]?.fen);
+      expect(recorder.sets.at(-1)?.drawable?.autoShapes).toEqual([]);
+
+      act(() => vi.advanceTimersByTime(MOVE_PAUSE_MS - 1));
+      expect(recorder.sets.at(-1)?.fen).toBe(steps[1]?.fen);
+      expect(recorder.sets.at(-1)?.drawable?.autoShapes).toEqual([]);
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(recorder.sets.at(-1)?.fen).toBe(finalStep.fen);
+      expect(recorder.sets.at(-1)?.drawable?.autoShapes).toEqual([arrow]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

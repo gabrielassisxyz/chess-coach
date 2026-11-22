@@ -646,6 +646,9 @@
   `cards_created` and `moves_flipped`. The Practice card of a first showing offers a "Skip first
   practice" button when `new_moves` is above 0 behind a confirmation naming how many new moves of
   the level it covers.
+  The answer arrow of a new move or a second hint is withheld while a move pause steps through
+  earlier positions and until the board animation into the asked position has finished, drawing
+  in the first update when board animation is off.
 - **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?, opening?}` serves
   the listed rows of `found_positions` (see Openings) as one-move exercises through their `own:`
   puzzles (`activity/found-drill.ts`, `TrainingRun`). The scope is required, and a command without
