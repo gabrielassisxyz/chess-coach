@@ -910,18 +910,22 @@ function findRepertoireOwnMoveNote(
   return trimmed.length > 0 ? trimmed : null;
 }
 
+// The review stores the opponent's move as a reply in the same transaction as its own row, so the
+// move that left the line is excluded by its UCI; IS NOT keeps a row with no `left_uci` excluding
+// nothing.
 function listRepertoireRepliesAtPosition(
   db: Database,
   repertoireId: number,
   positionKey: string,
+  playedUci: string | null,
 ): string[] {
   const rows = db
     .prepare(
       `SELECT move_san FROM repertoire_positions
-       WHERE repertoire_id = ? AND kind = 'reply' AND position_key = ?
+       WHERE repertoire_id = ? AND kind = 'reply' AND position_key = ? AND move_uci IS NOT ?
        ORDER BY move_san`,
     )
-    .all(repertoireId, positionKey) as Array<{ move_san: string }>;
+    .all(repertoireId, positionKey, playedUci) as Array<{ move_san: string }>;
   return rows.map((row) => row.move_san);
 }
 
@@ -936,7 +940,7 @@ export function findGameRepertoireReview(
   const row = db
     .prepare(
       `SELECT r.repertoire_id, u.group_name, u.variation_name, r.outcome, r.followed_plies,
-              r.left_ply, r.left_position_key, r.left_san, r.expected_san, r.expected_uci
+              r.left_ply, r.left_position_key, r.left_san, r.left_uci, r.expected_san, r.expected_uci
        FROM repertoire_game_reviews r JOIN repertoires u ON u.id = r.repertoire_id
        WHERE r.game_id = ?`,
     )
@@ -956,6 +960,7 @@ export function findGameRepertoireReview(
         left_ply: number | null;
         left_position_key: string | null;
         left_san: string | null;
+        left_uci: string | null;
         expected_san: string | null;
         expected_uci: string | null;
       }
@@ -999,7 +1004,7 @@ export function findGameRepertoireReview(
 
   const storedReplies =
     row.left_position_key !== null
-      ? listRepertoireRepliesAtPosition(db, row.repertoire_id, row.left_position_key)
+      ? listRepertoireRepliesAtPosition(db, row.repertoire_id, row.left_position_key, row.left_uci)
       : [];
   return {
     ...base,

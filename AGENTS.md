@@ -110,7 +110,8 @@
   for `reply_not_stored` and `reply_added`, `played_san` is `left_san`, `line_san` is `expected_san`
   or null for an opponent move, `line_note` is the trimmed `idea` of the unit's matching `own` row or
   null when absent or blank, and `stored_replies` is the sorted SANs of the unit's `reply` rows at
-  `left_position_key`, empty on a student departure). On the Games screen, `OpenGame.tsx` draws a
+  `left_position_key` except the move the opponent played, matched by `left_uci` because a
+  `reply_added` review stores that move as a reply itself, empty on a student departure). On the Games screen, `OpenGame.tsx` draws a
   repertoire review strip above the move list when `repertoire_review` is non-null (none when null):
   `<group> · <variation>` with "In your line for the first N moves." for `in_book`; "You left your
   line at move N." with "Go to move N" (selecting that ply in the move list and on the board) and

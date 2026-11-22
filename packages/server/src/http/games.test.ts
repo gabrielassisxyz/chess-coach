@@ -532,6 +532,63 @@ describe("repertoire_review on GET /api/games/:id", () => {
     expect(third.game.repertoire_review?.left?.line_note).toBeNull();
   });
 
+  it("reads the note from the unit the game was reviewed against when two units store the same move", async () => {
+    const first = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Classical Variation (4.c3)",
+    });
+    const second = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Giuoco Pianissimo (4.d3)",
+    });
+    for (const [unit, idea] of [
+      [first, "Prepares d4 to take the centre."],
+      [second, "Keeps the tension and the bishop pair."],
+    ] as const) {
+      insertRepertoireOwnMove(db, {
+        repertoireId: unit.id,
+        positionKey: "pos-shared",
+        ply: 7,
+        line: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"],
+        uci: "c2c3",
+        san: "c3",
+        share: null,
+        reach: 1,
+        openingName: null,
+        source: "pgn",
+        cpLoss: null,
+        evalCp: null,
+        results: null,
+      });
+      db.prepare(
+        "UPDATE repertoire_positions SET idea = ? WHERE repertoire_id = ? AND position_key = ?",
+      ).run(idea, unit.id, "pos-shared");
+    }
+
+    const notes: Array<string | null | undefined> = [];
+    for (const unit of [first, second]) {
+      const gameId = insertGradedGame(db);
+      insertReviewRow(gameId, unit.id, {
+        outcome: "departed",
+        followedPlies: 6,
+        leftPly: 7,
+        leftPositionKey: "pos-shared",
+        leftSan: "d3",
+        leftUci: "d2d3",
+        expectedSan: "c3",
+        expectedUci: "c2c3",
+      });
+      const parsed = GameDetailResponseSchema.parse((await get(`/api/games/${gameId}`)).json());
+      notes.push(parsed.game.repertoire_review?.left?.line_note);
+    }
+    expect(notes).toEqual([
+      "Prepares d4 to take the centre.",
+      "Keeps the tension and the bishop pair.",
+    ]);
+  });
+
   it("returns sorted stored_replies and null line_san/line_note for reply_not_stored and reply_added", async () => {
     const unit = createRepertoireVariation(db, {
       side: "white",
@@ -645,6 +702,46 @@ describe("repertoire_review on GET /api/games/:id", () => {
       (await get(`/api/games/${noReplies}`)).json(),
     );
     expect(emptyParsed.game.repertoire_review?.left?.stored_replies).toEqual([]);
+  });
+
+  it("leaves the move the opponent played out of stored_replies when the review stored it as a reply", async () => {
+    const unit = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Classical Variation (4.c3)",
+    });
+    for (const [uci, san] of [
+      ["g8f6", "Nf6"],
+      ["f8c5", "Bc5"],
+      ["d7d6", "d6"],
+      ["g7g6", "g6"],
+    ] as const) {
+      upsertRepertoireReply(db, {
+        repertoireId: unit.id,
+        positionKey: "pos-added",
+        ply: 8,
+        line: ["e4", "e5", "Nf3", "Nc6", "Bc4"],
+        uci,
+        san,
+        share: 0.2,
+        reach: 0.2,
+        openingName: null,
+        source: uci === "g7g6" ? "game" : "explorer",
+      });
+    }
+    const added = insertGradedGame(db);
+    insertReviewRow(added, unit.id, {
+      outcome: "reply_added",
+      followedPlies: 7,
+      leftPly: 8,
+      leftPositionKey: "pos-added",
+      leftSan: "g6",
+      leftUci: "g7g6",
+    });
+
+    const parsed = GameDetailResponseSchema.parse((await get(`/api/games/${added}`)).json());
+    expect(parsed.game.repertoire_review?.left?.played_san).toBe("g6");
+    expect(parsed.game.repertoire_review?.left?.stored_replies).toEqual(["Bc5", "Nf6", "d6"]);
   });
 
   it("parses a game detail fixture that omits repertoire_review as null", async () => {
