@@ -163,6 +163,7 @@ const composed = composeServer({
       db,
       allowedOrigins: allowedOriginsFrom(),
     },
+    activity,
     connections: {
       chessCom: httpFetcher(),
       explorerFor: (token) => httpExplorerFetcher(token),

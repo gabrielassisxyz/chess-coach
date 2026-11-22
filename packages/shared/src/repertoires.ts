@@ -406,6 +406,23 @@ export const RepertoireImportRefusalSchema = z.object({
 });
 export type RepertoireImportRefusal = z.infer<typeof RepertoireImportRefusalSchema>;
 
+// ---------------------------------------------------------------- saving a move's note
+
+// The Why card has no clamp and a long note squeezes the move list beside it.
+export const REPERTOIRE_IDEA_MAX_LENGTH = 500;
+
+// The body of PUT /api/repertoires/positions/:id/idea. Strict, so an unknown key is refused.
+export const SaveRepertoireIdeaRequestSchema = z.strictObject({
+  idea: z.string().trim().min(1).max(REPERTOIRE_IDEA_MAX_LENGTH),
+});
+export type SaveRepertoireIdeaRequest = z.input<typeof SaveRepertoireIdeaRequestSchema>;
+
+export const SaveRepertoireIdeaResponseSchema = z.object({
+  rows_updated: z.number().int().positive(),
+  idea: z.string().min(1).max(REPERTOIRE_IDEA_MAX_LENGTH),
+});
+export type SaveRepertoireIdeaResponse = z.infer<typeof SaveRepertoireIdeaResponseSchema>;
+
 // "3...Bc5 4.d3": moves written the way the book writes them, counted from the ply the first one is
 // played at (0 for White's first move). White's moves carry their number; a Black move carries its
 // number and three dots only where it opens the text, since White's number before it says the rest.

@@ -1,6 +1,7 @@
 import type { AddableOpeningsResponse, HealthResponse } from "@chess-coach/shared";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
+import type { ActivityService } from "./activity/service.js";
 import type { Database } from "./db/open.js";
 import { registerCardRoutes } from "./http/cards.js";
 import { registerClientLogRoute } from "./http/client-log.js";
@@ -16,6 +17,7 @@ import {
 } from "./http/openings.js";
 import { registerProgressRoutes } from "./http/progress.js";
 import { registerPuzzleRoutes } from "./http/puzzles.js";
+import { registerRepertoireIdeaRoute } from "./http/repertoire-idea.js";
 import { registerRepertoireImportRoutes } from "./http/repertoire-import.js";
 import { type RepertoireRebuildState, registerRepertoireRoutes } from "./http/repertoires.js";
 import { registerRoutineRoutes } from "./http/routine.js";
@@ -42,6 +44,8 @@ export interface Readiness {
 export interface AppOptions {
   readiness?: () => Readiness;
   hub?: HubOptions;
+  /** Refreshed when a repertoire move's note is saved; without it a save changes only the database. */
+  activity?: Pick<ActivityService, "refreshRepertoireIdea">;
   db?: Database;
   /**
    * The origins a request that changes the repertoire must come from, which are the socket's:
@@ -137,9 +141,22 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       book: options.repertoireBranches ?? NO_REPERTOIRE_BRANCH_BOOK,
       rebuilding,
     });
+    const allowedOrigins = options.allowedOrigins ?? allowedOriginsFrom();
+    const { activity } = options;
     registerRepertoireImportRoutes(app, {
       db: options.db,
-      allowedOrigins: options.allowedOrigins ?? allowedOriginsFrom(),
+      allowedOrigins,
+      log,
+    });
+    registerRepertoireIdeaRoute(app, {
+      db: options.db,
+      allowedOrigins,
+      ...(activity
+        ? {
+            onSaved: ({ positionKey, uci, idea }) =>
+              activity.refreshRepertoireIdea(positionKey, uci, idea),
+          }
+        : {}),
       log,
     });
     registerRoutineRoutes(app, options.db);

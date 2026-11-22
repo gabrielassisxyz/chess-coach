@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Chess } from "chess.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { composeServer } from "../src/compose.js";
+import { type ComposeAppExtras, composeServer } from "../src/compose.js";
 import { type Database, openDatabase } from "../src/db/open.js";
 import {
   createRepertoireVariation,
@@ -85,7 +85,7 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-function composed(engine: Searcher = new CompositionSearcher()) {
+function composed(engine: Searcher = new CompositionSearcher(), appExtras?: ComposeAppExtras) {
   const explorerClock = new FakeClock();
   return composeServer({
     db,
@@ -97,6 +97,7 @@ function composed(engine: Searcher = new CompositionSearcher()) {
     explorerClock,
     evaluate,
     log: logs,
+    ...(appExtras ? { appExtras } : {}),
   });
 }
 
@@ -278,6 +279,38 @@ describe("the composed server", () => {
     const { app: next } = composed();
     await next.close();
     expect(logs.named("openings.rebuild_copy_removed")).toHaveLength(1);
+  });
+
+  it("refreshes the running drill when a move's note is saved on the composed server", async () => {
+    seedItalianUnit([...ITALIAN_LINE, "Bc5", "c3"]);
+    const move = db
+      .prepare(
+        "SELECT id, position_key, move_uci FROM repertoire_positions WHERE kind = 'own' LIMIT 1",
+      )
+      .get() as { id: number; position_key: string; move_uci: string };
+    const refreshed: string[][] = [];
+    const activity = {
+      refreshRepertoireIdea: (positionKey: string, uci: string, idea: string) => {
+        refreshed.push([positionKey, uci, idea]);
+        return Promise.resolve();
+      },
+    };
+    const { app } = composed(undefined, { activity });
+
+    const response = await app.inject({
+      method: "PUT",
+      url: `/api/repertoires/positions/${move.id}/idea`,
+      headers: {
+        origin: "http://localhost:5173",
+        host: "localhost:5173",
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ idea: "Claim the centre." }),
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(refreshed).toEqual([[move.position_key, move.move_uci, "Claim the centre."]]);
   });
 
   it("names the unit a rebuild posted to the composed server walks, until the run ends", async () => {

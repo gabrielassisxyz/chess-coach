@@ -298,7 +298,9 @@
   its side and `moves_total` equal to its `own` moves.
   A second import of the same names makes the stored line equal to the new file and changes only what the
   file changed. A move still in the file keeps its row, its schedule and its stored reason, and a file
-  that gives no reason for it leaves the stored one; a move the file dropped leaves the drill, with its
+  that gives no reason for it leaves the stored one (including a note saved from the coach panel through
+  `PUT /api/repertoires/positions/:id/idea`, which lives in the database only and is never written back
+  to the PGN file, while a comment in the file replaces it); a move the file dropped leaves the drill, with its
   reason returned in `summary.reasons_removed` so the student can write it back; a new move arrives as new
   and due; a card goes only when no other line stores its position and move, and every rating stays in
   `drill_reviews`. `dry_run: true` does all of it and rolls it back, so its summary is the one the real run
@@ -659,7 +661,8 @@
   raises it to `move`, marking the pass missed and hinted without changing the move's rating; the
   count is per asked move, and on a first showing (`first_pass`) wrong tries raise no hint and no
   hint button is drawn.
-  `repertoire.answered` also carries `asked` (false when a move becomes the answered one, true after
+  `repertoire.answered` also carries `position_id` (the `repertoire_positions` row id the move was
+  served from) and `asked` (false when a move becomes the answered one, true after
   the student asks the coach about it). `ask_coach_about_item {activity_id}` on a line drill with
   `answered` set writes one `repertoire_idea_request` notification on the practice conversation with
   the group and variation names, side, numbered line up to and including the move, FEN before the
@@ -670,7 +673,24 @@
   stale id. The Practice column draws the Why card whenever `answered` is set (showing "No note for
   this move yet." when no note is stored) with an "Ask for the idea" button that flips to disabled
   "Asked" once requested, and the coach panel shows its waiting line until the next practice turn
-  streams, ends or fails.
+  streams, ends or fails. `PUT /api/repertoires/positions/:id/idea` (`http/repertoire-idea.ts`,
+  `saveRepertoireIdea` in `db/repertoires.ts`) takes the strict body `{idea}`, trims it (1 to 500
+  characters, `REPERTOIRE_IDEA_MAX_LENGTH`), writes it to every `own` row sharing that row's
+  `position_key` and `move_uci` outside rebuild copies (replacing any stored note), refreshes a
+  running line drill through `ActivityService.refreshRepertoireIdea` so `answered.idea` and later
+  moves in the same run show the new text at once, logs `repertoire.idea_saved` with `position_id`,
+  `rows_updated` and `length` (never the text), and answers 200 `{rows_updated, idea}`; it answers
+  403 `origin_not_allowed` before reading the body when Origin or Host is not allowed, 400
+  `invalid_request` for an invalid id, unknown key, blank text or text over 500 characters, and 404
+  `not_found` for an id no `own` row outside rebuild copies holds. In the practice coach panel, once
+  the first coach turn started after "Ask for the idea" ends, a card under its last assistant text
+  offers "Salvar como nota de <move>" (or "Substituir a nota de <move>" when the move had a note at
+  the request) using the Why card's move label; pressing it opens an editable text field filled with
+  the reply and a 500-character counter with "Salvar" (disabled when empty or over 500) and
+  "Cancelar", sending the route with the request's `position_id` even if another move is answered by
+  then, showing "Nota salva" with no button after 200 or "A nota não foi salva." while keeping the
+  text on failure; a failed turn gives no card, and a new practice conversation or page reload
+  removes it.
 - **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?, opening?}` serves
   the listed rows of `found_positions` (see Openings) as one-move exercises through their `own:`
   puzzles (`activity/found-drill.ts`, `TrainingRun`). The scope is required, and a command without
@@ -879,7 +899,7 @@
   `coach.conversation_reset`, `coach.stream_closed`,
   `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
   `coach.permission_resolved`, `training.item_served`, `training.answer`, `training.first_showings_skipped`, `training.runs_left` (the runs a server start ended), `srs.rated`,
-  `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `openings.rebuild_copy_removed`, `repertoire.import`, `repertoire.import_refused`, `repertoire.import_deleted`, `import_lichess.progress`, `import_lichess.done`,
+  `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `openings.rebuild_copy_removed`, `repertoire.import`, `repertoire.import_refused`, `repertoire.import_deleted`, `repertoire.idea_saved`, `import_lichess.progress`, `import_lichess.done`,
   `explorer.failed`, `eval_cache.hit`, `eval_cache.miss`, `eval_cache.unavailable`,
   `eval_cache.failed`, `eval_queue.added`, `eval_queue.done`, `eval_queue.failed`, `*.listener_failed`, and `client.*` for what
   the browser reports through `POST /api/client-log` (uncaught errors, socket drops and

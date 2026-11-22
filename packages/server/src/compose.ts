@@ -31,6 +31,7 @@ import { reviewRepertoireGames } from "./openings/repertoire-review.js";
 export interface ComposeAppExtras {
   readiness?: AppOptions["readiness"];
   hub?: AppOptions["hub"];
+  activity?: AppOptions["activity"];
   connections?: AppOptions["connections"];
   importer?: Omit<NonNullable<AppOptions["importer"]>, "grader">;
   generateRepertoireIdeas?: AppOptions["generateRepertoireIdeas"];
@@ -168,6 +169,7 @@ export function composeServer(options: ComposeOptions): ComposedServer {
     log,
     ...(extras.readiness ? { readiness: extras.readiness } : {}),
     ...(extras.hub ? { hub: extras.hub } : {}),
+    ...(extras.activity ? { activity: extras.activity } : {}),
     ...(extras.connections ? { connections: extras.connections } : {}),
     ...(extras.generateRepertoireIdeas
       ? { generateRepertoireIdeas: extras.generateRepertoireIdeas }

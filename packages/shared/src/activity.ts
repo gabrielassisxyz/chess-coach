@@ -244,11 +244,12 @@ export type RepertoireDrillResult = z.infer<typeof RepertoireDrillResultSchema>;
 // margin, cleared on the next try. A move is left until it is played right at the first attempt
 // of a pass; right and wrong count how that first rated attempt went. `repertoire_id` is the
 // variation of the move in play, as on the item, and `level` the one the drill was started at.
-// `answered` is the move just answered, with its stored idea and whether the student already asked
-// the coach to explain it, shown until the next move is answered; it is null before any answer and
-// at the start of a pass, and its idea is null when none is stored. `new_moves` is the number of
-// moves of the drill's level that have no card yet.
+// `answered` is the move just answered, with its `repertoire_positions` row id, its stored idea
+// and whether the student already asked the coach to explain it, shown until the next move is
+// answered; it is null before any answer and at the start of a pass, and its idea is null when
+// none is stored. `new_moves` is the number of moves of the drill's level that have no card yet.
 export const RepertoireAnsweredSchema = z.object({
+  position_id: z.number().int().positive(),
   san: z.string(),
   idea: z.string().nullable(),
   asked: z.boolean(),

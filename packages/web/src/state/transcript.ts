@@ -9,7 +9,7 @@ import {
   type ServerEvent,
   type TranscriptEntry,
 } from "@chess-coach/shared";
-import { answeredPlyOf } from "./repertoire-drill.js";
+import { answeredMoveLabelOf, answeredPlyOf } from "./repertoire-drill.js";
 
 export type ChatItem =
   | { type: "text"; key: string; role: "user" | "assistant"; text: string; liveId?: number }
@@ -32,6 +32,32 @@ export interface PendingPermission {
   requestId: string;
   toolName: string;
   input: unknown;
+}
+
+// An "Ask for the idea" request waiting for the first practice coach turn that starts after it.
+export interface PendingRepertoireNoteRequest {
+  requestKey: string;
+  positionId: number;
+  moveLabel: string;
+  hadNote: boolean;
+  commandId?: string;
+}
+
+// A practice coach turn answering an "Ask for the idea" request while it streams.
+export interface ActiveRepertoireNoteTurn {
+  request: PendingRepertoireNoteRequest;
+  lastTextKey: string | null;
+  lastText: string | null;
+}
+
+// A finished coach reply offered as a note under its last assistant text item.
+export interface RepertoireNoteOffer {
+  anchorKey: string;
+  positionId: number;
+  moveLabel: string;
+  hadNote: boolean;
+  replyText: string;
+  saved: boolean;
 }
 
 // What the coach is doing right now, derived from the chat events alone.
@@ -79,6 +105,14 @@ export interface ChatState {
   practiceEndedItem: string | null;
   // The engine's latest answer; the screen shows it only while it matches the position on the board.
   analysis: AnalysisEvent | null;
+  // "Ask for the idea" requests waiting for their coach turn to start.
+  pendingNoteRequests?: PendingRepertoireNoteRequest[];
+  // The practice coach turn currently answering an "Ask for the idea" request.
+  activeNoteTurn?: ActiveRepertoireNoteTurn | null;
+  // Completed replies offered as move notes in the practice conversation.
+  noteOffers?: RepertoireNoteOffer[];
+  // The last armed idea request key, so a repeat activity echo does not queue it twice.
+  lastNoteRequestKey?: string | null;
 }
 
 export const initialChatState: ChatState = {
@@ -94,6 +128,10 @@ export const initialChatState: ChatState = {
   practiceReplyPending: false,
   practiceEndedItem: null,
   analysis: null,
+  pendingNoteRequests: [],
+  activeNoteTurn: null,
+  noteOffers: [],
+  lastNoteRequestKey: null,
 };
 
 function textOf(content: unknown): string {
@@ -164,7 +202,34 @@ function applyRow(state: ChatState, tab: CoachTab, entry: TranscriptEntry): Chat
   const chat = state.conversations[tab];
   const items = [...chat.items];
   applyEntry(items, entry);
-  return withTab(state, tab, { ...chat, items, lastMessageAt: Date.now() });
+  const next = withTab(state, tab, { ...chat, items, lastMessageAt: Date.now() });
+  if (tab !== "practice") return next;
+  const content = entry.content as Record<string, unknown> | null;
+  const pendingNoteRequests = state.pendingNoteRequests ?? [];
+  const activeNoteTurn = state.activeNoteTurn ?? null;
+  if (entry.kind === "text" && entry.role === "system" && typeof content?.turn_start === "string") {
+    const [first, ...rest] = pendingNoteRequests;
+    // With no request waiting, this is a chat line joining the stream already running, whose
+    // reply is still the one offered when it ends.
+    if (first) {
+      return {
+        ...next,
+        pendingNoteRequests: rest,
+        activeNoteTurn: { request: first, lastTextKey: null, lastText: null },
+      };
+    }
+  }
+  if (entry.kind === "text" && entry.role === "assistant" && activeNoteTurn !== null) {
+    return {
+      ...next,
+      activeNoteTurn: {
+        ...activeNoteTurn,
+        lastTextKey: `row-${entry.id}`,
+        lastText: textOf(content),
+      },
+    };
+  }
+  return next;
 }
 
 function applyChat(state: ChatState, event: ChatEvent): ChatState {
@@ -207,7 +272,34 @@ function applyChat(state: ChatState, event: ChatEvent): ChatState {
   const practiceReplyPending =
     replied && event.tab === "practice" ? false : state.practiceReplyPending;
   const next = withTab(state, event.tab, { items, turn, coachMessages, lastMessageAt: Date.now() });
-  return { ...next, practiceReplyPending };
+  let activeNoteTurn = state.activeNoteTurn ?? null;
+  let noteOffers = state.noteOffers ?? [];
+  if (event.tab === "practice" && activeNoteTurn !== null) {
+    if (payload.kind === "text_delta") {
+      const last = items.at(-1);
+      if (last?.type === "text" && last.role === "assistant") {
+        activeNoteTurn = { ...activeNoteTurn, lastTextKey: last.key, lastText: last.text };
+      }
+    } else if (payload.kind === "turn_end") {
+      if (activeNoteTurn.lastTextKey !== null && activeNoteTurn.lastText !== null) {
+        noteOffers = [
+          ...noteOffers,
+          {
+            anchorKey: activeNoteTurn.lastTextKey,
+            positionId: activeNoteTurn.request.positionId,
+            moveLabel: activeNoteTurn.request.moveLabel,
+            hadNote: activeNoteTurn.request.hadNote,
+            replyText: activeNoteTurn.lastText,
+            saved: false,
+          },
+        ];
+      }
+      activeNoteTurn = null;
+    } else if (payload.kind === "turn_error") {
+      activeNoteTurn = null;
+    }
+  }
+  return { ...next, practiceReplyPending, activeNoteTurn, noteOffers };
 }
 
 // A tool call or its result means the coach is still working on the answer; only the end of
@@ -238,9 +330,46 @@ function withError(state: ChatState, message: string, code: ErrorCode | null): C
 export type ChatAction =
   | { type: "server"; event: ServerEvent }
   | { type: "local_say"; text: string; tab: CoachTab }
+  | { type: "local_ask_idea"; commandId?: string }
+  | { type: "mark_note_saved"; anchorKey: string }
   | { type: "permission_answered"; requestId: string }
   | { type: "protocol_error"; message: string }
   | { type: "dismiss_error" };
+
+function noteRequestOf(
+  activity: ActivityState | null,
+  requireAsked: boolean,
+  commandId?: string,
+): PendingRepertoireNoteRequest | null {
+  if (activity?.kind !== "training" || activity.summary !== null || !activity.repertoire) {
+    return null;
+  }
+  const answered = activity.repertoire.answered;
+  if (!answered) return null;
+  if (requireAsked ? !answered.asked : answered.asked) return null;
+  const moveLabel = answeredMoveLabelOf(activity, activity.repertoire);
+  if (moveLabel === null) return null;
+  const ply = answeredPlyOf(activity, activity.repertoire);
+  const requestKey = `${activity.served_at}#${activity.item.position_in_queue}#idea#${ply}#${answered.san}`;
+  return {
+    requestKey,
+    positionId: answered.position_id,
+    moveLabel,
+    hadNote: answered.idea !== null && answered.idea.trim() !== "",
+    ...(commandId === undefined ? {} : { commandId }),
+  };
+}
+
+function armNoteRequest(
+  state: ChatState,
+  request: PendingRepertoireNoteRequest | null,
+): Partial<ChatState> {
+  if (!request || request.requestKey === (state.lastNoteRequestKey ?? null)) return {};
+  return {
+    pendingNoteRequests: [...(state.pendingNoteRequests ?? []), request],
+    lastNoteRequestKey: request.requestKey,
+  };
+}
 
 // A practice item whose notification the coach has not answered yet: solved or failed with
 // the queue still open, or a line drill move the student asked the coach to explain. A rated card
@@ -281,6 +410,20 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     });
     return { ...said, localCount: state.localCount + 1 };
   }
+  if (action.type === "local_ask_idea") {
+    return {
+      ...state,
+      ...armNoteRequest(state, noteRequestOf(state.activity, false, action.commandId)),
+    };
+  }
+  if (action.type === "mark_note_saved") {
+    return {
+      ...state,
+      noteOffers: (state.noteOffers ?? []).map((offer) =>
+        offer.anchorKey === action.anchorKey ? { ...offer, saved: true } : offer,
+      ),
+    };
+  }
   if (action.type === "permission_answered") {
     const permissions = state.permissions.filter((p) => p.requestId !== action.requestId);
     return { ...state, permissions };
@@ -300,6 +443,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         localCount: state.localCount,
         activity: event.activity,
         currentElo: event.current_elo ?? null,
+        lastNoteRequestKey: noteRequestOf(event.activity, true)?.requestKey ?? null,
       };
     }
     case "chat":
@@ -307,11 +451,19 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "chat_row":
       return applyRow(state, event.tab, event.entry);
     // The count is kept so a view comparing it to what it last saw is not reset by the fresh start.
-    case "conversation_started":
-      return withTab(state, event.tab, {
+    case "conversation_started": {
+      const reset = withTab(state, event.tab, {
         ...emptyTabChat,
         coachMessages: state.conversations[event.tab].coachMessages,
       });
+      if (event.tab !== "practice") return reset;
+      return {
+        ...reset,
+        pendingNoteRequests: [],
+        activeNoteTurn: null,
+        noteOffers: [],
+      };
+    }
     case "permission_request":
       return addPermission(state, event);
     case "activity":
@@ -319,11 +471,25 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...state,
         activity: event.state,
         ...pendingAfter(state, event.state),
+        ...armNoteRequest(state, noteRequestOf(event.state, true)),
       };
     case "analysis":
       return { ...state, analysis: event };
-    case "error":
-      return withError(state, event.message, event.code);
+    case "error": {
+      const errored = withError(state, event.message, event.code);
+      if (event.command_id === undefined) return errored;
+      const pending = state.pendingNoteRequests ?? [];
+      const dropped = pending.find((req) => req.commandId === event.command_id);
+      if (!dropped) return errored;
+      return {
+        ...errored,
+        pendingNoteRequests: pending.filter((req) => req.commandId !== event.command_id),
+        lastNoteRequestKey:
+          state.lastNoteRequestKey === dropped.requestKey
+            ? null
+            : (state.lastNoteRequestKey ?? null),
+      };
+    }
     // The activity event that precedes it already carries the same item and status.
     case "training":
       return state;

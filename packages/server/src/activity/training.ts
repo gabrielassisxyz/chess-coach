@@ -143,6 +143,8 @@ export interface PracticeRunPort {
   retry(): void;
   /** Marks every never-trained move of a line drill's level as seen; refused on other runs. */
   skipFirstShowings(): SkipFirstShowingsResult;
+  /** Updates the note held in memory for a repertoire move; returns whether the run holds it. */
+  updateIdea?(positionKey: string, uci: string, idea: string): boolean;
   end(): void;
   /** The run stopped being on the board without the student ending it. */
   leave(): void;

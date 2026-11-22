@@ -632,6 +632,7 @@ export class RepertoireSession implements PracticeRunPort {
       flagged_sound: ask?.flaggedSound ?? false,
       answered: this.answered
         ? {
+            position_id: this.answered.move.rowId,
             san: this.answered.move.san,
             idea: repertoireAnsweredIdeaOf(this.answered.move),
             asked: this.answered.asked,
@@ -829,6 +830,17 @@ export class RepertoireSession implements PracticeRunPort {
   /** The student left the drill; a finished drill keeps the reason it already has. */
   end(): void {
     this.closeRun("ended");
+  }
+
+  /** Updates the stored idea on every queued move matching this position and move. */
+  updateIdea(positionKey: string, uci: string, idea: string): boolean {
+    let matched = false;
+    for (const state of this.order) {
+      if (state.move.positionKey !== positionKey || state.move.uci !== uci) continue;
+      state.move.idea = idea;
+      matched = true;
+    }
+    return matched;
   }
 
   /** The board moved on without the student ending the drill; a run already ended keeps its reason. */

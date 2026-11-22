@@ -23,7 +23,11 @@ import {
   type ImportedUnitSyncSummary,
   syncImportedRepertoireUnit,
 } from "./repertoire-import.js";
-import { createRepertoireVariation, insertRepertoireOwnMove } from "./repertoires.js";
+import {
+  createRepertoireVariation,
+  insertRepertoireOwnMove,
+  saveRepertoireIdea,
+} from "./repertoires.js";
 import { endTrainingRun, insertTrainingRun } from "./training.js";
 
 const AT = "2026-11-21T20:00:00.000Z";
@@ -500,6 +504,21 @@ describe("syncImportedRepertoireUnit: the student's reasons", () => {
 
     expect(summary).toMatchObject({ own_added: 3, reasons_from_file: 2, reasons_kept: 0 });
     expect(rowAt(unit, ["d4", "d5", "Bf4", "Nf6"], "e3").idea).toBe(E3_REASON);
+  });
+
+  it("keeps a saved note when a new import gives no comment for the move and replaces it when the file gives one", () => {
+    const { repertoire_id: unit } = syncOk(read("1. d4 d5 2. Bf4 Nf6 3. e3 e6 4. Nf3 *"));
+    const bf4 = rowAt(unit, ["d4", "d5"], "Bf4");
+    const saved = saveRepertoireIdea(db, bf4.id, "Bishop out before e3 shuts it in.");
+    expect(saved).toMatchObject({ rowsUpdated: 1, idea: "Bishop out before e3 shuts it in." });
+
+    const withoutComment = syncOk(read("1. d4 d5 2. Bf4 Nf6 3. e3 e6 4. Nf3 *"));
+    expect(withoutComment).toMatchObject({ reasons_from_file: 0, reasons_kept: 1 });
+    expect(rowAt(unit, ["d4", "d5"], "Bf4").idea).toBe("Bishop out before e3 shuts it in.");
+
+    const withComment = syncOk(read("1. d4 d5 2. Bf4 {From the PGN file.} Nf6 3. e3 e6 4. Nf3 *"));
+    expect(withComment).toMatchObject({ reasons_from_file: 1, reasons_kept: 0 });
+    expect(rowAt(unit, ["d4", "d5"], "Bf4").idea).toBe("From the PGN file.");
   });
 });
 

@@ -580,6 +580,50 @@ export function setRepertoireIdea(db: Database, positionId: number, idea: string
   return result.changes > 0;
 }
 
+/** What saving a student note wrote across every unit outside rebuild copies. */
+export interface SavedRepertoireIdea {
+  positionKey: string;
+  uci: string;
+  rowsUpdated: number;
+  idea: string;
+}
+
+// Replaces the stored note on every `own` row sharing the target row's position and move across
+// every unit that is not a rebuild's working copy, since those rows share one review card. Returns
+// null when no `own` row outside rebuild copies has `positionId`.
+export function saveRepertoireIdea(
+  db: Database,
+  positionId: number,
+  idea: string,
+): SavedRepertoireIdea | null {
+  return db.transaction((): SavedRepertoireIdea | null => {
+    const target = db
+      .prepare(
+        `SELECT p.position_key, p.move_uci
+         FROM repertoire_positions p JOIN repertoires r ON r.id = p.repertoire_id
+         WHERE p.id = ? AND p.kind = 'own' AND NOT ${repertoireRebuildCopySql("r.group_name")}`,
+      )
+      .get(positionId) as { position_key: string; move_uci: string } | undefined;
+    if (!target) return null;
+    const result = db
+      .prepare(
+        `UPDATE repertoire_positions
+         SET idea = ?
+         WHERE kind = 'own' AND position_key = ? AND move_uci = ?
+           AND repertoire_id IN (
+             SELECT id FROM repertoires WHERE NOT ${repertoireRebuildCopySql("group_name")}
+           )`,
+      )
+      .run(idea, target.position_key, target.move_uci);
+    return {
+      positionKey: target.position_key,
+      uci: target.move_uci,
+      rowsUpdated: result.changes,
+      idea,
+    };
+  })();
+}
+
 export function repertoireCounts(db: Database, repertoireId: number): RepertoireCounts {
   const row = db
     .prepare(

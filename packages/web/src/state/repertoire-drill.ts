@@ -199,6 +199,17 @@ export function answeredPlyOf(training: TrainingActivity, drill: RepertoireDrill
   return lastStudent ? lastStudent.ply : moves.length;
 }
 
+// The move as the Why card writes it, e.g. "4.c3" or "5.Bd3".
+export function answeredMoveLabelOf(
+  training: TrainingActivity,
+  drill: RepertoireDrill,
+): string | null {
+  const answered = drill.answered;
+  if (!answered) return null;
+  const number = Math.floor(answeredPlyOf(training, drill) / 2) + 1;
+  return `${number}.${answered.san}`;
+}
+
 // The Why card of the move just answered, drawn under the drill's card whenever `answered` is set.
 // Nothing before any move is answered or at the start of a pass.
 export function answeredLineOf(
@@ -206,10 +217,10 @@ export function answeredLineOf(
   drill: RepertoireDrill,
 ): AnsweredLine | null {
   const answered = drill.answered;
-  if (!answered) return null;
-  const number = Math.floor(answeredPlyOf(training, drill) / 2) + 1;
+  const move = answeredMoveLabelOf(training, drill);
+  if (!answered || move === null) return null;
   return {
-    title: `Why ${number}.${answered.san}`,
+    title: `Why ${move}`,
     body: answered.idea ?? NO_REPERTOIRE_NOTE_TEXT,
     asked: answered.asked,
   };

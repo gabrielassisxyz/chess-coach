@@ -373,6 +373,16 @@ export class ActivityService {
     this.run?.linkMessage(messageId);
   }
 
+  // Updates the note held by a running line drill after a save, publishing the new state when the
+  // drill is on the board. A demo shown over the drill still updates the underlying run in place.
+  refreshRepertoireIdea(positionKey: string, uci: string, idea: string): Promise<void> {
+    return this.enqueue("training", async () => {
+      if (!this.run?.updateIdea?.(positionKey, uci, idea)) return;
+      if (this.state?.kind !== "training") return;
+      this.publish(this.run.state(this.state.activity_id), "refreshRepertoireIdea");
+    });
+  }
+
   rateCard(exposureId: string, grade: number, expectedActivityId?: number): Promise<ActivityState> {
     return this.stepTraining(expectedActivityId, "rateCard", (run) =>
       run.rate(exposureId, grade),

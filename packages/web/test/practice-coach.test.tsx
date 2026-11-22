@@ -1,5 +1,9 @@
-import type { ServerEvent, TrainingActivity } from "@chess-coach/shared";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  REPERTOIRE_IDEA_MAX_LENGTH,
+  type ServerEvent,
+  type TrainingActivity,
+} from "@chess-coach/shared";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import {
@@ -324,7 +328,7 @@ describe("asking the coach for the idea of a line drill move", () => {
   const drillState = (asked: boolean, status: TrainingActivity["status"] = "in_progress") =>
     repertoireActivity({
       training: { status },
-      drill: { answered: { san: "c3", idea: null, asked } },
+      drill: { answered: { position_id: 42, san: "c3", idea: null, asked } },
     });
 
   it("sets practiceReplyPending once asked becomes true, clears it on text, end or error, and does not re-arm for the same move", () => {
@@ -366,7 +370,7 @@ describe("asking the coach for the idea of a line drill move", () => {
       repertoireActivity({
         sans: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"],
         training: { status: "in_progress" },
-        drill: { answered: { san: "d4", idea: null, asked: true } },
+        drill: { answered: { position_id: 43, san: "d4", idea: null, asked: true } },
       }),
     );
     expect(
@@ -528,5 +532,439 @@ describe("the coach's line card", () => {
     expect(FakeSocket.latest.sent).toContainEqual(
       expect.objectContaining({ type: "show_line", fen: LINE_FEN, moves: [] }),
     );
+  });
+});
+
+function turnStartRow(id: number, tab: "practice" | "play" = "practice"): ServerEvent {
+  return {
+    type: "chat_row",
+    tab,
+    entry: {
+      id,
+      seq: id,
+      role: "system",
+      kind: "text",
+      content: { turn_start: `2026-03-01T00:00:0${id}.000Z` },
+      created_at: `2026-03-01T00:00:0${id}.000Z`,
+    },
+  };
+}
+
+function turnEndEvent(seq: number, messageId = 1): ServerEvent {
+  return {
+    type: "chat",
+    tab: "practice",
+    message_id: messageId,
+    seq,
+    event: { kind: "turn_end", usage: { input_tokens: 1, output_tokens: 1 } },
+  };
+}
+
+function textDeltaEvent(seq: number, text: string, messageId = 1): ServerEvent {
+  return {
+    type: "chat",
+    tab: "practice",
+    message_id: messageId,
+    seq,
+    event: { kind: "text_delta", text },
+  };
+}
+
+const LONDON_BD3_LINE = ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "c5"];
+
+function bd3Drill(options: {
+  positionId?: number;
+  idea?: string | null;
+  asked?: boolean;
+}): TrainingActivity {
+  return repertoireActivity({
+    sans: LONDON_BD3_LINE,
+    training: { status: "in_progress" },
+    drill: {
+      answered: {
+        position_id: options.positionId ?? 77,
+        san: "Bd3",
+        idea: options.idea ?? null,
+        asked: options.asked ?? false,
+      },
+    },
+  });
+}
+
+describe("saving the coach's answer as a repertoire move note (reducer)", () => {
+  it("anchors to the last assistant text of the first turn that starts after the request, once it ends", () => {
+    const before = activityOf(bd3Drill({ positionId: 77, idea: null, asked: false }));
+    const asked = activityOf(bd3Drill({ positionId: 77, idea: null, asked: true }));
+
+    // A turn already running when the request arrives must NOT receive the card.
+    const duringOldTurn = reduce(
+      before,
+      turnStartRow(1),
+      textDeltaEvent(1, "Earlier reply.", 1),
+      asked,
+      textDeltaEvent(2, " More of earlier reply.", 1),
+      turnEndEvent(3, 1),
+    );
+    expect(duringOldTurn.noteOffers).toEqual([]);
+
+    // The first turn that starts after the request streams two text blocks around a tool call.
+    const streaming = [
+      turnStartRow(2),
+      textDeltaEvent(4, "Let me check.", 2),
+      chatOf(5, { kind: "tool_use", tool_use_id: "t1", name: "analyze", input: {} }),
+      chatOf(6, { kind: "tool_result", tool_use_id: "t1", output: "{}" }),
+      textDeltaEvent(7, "Develops the bishop ", 3),
+      textDeltaEvent(8, "towards the kingside.", 3),
+    ].reduce((state, event) => chatReducer(state, { type: "server", event }), duringOldTurn);
+
+    // No card until the turn has ended.
+    expect(streaming.noteOffers).toEqual([]);
+
+    const ended = chatReducer(streaming, { type: "server", event: turnEndEvent(9, 3) });
+    expect(ended.noteOffers).toEqual([
+      {
+        anchorKey: "live-7",
+        positionId: 77,
+        moveLabel: "5.Bd3",
+        hadNote: false,
+        replyText: "Develops the bishop towards the kingside.",
+        saved: false,
+      },
+    ]);
+  });
+
+  it("keeps the reply in progress when a second turn_start joins the running stream", () => {
+    const state = reduce(
+      activityOf(bd3Drill({ positionId: 77, asked: false })),
+      activityOf(bd3Drill({ positionId: 77, asked: true })),
+      turnStartRow(1),
+      textDeltaEvent(1, "Aims ", 1),
+      textDeltaEvent(2, "at h7.", 1),
+      // Typing in the practice chat while the reply streams makes the server announce another
+      // turn at once; the reply it joins goes on and ends with the first turn's turn_end.
+      turnStartRow(2),
+      textDeltaEvent(3, "The knight ", 1),
+      textDeltaEvent(4, "follows.", 1),
+      turnEndEvent(5, 1),
+    );
+
+    expect(state.noteOffers).toEqual([
+      {
+        anchorKey: "live-3",
+        positionId: 77,
+        moveLabel: "5.Bd3",
+        hadNote: false,
+        replyText: "The knight follows.",
+        saved: false,
+      },
+    ]);
+    expect(state.activeNoteTurn).toBeNull();
+  });
+
+  it("handles turn_start arriving before activity asked=true when local_ask_idea armed the request", () => {
+    let state = reduce(activityOf(bd3Drill({ positionId: 88, idea: "Old note.", asked: false })));
+    state = chatReducer(state, { type: "local_ask_idea", commandId: "c1" });
+    // Server emits turn_start before the updated activity frame.
+    state = chatReducer(state, { type: "server", event: turnStartRow(1) });
+    state = chatReducer(state, {
+      type: "server",
+      event: activityOf(bd3Drill({ positionId: 88, idea: "Old note.", asked: true })),
+    });
+    state = chatReducer(state, {
+      type: "server",
+      event: textDeltaEvent(1, "Controls e4 and eyes h7.", 1),
+    });
+    state = chatReducer(state, { type: "server", event: turnEndEvent(2, 1) });
+
+    expect(state.noteOffers).toEqual([
+      {
+        anchorKey: "live-1",
+        positionId: 88,
+        moveLabel: "5.Bd3",
+        hadNote: true,
+        replyText: "Controls e4 and eyes h7.",
+        saved: false,
+      },
+    ]);
+    // No duplicate pending request left behind.
+    expect(state.pendingNoteRequests).toEqual([]);
+  });
+
+  it("drops the request the server refused, so the next turn gives no card and the same move can be asked again", () => {
+    let state = reduce(activityOf(bd3Drill({ positionId: 77, asked: false })));
+    state = chatReducer(state, { type: "local_ask_idea", commandId: "c1" });
+    expect(state.pendingNoteRequests).toHaveLength(1);
+    expect(state.lastNoteRequestKey).not.toBeNull();
+
+    state = chatReducer(state, {
+      type: "server",
+      event: {
+        type: "error",
+        code: "already_requested",
+        message: "The coach was already asked.",
+        command_id: "c1",
+      },
+    });
+    expect(state.pendingNoteRequests).toEqual([]);
+    expect(state.lastNoteRequestKey).toBeNull();
+
+    for (const event of [
+      turnStartRow(1),
+      textDeltaEvent(1, "Aims at h7.", 1),
+      turnEndEvent(2, 1),
+    ]) {
+      state = chatReducer(state, { type: "server", event });
+    }
+    expect(state.noteOffers).toEqual([]);
+
+    state = chatReducer(state, { type: "local_ask_idea", commandId: "c2" });
+    expect(state.pendingNoteRequests).toHaveLength(1);
+  });
+
+  it("gives no card when the turn fails, even after partial text", () => {
+    const failed = reduce(
+      activityOf(bd3Drill({ positionId: 77, asked: false })),
+      activityOf(bd3Drill({ positionId: 77, asked: true })),
+      turnStartRow(1),
+      textDeltaEvent(1, "Partial text...", 1),
+      chatOf(2, { kind: "turn_error", message: "sdk crashed" }),
+    );
+    expect(failed.noteOffers).toEqual([]);
+    expect(failed.activeNoteTurn).toBeNull();
+  });
+
+  it("removes the card on a new practice conversation or bootstrap, but not on another tab's new conversation", () => {
+    const withOffer = reduce(
+      activityOf(bd3Drill({ positionId: 77, asked: false })),
+      activityOf(bd3Drill({ positionId: 77, asked: true })),
+      turnStartRow(1),
+      textDeltaEvent(1, "Aims at h7.", 1),
+      turnEndEvent(2, 1),
+    );
+    expect(withOffer.noteOffers).toHaveLength(1);
+
+    const playReset = chatReducer(withOffer, {
+      type: "server",
+      event: { type: "conversation_started", tab: "play" },
+    });
+    expect(playReset.noteOffers).toHaveLength(1);
+
+    const practiceReset = chatReducer(withOffer, {
+      type: "server",
+      event: { type: "conversation_started", tab: "practice" },
+    });
+    expect(practiceReset.noteOffers).toEqual([]);
+
+    const reloaded = chatReducer(withOffer, {
+      type: "server",
+      event: {
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: bd3Drill({ positionId: 77, asked: true }),
+      },
+    });
+    expect(reloaded.noteOffers).toEqual([]);
+  });
+});
+
+describe("saving the coach's answer as a repertoire move note (UI)", () => {
+  function setupDrillChat(options: { positionId?: number; idea?: string | null } = {}) {
+    render(<App />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: bd3Drill({ positionId: options.positionId ?? 77, idea: options.idea ?? null }),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+  }
+
+  function askAndReceiveReply(
+    replyText: string,
+    options: { positionId?: number; idea?: string | null } = {},
+  ) {
+    fireEvent.click(screen.getByRole("button", { name: "Ask for the idea" }));
+    act(() => {
+      FakeSocket.latest.receive(turnStartRow(1));
+      FakeSocket.latest.receive(
+        activityOf(
+          bd3Drill({
+            positionId: options.positionId ?? 77,
+            idea: options.idea ?? null,
+            asked: true,
+          }),
+        ),
+      );
+      FakeSocket.latest.receive(textDeltaEvent(1, replyText, 1));
+    });
+    // Still streaming: card must not appear yet.
+    expect(screen.queryByTestId("note-save-card")).toBeNull();
+    act(() => {
+      FakeSocket.latest.receive(turnEndEvent(2, 1));
+    });
+  }
+
+  it("shows 'Salvar como nota de 5.Bd3', opens the editor with count and validation, sends the original position_id even after moving on, and shows 'Nota salva'", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/health")) {
+        return Response.json({ status: "ok", version: "0.0.0", ready: true });
+      }
+      if (url === "/api/repertoires/positions/77/idea" && init?.method === "PUT") {
+        const parsed = JSON.parse(String(init.body)) as { idea: string };
+        return Response.json({ rows_updated: 1, idea: parsed.idea.trim() });
+      }
+      return Response.json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    setupDrillChat({ positionId: 77, idea: null });
+    askAndReceiveReply("Controls e4 and eyes h7.");
+
+    const card = screen.getByTestId("note-save-card");
+    const openBtn = within(card).getByRole("button", { name: "Salvar como nota de 5.Bd3" });
+    fireEvent.click(openBtn);
+
+    const textarea = within(card).getByRole("textbox") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("Controls e4 and eyes h7.");
+    expect(within(card).getByTestId("note-save-count").textContent).toBe(
+      `${"Controls e4 and eyes h7.".length}/${REPERTOIRE_IDEA_MAX_LENGTH}`,
+    );
+
+    const saveBtn = () => within(card).getByRole("button", { name: "Salvar" }) as HTMLButtonElement;
+    const cancelBtn = () => within(card).getByRole("button", { name: "Cancelar" });
+    expect(saveBtn().disabled).toBe(false);
+
+    // Empty / whitespace disables Salvar.
+    fireEvent.change(textarea, { target: { value: "   " } });
+    expect(within(card).getByTestId("note-save-count").textContent).toBe(
+      `0/${REPERTOIRE_IDEA_MAX_LENGTH}`,
+    );
+    expect(saveBtn().disabled).toBe(true);
+
+    // Over 500 characters disables Salvar.
+    fireEvent.change(textarea, { target: { value: "a".repeat(REPERTOIRE_IDEA_MAX_LENGTH + 1) } });
+    expect(within(card).getByTestId("note-save-count").textContent).toBe(
+      `${REPERTOIRE_IDEA_MAX_LENGTH + 1}/${REPERTOIRE_IDEA_MAX_LENGTH}`,
+    );
+    expect(saveBtn().disabled).toBe(true);
+
+    // Cancelar closes back to the button; opening again restores the reply text.
+    fireEvent.click(cancelBtn());
+    expect(within(card).queryByRole("textbox")).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Salvar como nota de 5.Bd3" }));
+    expect((within(card).getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+      "Controls e4 and eyes h7.",
+    );
+
+    // Move on to a different answered move before clicking Salvar: the request still sends position_id 77.
+    act(() => {
+      FakeSocket.latest.receive(
+        activityOf(
+          repertoireActivity({
+            sans: [...LONDON_BD3_LINE, "Bd3", "Nc6"],
+            training: { status: "in_progress" },
+            drill: {
+              answered: { position_id: 99, san: "c3", idea: null, asked: false },
+            },
+          }),
+        ),
+      );
+    });
+
+    fireEvent.change(within(card).getByRole("textbox"), {
+      target: { value: "My own note for Bd3." },
+    });
+    fireEvent.click(saveBtn());
+
+    await waitFor(() => {
+      expect(within(card).getByText("Nota salva")).toBeTruthy();
+    });
+    expect(within(card).queryAllByRole("button")).toHaveLength(0);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/repertoires/positions/77/idea",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ idea: "My own note for Bd3." }),
+      }),
+    );
+  });
+
+  it("reads 'Substituir a nota de 5.Bd3' when the move already had a note at the request", () => {
+    setupDrillChat({ positionId: 77, idea: "Existing note." });
+    askAndReceiveReply("Better explanation.", { positionId: 77, idea: "Existing note." });
+
+    const card = screen.getByTestId("note-save-card");
+    expect(within(card).getByRole("button", { name: "Substituir a nota de 5.Bd3" })).toBeTruthy();
+  });
+
+  it("shows 'A nota não foi salva.' and keeps the edited text on HTTP refusal and on lost connection, then succeeds on retry", async () => {
+    let attempt = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/health")) {
+        return Response.json({ status: "ok", version: "0.0.0", ready: true });
+      }
+      if (url === "/api/repertoires/positions/77/idea" && init?.method === "PUT") {
+        attempt += 1;
+        if (attempt === 1) {
+          return Response.json({ error: "invalid_request", message: "bad" }, { status: 400 });
+        }
+        if (attempt === 2) {
+          throw new TypeError("Failed to fetch");
+        }
+        return Response.json({ rows_updated: 1, idea: "Edited retry note." });
+      }
+      return Response.json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    setupDrillChat({ positionId: 77, idea: null });
+    askAndReceiveReply("Initial answer.");
+
+    const card = screen.getByTestId("note-save-card");
+    fireEvent.click(within(card).getByRole("button", { name: "Salvar como nota de 5.Bd3" }));
+    fireEvent.change(within(card).getByRole("textbox"), {
+      target: { value: "Edited retry note." },
+    });
+
+    // Attempt 1: HTTP refusal.
+    fireEvent.click(within(card).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      expect(within(card).getByRole("alert").textContent).toBe("A nota não foi salva.");
+    });
+    expect((within(card).getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+      "Edited retry note.",
+    );
+
+    // Attempt 2: lost connection (fetch rejects).
+    fireEvent.click(within(card).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      expect(attempt).toBe(2);
+      expect(within(card).getByRole("alert").textContent).toBe("A nota não foi salva.");
+    });
+    expect((within(card).getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+      "Edited retry note.",
+    );
+
+    // Attempt 3: succeeds.
+    fireEvent.click(within(card).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      expect(within(card).getByText("Nota salva")).toBeTruthy();
+    });
+    expect(within(card).queryByRole("alert")).toBeNull();
+  });
+
+  it("removes the card on a new conversation and on a reconnect bootstrap", () => {
+    setupDrillChat({ positionId: 77, idea: null });
+    askAndReceiveReply("Aims at h7.");
+    expect(screen.getByTestId("note-save-card")).toBeTruthy();
+
+    act(() => {
+      FakeSocket.latest.receive({ type: "conversation_started", tab: "practice" });
+    });
+    expect(screen.queryByTestId("note-save-card")).toBeNull();
   });
 });
