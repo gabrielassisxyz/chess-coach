@@ -246,7 +246,7 @@ export type RepertoireDrillResult = z.infer<typeof RepertoireDrillResultSchema>;
 // variation of the move in play, as on the item, and `level` the one the drill was started at.
 // `answered` is the move just answered, with its stored idea, shown until the next move is
 // answered; it is null before any answer and at the start of a pass, and its idea is null when
-// none is stored.
+// none is stored. `new_moves` is the number of moves of the drill's level that have no card yet.
 export const RepertoireAnsweredSchema = z.object({
   san: z.string(),
   idea: z.string().nullable(),
@@ -267,6 +267,7 @@ export const RepertoireDrillSchema = z.object({
   moves_left: z.number().int().nonnegative(),
   moves_right: z.number().int().nonnegative(),
   moves_wrong: z.number().int().nonnegative(),
+  new_moves: z.number().int().nonnegative(),
   result: RepertoireDrillResultSchema.nullable(),
 });
 export type RepertoireDrill = z.infer<typeof RepertoireDrillSchema>;

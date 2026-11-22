@@ -741,6 +741,83 @@ describe("when the answer arrow is drawn", () => {
   });
 });
 
+describe("skipping first practice", () => {
+  const firstWithNew = (
+    newMoves: number,
+    level?: "variation" | "group" | "side",
+  ): TrainingActivity =>
+    repertoireActivity({
+      drill: {
+        first_pass: true,
+        answer: { uci: "c2c3", san: "c3" },
+        new_moves: newMoves,
+        ...(level ? { level } : {}),
+      },
+    });
+
+  it("draws Skip first practice on a first showing when new_moves is above 0 and nowhere else", () => {
+    renderDrill(firstWithNew(4));
+    expect(screen.getByRole("button", { name: "Skip first practice" })).toBeTruthy();
+    cleanup();
+
+    // Hidden when new_moves is 0 on a first showing.
+    renderDrill(firstWithNew(0));
+    expect(screen.queryByRole("button", { name: "Skip first practice" })).toBeNull();
+    cleanup();
+
+    // Hidden on a test move even when new_moves is above 0.
+    renderDrill(repertoireActivity({ drill: { first_pass: false, answer: null, new_moves: 4 } }));
+    expect(screen.queryByRole("button", { name: "Skip first practice" })).toBeNull();
+    cleanup();
+
+    // Hidden on an ended pass.
+    renderDrill(
+      repertoireActivity({
+        training: { status: "solved", input_enabled: false, legal_moves: [] },
+        drill: { first_pass: true, answer: { uci: "c2c3", san: "c3" }, new_moves: 4 },
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "Skip first practice" })).toBeNull();
+  });
+
+  it.each([
+    [1, "variation", "Skip first practice for 1 new move of this line?"],
+    [5, "variation", "Skip first practice for 5 new moves of this line?"],
+    [12, "group", "Skip first practice for 12 new moves of this opening?"],
+    [20, "side", "Skip first practice for 20 new moves of this colour?"],
+  ] as const)(
+    "words the confirmation for %i new moves at level %s",
+    (count, level, expectedQuestion) => {
+      renderDrill(firstWithNew(count, level));
+      fireEvent.click(screen.getByRole("button", { name: "Skip first practice" }));
+      const dialog = screen.getByRole("dialog", { name: "Skip first practice" });
+      expect(within(dialog).getByText(expectedQuestion)).toBeTruthy();
+      expect(
+        within(dialog).getByText(
+          "They will be asked without the answer from now on. This cannot be undone.",
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it("sends skip_first_showings on Skip and sends nothing on Cancel", () => {
+    const { server } = renderDrill(firstWithNew(5, "variation"));
+    fireEvent.click(screen.getByRole("button", { name: "Skip first practice" }));
+    const dialog = screen.getByRole("dialog", { name: "Skip first practice" });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(server.send).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Skip first practice" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip first practice" }));
+    const reopened = screen.getByRole("dialog", { name: "Skip first practice" });
+    fireEvent.click(within(reopened).getByRole("button", { name: "Skip" }));
+    expect(server.send).toHaveBeenCalledTimes(1);
+    expect(server.send).toHaveBeenCalledWith({ type: "skip_first_showings", activity_id: 6 });
+    expect(screen.queryByRole("dialog", { name: "Skip first practice" })).toBeNull();
+  });
+});
+
 describe("a miss", () => {
   const missed = (tries: number) =>
     repertoireActivity({

@@ -52,7 +52,7 @@ import { sanFor } from "../srs/cards.js";
 import { SrsError } from "../srs/errors.js";
 import { GRADE, type Grade, review as reviewSchedule } from "../srs/fsrs.js";
 import { ActivityError } from "./errors.js";
-import type { PracticeRunPort, TrainingDeps } from "./training.js";
+import type { PracticeRunPort, SkipFirstShowingsResult, TrainingDeps } from "./training.js";
 
 /** The `recommended` scope serves at most this many due moves, the likeliest first. */
 export const REPERTOIRE_RECOMMENDED_SIZE = 10;
@@ -605,8 +605,15 @@ export class RepertoireSession implements PracticeRunPort {
       moves_left: count((state) => state.stage !== "done"),
       moves_right: count((state) => state.rating === "right"),
       moves_wrong: count((state) => state.rating === "wrong"),
+      new_moves: this.countNewMoves(),
       result: this.result,
     };
+  }
+
+  private countNewMoves(): number {
+    return mergeRepertoireUnitMoves(
+      listLevelUnitMoves(this.deps.db, this.repertoire, this.level),
+    ).filter((move) => move.card === null).length;
   }
 
   private statusOf(pass: DrillPass): TrainingStatus {
@@ -701,6 +708,36 @@ export class RepertoireSession implements PracticeRunPort {
   /** A line is drilled in passes the drill repeats by itself, so it has no item to play again. */
   retry(): void {
     throw new ActivityError("invalid_state", "only a puzzle can be played again");
+  }
+
+  /**
+   * Creates a card due now for every move of the drill's level that has none, and flips every
+   * queued intro move except the one currently being served to test, all in one transaction.
+   */
+  skipFirstShowings(): SkipFirstShowingsResult {
+    if (this.result !== null) {
+      throw new ActivityError("item_finished", "the drill has already ended");
+    }
+    let cardsCreated = 0;
+    let movesFlipped = 0;
+    this.transition(() => {
+      const nowIso = this.clock.now().toISOString();
+      const levelMoves = mergeRepertoireUnitMoves(
+        listLevelUnitMoves(this.deps.db, this.repertoire, this.level),
+      );
+      for (const move of levelMoves) {
+        if (move.card !== null) continue;
+        introduceRepertoireCard(this.deps.db, move, nowIso);
+        cardsCreated += 1;
+      }
+      const servedRowId = this.pass.ask?.rowId ?? null;
+      for (const state of this.order) {
+        if (state.stage !== "intro" || state.move.rowId === servedRowId) continue;
+        state.stage = "test";
+        movesFlipped += 1;
+      }
+    });
+    return { level: this.level, cardsCreated, movesFlipped };
   }
 
   /** The first call gives the stored idea, the second the move; either fails the move. */

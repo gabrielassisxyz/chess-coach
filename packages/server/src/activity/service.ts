@@ -26,6 +26,7 @@ import { RepertoireSession } from "./repertoire-session.js";
 import { demoState, liveGameState, reviewState } from "./state.js";
 import {
   type PracticeRunPort,
+  type SkipFirstShowingsResult,
   type TrainingDeps,
   type TrainingItemRef,
   TrainingRun,
@@ -396,6 +397,24 @@ export class ActivityService {
     return this.stepTraining(expectedActivityId, "retryTrainingItem", (run) => run.retry()).then(
       (state) => this.logServed(state),
     );
+  }
+
+  // Marks every never-trained move of a line drill's level as seen; refused on any other run.
+  trainingSkipFirstShowings(expectedActivityId?: number): Promise<ActivityState> {
+    let skipped: SkipFirstShowingsResult | undefined;
+    return this.stepTraining(expectedActivityId, "trainingSkipFirstShowings", (run) => {
+      skipped = run.skipFirstShowings();
+    }).then((state) => {
+      if (skipped) {
+        this.log.info("training.first_showings_skipped", {
+          activity_id: state.activity_id,
+          level: skipped.level,
+          cards_created: skipped.cardsCreated,
+          moves_flipped: skipped.movesFlipped,
+        });
+      }
+      return state;
+    });
   }
 
   // Back to what was under the queue: the live game if it is still unfinished, else an empty board.

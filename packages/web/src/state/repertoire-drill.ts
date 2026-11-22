@@ -2,6 +2,7 @@ import type {
   ExpectedMove,
   RepertoireDrill,
   RepertoireDrillResult,
+  RepertoireLevel,
   RepertoireSummary,
   TrainingActivity,
 } from "@chess-coach/shared";
@@ -50,6 +51,32 @@ export function hintLabelOf(drill: RepertoireDrill): string | null {
   if (drill.hint.kind === "none") return "Ask for the idea";
   if (drill.hint.kind === "idea" && !drill.first_pass) return "Ask for the move";
   return null;
+}
+
+const LEVEL_UNIT_TEXT: Record<RepertoireLevel, string> = {
+  variation: "this line",
+  group: "this opening",
+  side: "this colour",
+  found: "these openings",
+};
+
+// The card of a first showing offers to skip the rest while other moves of the level still have no
+// card; once none is left, or on any other card, nothing is offered.
+export function canSkipFirstShowings(drill: RepertoireDrill): boolean {
+  return drill.first_pass && drill.answer !== null && drill.new_moves > 0;
+}
+
+export interface SkipFirstShowingsPrompt {
+  question: string;
+  note: string;
+}
+
+export function skipFirstShowingsPrompt(drill: RepertoireDrill): SkipFirstShowingsPrompt {
+  const unit = LEVEL_UNIT_TEXT[drill.level ?? "variation"];
+  return {
+    question: `Skip first practice for ${countWord(drill.new_moves, "new move", "new moves")} of ${unit}?`,
+    note: "They will be asked without the answer from now on. This cannot be undone.",
+  };
 }
 
 export interface DrillFact {

@@ -109,6 +109,7 @@
   inset: 0;
   z-index: 30;
   width: fit-content;
+  max-width: min(26rem, calc(100vw - 2 * var(--space-4)));
   height: fit-content;
   margin: auto;
   padding: var(--space-4);
@@ -116,6 +117,12 @@
   border-radius: var(--radius-md);
   background: var(--surface-1);
   color: var(--text-1);
+}
+
+.practice__confirm-note {
+  margin: 0 0 var(--space-3);
+  color: var(--text-2);
+  font-size: var(--text-sm);
 }
 
 .practice__trail {
@@ -983,6 +990,7 @@
 
   .board-bar .icon-button,
   .state-card .button,
+  .practice__confirm .button,
   .practice-item__end {
     min-height: 44px;
   }

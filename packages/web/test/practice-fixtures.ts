@@ -184,6 +184,7 @@ export function repertoireActivity(options: RepertoireActivityOptions = {}): Tra
       moves_left: 4,
       moves_right: 0,
       moves_wrong: 0,
+      new_moves: 0,
       result: null,
       ...options.drill,
     },
