@@ -846,11 +846,11 @@ export interface RepertoireUnitRoot {
 }
 
 /**
- * The units of a side that games can be compared with, oldest first, each with its setup rows as the
- * root. A run cut short at the start stores only the start of its root, which would claim every game
- * that begins the same way, so a unit counts once a run got past its setup. A unit with no setup row
- * has no root to match. An imported unit is never compared with a game, whatever rows it stores: a
- * review would add a reply and an answer the engine chose into the student's own line.
+ * The generated units of a side that games can be compared with, oldest first, each with its setup
+ * rows as the root. A run cut short at the start stores only the start of its root, which would
+ * claim every game that begins the same way, so a unit counts once a run got past its setup. A unit
+ * with no setup row has no root to match. Imported units are read separately by
+ * `listImportedRepertoireUnits` so the review never adds replies or engine answers to them.
  */
 export function listRepertoireUnitRoots(db: Database, side: RepertoireSide): RepertoireUnitRoot[] {
   const units = db
@@ -871,4 +871,18 @@ export function listRepertoireUnitRoots(db: Database, side: RepertoireSide): Rep
     );
     return root.length === 0 ? [] : [{ repertoire, root }];
   });
+}
+
+/**
+ * The imported units of a side, oldest first, excluding any rebuild copy. The game review walks
+ * these read-only before falling back to generated units.
+ */
+export function listImportedRepertoireUnits(db: Database, side: RepertoireSide): RepertoireRow[] {
+  return db
+    .prepare(
+      `SELECT id, side, group_name, variation_name FROM repertoires
+       WHERE side = ? AND origin = 'pgn' AND NOT ${repertoireRebuildCopySql("group_name")}
+       ORDER BY id`,
+    )
+    .all(side) as RepertoireRow[];
 }

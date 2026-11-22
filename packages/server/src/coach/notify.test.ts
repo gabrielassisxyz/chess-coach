@@ -9,9 +9,11 @@ import type {
 import {
   type PuzzleResultNotification,
   type RepertoireIdeaRequestNotification,
+  type RepertoireReviewNotification,
   renderNotifications,
   renderPuzzleResult,
   renderRepertoireIdeaRequest,
+  renderRepertoireReview,
   renderSrsAnswer,
   renderTrainingSummary,
   type SrsAnswerNotification,
@@ -627,5 +629,96 @@ describe("repertoire idea request", () => {
     expect(text).toContain("Main lines");
     expect(text).toContain("Line: 1.d4 d5 2.Bf4");
     expect(text).toContain("3 of 4 repertoire moves solved, 1 failed.");
+  });
+});
+
+describe("repertoire review for an imported unit", () => {
+  const londonBase = {
+    type: "repertoire_review" as const,
+    game_id: 42,
+    group: "London System",
+    variation: "Main lines",
+    origin: "pgn" as const,
+  };
+
+  it("renders in_book naming group and variation and saying the game stayed in the line", () => {
+    const notice: RepertoireReviewNotification = {
+      ...londonBase,
+      outcome: "in_book",
+      followed_to: { ply: 13, san: "Bd3" },
+    };
+    const text = renderRepertoireReview(notice);
+    expect(text).toContain("London System");
+    expect(text).toContain("Main lines");
+    expect(text).toContain("The game stayed in the line.");
+    expect(text).toContain("7. Bd3");
+    expect(text).not.toMatch(/was added|repertoire changed/i);
+  });
+
+  it("renders departed with both moves in SAN with move numbers for White and Black", () => {
+    const whiteNotice: RepertoireReviewNotification = {
+      ...londonBase,
+      outcome: "departed",
+      followed_to: { ply: 12, san: "O-O" },
+      played: { ply: 13, san: "c3" },
+      expected: { ply: 13, san: "Bd3" },
+      alternative_opening: null,
+    };
+    const whiteText = renderRepertoireReview(whiteNotice);
+    expect(whiteText).toContain("London System");
+    expect(whiteText).toContain("Main lines");
+    expect(whiteText).toContain("played 7. c3 where the repertoire expects 7. Bd3");
+    expect(whiteText).not.toMatch(/was added|repertoire changed/i);
+
+    const blackNotice: RepertoireReviewNotification = {
+      type: "repertoire_review",
+      game_id: 43,
+      group: "Caro-Kann Defense",
+      variation: "Main lines",
+      origin: "pgn",
+      outcome: "departed",
+      followed_to: { ply: 5, san: "Nc3" },
+      played: { ply: 6, san: "Bf5" },
+      expected: { ply: 6, san: "dxe4" },
+      alternative_opening: null,
+    };
+    const blackText = renderRepertoireReview(blackNotice);
+    expect(blackText).toContain("Caro-Kann Defense");
+    expect(blackText).toContain("Main lines");
+    expect(blackText).toContain("played 3... Bf5 where the repertoire expects 3... dxe4");
+    expect(blackText).not.toMatch(/was added|repertoire changed/i);
+  });
+
+  it("renders reply_not_stored for White and Black without saying anything was added", () => {
+    const whiteNotice: RepertoireReviewNotification = {
+      ...londonBase,
+      outcome: "reply_not_stored",
+      followed_to: { ply: 3, san: "Bf4" },
+      reply: { ply: 4, san: "c5" },
+    };
+    const whiteText = renderRepertoireReview(whiteNotice);
+    expect(whiteText).toContain("London System");
+    expect(whiteText).toContain("Main lines");
+    expect(whiteText).toContain(
+      "The opponent then played 2... c5, which the line has no answer to.",
+    );
+    expect(whiteText).not.toMatch(/was added|repertoire changed/i);
+
+    const blackNotice: RepertoireReviewNotification = {
+      type: "repertoire_review",
+      game_id: 44,
+      group: "Caro-Kann Defense",
+      variation: "Main lines",
+      origin: "pgn",
+      outcome: "reply_not_stored",
+      followed_to: { ply: 4, san: "d5" },
+      reply: { ply: 5, san: "e5" },
+    };
+    const blackText = renderRepertoireReview(blackNotice);
+    expect(blackText).toContain("Caro-Kann Defense");
+    expect(blackText).toContain("Main lines");
+    expect(blackText).toContain("The opponent then played 3. e5, which the line has no answer to.");
+    expect(blackText).not.toContain("Black then replied");
+    expect(blackText).not.toMatch(/was added|repertoire changed/i);
   });
 });

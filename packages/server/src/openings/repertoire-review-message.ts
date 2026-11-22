@@ -1,3 +1,4 @@
+import type { RepertoireOrigin } from "@chess-coach/shared";
 import { Chess } from "chess.js";
 import { REPERTOIRE_FLAG_CP } from "../activity/repertoire-session.js";
 import type { RepertoireReviewNotification, ReviewedPly } from "../coach/notify.js";
@@ -11,6 +12,8 @@ export interface GameNoticeInput {
   gameId: number;
   group: string;
   variation: string;
+  /** Set for an imported unit so the rendered text reflects its read-only review. */
+  origin?: RepertoireOrigin;
   moves: readonly MoveRecord[];
   /** How many plies matched the repertoire. */
   followed: number;
@@ -55,6 +58,7 @@ export function repertoireReviewNotice(input: GameNoticeInput): RepertoireReview
     game_id: input.gameId,
     group: input.group,
     variation: input.variation,
+    ...(input.origin ? { origin: input.origin } : {}),
     followed_to: last ? plyOf(last.ply, last.san) : null,
   };
   switch (verdict.kind) {
