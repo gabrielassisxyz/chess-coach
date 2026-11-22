@@ -1,5 +1,5 @@
 import type { ChessComListedGame, ImportResult } from "@chess-coach/shared";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { type ConnectionsApi, serverConnectionsApi } from "../state/connections-api.js";
 import { type TimeClass, timeClassOf } from "../state/games.js";
 import { type ImportApi, serverImportApi } from "../state/import-api.js";
@@ -51,6 +51,8 @@ export function ImportPanel({
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [pgn, setPgn] = useState("");
   const [pgnColor, setPgnColor] = useState<"" | "white" | "black">("");
+  const [pgnPractice, setPgnPractice] = useState(false);
+  const practiceHintId = useId();
   const [message, setMessage] = useState<string | null>(null);
   const [classes, setClasses] = useState<Set<TimeClass>>(new Set(["rapid", "blitz"]));
   const [lichessUsername, setLichessUsername] = useState("");
@@ -126,7 +128,7 @@ export function ImportPanel({
   const importPasted = (event: FormEvent): void => {
     event.preventDefault();
     void run(async () => {
-      const result = await api.importPgn(pgn, pgnColor === "" ? null : pgnColor);
+      const result = await api.importPgn(pgn, pgnColor === "" ? null : pgnColor, pgnPractice);
       onChanged();
       return result.imported === 1 ? "Imported the game." : "That game was already imported.";
     });
@@ -268,18 +270,34 @@ export function ImportPanel({
             onChange={(e) => setPgn(e.target.value)}
           />
         </label>
-        <label>
-          You played
-          <select
-            className="input"
-            value={pgnColor}
-            onChange={(e) => setPgnColor(e.target.value as "" | "white" | "black")}
-          >
-            <option value="">detect from the names</option>
-            <option value="white">white</option>
-            <option value="black">black</option>
-          </select>
-        </label>
+        <div className="import__pgn-options">
+          <label>
+            You played
+            <select
+              className="input"
+              value={pgnColor}
+              onChange={(e) => setPgnColor(e.target.value as "" | "white" | "black")}
+            >
+              <option value="">detect from the names</option>
+              <option value="white">white</option>
+              <option value="black">black</option>
+            </select>
+          </label>
+          <div className="import__practice">
+            <label className="import__checkbox">
+              <input
+                type="checkbox"
+                checked={pgnPractice}
+                aria-describedby={practiceHintId}
+                onChange={(e) => setPgnPractice(e.target.checked)}
+              />
+              Practice game
+            </label>
+            <span id={practiceHintId} className="import__hint">
+              Not counted in your statistics.
+            </span>
+          </div>
+        </div>
         <button type="submit" className="button" disabled={pgn.trim() === ""}>
           Import PGN
         </button>

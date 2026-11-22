@@ -1,4 +1,5 @@
 import type { RepertoireOrigin } from "@chess-coach/shared";
+import { gameCountsInStatsSql } from "./games.js";
 import type { Database } from "./open.js";
 import { deleteRepertoireCardsNoVariationPlays } from "./repertoire-cards.js";
 import { endTrainingRun } from "./training.js";
@@ -696,11 +697,12 @@ function unitsByLastRootMove(db: Database): Map<string, number> {
 export function listMetOpenings(db: Database): MetOpeningRow[] {
   const groups = db
     .prepare(
-      `SELECT left_position_key AS position_key, left_uci AS move_uci,
-              MIN(game_id) AS sample_game_id, COUNT(*) AS games, MAX(opening_name) AS opening_name
-       FROM repertoire_game_reviews
-       WHERE outcome = 'not_reached' AND left_ply IS NOT NULL AND left_ply % 2 = 0
-       GROUP BY left_position_key, left_uci
+      `SELECT r.left_position_key AS position_key, r.left_uci AS move_uci,
+              MIN(r.game_id) AS sample_game_id, COUNT(*) AS games, MAX(r.opening_name) AS opening_name
+       FROM repertoire_game_reviews r JOIN games g ON g.id = r.game_id
+       WHERE r.outcome = 'not_reached' AND r.left_ply IS NOT NULL AND r.left_ply % 2 = 0
+         AND ${gameCountsInStatsSql("g.practice")}
+       GROUP BY r.left_position_key, r.left_uci
        ORDER BY games DESC, sample_game_id`,
     )
     .all() as Array<{
@@ -767,9 +769,10 @@ export function countRepertoireGamesInLine(
 ): RepertoireGamesInLine {
   const counted = db
     .prepare(
-      `SELECT COALESCE(SUM(outcome IN ('in_book', 'reply_added', 'reply_not_stored')), 0) AS stayed,
-              COALESCE(SUM(outcome = 'departed'), 0) AS departed
-       FROM repertoire_game_reviews WHERE repertoire_id = ?`,
+      `SELECT COALESCE(SUM(r.outcome IN ('in_book', 'reply_added', 'reply_not_stored')), 0) AS stayed,
+              COALESCE(SUM(r.outcome = 'departed'), 0) AS departed
+       FROM repertoire_game_reviews r JOIN games g ON g.id = r.game_id
+       WHERE r.repertoire_id = ? AND ${gameCountsInStatsSql("g.practice")}`,
     )
     .get(repertoireId) as { stayed: number; departed: number };
   return { stayed: counted.stayed, of: counted.stayed + counted.departed };

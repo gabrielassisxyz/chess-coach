@@ -64,6 +64,7 @@ export const COACH_GAME_SOURCE = {
   time_control: null,
   played_at: null,
   grading: "done",
+  practice: false,
 } as const;
 
 /** An import API with nothing queued, so a Games render never reaches for the network. */

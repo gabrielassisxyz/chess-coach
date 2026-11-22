@@ -11,7 +11,7 @@ import { insertGeneratedPuzzle, listPuzzles } from "../db/puzzles.js";
 import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
 import { importFinishedGame } from "../import/pgn.js";
 import { ExplorerError, type ExplorerFetcher } from "./explorer-client.js";
-import { generateExplorerPuzzles } from "./from-explorer.js";
+import { deriveRepertoire, generateExplorerPuzzles } from "./from-explorer.js";
 import { positionKey, puzzleId } from "./from-games.js";
 import { parseOpeningTable } from "./names.js";
 
@@ -383,5 +383,19 @@ describe("generateExplorerPuzzles", () => {
     expect(result).toMatchObject({ truncated: true, requests: 2 });
     expect(explorer.calls).toHaveLength(2);
     expect(existsSync(cacheDir)).toBe(true);
+  });
+
+  it("still derives the repertoire from practice games", () => {
+    const gameId = importFinishedGame(db, {
+      pgn: WHITE_TWO,
+      playerColor: "white",
+      source: "pgn",
+      sourceId: "practice-explorer",
+      practice: true,
+    }) as number;
+    setGrading(db, gameId, "done");
+    const repertoire = deriveRepertoire(db, "white", 3);
+    expect(repertoire.byTurn.get(1)).toBe("e2e4");
+    expect(repertoire.byPosition.get(positionKey(AFTER_E4_E5))).toBe("g1f3");
   });
 });

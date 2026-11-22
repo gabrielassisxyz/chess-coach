@@ -98,6 +98,33 @@ describe("game list state", () => {
     expect(totalsOf([]).averageAccuracy).toBeNull();
   });
 
+  it("leaves practice games out of footer totals while keeping source tab counts unchanged", () => {
+    const practiceGame = game({
+      id: 9,
+      source: "pgn",
+      opponent: "Maia-3 600",
+      result: "0-1",
+      accuracy: 0.1,
+      practice: true,
+    });
+    const withPractice = [...LIBRARY, practiceGame];
+    expect(totalsOf(withPractice)).toEqual(totalsOf(LIBRARY));
+    expect(totalsOf([practiceGame])).toEqual({
+      games: 0,
+      won: 0,
+      lost: 0,
+      drawn: 0,
+      averageAccuracy: null,
+    });
+    expect(sourceCounts(withPractice)).toEqual({
+      all: 6,
+      coach: 2,
+      chesscom: 2,
+      lichess: 0,
+      pgn: 2,
+    });
+  });
+
   it("words dates, losses and time classes", () => {
     const now = new Date(2026, 9, 28, 15);
     expect(dateLabel(new Date(2026, 9, 28, 1).toISOString(), now)).toBe("Today");
@@ -138,6 +165,33 @@ describe("games table", () => {
     expect(within(rows()[1] as HTMLElement).getByText("mateus_rj 438")).toBeTruthy();
     expect(within(rows()[1] as HTMLElement).getByText("Chess.com")).toBeTruthy();
     expect(within(rows()[0] as HTMLElement).getByText("Stockfish 1100")).toBeTruthy();
+  });
+
+  it("tags a practice game with Practice beside its source tag, shows its opponent, and excludes it from footer totals", async () => {
+    const practiceGame = game({
+      id: 10,
+      source: "pgn",
+      opponent: "Maia-3 600",
+      result: "0-1",
+      accuracy: 0.1,
+      practice: true,
+    });
+    mount([...LIBRARY, practiceGame]);
+    await screen.findByRole("table");
+    expect(screen.getByRole("button", { name: "All · 6" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "PGN · 2" })).toBeTruthy();
+
+    const practiceRow = rows()[5] as HTMLElement;
+    expect(within(practiceRow).getByText("Maia-3 600")).toBeTruthy();
+    expect(within(practiceRow).getByText("PGN")).toBeTruthy();
+    expect(within(practiceRow).getByText("Practice")).toBeTruthy();
+
+    const regularPgnRow = rows()[4] as HTMLElement;
+    expect(within(regularPgnRow).queryByText("Practice")).toBeNull();
+
+    expect(screen.getByTestId("games-footer").textContent).toContain(
+      "5 games · 2 won · 2 lost · 1 drawn · average accuracy 60%",
+    );
   });
 
   it("gives the opening a column of its own, name and ECO code, with the full name on hover", async () => {

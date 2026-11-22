@@ -5,6 +5,7 @@ import type {
   RatingPoint,
 } from "@chess-coach/shared";
 import type { Clock } from "../clock.js";
+import { gameCountsInStatsSql } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import { getCurrentElo, lastDifficultyChange } from "../db/settings.js";
 import { currentPuzzleRating } from "../puzzles/rating.js";
@@ -53,7 +54,7 @@ function recentGames(db: Database): ProgressGame[] {
          COALESCE(SUM(m.classification = 'blunder'), 0) AS blunders,
          COALESCE(SUM(m.classification = 'mistake'), 0) AS mistakes
        FROM games g LEFT JOIN moves m ON m.game_id = g.id AND m.is_player = 1
-       WHERE g.finished_at IS NOT NULL
+       WHERE g.finished_at IS NOT NULL AND ${gameCountsInStatsSql("g.practice")}
        GROUP BY g.id
        ORDER BY played_at DESC, g.id DESC LIMIT ?`,
     )
@@ -285,6 +286,8 @@ export function computeProgress(db: Database, clock: Clock): ProgressResponse {
 
 export function computeCoachProgress(db: Database, clock: Clock): CoachProgress {
   const { games, ...rest } = computeProgress(db, clock);
-  const row = db.prepare("SELECT COUNT(*) AS n FROM games").get() as { n: number };
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM games WHERE ${gameCountsInStatsSql("practice")}`)
+    .get() as { n: number };
   return { ...rest, games_played: row.n };
 }

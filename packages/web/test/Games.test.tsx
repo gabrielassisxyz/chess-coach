@@ -82,12 +82,12 @@ const onCoachIdle = vi.fn();
 let detail: GameDetail = game;
 const detailApi: GamesApi = { ...api, getGame: async () => detail };
 
-function Harness() {
+function Harness({ gamesApi = detailApi }: { gamesApi?: GamesApi } = {}) {
   const server = useServer({ createSocket: createFakeSocket });
   return (
     <Games
       server={server}
-      api={detailApi}
+      api={gamesApi}
       importApi={idleImportApi}
       createBoard={factory}
       onCoachIdle={onCoachIdle}
@@ -167,6 +167,46 @@ describe("games list and stepping", () => {
       "2. Nf3, Inaccuracy, cp loss 120, best was d4",
     );
     expect(boardSets.at(-1)).toBe(game.moves[2]?.fen_after);
+  });
+
+  it("shows a pasted practice game with its opponent and Practice tag, excludes it from totals, and opens it", async () => {
+    const practiceSummary: GameSummary = {
+      ...summary,
+      id: 8,
+      source: "pgn",
+      opponent: "Maia-3 600",
+      result: "0-1",
+      accuracy: 0.2,
+      practice: true,
+    };
+    const practiceDetail: GameDetail = {
+      ...game,
+      id: 8,
+      source: "pgn",
+      opponent: "Maia-3 600",
+      practice: true,
+    };
+    const practiceApi: GamesApi = {
+      listGames: async () => [summary, practiceSummary],
+      getGame: async (id) => (id === 8 ? practiceDetail : game),
+    };
+    render(<Harness gamesApi={practiceApi} />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: null,
+      }),
+    );
+    const practiceRow = await screen.findByRole("row", { name: /Maia-3 600/ });
+    expect(practiceRow.textContent).toContain("PGN");
+    expect(practiceRow.textContent).toContain("Practice");
+    expect(screen.getByTestId("games-footer").textContent).toContain(
+      "1 game · 0 won · 1 lost · 0 drawn · average accuracy 50%",
+    );
+    fireEvent.doubleClick(practiceRow);
+    expect(await screen.findByRole("heading", { name: "White vs Maia-3 600" })).toBeTruthy();
   });
 });
 

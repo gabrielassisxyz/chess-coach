@@ -63,7 +63,26 @@
   username and month range, or a pasted PGN, and grades them in the background.
   `CHESS_COACH_USERNAMES` (comma-separated) names the student's accounts so a pasted PGN finds its
   side; without it the form asks for the colour. The Chess.com API is summarised in
-  `docs/chesscom-api.md`.
+  `docs/chesscom-api.md`. `POST /api/import/pgn` also accepts a boolean `practice` (false when
+  absent; anything else answers 400 `invalid_body` and stores nothing), stored in `games.practice`
+  (`036_practice_games.sql`, `INTEGER NOT NULL DEFAULT 0`); Chess.com and Lichess imports always
+  store 0. A pasted PGN stores as `opponent` the trimmed header of the colour the student did not
+  play (null when missing, empty or `?`) and as `source_url` the `Site` header when it starts with
+  `http://` or `https://` and is at most 300 characters (else null), while `source_id` stays the
+  same hash of the PGN text. `GET /api/games` and `GET /api/games/:id` carry `practice` as a
+  boolean; the Games list tags a practice game with "Practice" beside its source tag and keeps the
+  source tab counts unchanged. Every server reader of results or opening frequency skips practice
+  games through `gameCountsInStatsSql` in `packages/server/src/db/games.ts`:
+
+  | Reader | Practice game |
+  | --- | --- |
+  | Openings played (`playedGames`) and Dashboard card | left out |
+  | Games list footer totals (`totalsOf`) | left out |
+  | "In line S of N games" (`countRepertoireGamesInLine`), openings met and counts (`listMetOpenings`) | left out |
+  | Progress `recentGames` and coach `games_played` | left out |
+  | Streak and 7-day activity (`activeDays`) | counted |
+  | Repertoire review (`listGamesToReview`) and its card ratings | counted |
+  | Positions from games (`from-games.ts`) and `deriveRepertoire` | counted |
 - **Lichess import:** `POST /api/import/lichess {username, from, to}` takes whole UTC months and imports
   every finished standard game of the account in one step, with no list to pick from. The export is
   `GET /api/games/user/{username}` as NDJSON with the PGN inside each line, and it is the only network

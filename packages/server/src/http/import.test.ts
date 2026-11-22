@@ -2,18 +2,30 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GameListResponseSchema } from "@chess-coach/shared";
+import { Chess } from "chess.js";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeChessCom } from "../../test/fakes/fake-chesscom.js";
+import { FakeClock } from "../../test/fakes/fake-explorer.js";
 import { FakeLichess } from "../../test/fakes/fake-lichess.js";
 import { buildApp } from "../app.js";
 import { setChessComUsername, setLichessToken } from "../db/connections.js";
 import { type Database, openDatabase } from "../db/open.js";
+import {
+  createRepertoireVariation,
+  insertRepertoireOwnMove,
+  upsertRepertoireReply,
+} from "../db/repertoires.js";
+import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
 import { ChessComError, ChessComSource } from "../import/chesscom.js";
 import { ImportGrader } from "../import/grader.js";
 import { httpLichessGamesFetcher, LichessError } from "../import/lichess.js";
 import { MAX_PGN_BYTES } from "../import/pgn.js";
 import { silentLog } from "../log.js";
+import { positionKey } from "../openings/from-games.js";
+import { loadOpeningNames } from "../openings/names.js";
+import { reviewRepertoireGames } from "../openings/repertoire-review.js";
+import { contentDir } from "../paths.js";
 
 const FIXTURE_PGN = readFileSync(
   new URL("../../test/fixtures/chesscom_2026-10-28.pgn", import.meta.url),
@@ -402,6 +414,148 @@ describe("POST /api/import/pgn", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: "invalid_body" });
     expect(db.prepare("SELECT COUNT(*) AS n FROM games").get()).toEqual({ n: 0 });
+  });
+
+  it("stores practice false when absent, true when given, and rejects non-boolean practice", async () => {
+    for (const bad of ["true", "false", 1, 0, null, {}, []]) {
+      const refused = await post("/api/import/pgn", {
+        pgn: FIXTURE_PGN,
+        student_color: "white",
+        practice: bad,
+      });
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json()).toMatchObject({ error: "invalid_body", message: expect.any(String) });
+    }
+    expect(db.prepare("SELECT COUNT(*) AS n FROM games").get()).toEqual({ n: 0 });
+
+    const regular = await post("/api/import/pgn", {
+      pgn: '[White "Guest"]\n[Black "Opponent"]\n[Result "1-0"]\n\n1. e4 e5 1-0',
+      student_color: "white",
+    });
+    expect(regular.statusCode).toBe(200);
+    expect(regular.json()).toEqual({ imported: 1, skipped: 0 });
+
+    const practicePgn =
+      '[White "Guest"]\n[Black "Maia-3 600"]\n[Site "https://maiachess.com/"]\n[Result "0-1"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 0-1';
+    const marked = await post("/api/import/pgn", {
+      pgn: practicePgn,
+      student_color: "white",
+      practice: true,
+    });
+    expect(marked.statusCode).toBe(200);
+    expect(marked.json()).toEqual({ imported: 1, skipped: 0 });
+
+    const rows = db.prepare("SELECT opponent, source_url, practice FROM games ORDER BY id").all();
+    expect(rows).toEqual([
+      { opponent: "Opponent", source_url: null, practice: 0 },
+      { opponent: "Maia-3 600", source_url: "https://maiachess.com/", practice: 1 },
+    ]);
+  });
+
+  it("keeps a pasted practice game out of GET /api/openings/played while still reviewing it against the repertoire", async () => {
+    const names = loadOpeningNames(contentDir());
+    await app.close();
+    app = buildApp({
+      db,
+      openingNames: names,
+      importer: { source: new ChessComSource(fetcher), lichess, grader, usernames: [] },
+    });
+
+    const pgn = [
+      '[White "Guest"]',
+      '[Black "Maia-3 600"]',
+      '[Site "https://maiachess.com/"]',
+      '[Result "0-1"]',
+      "",
+      "1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 0-1",
+    ].join("\n");
+    const response = await post("/api/import/pgn", {
+      pgn,
+      student_color: "white",
+      practice: true,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ imported: 1, skipped: 0 });
+    await grader.idle();
+
+    const stored = db
+      .prepare("SELECT id, practice, opponent, source_url, grading FROM games")
+      .get() as {
+      id: number;
+      practice: number;
+      opponent: string | null;
+      source_url: string | null;
+      grading: string;
+    };
+    expect(stored).toMatchObject({
+      practice: 1,
+      opponent: "Maia-3 600",
+      source_url: "https://maiachess.com/",
+      grading: "done",
+    });
+
+    const played = await app.inject({ method: "GET", url: "/api/openings/played?days=all" });
+    expect(played.statusCode).toBe(200);
+    expect(played.json()).toEqual({
+      white: { games: 0, mine: [], against: [] },
+      black: { games: 0, mine: [], against: [] },
+    });
+
+    // Seed the minimal Italian setup so the repertoire review queue runs against it.
+    const board = new Chess();
+    const startKey = positionKey(board.fen());
+    board.move("e4");
+    const afterE4Key = positionKey(board.fen());
+    const italian = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Classical Variation (4.c3)",
+    });
+    insertRepertoireOwnMove(db, {
+      repertoireId: italian.id,
+      positionKey: startKey,
+      ply: 1,
+      line: [],
+      reach: 1,
+      openingName: null,
+      uci: "e2e4",
+      san: "e4",
+      share: null,
+      source: "setup",
+      cpLoss: 0,
+      evalCp: 30,
+      results: null,
+    });
+    upsertRepertoireReply(db, {
+      repertoireId: italian.id,
+      positionKey: afterE4Key,
+      ply: 2,
+      line: ["e4"],
+      reach: 1,
+      openingName: null,
+      uci: "e7e5",
+      san: "e5",
+      share: 0.5,
+      source: "setup",
+    });
+    const engine: Searcher = {
+      async search(req: SearchRequest): Promise<SearchResult> {
+        return { fen: req.fen, bestmove: "c2c3", lines: [{ moves: ["c2c3"], score: 20 }] };
+      },
+    };
+    const summary = await reviewRepertoireGames({
+      db,
+      engine,
+      fetcher: { fetch: async () => JSON.stringify({ white: 0, draws: 0, black: 0, moves: [] }) },
+      cacheDir: join(tmp, "explorer-cache"),
+      explorerClock: new FakeClock(),
+      names,
+    });
+    expect(summary.reviewed).toBe(1);
+    const review = db
+      .prepare("SELECT game_id FROM repertoire_game_reviews WHERE game_id = ?")
+      .get(stored.id);
+    expect(review).toEqual({ game_id: stored.id });
   });
 });
 

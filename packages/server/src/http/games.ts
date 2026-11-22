@@ -62,6 +62,7 @@ function sourceFields(game: GameRecord) {
     time_control: game.timeControl,
     played_at: game.playedAt,
     grading: game.grading,
+    practice: game.practice,
   };
 }
 

@@ -436,6 +436,7 @@ interface GameOptions {
   /** The centipawn loss the grader recorded, by ply. */
   cpLoss?: Record<number, number>;
   grading?: GradingState;
+  practice?: boolean;
 }
 
 function addGame(line: string[], options: GameOptions = {}): number {
@@ -445,6 +446,7 @@ function addGame(line: string[], options: GameOptions = {}): number {
     playerColor: options.color ?? "white",
     source: "pgn",
     sourceId: `review-${gameCounter}`,
+    ...(options.practice ? { practice: true } : {}),
   }) as number;
   for (const [ply, loss] of Object.entries(options.cpLoss ?? {})) {
     const move = listMoves(db, id).find((candidate) => candidate.ply === Number(ply));
@@ -1693,6 +1695,25 @@ describe("a game that reaches no unit's root", () => {
     addGame(["e4", "c5"]);
     await reviewRepertoireGames(deps());
     expect(listMetOpenings(db).map((met) => met.root)).toEqual([["e4", "c5"]]);
+  });
+
+  it("still reviews practice games against the repertoire but leaves them out of listMetOpenings", async () => {
+    seedRepertoire();
+    const countedSicilian = addGame(["e4", "c5", "Nf3", "d6"]);
+    const practiceSicilian = addGame(["e4", "c5", "Nf3", "Nc6"], { practice: true });
+    const practiceScandinavian = addGame(["e4", "d5", "exd5"], { practice: true });
+    const practiceItalian = addGame(MAIN_LINE, { practice: true });
+
+    const summary = await reviewRepertoireGames(deps());
+    expect(summary.reviewed).toBe(4);
+    expect(reviewOf(countedSicilian)?.outcome).toBe("not_reached");
+    expect(reviewOf(practiceSicilian)?.outcome).toBe("not_reached");
+    expect(reviewOf(practiceScandinavian)?.outcome).toBe("not_reached");
+    expect(reviewOf(practiceItalian)?.outcome).toBe("in_book");
+
+    expect(listMetOpenings(db)).toEqual([
+      { root: ["e4", "c5"], openingName: "Sicilian Defense", games: 1, repertoireId: null },
+    ]);
   });
 
   it.each([

@@ -336,6 +336,15 @@ card keeps its title where it has no control. It adds no rule to a stylesheet an
 900 px the notes wrap inside their cards, and the Train button stays a 44 px target as before. M1
 and M2 still find no matches.
 
+The Games column was re-checked on rows 3, 6, 8, 9, 10, 14 and 19, and the Phone column on row 19,
+for the Practice game checkbox on the paste form and the Practice tag in the Games table, against
+their markup and `games.css`; the cells were not measured in a browser. The checkbox sits directly
+under You played with its 12 px secondary-text hint (`--text-2`, `--text-xs`) linked through
+`aria-describedby`, takes the shared `input:focus-visible` ring, and keeps a 44 px target under
+900 px. The Practice tag reuses `.games__tag` beside the source tag in a non-shrinking flex row so
+it carries no extra colour, radius or shadow and pairs cleanly under the opponent name on a phone.
+M1 and M2 still find no matches.
+
 ## Partial cells
 
 - **4, Play and Phone.** The move list marks inaccuracy, mistake and blunder with a glyph

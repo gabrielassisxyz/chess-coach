@@ -13,6 +13,7 @@ import type { Database } from "../db/open.js";
 
 // A real game is a few KB; the cap exists so a pasted blob cannot stall the parser.
 export const MAX_PGN_BYTES = 100_000;
+export const MAX_SOURCE_URL_LENGTH = 300;
 const DEFAULT_TARGET_ELO = 1200;
 const MIN_TARGET_ELO = 100;
 const MAX_TARGET_ELO = 3190;
@@ -32,6 +33,8 @@ export interface ImportRequest {
   timeControl?: string;
   /** ISO time the game ended; the PGN headers are the fallback. */
   playedAt?: string;
+  /** Marks a pasted game as practice so statistics leave it out; ignored for other sources. */
+  practice?: boolean;
   now?: () => Date;
 }
 
@@ -64,6 +67,21 @@ function terminationOf(chess: Chess, result: GameResult, text: string | null): T
 
 function clampElo(rating: number | undefined): number {
   return Math.min(MAX_TARGET_ELO, Math.max(MIN_TARGET_ELO, rating ?? DEFAULT_TARGET_ELO));
+}
+
+function headerOpponent(
+  headers: Record<string, string | null>,
+  playerColor: PlayerColor,
+): string | null {
+  const raw = playerColor === "white" ? headers.Black : headers.White;
+  const trimmed = raw?.trim() ?? "";
+  return trimmed === "" || trimmed === "?" ? null : trimmed;
+}
+
+function headerSiteUrl(headers: Record<string, string | null>): string | null {
+  const raw = headers.Site?.trim();
+  if (!raw || raw.length > MAX_SOURCE_URL_LENGTH) return null;
+  return raw.startsWith("http://") || raw.startsWith("https://") ? raw : null;
 }
 
 function replayMoves(chess: Chess, playerColor: PlayerColor): NewMove[] {
@@ -110,12 +128,15 @@ export function parseFinishedGame(request: ImportRequest): ImportedGame {
     moves,
     source: request.source,
     sourceId: request.sourceId ?? pgnSourceId(request.pgn),
-    sourceUrl: request.sourceUrl ?? null,
-    opponent: request.opponent ?? null,
+    sourceUrl: request.sourceUrl ?? (request.source === "pgn" ? headerSiteUrl(headers) : null),
+    opponent:
+      request.opponent ??
+      (request.source === "pgn" ? headerOpponent(headers, request.playerColor) : null),
     studentRating: request.studentRating ?? null,
     opponentRating: request.opponentRating ?? null,
     timeControl: request.timeControl ?? null,
     playedAt,
+    practice: request.source === "pgn" && (request.practice ?? false),
   };
 }
 
