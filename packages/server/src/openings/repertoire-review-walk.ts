@@ -1,5 +1,6 @@
 import type { MoveRecord } from "../db/games.js";
 import type { Database } from "../db/open.js";
+import type { RepertoireSide } from "../db/repertoires.js";
 import { positionKey } from "./from-games.js";
 import { REPERTOIRE_MAX_PLY } from "./from-repertoire.js";
 
@@ -14,6 +15,7 @@ export interface GameReviewStoredMove {
 export interface RepertoireLookup {
   ownMoveAt(key: string): GameReviewStoredMove | undefined;
   hasReplyAt(key: string, uci: string): boolean;
+  hasAnyReplyAt(key: string): boolean;
 }
 
 /** A move of the repertoire a game played, so its card can be rated. */
@@ -51,9 +53,15 @@ export function repertoireLookupOf(db: Database, repertoireId: number): Repertoi
     `SELECT 1 FROM repertoire_positions
      WHERE repertoire_id = ? AND position_key = ? AND move_uci = ? AND kind = 'reply'`,
   );
+  const anyReply = db.prepare(
+    `SELECT 1 FROM repertoire_positions
+     WHERE repertoire_id = ? AND position_key = ? AND kind = 'reply'
+     LIMIT 1`,
+  );
   return {
     ownMoveAt: (key) => own.get(repertoireId, key) as GameReviewStoredMove | undefined,
     hasReplyAt: (key, uci) => reply.get(repertoireId, key, uci) !== undefined,
+    hasAnyReplyAt: (key) => anyReply.get(repertoireId, key) !== undefined,
   };
 }
 
@@ -141,5 +149,79 @@ export function gameVerdictOf(walk: GameWalk, startPly: number): GameVerdict {
   // White's answer sits one ply later, and a reply stored where that answer cannot be would read as
   // a gap that no later run could fill.
   if (ending.kind === "reply_missing" && ending.move.ply + 1 <= REPERTOIRE_MAX_PLY) return ending;
+  return { kind: "in_book" };
+}
+
+/**
+ * Follows a game from its first move against an imported unit of `side`, with no ply limit.
+ * On a student's ply, a stored different `own` move marks a departure and an absent one ends the
+ * line as in book. On an opponent's ply, an unstored move marks a missing reply only when the
+ * position stores other replies; otherwise the imported line ended there.
+ */
+export function walkGameAgainstImportedRepertoire(
+  moves: readonly MoveRecord[],
+  lookup: RepertoireLookup,
+  side: RepertoireSide,
+): GameWalk {
+  const passes: CardMove[] = [];
+  const studentMod = side === "white" ? 1 : 0;
+  let followed = 0;
+  let lastOwn: GameReviewStoredMove | null = null;
+  for (const move of moves) {
+    const key = positionKey(move.fenBefore);
+    if (move.ply % 2 === studentMod) {
+      const expected = lookup.ownMoveAt(key);
+      if (!expected) return { followed, passes, ending: { kind: "repertoire_ends", move } };
+      if (expected.move_uci !== move.uci) {
+        return { followed, passes, ending: { kind: "departed", move, expected } };
+      }
+      passes.push({ positionKey: key, uci: move.uci });
+      lastOwn = expected;
+    } else if (!lookup.hasReplyAt(key, move.uci)) {
+      if (lookup.hasAnyReplyAt(key)) {
+        return { followed, passes, ending: { kind: "reply_missing", move, parent: lastOwn } };
+      }
+      return { followed, passes, ending: { kind: "repertoire_ends", move } };
+    }
+    followed = move.ply;
+  }
+  return { followed, passes, ending: { kind: "game_over" } };
+}
+
+/** An imported unit that a game of the same colour can be walked against. */
+export interface ImportedUnitForWalk {
+  id: number;
+  lookup: RepertoireLookup;
+}
+
+/**
+ * Walks a game against every imported unit of `side` and keeps the one with the most followed
+ * plies, the lowest id at a tie. Returns null when no unit followed at least the student's first
+ * move (ply 1 for White, ply 2 for Black).
+ */
+export function walkLongestFollowedImportedUnit<Unit extends ImportedUnitForWalk>(
+  moves: readonly MoveRecord[],
+  units: readonly Unit[],
+  side: RepertoireSide,
+): { unit: Unit; walk: GameWalk } | null {
+  const minFollowed = side === "white" ? 1 : 2;
+  let longest: { unit: Unit; walk: GameWalk } | null = null;
+  for (const unit of units) {
+    const walk = walkGameAgainstImportedRepertoire(moves, unit.lookup, side);
+    if (walk.followed < minFollowed) continue;
+    const beatsLongest =
+      longest === null ||
+      walk.followed > longest.walk.followed ||
+      (walk.followed === longest.walk.followed && unit.id < longest.unit.id);
+    if (beatsLongest) longest = { unit, walk };
+  }
+  return longest;
+}
+
+/** Verdict for an imported unit that already followed at least the student's first move. */
+export function importedGameVerdictOf(
+  walk: GameWalk,
+): Exclude<GameVerdict, { kind: "not_reached" }> {
+  if (walk.ending.kind === "departed" || walk.ending.kind === "reply_missing") return walk.ending;
   return { kind: "in_book" };
 }

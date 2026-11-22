@@ -1,3 +1,4 @@
+import type { RepertoireOrigin } from "@chess-coach/shared";
 import type {
   CostlyMove,
   DifficultyChangeNotification,
@@ -321,6 +322,8 @@ interface RepertoireReviewBase {
   /** The repertoire the game was compared with: its group, then the variation it belongs to. */
   group: string;
   variation: string;
+  /** Where the unit came from; absent on rows written before imported units were reviewed. */
+  origin?: RepertoireOrigin;
   /** The last move of the game that the repertoire held; null when not even the first. */
   followed_to: ReviewedPly | null;
 }
@@ -423,9 +426,14 @@ function reviewFollowed(review: RepertoireReviewNotification): string {
 }
 
 function reviewFinding(review: RepertoireReviewNotification): string[] {
+  const imported = review.origin === "pgn";
   switch (review.outcome) {
     case "in_book":
-      return [`Every move of the game stayed in the repertoire. ${reviewFollowed(review)}`];
+      return [
+        imported
+          ? `The game stayed in the line. ${reviewFollowed(review)}`
+          : `Every move of the game stayed in the repertoire. ${reviewFollowed(review)}`,
+      ];
     case "departed": {
       const lines = [
         `${reviewFollowed(review)} Then they played ${reviewLabel(review.played)} where the repertoire expects ${reviewLabel(review.expected)}. That move was marked as missed, so it comes back in practice.`,
@@ -443,7 +451,9 @@ function reviewFinding(review: RepertoireReviewNotification): string[] {
       ];
     case "reply_not_stored":
       return [
-        `${reviewFollowed(review)} Black then replied ${reviewLabel(review.reply)}, which the repertoire does not have, and no answer could follow it, so nothing was added.`,
+        imported
+          ? `${reviewFollowed(review)} The opponent then played ${reviewLabel(review.reply)}, which the line has no answer to.`
+          : `${reviewFollowed(review)} Black then replied ${reviewLabel(review.reply)}, which the repertoire does not have, and no answer could follow it, so nothing was added.`,
       ];
     case "not_reached": {
       const became = review.opening ? ` and became the ${review.opening}` : "";
