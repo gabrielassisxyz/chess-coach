@@ -659,6 +659,18 @@
   raises it to `move`, marking the pass missed and hinted without changing the move's rating; the
   count is per asked move, and on a first showing (`first_pass`) wrong tries raise no hint and no
   hint button is drawn.
+  `repertoire.answered` also carries `asked` (false when a move becomes the answered one, true after
+  the student asks the coach about it). `ask_coach_about_item {activity_id}` on a line drill with
+  `answered` set writes one `repertoire_idea_request` notification on the practice conversation with
+  the group and variation names, side, numbered line up to and including the move, FEN before the
+  move, SAN, stored note or `none`, and whether the first attempt was right, telling the coach to
+  answer in at most three plain-text sentences naming the move freely, wakes the coach, and changes
+  no card (`drill_reviews` and `repertoire_cards` untouched); it is refused with `not_in_training`
+  while `answered` is null, `already_requested` once `asked` is true, and `stale_activity` on a
+  stale id. The Practice column draws the Why card whenever `answered` is set (showing "No note for
+  this move yet." when no note is stored) with an "Ask for the idea" button that flips to disabled
+  "Asked" once requested, and the coach panel shows its waiting line until the next practice turn
+  streams, ends or fails.
 - **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?, opening?}` serves
   the listed rows of `found_positions` (see Openings) as one-move exercises through their `own:`
   puzzles (`activity/found-drill.ts`, `TrainingRun`). The scope is required, and a command without

@@ -12,6 +12,7 @@ import { lineCardsByAnchor } from "../src/state/tool-summary.js";
 import { type ChatState, chatReducer, initialChatState } from "../src/state/transcript.js";
 import { FakeSocket } from "./fake-socket.js";
 import { legalMovesOf, START_FEN } from "./fixtures.js";
+import { repertoireActivity } from "./practice-fixtures.js";
 
 beforeEach(() => {
   FakeSocket.reset();
@@ -316,6 +317,94 @@ describe("a puzzle solved first try", () => {
     expect(screen.getByText("puzzle solved")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Pedir comentário do coach" })).toBeNull();
     expect(container.querySelector(".coach-actions")).toBeNull();
+  });
+});
+
+describe("asking the coach for the idea of a line drill move", () => {
+  const drillState = (asked: boolean, status: TrainingActivity["status"] = "in_progress") =>
+    repertoireActivity({
+      training: { status },
+      drill: { answered: { san: "c3", idea: null, asked } },
+    });
+
+  it("sets practiceReplyPending once asked becomes true, clears it on text, end or error, and does not re-arm for the same move", () => {
+    const before = activityOf(drillState(false));
+    const after = activityOf(drillState(true));
+    expect(reduce(before).practiceReplyPending).toBe(false);
+    expect(reduce(before, after).practiceReplyPending).toBe(true);
+    expect(practiceWaitingLabel(drillState(true), true)).toBe(PRACTICE_WAITING_LABEL);
+    expect(practiceWaitingLabel(drillState(false), true)).toBeUndefined();
+
+    // Cleared by text_delta, turn_end or turn_error on practice.
+    expect(
+      reduce(before, after, chatOf(1, { kind: "text_delta", text: "Esse lance..." }))
+        .practiceReplyPending,
+    ).toBe(false);
+    expect(
+      reduce(
+        before,
+        after,
+        chatOf(1, { kind: "turn_end", usage: { input_tokens: 1, output_tokens: 1 } }),
+      ).practiceReplyPending,
+    ).toBe(false);
+    expect(
+      reduce(before, after, chatOf(1, { kind: "turn_error", message: "boom" }))
+        .practiceReplyPending,
+    ).toBe(false);
+
+    // A later activity echo for the same asked move does not re-arm the waiting line.
+    const replied = reduce(
+      before,
+      after,
+      chatOf(1, { kind: "text_delta", text: "Esse lance..." }),
+      after,
+    );
+    expect(replied.practiceReplyPending).toBe(false);
+
+    // Asking on a later answered move in the same pass arms the waiting line again.
+    const nextMoveAsked = activityOf(
+      repertoireActivity({
+        sans: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"],
+        training: { status: "in_progress" },
+        drill: { answered: { san: "d4", idea: null, asked: true } },
+      }),
+    );
+    expect(
+      chatReducer(replied, { type: "server", event: nextMoveAsked }).practiceReplyPending,
+    ).toBe(true);
+  });
+
+  it("shows the waiting line in the coach panel after pressing Ask for the idea until the practice turn answers", () => {
+    render(<App />);
+    act(() => FakeSocket.latest.open());
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "bootstrap",
+        conversations: { play: [], games: [], practice: [] },
+        activity: drillState(false),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Practice" }));
+    expect(screen.queryByText(PRACTICE_WAITING_LABEL)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Ask for the idea" }));
+    expect(FakeSocket.latest.sent).toContainEqual(
+      expect.objectContaining({ type: "ask_coach_about_item", activity_id: 6 }),
+    );
+    act(() => FakeSocket.latest.receive({ type: "activity", state: drillState(true) }));
+    expect(screen.getByText(PRACTICE_WAITING_LABEL)).toBeTruthy();
+
+    act(() =>
+      FakeSocket.latest.receive({
+        type: "chat",
+        tab: "practice",
+        message_id: 1,
+        seq: 1,
+        event: { kind: "text_delta", text: "Prepara d4." },
+      }),
+    );
+    expect(screen.queryByText(PRACTICE_WAITING_LABEL)).toBeNull();
+    expect(screen.getByText("writing")).toBeTruthy();
   });
 });
 

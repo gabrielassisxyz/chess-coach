@@ -150,6 +150,9 @@ export function practiceWaitingLabel(
 ): string | undefined {
   const training = trainingOf(activity);
   if (!replyPending || !training || training.summary !== null) return undefined;
+  if (training.repertoire) {
+    return training.repertoire.answered?.asked ? PRACTICE_WAITING_LABEL : undefined;
+  }
   return training.status === "solved" || training.status === "failed"
     ? PRACTICE_WAITING_LABEL
     : undefined;

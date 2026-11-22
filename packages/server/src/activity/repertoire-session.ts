@@ -12,7 +12,10 @@ import type {
 } from "@chess-coach/shared";
 import { Chess, type Move } from "chess.js";
 import { type Clock, systemClock } from "../clock.js";
-import type { TrainingSummaryNotification } from "../coach/notify.js";
+import type {
+  RepertoireIdeaRequestNotification,
+  TrainingSummaryNotification,
+} from "../coach/notify.js";
 import { appendChatMessage } from "../db/chat.js";
 import { countRepertoireMisses, repertoireCardKey } from "../db/drill-reviews.js";
 import type { Database } from "../db/open.js";
@@ -432,6 +435,33 @@ function repertoireAnsweredIdeaOf(move: RepertoireDrillMove): string | null {
   return idea ? idea : null;
 }
 
+interface AnsweredMove {
+  move: RepertoireLevelMove;
+  firstTryRight: boolean;
+  asked: boolean;
+}
+
+function fenBeforeRepertoireMove(line: readonly string[]): string {
+  const board = new Chess();
+  for (const san of line) board.move(san);
+  return board.fen();
+}
+
+function repertoireIdeaRequestOf(answered: AnsweredMove): RepertoireIdeaRequestNotification {
+  const { move } = answered;
+  return {
+    type: "repertoire_idea_request",
+    group: move.variation.group_name,
+    variation: move.variation.variation_name,
+    side: move.variation.side,
+    line: [...move.line, move.san],
+    fen_before: fenBeforeRepertoireMove(move.line),
+    san: move.san,
+    idea: repertoireAnsweredIdeaOf(move),
+    first_try_right: answered.firstTryRight,
+  };
+}
+
 const uciOfRepertoireMove = (move: Move): string => `${move.from}${move.to}${move.promotion ?? ""}`;
 
 /**
@@ -452,9 +482,8 @@ export class RepertoireSession implements PracticeRunPort {
   private closed = false;
   // Set while a transition writes, so the coach is woken once the rows are committed.
   private wake = false;
-  // The move just answered, with its stored idea, until the next move is answered. Null before
-  // any answer and at the start of a pass.
-  private answered: { san: string; idea: string | null } | null = null;
+  // The move just answered or shown, until the next move is answered or a new pass opens.
+  private answered: AnsweredMove | null = null;
 
   // `repertoire` is the one the drill was started from: its side is the side of every variation
   // the level covers, and a pass with nothing asked yet falls back to it.
@@ -601,7 +630,13 @@ export class RepertoireSession implements PracticeRunPort {
       hint,
       flagged_opening: ask?.flagged ?? null,
       flagged_sound: ask?.flaggedSound ?? false,
-      answered: this.answered,
+      answered: this.answered
+        ? {
+            san: this.answered.move.san,
+            idea: repertoireAnsweredIdeaOf(this.answered.move),
+            asked: this.answered.asked,
+          }
+        : null,
       moves_left: count((state) => state.stage !== "done"),
       moves_right: count((state) => state.rating === "right"),
       moves_wrong: count((state) => state.rating === "wrong"),
@@ -700,9 +735,19 @@ export class RepertoireSession implements PracticeRunPort {
     });
   }
 
-  /** A repertoire drill never stays quiet, so there is no comment to ask for. */
+  /** Writes a notification asking the coach why the last answered move is played, once per move. */
   askCoach(): void {
-    throw new ActivityError("not_in_training", "this drill has no quiet item to ask about");
+    const answered = this.answered;
+    if (this.result !== null || answered === null) {
+      throw new ActivityError("not_in_training", "no answered move to ask about");
+    }
+    if (answered.asked) {
+      throw new ActivityError("already_requested", "the coach was already asked about this move");
+    }
+    this.transition(() => {
+      answered.asked = true;
+      this.notify(repertoireIdeaRequestOf(answered));
+    });
   }
 
   /** A line is drilled in passes the drill repeats by itself, so it has no item to play again. */
@@ -803,9 +848,13 @@ export class RepertoireSession implements PracticeRunPort {
   private playRight(ask: DrillAsk, state: DrillMoveState, uci: string): void {
     const pass = this.pass;
     this.recordTry(pass, uci, true);
+    const firstTryRight = state.stage !== "intro" && !ask.attempted;
     if (!ask.attempted) this.rateFirstAttempt(state, true);
     ask.attempted = true;
-    this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
+    // Keep an already-answered move (from a first showing or a move hint) so `asked` stays set.
+    if (this.answered?.move.rowId !== state.move.rowId) {
+      this.answered = { move: state.move, firstTryRight, asked: false };
+    }
     if (state.stage === "intro") state.stage = "test";
     const board = new Chess(pass.fen);
     const played = applyUci(board, uci);
@@ -839,8 +888,8 @@ export class RepertoireSession implements PracticeRunPort {
 
   private raiseHint(ask: DrillAsk, state: DrillMoveState, level: 1 | 2): void {
     ask.hint = level;
-    if (level === 2) {
-      this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
+    if (level === 2 && this.answered?.move.rowId !== state.move.rowId) {
+      this.answered = { move: state.move, firstTryRight: false, asked: false };
     }
     this.missByHint(ask, state);
   }
@@ -989,7 +1038,7 @@ export class RepertoireSession implements PracticeRunPort {
     // Showing a new move with its answer is what makes it known, and showing counts as
     // answering for the idea shown after each answer.
     if (state.stage === "intro") {
-      this.answered = { san: state.move.san, idea: repertoireAnsweredIdeaOf(state.move) };
+      this.answered = { move: state.move, firstTryRight: false, asked: false };
       introduceRepertoireCard(this.deps.db, state.move, this.clock.now().toISOString());
     }
   }
@@ -1027,6 +1076,7 @@ export class RepertoireSession implements PracticeRunPort {
 
   private finish(): void {
     const right = this.order.filter((state) => state.rating === "right").length;
+    this.answered = null;
     this.result = { practised: this.order.length, first_try_right: right };
     this.notify({
       type: "training_summary",
@@ -1118,7 +1168,7 @@ export class RepertoireSession implements PracticeRunPort {
     return state?.move.variation ?? this.repertoire;
   }
 
-  private notify(content: TrainingSummaryNotification): void {
+  private notify(content: TrainingSummaryNotification | RepertoireIdeaRequestNotification): void {
     const sink = this.deps.notifications;
     if (!sink) return;
     appendChatMessage(

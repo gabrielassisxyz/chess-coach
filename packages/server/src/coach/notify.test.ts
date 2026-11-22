@@ -8,8 +8,10 @@ import type {
 } from "../game/notifications.js";
 import {
   type PuzzleResultNotification,
+  type RepertoireIdeaRequestNotification,
   renderNotifications,
   renderPuzzleResult,
+  renderRepertoireIdeaRequest,
   renderSrsAnswer,
   renderTrainingSummary,
   type SrsAnswerNotification,
@@ -556,5 +558,74 @@ describe("hint and drawings in a training result", () => {
     const text = renderPuzzleResult(asked);
     expect(text).toContain("Hint used: no");
     expect(text).toContain("Drawn:\n+3s  blue circle c3");
+  });
+});
+
+describe("repertoire idea request", () => {
+  const BEFORE_BF4 = "rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq d6 0 2";
+  const request: RepertoireIdeaRequestNotification = {
+    type: "repertoire_idea_request",
+    group: "London System",
+    variation: "Main lines",
+    side: "white",
+    line: ["d4", "d5", "Bf4"],
+    fen_before: BEFORE_BF4,
+    san: "Bf4",
+    idea: "Develop the dark-squared bishop outside the pawn chain.",
+    first_try_right: true,
+  };
+
+  it("renders the opening, line, FEN before the move, SAN, stored note, first-try verdict and style rules", () => {
+    const text = renderRepertoireIdeaRequest(request);
+    expect(text).toContain("London System");
+    expect(text).toContain("Main lines");
+    expect(text).toContain("white");
+    expect(text).toContain("asked why Bf4 is played here");
+    expect(text).toContain("Line: 1.d4 d5 2.Bf4");
+    expect(text).toContain(`Position before the move (FEN): ${BEFORE_BF4}`);
+    expect(text).toContain("Move: Bf4");
+    expect(text).toContain("Stored note: Develop the dark-squared bishop outside the pawn chain.");
+    expect(text).toContain("First attempt right: yes");
+    expect(text).toContain("at most three sentences of plain text");
+    expect(text).toContain("no list");
+    expect(text).toContain("no heading");
+    expect(text).toContain("naming the move freely");
+    expect(renderNotifications([request])).toBe(text);
+  });
+
+  it("writes none when no note is stored and reports a missed first attempt on a Black line", () => {
+    const blackRequest: RepertoireIdeaRequestNotification = {
+      type: "repertoire_idea_request",
+      group: "Caro-Kann Defense",
+      variation: "Main line (1...c6)",
+      side: "black",
+      line: ["e4", "c6", "d4", "d5"],
+      fen_before: "rnbqkbnr/pp1ppppp/2p5/8/3PP3/8/PPP2PPP/RNBQKBNR b KQkq d3 0 2",
+      san: "d5",
+      idea: null,
+      first_try_right: false,
+    };
+    const text = renderNotifications([blackRequest]);
+    expect(text).toContain("Caro-Kann Defense");
+    expect(text).toContain("Main line (1...c6)");
+    expect(text).toContain("black");
+    expect(text).toContain("Line: 1.e4 c6 2.d4 d5");
+    expect(text).toContain("Stored note: none");
+    expect(text).toContain("First attempt right: no");
+  });
+
+  it("is kept when folded together with a training_summary", () => {
+    const summary: TrainingSummaryNotification = {
+      type: "training_summary",
+      mode: "repertoire",
+      solved: 3,
+      failed: 1,
+    };
+    const text = renderNotifications([request, summary]);
+    expect(text).toContain("Several updates arrived while you were busy (2 in all).");
+    expect(text).toContain("London System");
+    expect(text).toContain("Main lines");
+    expect(text).toContain("Line: 1.d4 d5 2.Bf4");
+    expect(text).toContain("3 of 4 repertoire moves solved, 1 failed.");
   });
 });

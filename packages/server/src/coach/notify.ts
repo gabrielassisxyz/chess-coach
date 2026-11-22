@@ -293,6 +293,22 @@ export interface TrainingSummaryNotification {
   failed: number;
 }
 
+/** Row content written when the student asks why an answered line drill move is played. */
+export interface RepertoireIdeaRequestNotification {
+  type: "repertoire_idea_request";
+  group: string;
+  variation: string;
+  side: "white" | "black";
+  /** The SAN moves from move 1 up to and including the answered move. */
+  line: string[];
+  /** The position before the answered move. */
+  fen_before: string;
+  san: string;
+  /** The stored note for this move, or null when none is stored. */
+  idea: string | null;
+  first_try_right: boolean;
+}
+
 /** One move of a reviewed game, by its ply: the coach reads it as "12. Nf3" or "12... Nf6". */
 export interface ReviewedPly {
   ply: number;
@@ -330,13 +346,21 @@ export type CoachNotification =
   | SrsAnswerNotification
   | PuzzleResultNotification
   | TrainingSummaryNotification
+  | RepertoireIdeaRequestNotification
   | RepertoireReviewNotification;
 
-type TrainingRow = SrsAnswerNotification | PuzzleResultNotification | TrainingSummaryNotification;
+type TrainingRow =
+  | SrsAnswerNotification
+  | PuzzleResultNotification
+  | TrainingSummaryNotification
+  | RepertoireIdeaRequestNotification;
 
 function isTrainingRow(item: CoachNotification): item is TrainingRow {
   return (
-    item.type === "srs_answer" || item.type === "puzzle_result" || item.type === "training_summary"
+    item.type === "srs_answer" ||
+    item.type === "puzzle_result" ||
+    item.type === "training_summary" ||
+    item.type === "repertoire_idea_request"
   );
 }
 
@@ -461,6 +485,24 @@ function renderRepertoireReviews(items: CoachNotification[]): string[] {
   return [...earlier, ...shown.map(renderRepertoireReview)];
 }
 
+function numberedRepertoireLine(sans: readonly string[]): string {
+  return sans.map((san, index) => (index % 2 === 0 ? `${index / 2 + 1}.${san}` : san)).join(" ");
+}
+
+export function renderRepertoireIdeaRequest(request: RepertoireIdeaRequestNotification): string {
+  const note = request.idea && request.idea.trim() !== "" ? request.idea.trim() : "none";
+  return [
+    `The student is drilling ${request.group} (${request.variation}) as ${request.side} and asked why ${request.san} is played here.`,
+    `Line: ${numberedRepertoireLine(request.line)}`,
+    `Position before the move (FEN): ${request.fen_before}`,
+    `Move: ${request.san}`,
+    `Stored note: ${note}`,
+    `First attempt right: ${request.first_try_right ? "yes" : "no"}`,
+    "Explain why this move is played here in at most three sentences of plain text, with no list and no heading, naming the move freely because it is already answered.",
+    DURING_PRACTICE_NOTE,
+  ].join("\n");
+}
+
 function renderOne(item: CoachNotification): string {
   switch (item.type) {
     case "turn":
@@ -475,6 +517,8 @@ function renderOne(item: CoachNotification): string {
       return renderPuzzleResult(item);
     case "training_summary":
       return renderTrainingSummary(item);
+    case "repertoire_idea_request":
+      return renderRepertoireIdeaRequest(item);
     case "difficulty_change":
       return renderDifficultyChange(item);
     case "repertoire_review":

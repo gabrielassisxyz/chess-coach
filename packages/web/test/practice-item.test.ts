@@ -667,16 +667,21 @@ describe("the answered idea under a repertoire drill's card", () => {
   it("shows Why with the move number and idea after an answer, and nothing before", () => {
     expect(renderColumn(repertoireActivity({}))).not.toContain("why-line");
     const html = renderColumn(
-      repertoireActivity({ drill: { answered: { san: "c3", idea: "Prepare d4." } } }),
+      repertoireActivity({ drill: { answered: { san: "c3", idea: "Prepare d4.", asked: false } } }),
     );
     expect(html).toContain("why-line");
     expect(html).toContain("Why 4.c3");
     expect(html).toContain("Prepare d4.");
+    expect(html).toContain("Ask for the idea");
   });
 
-  it("draws nothing when the answered move stores no idea", () => {
-    expect(
-      renderColumn(repertoireActivity({ drill: { answered: { san: "c3", idea: null } } })),
-    ).not.toContain("why-line");
+  it("draws the Why card with its fallback body when the answered move stores no idea", () => {
+    const html = renderColumn(
+      repertoireActivity({ drill: { answered: { san: "c3", idea: null, asked: false } } }),
+    );
+    expect(html).toContain("why-line");
+    expect(html).toContain("Why 4.c3");
+    expect(html).toContain("No note for this move yet.");
+    expect(html).toContain("Ask for the idea");
   });
 });
