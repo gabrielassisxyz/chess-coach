@@ -7,6 +7,7 @@ import {
   MIX_PRACTICE_MOTIF,
   ServerEventSchema,
 } from "@chess-coach/shared";
+import { Chess } from "chess.js";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActivityService } from "../../src/activity/service.js";
@@ -14,6 +15,11 @@ import { buildApp } from "../../src/app.js";
 import { createCoachSession } from "../../src/db/chat.js";
 import { insertFoundPosition } from "../../src/db/found-positions.js";
 import { type Database, openDatabase } from "../../src/db/open.js";
+import {
+  createRepertoireVariation,
+  insertRepertoireOwnMove,
+  upsertRepertoireReply,
+} from "../../src/db/repertoires.js";
 import { endRunsLeftOpenAtStart } from "../../src/db/training.js";
 import { EngineFault } from "../../src/engine/errors.js";
 import type { EvalCache } from "../../src/engine/eval-cache.js";
@@ -22,6 +28,7 @@ import type { SearchRequest, SearchResult } from "../../src/engine/uci.js";
 import { GameService } from "../../src/game/service.js";
 import type { Log } from "../../src/log.js";
 import { RecordingLog } from "../../src/log.js";
+import { positionKey } from "../../src/openings/from-games.js";
 import { ReviewDesk } from "../../src/srs/review.js";
 import { FakeCoach } from "../fakes/fake-coach.js";
 import { ScriptedEngine } from "../fakes/scripted-engine.js";
@@ -112,6 +119,8 @@ describe("training over the socket", () => {
       { type: "next_training_item" },
       { type: "retry_item" },
       { type: "retry_item", activity_id: 3 },
+      { type: "skip_first_showings" },
+      { type: "skip_first_showings", activity_id: 3 },
       { type: "end_training", activity_id: 3 },
       { type: "explore", kind: "move", uci: "e2e4", activity_id: 3 },
       { type: "explore", kind: "undo" },
@@ -170,6 +179,9 @@ describe("training over the socket", () => {
       { type: "retry_item", activity_id: 0 },
       { type: "retry_item", activity_id: "3" },
       { type: "retry" },
+      { type: "skip_first_showings", activity_id: 0 },
+      { type: "skip_first_showings", activity_id: "3" },
+      { type: "skip_first_showings", extra: true },
       { type: "analyse", fen: "short" },
       { type: "analyse", fen: BACK_RANK, lines: 6 },
       { type: "analyse", fen: BACK_RANK, depth: 4 },
@@ -1568,6 +1580,124 @@ describe("every refused ask over the socket is logged with its code", () => {
     );
     expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "c8" });
     expect(failedOf("c8")).toMatchObject({ fields: { code: "not_in_training" } });
+    socket.close();
+  });
+
+  it("routes skip_first_showings to a line drill and refuses off training, on a puzzle and on a stale id", async () => {
+    const db = seededDatabase();
+    const { id: repId } = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "Italian Game",
+      variationName: "Classical",
+    });
+    const lineMoves: [string[], string, boolean][] = [
+      [[], "e4", true],
+      [["e4"], "e5", false],
+      [["e4", "e5"], "Nf3", true],
+    ];
+    for (const [line, san, own] of lineMoves) {
+      const board = new Chess();
+      for (const played of line) board.move(played);
+      const key = positionKey(board.fen());
+      const move = board.move(san);
+      const row = {
+        repertoireId: repId,
+        positionKey: key,
+        ply: line.length + 1,
+        line,
+        reach: 1,
+        openingName: "King's Pawn Game",
+        uci: `${move.from}${move.to}${move.promotion ?? ""}`,
+        san,
+        share: null,
+        source: "explorer" as const,
+      };
+      if (own) insertRepertoireOwnMove(db, { ...row, cpLoss: 0, evalCp: 20, results: null });
+      else upsertRepertoireReply(db, row);
+    }
+
+    const log = new RecordingLog();
+    const server = await start(db, log);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+
+    // Refused when not in training.
+    socket.send(JSON.stringify({ type: "skip_first_showings", command_id: "s0" }));
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "s0" });
+
+    // Refused with invalid_state on a puzzle run.
+    socket.send(
+      JSON.stringify({ type: "start_training", command_id: "p1", mode: "puzzles", motif: "fork" }),
+    );
+    const puzzleState = (await next("activity")) as { state: { activity_id: number } };
+    await next("training");
+    socket.send(
+      JSON.stringify({
+        type: "skip_first_showings",
+        command_id: "s1",
+        activity_id: puzzleState.state.activity_id,
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "invalid_state", command_id: "s1" });
+
+    // Start a line drill, test stale_activity, then route skip_first_showings cleanly.
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "r1",
+        mode: "repertoire",
+        repertoire_id: repId,
+        scope: "due",
+      }),
+    );
+    const drillStart = ServerEventSchema.parse(await next("activity")) as {
+      state: { activity_id: number; repertoire: { first_pass: boolean; new_moves: number } };
+    };
+    await next("training");
+    const drillId = drillStart.state.activity_id;
+    expect(drillStart.state.repertoire).toMatchObject({ first_pass: true, new_moves: 1 });
+
+    socket.send(
+      JSON.stringify({
+        type: "skip_first_showings",
+        command_id: "s2",
+        activity_id: drillId + 1,
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "s2" });
+
+    // Extra field refused by strict schema.
+    socket.send(
+      JSON.stringify({
+        type: "skip_first_showings",
+        command_id: "s3",
+        activity_id: drillId,
+        extra: 1,
+      }),
+    );
+    expect(await next("error")).toMatchObject({ code: "invalid_command", command_id: "s3" });
+
+    socket.send(
+      JSON.stringify({
+        type: "skip_first_showings",
+        command_id: "s4",
+        activity_id: drillId,
+      }),
+    );
+    const afterSkip = ServerEventSchema.parse(await next("activity")) as {
+      state: {
+        repertoire: { first_pass: boolean; answer: { san: string } | null; new_moves: number };
+      };
+    };
+    await next("training");
+    expect(afterSkip.state.repertoire).toMatchObject({
+      first_pass: true,
+      answer: { san: "e4" },
+      new_moves: 0,
+    });
+    expect(log.named("ws.command_done").map((entry) => entry.fields.type)).toContain(
+      "skip_first_showings",
+    );
     socket.close();
   });
 });

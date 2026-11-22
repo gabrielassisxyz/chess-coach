@@ -4,6 +4,7 @@ import type {
   FoundNote,
   PlayedMove,
   QueueOutcome,
+  RepertoireLevel,
   RepertoireScope,
   ExploredEvent as ShownEvent,
   TrainingActivity,
@@ -116,6 +117,13 @@ export interface TrainingDeps {
   repertoireJudge?: RepertoireTryJudge | undefined;
 }
 
+/** What skipping first showings on a line drill wrote and flipped, for the server log. */
+export interface SkipFirstShowingsResult {
+  level: RepertoireLevel;
+  cardsCreated: number;
+  movesFlipped: number;
+}
+
 /** What the activity service drives on the practice queue or drill that is on the board. */
 export interface PracticeRunPort {
   readonly runId: number | null;
@@ -133,6 +141,8 @@ export interface PracticeRunPort {
   next(): void;
   /** Serves the ended puzzle again from its first move; the second play counts for nothing. */
   retry(): void;
+  /** Marks every never-trained move of a line drill's level as seen; refused on other runs. */
+  skipFirstShowings(): SkipFirstShowingsResult;
   end(): void;
   /** The run stopped being on the board without the student ending it. */
   leave(): void;
@@ -1067,6 +1077,11 @@ export class TrainingRun implements PracticeRunPort {
     this.transition(() => {
       this.served = { ...this.serve(this.position), firstPlay: s.firstPlay ?? s };
     });
+  }
+
+  /** Only a repertoire line drill has first showings to skip. */
+  skipFirstShowings(): never {
+    throw new ActivityError("invalid_state", "only a line drill has first showings to skip");
   }
 
   /** The student left the queue; a finished queue keeps the reason it already has. */
