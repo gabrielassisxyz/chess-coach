@@ -29,6 +29,7 @@ export interface GameRecord {
   timeControl: string | null;
   playedAt: string | null;
   grading: GradingState;
+  practice: boolean;
 }
 
 export interface NewMove {
@@ -90,6 +91,7 @@ interface GameRow {
   time_control: string | null;
   played_at: string | null;
   grading: GradingState;
+  practice: number;
 }
 
 interface MoveRow {
@@ -131,7 +133,17 @@ function toGame(row: GameRow): GameRecord {
     timeControl: row.time_control,
     playedAt: row.played_at,
     grading: row.grading,
+    practice: row.practice === 1,
   };
+}
+
+/**
+ * The SQL condition that a game counts in statistics (results, accuracy and opening frequency).
+ * Readers of those figures share this so practice games stay out of all of them, while the streak,
+ * repertoire review and positions from games intentionally skip it.
+ */
+export function gameCountsInStatsSql(column = "practice"): string {
+  return `(${column} = 0)`;
 }
 
 function toMove(row: MoveRow): MoveRecord {
@@ -408,6 +420,7 @@ export interface ImportedGame {
   opponentRating: number | null;
   timeControl: string | null;
   playedAt: string | null;
+  practice: boolean;
 }
 
 /** Stores a finished game and all its plies in one transaction; returns null when `sourceId` is known. */
@@ -417,8 +430,8 @@ export function insertImportedGame(db: Database, game: ImportedGame): number | n
       .prepare(
         `INSERT INTO games (started_at, finished_at, player_color, target_elo, initial_fen, phase, result,
            termination, pgn, source, source_id, source_url, opponent, student_rating, opponent_rating,
-           time_control, played_at, grading)
-         VALUES (?, ?, ?, ?, ?, 'finished', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+           time_control, played_at, grading, practice)
+         VALUES (?, ?, ?, ?, ?, 'finished', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT DO NOTHING RETURNING id`,
       )
       .get(
@@ -438,6 +451,7 @@ export function insertImportedGame(db: Database, game: ImportedGame): number | n
         game.opponentRating,
         game.timeControl,
         game.playedAt,
+        game.practice ? 1 : 0,
       ) as { id: number } | undefined;
     if (!row) return null;
     for (const move of game.moves) insertMove(db, row.id, move);

@@ -41,13 +41,14 @@ const variation = (name: string): number =>
 
 // Only the outcome and the variation matter to the count, so the game is the shortest one that
 // imports and the review row carries nothing else.
-function addReview(repertoireId: number, outcome: Outcome): void {
+function addReview(repertoireId: number, outcome: Outcome, practice = false): void {
   gameCount += 1;
   const gameId = importFinishedGame(db, {
     pgn: '[Result "1-0"]\n\n1. e4 e5 1-0',
     playerColor: "white",
     source: "pgn",
     sourceId: `in-line-${gameCount}`,
+    practice,
   }) as number;
   db.prepare(
     `INSERT INTO repertoire_game_reviews
@@ -102,6 +103,15 @@ describe("the games reviewed against a variation that stayed in its line", () =>
 
   it("is 0 of 0 for a variation no game was reviewed against", () => {
     expect(countRepertoireGamesInLine(db, variation("Classical"))).toEqual({ stayed: 0, of: 0 });
+  });
+
+  it("leaves practice games out of both counts while keeping regular games", () => {
+    const id = variation("Classical");
+    addReview(id, "in_book", false);
+    addReview(id, "in_book", true);
+    addReview(id, "departed", true);
+
+    expect(countRepertoireGamesInLine(db, id)).toEqual({ stayed: 1, of: 1 });
   });
 });
 

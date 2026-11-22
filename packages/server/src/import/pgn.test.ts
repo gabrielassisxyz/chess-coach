@@ -132,6 +132,47 @@ describe("importFinishedGame", () => {
     });
     expect(importFinishedGame(db, request)).toBeNull();
   });
+
+  it("stores practice on pasted PGNs, keeps the same source id, and ignores practice on other sources", () => {
+    const pgn =
+      '[White "Guest"]\n[Black "Maia-3 600"]\n[Site "https://maiachess.com/"]\n[Result "0-1"]\n\n1. e4 e5 0-1';
+    const id = importFinishedGame(db, {
+      pgn,
+      playerColor: "white",
+      source: "pgn",
+      practice: true,
+      now: NOW,
+    });
+    expect(id).not.toBeNull();
+    expect(getGame(db, id as number)).toMatchObject({
+      practice: true,
+      opponent: "Maia-3 600",
+      sourceUrl: "https://maiachess.com/",
+    });
+    // Re-importing the same text with practice flipped still collides on the unchanged source id.
+    expect(
+      importFinishedGame(db, { pgn, playerColor: "white", source: "pgn", practice: false }),
+    ).toBeNull();
+
+    const chesscomId = importFinishedGame(db, {
+      pgn: FIXTURE,
+      playerColor: "white",
+      source: "chesscom",
+      sourceId: "cc-practice-ignored",
+      opponent: "Dibitard49",
+      practice: true,
+    });
+    const lichessId = importFinishedGame(db, {
+      pgn: FIXTURE,
+      playerColor: "white",
+      source: "lichess",
+      sourceId: "li-practice-ignored",
+      opponent: "Dibitard49",
+      practice: true,
+    });
+    expect(getGame(db, chesscomId as number)?.practice).toBe(false);
+    expect(getGame(db, lichessId as number)?.practice).toBe(false);
+  });
 });
 
 describe("parseFinishedGame", () => {
@@ -167,6 +208,74 @@ describe("parseFinishedGame", () => {
     const game = parse(body);
     expect(game.playedAt).toBe("2026-10-28T03:04:05.000Z");
     expect(game.finish.termination).toBe("draw");
+  });
+
+  it("reads the opponent from the other colour's header, trimmed, and leaves missing, empty or ? null", () => {
+    const asWhite = parseFinishedGame({
+      pgn: '[White "Guest"]\n[Black "  Maia-3 600  "]\n[Result "0-1"]\n\n1. e4 e5 0-1',
+      playerColor: "white",
+      source: "pgn",
+      now: NOW,
+    });
+    expect(asWhite.opponent).toBe("Maia-3 600");
+
+    const asBlack = parseFinishedGame({
+      pgn: '[White "  Maia-3 600  "]\n[Black "Guest"]\n[Result "1-0"]\n\n1. e4 e5 1-0',
+      playerColor: "black",
+      source: "pgn",
+      now: NOW,
+    });
+    expect(asBlack.opponent).toBe("Maia-3 600");
+
+    for (const header of [
+      "",
+      '[Black ""]\n',
+      '[Black "   "]\n',
+      '[Black "?"]\n',
+      '[Black " ? "]\n',
+    ]) {
+      const parsed = parse(`${header}[Result "1-0"]\n\n1. e4 e5 1-0`);
+      expect(parsed.opponent).toBeNull();
+    }
+  });
+
+  it("reads Site as sourceUrl only for http(s) URLs up to 300 characters", () => {
+    const exact300 = `https://example.com/${"a".repeat(300 - "https://example.com/".length)}`;
+    const over300 = `${exact300}a`;
+    expect(parse('[Site "https://maiachess.com/"]\n[Result "0-1"]\n\n1. e4 e5 0-1').sourceUrl).toBe(
+      "https://maiachess.com/",
+    );
+    expect(parse('[Site "http://example.com/g"]\n[Result "0-1"]\n\n1. e4 e5 0-1').sourceUrl).toBe(
+      "http://example.com/g",
+    );
+    expect(parse(`[Site "${exact300}"]\n[Result "0-1"]\n\n1. e4 e5 0-1`).sourceUrl).toBe(exact300);
+
+    for (const site of [
+      "",
+      "?",
+      "Chess.com",
+      "ftp://example.com/1",
+      "javascript:alert(1)",
+      over300,
+    ]) {
+      const header = site === "" ? "" : `[Site "${site}"]\n`;
+      expect(parse(`${header}[Result "0-1"]\n\n1. e4 e5 0-1`).sourceUrl).toBeNull();
+    }
+  });
+
+  it("defaults practice to false and leaves sourceId unchanged when practice is true", () => {
+    const pgn = '[Result "1-0"]\n\n1. e4 e5 1-0';
+    const regular = parseFinishedGame({ pgn, playerColor: "white", source: "pgn", now: NOW });
+    const practice = parseFinishedGame({
+      pgn,
+      playerColor: "white",
+      source: "pgn",
+      practice: true,
+      now: NOW,
+    });
+    expect(regular.practice).toBe(false);
+    expect(practice.practice).toBe(true);
+    expect(practice.sourceId).toBe(regular.sourceId);
   });
 });
 

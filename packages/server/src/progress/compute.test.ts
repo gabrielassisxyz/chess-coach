@@ -30,19 +30,20 @@ const at = (day: number, hour = 12): string => new Date(2026, 5, day, hour).toIS
 const clockOn = (day: number) => ({ now: () => new Date(2026, 5, day, 12) });
 
 function insertGame(opts: {
-  source: "coach" | "chesscom" | "lichess";
+  source: "coach" | "chesscom" | "lichess" | "pgn";
   day: number;
   rating?: number;
   timeControl?: string;
   finished?: boolean;
+  practice?: boolean;
 }): number {
   const finished = opts.finished ?? true;
   const imported = opts.source !== "coach";
   const row = db
     .prepare(
       `INSERT INTO games (started_at, finished_at, player_color, target_elo, initial_fen, phase, result,
-         pgn, source, source_id, student_rating, time_control, played_at)
-       VALUES (?, ?, 'white', 1200, 'fen', ?, ?, '', ?, ?, ?, ?, ?) RETURNING id`,
+         pgn, source, source_id, student_rating, time_control, played_at, practice)
+       VALUES (?, ?, 'white', 1200, 'fen', ?, ?, '', ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .get(
       at(opts.day),
@@ -50,10 +51,13 @@ function insertGame(opts: {
       finished ? "finished" : "player_turn",
       finished ? "1-0" : null,
       opts.source,
-      imported ? `${opts.source === "chesscom" ? "uuid" : opts.source}-${opts.day}` : null,
+      imported
+        ? `${opts.source === "chesscom" ? "uuid" : opts.source}-${opts.day}-${opts.practice ? "p" : "c"}`
+        : null,
       opts.rating ?? null,
       opts.timeControl ?? null,
       imported ? at(opts.day) : null,
+      opts.practice ? 1 : 0,
     ) as { id: number };
   return row.id;
 }
@@ -486,5 +490,22 @@ describe("computeCoachProgress", () => {
     expect(computeCoachProgress(db, clockOn(10)).puzzle_rating).toBe(INITIAL_PUZZLE_RATING);
     setPuzzleRating(db, 1337, at(10));
     expect(computeCoachProgress(db, clockOn(10)).puzzle_rating).toBe(1337);
+  });
+});
+
+describe("practice games", () => {
+  it("leaves a practice game out of recentGames and games_played while still counting it for the streak and 7-day activity", () => {
+    const countedId = insertGame({ source: "pgn", day: 9, practice: false });
+    insertGame({ source: "pgn", day: 10, practice: true });
+
+    const progress = computeProgress(db, clockOn(10));
+    expect(progress.games.map((game) => game.id)).toEqual([countedId]);
+    expect(progress.streak_days).toBe(2);
+    expect(progress.streak_best).toBe(2);
+    expect(progress.activity_7d).toEqual([false, false, false, false, false, true, true]);
+
+    const coach = computeCoachProgress(db, clockOn(10));
+    expect(coach.games_played).toBe(1);
+    expect(coach.streak_days).toBe(2);
   });
 });

@@ -8,7 +8,7 @@ import {
   UNNAMED_PLAYED_OPENING,
 } from "@chess-coach/shared";
 import { type Clock, systemClock } from "../clock.js";
-import { listMoves } from "../db/games.js";
+import { gameCountsInStatsSql, listMoves } from "../db/games.js";
 import type { Database } from "../db/open.js";
 import type { OpeningNames } from "./names.js";
 
@@ -33,7 +33,8 @@ function playedGames(db: Database, cutoff: string | null, nowIso: string): Playe
     .prepare(
       `SELECT id, player_color, result, COALESCE(played_at, started_at) AS game_date
        FROM games
-       WHERE finished_at IS NOT NULL AND result IS NOT NULL AND source != 'coach' ${dateFilter}
+       WHERE finished_at IS NOT NULL AND result IS NOT NULL AND source != 'coach'
+         AND ${gameCountsInStatsSql("practice")} ${dateFilter}
        ORDER BY id`,
     )
     .all(...params);

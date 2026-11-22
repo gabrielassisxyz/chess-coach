@@ -1,0 +1,1 @@
+ALTER TABLE games ADD COLUMN practice INTEGER NOT NULL DEFAULT 0 CHECK (practice IN (0, 1));

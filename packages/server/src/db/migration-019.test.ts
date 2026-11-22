@@ -40,7 +40,13 @@ const insertGame = (source: string, sourceId: string | null, finished = true): n
       ).lastInsertRowid,
   );
 
-const snapshotOfGames = (): unknown[] => db.prepare("SELECT * FROM games ORDER BY id").all();
+// Columns of games at 018: later migrations (such as 036's practice flag) add new columns.
+const GAMES_COLUMNS_AT_018 = `id, coach_session_id, started_at, finished_at, player_color,
+  target_elo, initial_fen, phase, result, termination, pgn, source, source_id, source_url,
+  opponent, student_rating, opponent_rating, time_control, played_at, grading`;
+
+const snapshotOfGames = (): unknown[] =>
+  db.prepare(`SELECT ${GAMES_COLUMNS_AT_018} FROM games ORDER BY id`).all();
 const indexesOfGames = (): unknown[] =>
   db
     .prepare(

@@ -941,6 +941,28 @@ describe("generateOpeningPuzzles in the composed server", () => {
     expect(foundAt(fenBeforePly(ruy, 13)).game_id).toBe(ruy);
     expect(foundAt(departure).game_id).toBe(italian);
   });
+
+  it("still extracts positions from practice games", async () => {
+    const gameId = importFinishedGame(db, {
+      pgn: WHITE_ONE,
+      playerColor: "white",
+      source: "pgn",
+      sourceId: "practice-mistake",
+      playedAt: DAY(2),
+      practice: true,
+    }) as number;
+    setGrading(db, gameId, "done");
+    gradeEveryStudentMove(gameId, "best");
+    grade(gameId, 5, "blunder", "f1c4");
+
+    const engine = new FakeEngine();
+    const fen = fenBeforePly(gameId, 5);
+    engine.movesByKey.set(positionKey(fen), ["f1c4", "d2d3"]);
+    const result = await generateOpeningPuzzles(db, engine);
+    expect(result.candidates).toBe(1);
+    expect(result.listed).toBe(1);
+    expect(foundAt(fen)).toMatchObject({ game_id: gameId, from_mistake: 1, listed: 1 });
+  });
 });
 
 describe("seedPuzzles with opening names", () => {

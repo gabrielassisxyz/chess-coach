@@ -43,9 +43,11 @@ export const GameSummarySchema = z.object({
   played_at: z.string().nullable(),
   // An imported game shows its moves without badges until the background grading is done.
   grading: z.enum(["pending", "running", "done", "failed"]),
+  // True for a game pasted as practice, which stays out of results and frequency figures.
+  practice: z.boolean().default(false),
 });
-// The four game-list fields above default on parse; the input type keeps them optional so a
-// hand-built summary that predates them still typechecks.
+// The game-list fields above with defaults stay optional on input so a hand-built summary
+// that predates them still typechecks.
 export type GameSummary = z.input<typeof GameSummarySchema>;
 
 export const GameListResponseSchema = z.object({ games: z.array(GameSummarySchema) });

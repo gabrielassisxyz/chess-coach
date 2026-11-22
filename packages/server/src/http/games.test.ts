@@ -68,7 +68,27 @@ describe("GET /api/games", () => {
       time_control: null,
       played_at: null,
       grading: "done",
+      practice: false,
     });
+  });
+
+  it("carries practice as a boolean on the list and detail routes", async () => {
+    const regular = insertGradedGame(db);
+    const practice = insertGradedGame(db);
+    db.prepare("UPDATE games SET practice = 1 WHERE id = ?").run(practice);
+
+    const list = GameListResponseSchema.parse((await get("/api/games")).json()).games;
+    expect(list.find((entry) => entry.id === regular)?.practice).toBe(false);
+    expect(list.find((entry) => entry.id === practice)?.practice).toBe(true);
+
+    const regularDetail = GameDetailResponseSchema.parse(
+      (await get(`/api/games/${regular}`)).json(),
+    ).game;
+    const practiceDetail = GameDetailResponseSchema.parse(
+      (await get(`/api/games/${practice}`)).json(),
+    ).game;
+    expect(regularDetail.practice).toBe(false);
+    expect(practiceDetail.practice).toBe(true);
   });
 
   it("has a null accuracy when no student move was graded", async () => {

@@ -54,6 +54,7 @@ const importBody = z.object({
 const pgnBody = z.object({
   pgn: z.string().min(1).max(MAX_PGN_BYTES),
   student_color: z.enum(["white", "black"]).optional(),
+  practice: z.boolean().optional(),
 });
 
 const STATUS_BY_CODE = {
@@ -234,7 +235,12 @@ export function registerImportRoutes(app: FastifyInstance, options: ImportRoutes
   app.post("/api/import/pgn", async (request, reply): Promise<ImportResult | undefined> => {
     const body = pgnBody.safeParse(request.body);
     if (!body.success)
-      return fail(reply, 400, "invalid_body", "pgn is required and at most 100000 bytes");
+      return fail(
+        reply,
+        400,
+        "invalid_body",
+        "pgn is required and at most 100000 bytes, and practice must be a boolean",
+      );
     const saved = storedChessComUsername(db);
     const accounts = saved === null ? options.usernames : [...options.usernames, saved];
     const color = body.data.student_color ?? colorFromHeaders(body.data.pgn, accounts);
@@ -246,9 +252,15 @@ export function registerImportRoutes(app: FastifyInstance, options: ImportRoutes
         "say which side you played: white or black",
       );
     }
+    const practice = body.data.practice ?? false;
     try {
-      const id = importFinishedGame(db, { pgn: body.data.pgn, playerColor: color, source: "pgn" });
-      log.info("import.pgn", { game_id: id, student_color: color, skipped: id === null });
+      const id = importFinishedGame(db, {
+        pgn: body.data.pgn,
+        playerColor: color,
+        source: "pgn",
+        practice,
+      });
+      log.info("import.pgn", { game_id: id, student_color: color, practice, skipped: id === null });
       if (id !== null) grader.kick();
       return { imported: id === null ? 0 : 1, skipped: id === null ? 1 : 0 };
     } catch (error) {

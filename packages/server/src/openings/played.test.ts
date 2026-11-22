@@ -60,6 +60,7 @@ function addGame(
   id: string,
   playedAt: string,
   source: "pgn" | "chesscom" | "lichess" = "pgn",
+  practice = false,
 ): number {
   const gameId = importFinishedGame(db, {
     pgn,
@@ -67,6 +68,7 @@ function addGame(
     source,
     sourceId: id,
     playedAt,
+    practice,
   });
   if (gameId === null) throw new Error("fixture game was not imported");
   return gameId;
@@ -282,5 +284,21 @@ describe("listPlayedOpenings", () => {
     const [italian] = listPlayedOpenings(db, names, "30", clock).white.mine;
     expect(italian?.line).toBe("1.Nf3 Nc6 2.e4 e5 3.Bc4");
     expect(italian?.variations[0]?.line).toBe("1.Nf3 Nc6 2.e4 e5 3.Bc4 Nf6");
+  });
+
+  it("leaves practice games out while counting regular games", () => {
+    addGame(ITALIAN_KNIGHTS, "white", "counted", daysAgo(1), "pgn", false);
+    addGame(ITALIAN_GIUOCO, "white", "practice-same", daysAgo(1), "pgn", true);
+    addGame(SCANDINAVIAN, "white", "practice-other", daysAgo(1), "pgn", true);
+    const { white } = listPlayedOpenings(db, names, "30", clock);
+    expect(white.games).toBe(1);
+    expect(white.mine).toHaveLength(1);
+    expect(white.mine[0]).toMatchObject({
+      opening: "Italian Game",
+      games: 1,
+      wins: 1,
+      losses: 0,
+    });
+    expect(white.against).toEqual([]);
   });
 });
