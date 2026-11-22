@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import { practiceIdleLabel, startFailureText, trainingView } from "../src/state/practice.js";
 import {
   answeredLineOf,
+  canSkipFirstShowings,
   drillFactsOf,
   hintLabelOf,
   nextEndsDrill,
   repertoireCardOf,
   resultText,
   shownMoveOf,
+  skipFirstShowingsPrompt,
   variationNameOf,
 } from "../src/state/repertoire-drill.js";
 import { CLASSICAL_VARIATION, repertoireActivity, repertoireList } from "./practice-fixtures.js";
@@ -229,5 +231,43 @@ describe("the answered idea", () => {
         drill: { answered: { san: "Nf3", idea: "Develop." } },
       }),
     ).toEqual({ title: "Why 2.Nf3", body: "Develop." });
+  });
+});
+
+describe("skipping first showings", () => {
+  it("offers to skip only on a first showing with new moves left in the level", () => {
+    const first = { first_pass: true, answer: { uci: "c2c3", san: "c3" } };
+    expect(canSkipFirstShowings(drillOf({ ...first, new_moves: 3 }))).toBe(true);
+    expect(canSkipFirstShowings(drillOf({ ...first, new_moves: 0 }))).toBe(false);
+    expect(canSkipFirstShowings(drillOf({ first_pass: false, answer: null, new_moves: 5 }))).toBe(
+      false,
+    );
+    expect(canSkipFirstShowings(drillOf({ first_pass: true, answer: null, new_moves: 5 }))).toBe(
+      false,
+    );
+  });
+
+  it("words the confirmation by level and singular or plural count", () => {
+    const note = "They will be asked without the answer from now on. This cannot be undone.";
+    expect(skipFirstShowingsPrompt(drillOf({ new_moves: 1, level: "variation" }))).toEqual({
+      question: "Skip first practice for 1 new move of this line?",
+      note,
+    });
+    expect(skipFirstShowingsPrompt(drillOf({ new_moves: 12 }))).toEqual({
+      question: "Skip first practice for 12 new moves of this line?",
+      note,
+    });
+    expect(skipFirstShowingsPrompt(drillOf({ new_moves: 4, level: "group" }))).toEqual({
+      question: "Skip first practice for 4 new moves of this opening?",
+      note,
+    });
+    expect(skipFirstShowingsPrompt(drillOf({ new_moves: 1, level: "side" }))).toEqual({
+      question: "Skip first practice for 1 new move of this colour?",
+      note,
+    });
+    expect(skipFirstShowingsPrompt(drillOf({ new_moves: 7, level: "side" }))).toEqual({
+      question: "Skip first practice for 7 new moves of this colour?",
+      note,
+    });
   });
 });

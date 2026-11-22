@@ -20,11 +20,13 @@ import {
 } from "../state/practice-item.js";
 import {
   answeredLineOf,
+  canSkipFirstShowings,
   hintLabelOf,
   itemOpeningOf,
   itemVariationOf,
   nextEndsDrill,
   shownMoveOf,
+  skipFirstShowingsPrompt,
 } from "../state/repertoire-drill.js";
 import type { FetchRepertoires } from "../state/repertoires-api.js";
 import { ExplorationTrail } from "./ExplorationTrail.js";
@@ -38,6 +40,7 @@ export interface PracticeColumnActions {
   retry(): void;
   end(): void;
   hint(): void;
+  skipFirstShowings?: (() => void) | undefined;
   toggleScratch(): void;
   takeBack(): void;
   resetLine(): void;
@@ -312,21 +315,32 @@ function OpenActions({ actions }: { actions: PracticeColumnActions }) {
 }
 
 // The hint button is the only way the idea or the move of a repertoire line appears, so there is no
-// View solution beside it; once both were asked there is nothing left to offer.
+// View solution beside it; once both were asked there is nothing left to offer. On a first showing
+// with more new moves in the level, a quiet button beside it skips the remaining first showings.
 function DrillOpenActions({
   actions,
   drill,
+  onSkipFirstShowings,
 }: {
   actions: PracticeColumnActions;
   drill: RepertoireDrill;
+  onSkipFirstShowings: () => void;
 }) {
   const label = hintLabelOf(drill);
-  if (label === null) return null;
+  const canSkip = canSkipFirstShowings(drill);
+  if (label === null && !canSkip) return null;
   return (
     <div className="state-card__actions">
-      <button type="button" className="button" onClick={actions.hint}>
-        {label}
-      </button>
+      {label === null ? null : (
+        <button type="button" className="button" onClick={actions.hint}>
+          {label}
+        </button>
+      )}
+      {canSkip ? (
+        <button type="button" className="button button--quiet" onClick={onSkipFirstShowings}>
+          Skip first practice
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -386,6 +400,7 @@ export function PracticeColumn(props: PracticeColumnProps) {
   const { training, view, actions, card, elapsedMs, scratchLine, shownPly, runMotif } = props;
   const { engineStrip, fetchRepertoires } = props;
   const [confirming, setConfirming] = useState(false);
+  const [confirmingSkip, setConfirmingSkip] = useState(false);
   const heading = headingOf(
     training,
     runMotif !== undefined ? runMotif : (training.run_motif ?? null),
@@ -394,6 +409,10 @@ export function PracticeColumn(props: PracticeColumnProps) {
   const drill = training.repertoire ?? null;
   const answer = drill && view.open ? (shownMoveOf(drill)?.san ?? null) : null;
   const why = drill ? answeredLineOf(training, drill) : null;
+  const skipPrompt =
+    confirmingSkip && drill && view.open && canSkipFirstShowings(drill)
+      ? skipFirstShowingsPrompt(drill)
+      : null;
   return (
     <section className="screen practice-item" aria-label="Practice">
       <header className="practice-item__head">
@@ -407,7 +426,10 @@ export function PracticeColumn(props: PracticeColumnProps) {
             <button
               type="button"
               className="button button--quiet practice-item__end"
-              onClick={() => setConfirming(true)}
+              onClick={() => {
+                setConfirmingSkip(false);
+                setConfirming(true);
+              }}
             >
               End
             </button>
@@ -462,7 +484,14 @@ export function PracticeColumn(props: PracticeColumnProps) {
           </button>
         ) : view.open ? (
           drill ? (
-            <DrillOpenActions actions={actions} drill={drill} />
+            <DrillOpenActions
+              actions={actions}
+              drill={drill}
+              onSkipFirstShowings={() => {
+                setConfirming(false);
+                setConfirmingSkip(true);
+              }}
+            />
           ) : (
             <OpenActions actions={actions} />
           )
@@ -495,6 +524,27 @@ export function PracticeColumn(props: PracticeColumnProps) {
               End
             </button>
             <button type="button" className="button" onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+          </div>
+        </dialog>
+      ) : null}
+      {skipPrompt ? (
+        <dialog open className="practice__confirm" aria-label="Skip first practice">
+          <p>{skipPrompt.question}</p>
+          <p className="practice__confirm-note">{skipPrompt.note}</p>
+          <div className="controls__row">
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={() => {
+                setConfirmingSkip(false);
+                actions.skipFirstShowings?.();
+              }}
+            >
+              Skip
+            </button>
+            <button type="button" className="button" onClick={() => setConfirmingSkip(false)}>
               Cancel
             </button>
           </div>

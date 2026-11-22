@@ -73,6 +73,7 @@ export type ActivityPort = Pick<
   | "rateCard"
   | "nextTrainingItem"
   | "retryTrainingItem"
+  | "trainingSkipFirstShowings"
   | "endTraining"
 >;
 
@@ -383,6 +384,9 @@ export async function registerHub(app: FastifyInstance, options: HubOptions): Pr
         return;
       case "retry_item":
         await activity.retryTrainingItem(command.activity_id);
+        return;
+      case "skip_first_showings":
+        await activity.trainingSkipFirstShowings(command.activity_id);
         return;
       case "end_training":
         await activity.endTraining(command.activity_id);

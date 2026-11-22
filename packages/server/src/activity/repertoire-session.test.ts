@@ -35,6 +35,7 @@ import { endRunsLeftOpenAtStart } from "../db/training.js";
 import type { Searcher, SearchRequest, SearchResult } from "../engine/uci.js";
 import { GameService } from "../game/service.js";
 import { importFinishedGame } from "../import/pgn.js";
+import { type Log, RecordingLog } from "../log.js";
 import { positionKey } from "../openings/from-games.js";
 import { NO_OPENING_NAMES, parseOpeningTable } from "../openings/names.js";
 import { GRADE, type Grade, review } from "../srs/fsrs.js";
@@ -426,7 +427,7 @@ const wholeRun = (): unknown => db.prepare("SELECT * FROM training_runs").get();
 
 // Everything a server boot builds that holds memory: a new call is a restart over the same file,
 // and a restart ends the runs the last process left open before it serves anything.
-function boot(judge?: RepertoireTryJudge): ActivityService {
+function boot(judge?: RepertoireTryJudge, log?: Log): ActivityService {
   endRunsLeftOpenAtStart(db, clock.now().toISOString());
   const session = createCoachSession(db, { promptVersion: "v" });
   const notifications = { sessionId: () => session.id };
@@ -440,6 +441,7 @@ function boot(judge?: RepertoireTryJudge): ActivityService {
       onNotification: () => wakes.push(notificationCount()),
       ...(judge ? { repertoireJudge: judge } : {}),
     },
+    ...(log ? { log } : {}),
   });
 }
 
@@ -3312,5 +3314,297 @@ describe("a repertoire drill of a White unit that starts 1.d4", () => {
     expect(loggedDrillGrades()).toEqual([1]);
     expect(firstAttempts()).toEqual([attemptOf("", "d4", id, 0)]);
     expect(cardOf("", "d4")).toMatchObject({ fsrs_state: 3, lapses: 1, reviews: 3 });
+  });
+});
+
+describe("skipping first showings of a line drill", () => {
+  // Five White moves on one line: 1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5 4.c3 Nf6 5.d4.
+  const FIVE_MOVE_ROWS: FixtureRow[] = [
+    ...SETUP_ROWS,
+    ["e4 e5 Nf3 Nc6 Bc4", "Bc5", 1],
+    ["e4 e5 Nf3 Nc6 Bc4 Bc5", "c3", 1],
+    ["e4 e5 Nf3 Nc6 Bc4 Bc5 c3", "Nf6", 1],
+    ["e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6", "d4", 1],
+  ];
+
+  const totalCards = (): number =>
+    (db.prepare("SELECT COUNT(*) AS n FROM repertoire_cards").get() as { n: number }).n;
+
+  it("leaves the served first showing alone and serves the other four moves directly and rated", async () => {
+    const id = addVariation("Five moves", FIVE_MOVE_ROWS);
+    const log = new RecordingLog();
+    const service = boot(undefined, log);
+
+    let state = await start(service, id, "due");
+    expect(drillOf(state)).toMatchObject({
+      first_pass: true,
+      answer: { uci: "e2e4", san: "e4" },
+      new_moves: 4,
+      moves_left: 5,
+    });
+
+    // Advance the clock slightly before skipping so card timestamps are distinguishable from start.
+    const skipAt = new Date(T0.getTime() + 10_000);
+    now = skipAt;
+    state = training(await service.trainingSkipFirstShowings(state.activity_id));
+
+    expect(drillOf(state)).toMatchObject({
+      first_pass: true,
+      answer: { uci: "e2e4", san: "e4" },
+      new_moves: 0,
+      moves_left: 5,
+    });
+    expect(totalCards()).toBe(5);
+    for (const [lineText, san] of [
+      ["e4 e5", "Nf3"],
+      ["e4 e5 Nf3 Nc6", "Bc4"],
+      ["e4 e5 Nf3 Nc6 Bc4 Bc5", "c3"],
+      ["e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6", "d4"],
+    ] as const) {
+      expect(cardOf(lineText, san)).toMatchObject({
+        next_review_at: skipAt.toISOString(),
+        reviews: 0,
+      });
+    }
+    expect(log.named("training.first_showings_skipped")).toEqual([
+      expect.objectContaining({
+        fields: {
+          activity_id: state.activity_id,
+          level: "variation",
+          cards_created: 4,
+          moves_flipped: 4,
+        },
+      }),
+    ]);
+
+    // Playing the served first showing rates nothing, and the next four moves are asked directly.
+    now = new Date(skipAt.getTime() + 1000);
+    state = await play(service, state, "e4");
+    expect(loggedDrillGrades()).toEqual([]);
+    expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null, new_moves: 0 });
+
+    // Move 2 answered right on first attempt: grade 3 (Good).
+    state = await play(service, state, "Nf3");
+    expect(loggedDrillGrades()).toEqual([3]);
+    expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null, moves_right: 1 });
+
+    // Move 3 answered wrong then right: one grade 1 (Again) row.
+    state = await play(service, state, "Bb5");
+    expect(loggedDrillGrades()).toEqual([3, 1]);
+    state = await play(service, state, "Bc4");
+    expect(loggedDrillGrades()).toEqual([3, 1]);
+    expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null, moves_wrong: 1 });
+
+    // Move 4 answered right: grade 3.
+    state = await play(service, state, "c3");
+    expect(loggedDrillGrades()).toEqual([3, 1, 3]);
+    expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null });
+
+    // Move 5 answered right: grade 3.
+    state = await play(service, state, "d4");
+    expect(loggedDrillGrades()).toEqual([3, 1, 3, 3]);
+    expect(state.status).toBe("failed");
+  });
+
+  it("creates cards for every move of the drill's level, not just the queue, and leaves other levels alone", async () => {
+    // 12 moves in the variation; `recommended` holds 10 of them.
+    const wideId = addVariation("Wide", WIDE_ROWS, "Italian Game");
+    const otherId = addVariation(
+      "London",
+      [
+        ["", "d4", 1],
+        ["d4", "d5", 1],
+        ["d4 d5", "Bf4", 1],
+      ],
+      "London System",
+    );
+    const log = new RecordingLog();
+    const service = boot(undefined, log);
+
+    let state = await start(service, wideId, "recommended");
+    // Move 1 (1.e4) already got its card when served; the other 11 moves of the variation have none.
+    expect(drillOf(state)).toMatchObject({ moves_left: 10, new_moves: 11, first_pass: true });
+
+    state = training(await service.trainingSkipFirstShowings(state.activity_id));
+    expect(drillOf(state).new_moves).toBe(0);
+    // All 12 moves of Wide have cards; none of London's moves got a card.
+    expect(totalCards()).toBe(12);
+    expect(cardOf("", "d4")).toBeUndefined();
+    expect(cardOf("d4 d5", "Bf4")).toBeUndefined();
+    // 11 cards created for the level, 9 moves flipped in the 10-move queue (1 served stayed intro).
+    expect(log.named("training.first_showings_skipped")[0]?.fields).toEqual({
+      activity_id: state.activity_id,
+      level: "variation",
+      cards_created: 11,
+      moves_flipped: 9,
+    });
+    expect(listRepertoireDrillMoves(db, otherId).every((m) => m.card === null)).toBe(true);
+  });
+
+  it("covers every variation of the group or side when widened, and leaves the other colour alone", async () => {
+    const italianA = addVariation("Classical", ITALIAN_ROWS, "Italian Game", "white");
+    const italianB = addVariation(
+      "Pianissimo",
+      [...SETUP_ROWS, ["e4 e5 Nf3 Nc6 Bc4", "Bc5", 1], ["e4 e5 Nf3 Nc6 Bc4 Bc5", "b4", 1]],
+      "Italian Game",
+      "white",
+    );
+    const london = addVariation(
+      "London",
+      [
+        ["", "d4", 1],
+        ["d4", "d5", 1],
+        ["d4 d5", "Bf4", 1],
+      ],
+      "London System",
+      "white",
+    );
+    const sicilian = addVariation(
+      "Sicilian",
+      [
+        ["", "e4", 1],
+        ["e4", "c5", 1],
+      ],
+      "Sicilian Defense",
+      "black",
+    );
+    const log = new RecordingLog();
+    const service = boot(undefined, log);
+
+    // Group level covers Italian A (6 moves) + Italian B's unique 4.b4 (1 move) = 7 unique moves.
+    let state = await startAt(service, italianA, "due", "group");
+    expect(drillOf(state).new_moves).toBe(6);
+    state = training(await service.trainingSkipFirstShowings(state.activity_id));
+    expect(drillOf(state).new_moves).toBe(0);
+    expect(cardOf("e4 e5 Nf3 Nc6 Bc4 Bc5", "b4")).toBeDefined();
+    expect(cardOf("", "d4")).toBeUndefined();
+    expect(cardOf("e4", "c5")).toBeUndefined();
+    expect(log.named("training.first_showings_skipped")[0]?.fields).toEqual({
+      activity_id: state.activity_id,
+      level: "group",
+      cards_created: 6,
+      moves_flipped: 6,
+    });
+
+    // Side level on White serves 1.e4 (already carded) first, so both of London's moves (1.d4 and
+    // 2.Bf4) have no card yet; skipping creates both while still leaving Black's Sicilian untouched.
+    state = await startAt(service, london, "due", "side");
+    expect(drillOf(state).new_moves).toBe(2);
+    state = training(await service.trainingSkipFirstShowings(state.activity_id));
+    expect(drillOf(state).new_moves).toBe(0);
+    expect(cardOf("", "d4")).toBeDefined();
+    expect(cardOf("d4 d5", "Bf4")).toBeDefined();
+    expect(cardOf("e4", "c5")).toBeUndefined();
+    expect(log.named("training.first_showings_skipped")[1]?.fields).toEqual({
+      activity_id: state.activity_id,
+      level: "side",
+      cards_created: 2,
+      moves_flipped: 2,
+    });
+    expect(listRepertoireDrillMoves(db, italianB).every((m) => m.card !== null)).toBe(true);
+    expect(listRepertoireDrillMoves(db, sicilian).every((m) => m.card === null)).toBe(true);
+  });
+
+  it("is idempotent when sent twice", async () => {
+    const id = addVariation("Five moves", FIVE_MOVE_ROWS);
+    const log = new RecordingLog();
+    const service = boot(undefined, log);
+
+    let state = await start(service, id, "due");
+    state = training(await service.trainingSkipFirstShowings(state.activity_id));
+    const cardsAfterFirst = db
+      .prepare(
+        "SELECT position_key, move_uci, introduced_at, next_review_at FROM repertoire_cards ORDER BY id",
+      )
+      .all();
+
+    now = new Date(T0.getTime() + 60_000);
+    state = training(await service.trainingSkipFirstShowings(state.activity_id));
+    const cardsAfterSecond = db
+      .prepare(
+        "SELECT position_key, move_uci, introduced_at, next_review_at FROM repertoire_cards ORDER BY id",
+      )
+      .all();
+
+    expect(cardsAfterSecond).toEqual(cardsAfterFirst);
+    expect(drillOf(state)).toMatchObject({
+      first_pass: true,
+      answer: { uci: "e2e4", san: "e4" },
+      new_moves: 0,
+    });
+    expect(log.named("training.first_showings_skipped")[1]?.fields).toEqual({
+      activity_id: state.activity_id,
+      level: "variation",
+      cards_created: 0,
+      moves_flipped: 0,
+    });
+  });
+
+  it("starts a later run with no intro move, while a move stored afterwards is still shown first", async () => {
+    const id = addVariation("Five moves", FIVE_MOVE_ROWS);
+    const service = boot();
+
+    let state = await start(service, id, "due");
+    await service.trainingSkipFirstShowings(state.activity_id);
+    await service.endTraining(state.activity_id);
+
+    // A later run on the same variation serves every move directly with first_pass false.
+    state = await start(service, id, "all");
+    expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null, new_moves: 0 });
+    for (const san of ["e4", "Nf3", "Bc4", "c3", "d4"]) {
+      expect(drillOf(state)).toMatchObject({ first_pass: false, answer: null });
+      state = await play(service, state, san);
+    }
+    await service.endTraining(state.activity_id);
+
+    // A move stored afterwards has no card and is still shown with first_pass true.
+    const afterLine = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d4"];
+    const replyPlace = placeOf(afterLine.join(" "), "exd4");
+    upsertRepertoireReply(db, {
+      repertoireId: id,
+      positionKey: replyPlace.positionKey,
+      ply: 10,
+      line: afterLine,
+      reach: 1,
+      openingName: "Italian Game",
+      uci: replyPlace.uci,
+      san: "exd4",
+      share: null,
+      source: "explorer",
+    });
+    const ownLine = [...afterLine, "exd4"];
+    const ownPlace = placeOf(ownLine.join(" "), "cxd4");
+    insertRepertoireOwnMove(db, {
+      repertoireId: id,
+      positionKey: ownPlace.positionKey,
+      ply: 11,
+      line: ownLine,
+      reach: 1,
+      openingName: "Italian Game",
+      uci: ownPlace.uci,
+      san: "cxd4",
+      share: null,
+      source: "explorer",
+      cpLoss: 0,
+      evalCp: 30,
+      results: null,
+    });
+
+    state = await start(service, id, "due");
+    expect(drillOf(state)).toMatchObject({
+      first_pass: true,
+      answer: { san: "cxd4" },
+      new_moves: 0,
+    });
+  });
+
+  it("refuses with invalid_state on a non-repertoire run", async () => {
+    db.prepare(
+      `INSERT INTO puzzles (id, source, motif, difficulty, fen, solution_uci, solution_san, explanation)
+       VALUES ('p1', 'test', 'fork', 'easy', '6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1', '["a1a8"]', '["Ra8#"]', 'why')`,
+    ).run();
+    const service = boot();
+    const state = training(await service.startTraining({ mode: "puzzles", motif: "fork" }));
+    expect(await code(service.trainingSkipFirstShowings(state.activity_id))).toBe("invalid_state");
   });
 });

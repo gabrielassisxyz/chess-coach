@@ -522,6 +522,14 @@ export const EndTrainingCommandSchema = z.object({
   activity_id: activityId,
 });
 
+// Marks every never-trained move of the running line drill's level as seen so every move after the
+// one on screen is asked directly without its answer. Strict so unexpected fields are refused.
+export const SkipFirstShowingsCommandSchema = z.strictObject({
+  type: z.literal("skip_first_showings"),
+  command_id: commandId,
+  activity_id: activityId,
+});
+
 export const CreateCardsCommandSchema = z.object({
   type: z.literal("create_cards"),
   command_id: commandId,
@@ -559,6 +567,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   NextTrainingItemCommandSchema,
   RetryItemCommandSchema,
   EndTrainingCommandSchema,
+  SkipFirstShowingsCommandSchema,
   CreateCardsCommandSchema,
   AskCoachAboutPlyCommandSchema,
   AnalyseCommandSchema,

@@ -635,6 +635,17 @@
   `repertoire_id` and `variation_name`, and the drill's `repertoire_id`, name the variation of the
   move in play, and the drill carries the `level`. `GET /api/repertoires` counts the
   levels from the same merge in `groups` and `sides`; the Openings page draws a button for each.
+  `repertoire.new_moves` counts the moves of the drill's level that have no card in
+  `repertoire_cards` yet. `skip_first_showings {command_id, activity_id}` (strict schema) creates a
+  `repertoire_cards` row due at that instant for every move of the drill's level that has none, in
+  one transaction, and sets every queued `intro` move except the move being served to `test`,
+  leaving the move on screen as a first showing and asking every later new move directly and rated
+  on its first attempt; it is a one-time action with no stored preference (moves stored later are
+  still shown first), idempotent on a second call, refused with `invalid_state` on any other
+  training run, and logged as `training.first_showings_skipped` with `activity_id`, `level`,
+  `cards_created` and `moves_flipped`. The Practice card of a first showing offers a "Skip first
+  practice" button when `new_moves` is above 0 behind a confirmation naming how many new moves of
+  the level it covers.
 - **From my games drill:** `start_training {mode: "found", scope, color?, phase?, position?, opening?}` serves
   the listed rows of `found_positions` (see Openings) as one-move exercises through their `own:`
   puzzles (`activity/found-drill.ts`, `TrainingRun`). The scope is required, and a command without
@@ -842,7 +853,7 @@
   `coach.session`, `coach.started`, `coach.start_failed`, `coach.turn_start`, `coach.tool_call`, `coach.tool_result`, `coach.turn_end`,
   `coach.conversation_reset`, `coach.stream_closed`,
   `coach.turn_failed`, `coach.turn_error`, `coach.permission_request`,
-  `coach.permission_resolved`, `training.item_served`, `training.answer`, `training.runs_left` (the runs a server start ended), `srs.rated`,
+  `coach.permission_resolved`, `training.item_served`, `training.answer`, `training.first_showings_skipped`, `training.runs_left` (the runs a server start ended), `srs.rated`,
   `review.cards_created`, `import.*`, `connections.*`, `openings.generate`, `openings.generate_failed`, `openings.rebuild_copy_removed`, `repertoire.import`, `repertoire.import_refused`, `repertoire.import_deleted`, `import_lichess.progress`, `import_lichess.done`,
   `explorer.failed`, `eval_cache.hit`, `eval_cache.miss`, `eval_cache.unavailable`,
   `eval_cache.failed`, `eval_queue.added`, `eval_queue.done`, `eval_queue.failed`, `*.listener_failed`, and `client.*` for what
