@@ -29,6 +29,7 @@ import {
   createRepertoireVariation,
   deleteRepertoireGroupVariations,
   findFirstRepertoireVariation,
+  findGameRepertoireReview,
   findRepertoireOwnMove,
   insertRepertoireOwnMove,
   listMetOpenings,
@@ -701,6 +702,20 @@ describe("a Black reply the repertoire lacks", () => {
       added_reply_id: added[0]?.id,
       added_answer_id: added[1]?.id,
     });
+  });
+
+  it("is stored as a reply, yet the review read lists only the replies the line already had", async () => {
+    seedRepertoire();
+    writeH6Answers();
+    const id = addGame([...SETUP, "h6", "c3", "Nf6", "d4"]);
+    await reviewRepertoireGame(deps(), id);
+    const repliesHere = positionsOf().filter(
+      (row) => row.kind === "reply" && row.position_key === keyOf(SETUP),
+    );
+    expect(repliesHere.map((row) => row.move_san).sort()).toEqual(["Bc5", "Nf6", "h6"]);
+    const review = findGameRepertoireReview(db, id);
+    expect(review?.left).toMatchObject({ by: "opponent", played_san: "h6" });
+    expect(review?.left?.stored_replies).toEqual(["Bc5", "Nf6"]);
   });
 
   it("searches White's answer under the generator's cap and stores the depth it reached", async () => {

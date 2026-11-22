@@ -101,6 +101,24 @@
   Lichess import form. The token travels only in a REST body, never over the
   socket, whose `ws.command` logs the whole command, and no route returns it. Writes obey the socket's
   Origin and Host rule, so `CHESS_COACH_ALLOWED_ORIGINS` also governs them.
+- **Game repertoire review:** `GET /api/games/:id` carries `repertoire_review` (`findGameRepertoireReview`
+  in `packages/server/src/db/repertoires.ts`, optional in `GameDetailSchema` defaulting to null so
+  fixtures without it still parse): null when the game has no `repertoire_game_reviews` row or its
+  outcome is `not_reached` or `other_side`, else `{repertoire_id, group_name, variation_name,
+  outcome, followed_plies, left}` with `left` null for `in_book` and otherwise `{ply, by,
+  played_san, line_san, line_note, stored_replies}` (`by` is `student` for `departed` and `opponent`
+  for `reply_not_stored` and `reply_added`, `played_san` is `left_san`, `line_san` is `expected_san`
+  or null for an opponent move, `line_note` is the trimmed `idea` of the unit's matching `own` row or
+  null when absent or blank, and `stored_replies` is the sorted SANs of the unit's `reply` rows at
+  `left_position_key` except the move the opponent played, matched by `left_uci` because a
+  `reply_added` review stores that move as a reply itself, empty on a student departure). On the Games screen, `OpenGame.tsx` draws a
+  repertoire review strip above the move list when `repertoire_review` is non-null (none when null):
+  `<group> · <variation>` with "In your line for the first N moves." for `in_book`; "You left your
+  line at move N." with "Go to move N" (selecting that ply in the move list and on the board) and
+  "Show my line's move" (which hides the line's move until pressed, replaces itself with "Your line
+  plays <numbered move>" and the note beneath when present, and resets when another game opens) for
+  `departed`; and "Your opponent left your line at move N with <numbered move>.", "Your line answers
+  <replies>." or "Your line has no reply stored here.", and "Go to move N" when the opponent left.
 - **Openings:** `POST /api/openings/generate` (alone or with `sources: ["own"]`) records in
   `found_positions` (`openings/from-games.ts`) the positions worth practising from every graded,
   finished game, and the import grader runs it after each game. Three rules find them, the starting

@@ -1,4 +1,4 @@
-import type { RepertoireOrigin } from "@chess-coach/shared";
+import type { GameRepertoireReview, RepertoireOrigin } from "@chess-coach/shared";
 import { gameCountsInStatsSql } from "./games.js";
 import type { Database } from "./open.js";
 import { deleteRepertoireCardsNoVariationPlays } from "./repertoire-cards.js";
@@ -888,4 +888,133 @@ export function listImportedRepertoireUnits(db: Database, side: RepertoireSide):
        ORDER BY id`,
     )
     .all(side) as RepertoireRow[];
+}
+
+function findRepertoireOwnMoveNote(
+  db: Database,
+  repertoireId: number,
+  positionKey: string,
+  expectedUci: string | null,
+  expectedSan: string | null,
+): string | null {
+  const row = db
+    .prepare(
+      `SELECT idea FROM repertoire_positions
+       WHERE repertoire_id = ? AND kind = 'own' AND position_key = ?
+         AND ((? IS NOT NULL AND move_uci = ?) OR (? IS NULL AND move_san = ?))`,
+    )
+    .get(repertoireId, positionKey, expectedUci, expectedUci, expectedUci, expectedSan) as
+    | { idea: string | null }
+    | undefined;
+  const trimmed = row?.idea?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+// The review stores the opponent's move as a reply in the same transaction as its own row, so the
+// move that left the line is excluded by its UCI; IS NOT keeps a row with no `left_uci` excluding
+// nothing.
+function listRepertoireRepliesAtPosition(
+  db: Database,
+  repertoireId: number,
+  positionKey: string,
+  playedUci: string | null,
+): string[] {
+  const rows = db
+    .prepare(
+      `SELECT move_san FROM repertoire_positions
+       WHERE repertoire_id = ? AND kind = 'reply' AND position_key = ? AND move_uci IS NOT ?
+       ORDER BY move_san`,
+    )
+    .all(repertoireId, positionKey, playedUci) as Array<{ move_san: string }>;
+  return rows.map((row) => row.move_san);
+}
+
+/**
+ * The repertoire review of one game for `GET /api/games/:id`, or null when the game has no review
+ * row or never reached a unit (`not_reached`, `other_side`).
+ */
+export function findGameRepertoireReview(
+  db: Database,
+  gameId: number,
+): GameRepertoireReview | null {
+  const row = db
+    .prepare(
+      `SELECT r.repertoire_id, u.group_name, u.variation_name, r.outcome, r.followed_plies,
+              r.left_ply, r.left_position_key, r.left_san, r.left_uci, r.expected_san, r.expected_uci
+       FROM repertoire_game_reviews r JOIN repertoires u ON u.id = r.repertoire_id
+       WHERE r.game_id = ?`,
+    )
+    .get(gameId) as
+    | {
+        repertoire_id: number;
+        group_name: string;
+        variation_name: string;
+        outcome:
+          | "in_book"
+          | "departed"
+          | "reply_not_stored"
+          | "reply_added"
+          | "not_reached"
+          | "other_side";
+        followed_plies: number;
+        left_ply: number | null;
+        left_position_key: string | null;
+        left_san: string | null;
+        left_uci: string | null;
+        expected_san: string | null;
+        expected_uci: string | null;
+      }
+    | undefined;
+  if (!row || row.outcome === "not_reached" || row.outcome === "other_side") return null;
+
+  const base = {
+    repertoire_id: row.repertoire_id,
+    group_name: row.group_name,
+    variation_name: row.variation_name,
+    outcome: row.outcome,
+    followed_plies: row.followed_plies,
+  };
+
+  if (row.outcome === "in_book") return { ...base, left: null };
+  if (row.left_ply === null || row.left_san === null) return { ...base, left: null };
+
+  if (row.outcome === "departed") {
+    const lineNote =
+      row.left_position_key !== null && (row.expected_uci !== null || row.expected_san !== null)
+        ? findRepertoireOwnMoveNote(
+            db,
+            row.repertoire_id,
+            row.left_position_key,
+            row.expected_uci,
+            row.expected_san,
+          )
+        : null;
+    return {
+      ...base,
+      left: {
+        ply: row.left_ply,
+        by: "student",
+        played_san: row.left_san,
+        line_san: row.expected_san,
+        line_note: lineNote,
+        stored_replies: [],
+      },
+    };
+  }
+
+  const storedReplies =
+    row.left_position_key !== null
+      ? listRepertoireRepliesAtPosition(db, row.repertoire_id, row.left_position_key, row.left_uci)
+      : [];
+  return {
+    ...base,
+    left: {
+      ply: row.left_ply,
+      by: "opponent",
+      played_san: row.left_san,
+      line_san: null,
+      line_note: null,
+      stored_replies: storedReplies,
+    },
+  };
 }

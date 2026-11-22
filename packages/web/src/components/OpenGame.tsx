@@ -1,4 +1,4 @@
-import type { GameDetail, GameSummary } from "@chess-coach/shared";
+import type { GameDetail, GameRepertoireReview, GameSummary } from "@chess-coach/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ServerApi } from "../hooks/useServer.js";
 import {
@@ -10,6 +10,7 @@ import {
   plyCount,
   plyLabel,
   RESULT_GLYPH,
+  repertoireMoveLabel,
   SELECT_DEBOUNCE_MS,
   SOURCE_TAG,
   stepTarget,
@@ -49,6 +50,96 @@ function subline(game: GameDetail, summary: GameSummary | undefined): string {
 
 function mistakesLabel(count: number): string {
   return `Create cards from ${count} ${count === 1 ? "mistake" : "mistakes"}`;
+}
+
+interface RepertoireStripProps {
+  gameId: number;
+  review: GameRepertoireReview;
+  onGoToPly(ply: number): void;
+}
+
+function RepertoireStrip({ gameId, review, onGoToPly }: RepertoireStripProps) {
+  // Keying the reveal by game id hides the move on the same render when another game opens.
+  const [revealedGameId, setRevealedGameId] = useState<number | null>(null);
+  const revealed = revealedGameId === gameId;
+  const title = `${review.group_name} · ${review.variation_name}`;
+  const { left } = review;
+
+  if (!left) {
+    const moves = Math.ceil(review.followed_plies / 2);
+    return (
+      <section
+        className="games__repertoire"
+        aria-label="Repertoire review"
+        data-testid="repertoire-review"
+      >
+        <p className="games__repertoire-title">{title}</p>
+        <p className="games__repertoire-line">
+          {`In your line for the first ${moves} ${moves === 1 ? "move" : "moves"}.`}
+        </p>
+      </section>
+    );
+  }
+
+  const moveNumber = Math.ceil(left.ply / 2);
+
+  if (left.by === "student") {
+    return (
+      <section
+        className="games__repertoire"
+        aria-label="Repertoire review"
+        data-testid="repertoire-review"
+      >
+        <p className="games__repertoire-title">{title}</p>
+        <p className="games__repertoire-line">{`You left your line at move ${moveNumber}.`}</p>
+        <div className="games__repertoire-actions">
+          <button type="button" className="button" onClick={() => onGoToPly(left.ply)}>
+            {`Go to move ${moveNumber}`}
+          </button>
+          {left.line_san !== null ? (
+            revealed ? (
+              <div className="games__repertoire-reveal">
+                <p className="games__repertoire-answer">
+                  {`Your line plays ${repertoireMoveLabel(left.ply, left.line_san)}`}
+                </p>
+                {left.line_note ? <p className="games__repertoire-note">{left.line_note}</p> : null}
+              </div>
+            ) : (
+              <button type="button" className="button" onClick={() => setRevealedGameId(gameId)}>
+                Show my line's move
+              </button>
+            )
+          ) : null}
+        </div>
+      </section>
+    );
+  }
+
+  const repliesLine =
+    left.stored_replies.length > 0
+      ? `Your line answers ${left.stored_replies
+          .map((san) => repertoireMoveLabel(left.ply, san))
+          .join(", ")}.`
+      : "Your line has no reply stored here.";
+
+  return (
+    <section
+      className="games__repertoire"
+      aria-label="Repertoire review"
+      data-testid="repertoire-review"
+    >
+      <p className="games__repertoire-title">{title}</p>
+      <p className="games__repertoire-line">
+        {`Your opponent left your line at move ${moveNumber} with ${repertoireMoveLabel(left.ply, left.played_san)}.`}
+      </p>
+      <p className="games__repertoire-line">{repliesLine}</p>
+      <div className="games__repertoire-actions">
+        <button type="button" className="button" onClick={() => onGoToPly(left.ply)}>
+          {`Go to move ${moveNumber}`}
+        </button>
+      </div>
+    </section>
+  );
 }
 
 interface StepsProps {
@@ -172,6 +263,13 @@ export function OpenGame({
           ) : null}
           <p className="games__meta">{subline(game, summary)}</p>
         </header>
+        {game.repertoire_review ? (
+          <RepertoireStrip
+            gameId={game.id}
+            review={game.repertoire_review}
+            onGoToPly={(target) => setPly(Math.min(count, target))}
+          />
+        ) : null}
         <div className="games__moves">
           <GameMoves moves={game.moves} selectedPly={ply} onSelect={setPly} />
         </div>

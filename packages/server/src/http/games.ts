@@ -15,6 +15,7 @@ import {
   type MoveRecord,
 } from "../db/games.js";
 import type { Database } from "../db/open.js";
+import { findGameRepertoireReview } from "../db/repertoires.js";
 import type { OpeningNames } from "../openings/names.js";
 
 export const DEFAULT_GAME_LIMIT = 50;
@@ -121,6 +122,7 @@ export function registerGameRoutes(app: FastifyInstance, db: Database, names: Op
         opening: openingOf(names, moves),
         ...sourceFields(game),
         moves: moves.map(gameMove),
+        repertoire_review: findGameRepertoireReview(db, game.id),
       },
     };
   });
