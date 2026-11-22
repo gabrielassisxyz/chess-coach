@@ -3,7 +3,7 @@ import type { DrawShape } from "@lichess-org/chessground/draw";
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MOVE_PAUSE_MS, type MovePause } from "../components/Board.js";
-import { ANIMATION_MS, readBoardPrefs } from "../state/board-prefs.js";
+import { ANIMATION_MS, type BoardPrefs } from "../state/board-prefs.js";
 import { positionsAlong } from "../state/play.js";
 import { boardOf, trainingView } from "../state/practice.js";
 import {
@@ -95,6 +95,7 @@ function pauseAfterTry(before: TrainingActivity, after: TrainingActivity): MoveP
 export function usePracticeBoard(
   training: TrainingActivity,
   send: ServerApi["send"],
+  animation: BoardPrefs["animation"],
 ): PracticeBoard {
   const view = trainingView(training);
   const open = view.open;
@@ -347,7 +348,7 @@ export function usePracticeBoard(
   const activePause = !scratch && !stepping ? pause : null;
   const activePauseKey = activePause?.key ?? null;
   const pauseSteps = activePause?.steps.length ?? 0;
-  const animMs = ANIMATION_MS[readBoardPrefs().animation];
+  const animMs = ANIMATION_MS[animation];
   const hasArrow = atTip && shownUci !== null;
 
   // Hold the answer arrow off the board while a move pause steps and while chessground animates

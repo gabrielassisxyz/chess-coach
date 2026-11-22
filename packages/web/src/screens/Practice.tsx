@@ -353,10 +353,11 @@ function Item({
 }) {
   const training = trainingOf(server.activity) as NonNullable<ReturnType<typeof trainingOf>>;
   const view = trainingView(training);
-  const board = usePracticeBoard(training, server.send);
+  const { prefs, set: setPrefs } = useBoardPrefs();
+  // The board hook times the answer arrow by the same animation setting the board is drawn with.
+  const board = usePracticeBoard(training, server.send, prefs.animation);
   const elapsedMs = useElapsed(training.served_at, view.open);
   const theme = useBoardTheme();
-  const { prefs, set: setPrefs } = useBoardPrefs();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const [engineOpen, setEngineOpen] = useState(false);
