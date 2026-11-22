@@ -224,15 +224,22 @@ describe("the answered idea", () => {
     return answeredLineOf(training, training.repertoire as RepertoireDrill);
   };
 
-  it("draws nothing before any move is answered or when none is stored", () => {
+  it("draws nothing before any move is answered, and shows a fallback body when no note is stored", () => {
     expect(lineOf({})).toBeNull();
-    expect(lineOf({ drill: { answered: { san: "c3", idea: null } } })).toBeNull();
+    expect(lineOf({ drill: { answered: { san: "c3", idea: null, asked: false } } })).toEqual({
+      title: "Why 4.c3",
+      body: "No note for this move yet.",
+      asked: false,
+    });
   });
 
-  it("words the answered move with its number and idea", () => {
-    expect(lineOf({ drill: { answered: { san: "c3", idea: "Prepare d4." } } })).toEqual({
+  it("words the answered move with its number, idea and asked state", () => {
+    expect(
+      lineOf({ drill: { answered: { san: "c3", idea: "Prepare d4.", asked: true } } }),
+    ).toEqual({
       title: "Why 4.c3",
       body: "Prepare d4.",
+      asked: true,
     });
   });
 
@@ -240,9 +247,9 @@ describe("the answered idea", () => {
     expect(
       lineOf({
         sans: ["e4", "e5"],
-        drill: { answered: { san: "Nf3", idea: "Develop." } },
+        drill: { answered: { san: "Nf3", idea: "Develop.", asked: false } },
       }),
-    ).toEqual({ title: "Why 2.Nf3", body: "Develop." });
+    ).toEqual({ title: "Why 2.Nf3", body: "Develop.", asked: false });
   });
 });
 

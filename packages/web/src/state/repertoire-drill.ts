@@ -178,24 +178,39 @@ export function nextEndsDrill(drill: RepertoireDrill): boolean {
   return drill.moves_left === 0;
 }
 
+export const NO_REPERTOIRE_NOTE_TEXT = "No note for this move yet.";
+
 export interface AnsweredLine {
   title: string;
   body: string;
+  asked: boolean;
 }
 
-// The stored idea of the move just answered, drawn under the drill's card. Nothing when no move
-// was answered yet, at the start of a pass, or when none is stored.
+// The 0-based ply of the move held in `drill.answered`: the next ply when that move is currently
+// shown on screen (a first showing or a move hint), else the latest student ply matching its SAN.
+export function answeredPlyOf(training: TrainingActivity, drill: RepertoireDrill): number {
+  const answered = drill.answered;
+  const moves = training.moves ?? [];
+  if (!answered) return moves.length;
+  if (shownMoveOf(drill)?.san === answered.san) return moves.length;
+  const lastStudent = [...moves]
+    .reverse()
+    .find((move) => move.by === "student" && move.san === answered.san);
+  return lastStudent ? lastStudent.ply : moves.length;
+}
+
+// The Why card of the move just answered, drawn under the drill's card whenever `answered` is set.
+// Nothing before any move is answered or at the start of a pass.
 export function answeredLineOf(
   training: TrainingActivity,
   drill: RepertoireDrill,
 ): AnsweredLine | null {
   const answered = drill.answered;
-  if (!answered?.idea) return null;
-  const moves = training.moves ?? [];
-  const lastStudent = [...moves]
-    .reverse()
-    .find((move) => move.by === "student" && move.san === answered.san);
-  const ply = lastStudent ? lastStudent.ply : moves.length;
-  const number = Math.floor(ply / 2) + 1;
-  return { title: `Why ${number}.${answered.san}`, body: answered.idea };
+  if (!answered) return null;
+  const number = Math.floor(answeredPlyOf(training, drill) / 2) + 1;
+  return {
+    title: `Why ${number}.${answered.san}`,
+    body: answered.idea ?? NO_REPERTOIRE_NOTE_TEXT,
+    asked: answered.asked,
+  };
 }

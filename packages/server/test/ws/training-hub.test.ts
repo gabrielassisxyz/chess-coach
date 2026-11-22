@@ -1700,4 +1700,113 @@ describe("every refused ask over the socket is logged with its code", () => {
     );
     socket.close();
   });
+
+  it("routes ask_coach_about_item to a line drill once a move is answered and refuses before, stale and on repeat", async () => {
+    const db = seededDatabase();
+    const { id: repId } = createRepertoireVariation(db, {
+      side: "white",
+      groupName: "London System",
+      variationName: "Main lines",
+    });
+    const lineMoves: [string[], string, boolean][] = [
+      [[], "d4", true],
+      [["d4"], "d5", false],
+      [["d4", "d5"], "Bf4", true],
+    ];
+    for (const [line, san, own] of lineMoves) {
+      const board = new Chess();
+      for (const played of line) board.move(played);
+      const key = positionKey(board.fen());
+      const move = board.move(san);
+      const uci = `${move.from}${move.to}${move.promotion ?? ""}`;
+      const row = {
+        repertoireId: repId,
+        positionKey: key,
+        ply: line.length + 1,
+        line,
+        reach: 1,
+        openingName: "London System",
+        uci,
+        san,
+        share: null,
+        source: "explorer" as const,
+      };
+      if (own) {
+        insertRepertoireOwnMove(db, { ...row, cpLoss: 0, evalCp: 20, results: null });
+        db.prepare(
+          `INSERT INTO repertoire_cards (position_key, move_uci, introduced_at, next_review_at,
+             interval_hours, fsrs_state, stability, difficulty, reviews, last_reviewed_at)
+           VALUES (?, ?, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', 24, 2, 1, 2.1, 1, '2026-09-30T00:00:00.000Z')`,
+        ).run(key, uci);
+      } else {
+        upsertRepertoireReply(db, row);
+      }
+    }
+
+    const server = await start(db);
+    const { socket, next } = await connect(server);
+    await next("bootstrap");
+
+    socket.send(
+      JSON.stringify({
+        type: "start_training",
+        command_id: "r1",
+        mode: "repertoire",
+        repertoire_id: repId,
+        scope: "due",
+      }),
+    );
+    const started = ServerEventSchema.parse(await next("activity")) as {
+      state: { activity_id: number };
+    };
+    await next("training");
+    const drillId = started.state.activity_id;
+
+    // Refused while answered is null.
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "a1", activity_id: drillId }),
+    );
+    expect(await next("error")).toMatchObject({ code: "not_in_training", command_id: "a1" });
+
+    // Answer 1.d4; stale id refused; fresh id succeeds and writes repertoire_idea_request.
+    socket.send(
+      JSON.stringify({ type: "try_move", command_id: "m1", uci: "d2d4", activity_id: drillId }),
+    );
+    expect(ServerEventSchema.parse(await next("activity"))).toMatchObject({
+      state: { repertoire: { answered: { san: "d4", idea: null, asked: false } } },
+    });
+    await next("training");
+
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "a2", activity_id: drillId + 1 }),
+    );
+    expect(await next("error")).toMatchObject({ code: "stale_activity", command_id: "a2" });
+
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "a3", activity_id: drillId }),
+    );
+    expect(ServerEventSchema.parse(await next("activity"))).toMatchObject({
+      state: { repertoire: { answered: { san: "d4", idea: null, asked: true } } },
+    });
+    await next("training");
+
+    const notes = db
+      .prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification'")
+      .all() as { content_json: string }[];
+    expect(notes).toHaveLength(1);
+    expect(JSON.parse(notes[0]?.content_json as string)).toMatchObject({
+      type: "repertoire_idea_request",
+      group: "London System",
+      variation: "Main lines",
+      san: "d4",
+      line: ["d4"],
+    });
+
+    // Second ask for the same answered move is refused.
+    socket.send(
+      JSON.stringify({ type: "ask_coach_about_item", command_id: "a4", activity_id: drillId }),
+    );
+    expect(await next("error")).toMatchObject({ code: "already_requested", command_id: "a4" });
+    socket.close();
+  });
 });

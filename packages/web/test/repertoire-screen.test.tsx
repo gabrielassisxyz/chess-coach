@@ -903,7 +903,7 @@ describe("the hints", () => {
     const move = repertoireActivity({
       drill: {
         hint: { kind: "move", uci: "c2c3", san: "c3" },
-        answered: { san: "c3", idea: "Prepare d4." },
+        answered: { san: "c3", idea: "Prepare d4.", asked: false },
       },
     });
     rerender(
@@ -935,7 +935,7 @@ describe("the hints", () => {
         last_try: { uci: "c2c3", san: "c3", correct: true },
         hint_square: null,
       },
-      drill: { hint: { kind: "none" }, answered: { san: "c3", idea: "Prepare d4." } },
+      drill: { hint: { kind: "none" }, answered: { san: "c3", idea: "Prepare d4.", asked: false } },
     });
     rerender(
       <Practice
@@ -1135,5 +1135,54 @@ describe("the end of a session", () => {
     expect(screen.queryByTestId("summary")).toBeNull();
     expect(screen.queryByTestId("last-session")).toBeNull();
     expect(screen.getByRole("region", { name: "Due cards" })).toBeTruthy();
+  });
+});
+
+describe("the Why card and asking for the idea", () => {
+  it("draws the Why card for a move with no stored note and sends ask_coach_about_item on press", () => {
+    const { server } = renderDrill(
+      repertoireActivity({
+        drill: { answered: { san: "c3", idea: null, asked: false } },
+      }),
+    );
+    const card = screen.getByTestId("why-line");
+    expect(card.textContent).toContain("Why 4.c3");
+    expect(card.textContent).toContain("No note for this move yet.");
+    const button = within(card).getByRole("button", { name: "Ask for the idea" });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(button);
+    expect(server.send).toHaveBeenCalledWith({ type: "ask_coach_about_item", activity_id: 6 });
+  });
+
+  it("keeps the button when a note is stored and switches it to disabled Asked once asked is true", () => {
+    const { rerender } = renderDrill(
+      repertoireActivity({
+        drill: { answered: { san: "c3", idea: "Prepare d4.", asked: false } },
+      }),
+    );
+    const card = screen.getByTestId("why-line");
+    expect(card.textContent).toContain("Prepare d4.");
+    expect(
+      (within(card).getByRole("button", { name: "Ask for the idea" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+
+    rerender(
+      <Practice
+        server={serverApi(
+          repertoireActivity({
+            drill: { answered: { san: "c3", idea: "Prepare d4.", asked: true } },
+          }),
+          { tab: "practice" },
+        )}
+        createBoard={spyBoard}
+        fetchRepertoires={listed}
+      />,
+    );
+    const askedButton = within(screen.getByTestId("why-line")).getByRole("button", {
+      name: "Asked",
+    }) as HTMLButtonElement;
+    expect(askedButton.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Ask for the idea" })).toBeNull();
   });
 });

@@ -392,6 +392,7 @@ function Item({
     },
     end: () => server.send({ type: "end_training", activity_id: activityId }),
     hint: () => server.send({ type: "hint", activity_id: activityId }),
+    askCoach: () => server.send({ type: "ask_coach_about_item", activity_id: activityId }),
     skipFirstShowings: () => server.send({ type: "skip_first_showings", activity_id: activityId }),
     toggleScratch: board.toggleScratch,
     takeBack: board.takeBack,

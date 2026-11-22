@@ -16,6 +16,7 @@ import { FakeCoach } from "../../test/fakes/fake-coach.js";
 import { ScriptedEngine } from "../../test/fakes/scripted-engine.js";
 import { buildApp } from "../app.js";
 import type { Clock } from "../clock.js";
+import { type CoachNotification, renderNotifications } from "../coach/notify.js";
 import { appendChatMessage, createCoachSession } from "../db/chat.js";
 import { type DrillCardKind, insertDrillReview, repertoireCardKey } from "../db/drill-reviews.js";
 import { type Database, openDatabase } from "../db/open.js";
@@ -1248,6 +1249,7 @@ describe("a repertoire drill", () => {
     expect(drillOf(state).answered).toEqual({
       san: "e4",
       idea: "Take the centre and free the bishop.",
+      asked: false,
     });
 
     state = await play(service, state, "e4");
@@ -1260,7 +1262,11 @@ describe("a repertoire drill", () => {
     // Answering directly after a piece hint clears the marked square.
     state = await play(service, state, "Nf3");
     expect(state.hint_square).toBeNull();
-    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: "Develop and attack e5." });
+    expect(drillOf(state).answered).toEqual({
+      san: "Nf3",
+      idea: "Develop and attack e5.",
+      asked: false,
+    });
 
     expect(cardOf("", "e4")).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
     expect(cardOf("e4 e5", "Nf3")).toMatchObject({
@@ -1319,6 +1325,7 @@ describe("a repertoire drill", () => {
     expect(drillOf(state).answered).toEqual({
       san: "e4",
       idea: "Take the centre and free the bishop.",
+      asked: false,
     });
     expect(itemHinted()).toBe(1);
     expect(cardOf("", "e4")).toEqual(cardAfterFirstWrong);
@@ -1346,7 +1353,7 @@ describe("a repertoire drill", () => {
     state = await play(service, state, "a3");
     expect(drillOf(state).hint).toEqual({ kind: "move", uci: "e2e4", san: "e4" });
     expect(state.hint_square).toBeNull();
-    expect(drillOf(state).answered).toEqual({ san: "e4", idea: "Take the centre." });
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: "Take the centre.", asked: false });
     expect(cardOf("", "e4")).toEqual(cardAfterHint);
     expect(loggedDrillGrades()).toEqual([1]);
     expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
@@ -2950,6 +2957,7 @@ describe("showing a line drill move's stored idea after the answer", () => {
     expect(drillOf(state).answered).toEqual({
       san: "e4",
       idea: "Take the centre and free the bishop.",
+      asked: false,
     });
     expect(drillOf(state).hint).toEqual({ kind: "none" });
     expect(cardOf("", "e4")).toMatchObject({ reviews: 3, last_reviewed_at: T0.toISOString() });
@@ -2968,6 +2976,7 @@ describe("showing a line drill move's stored idea after the answer", () => {
     expect(drillOf(state).answered).toEqual({
       san: "e4",
       idea: "Take the centre and free the bishop.",
+      asked: false,
     });
     expect(cardOf("", "e4")).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
     expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
@@ -2985,11 +2994,13 @@ describe("showing a line drill move's stored idea after the answer", () => {
     expect(drillOf(state).answered).toEqual({
       san: "e4",
       idea: "Take the centre and free the bishop.",
+      asked: false,
     });
     state = await play(service, state, "e4");
     expect(drillOf(state).answered).toEqual({
       san: "e4",
       idea: "Take the centre and free the bishop.",
+      asked: false,
     });
     expect(cardOf("", "e4")).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
     expect(firstAttempts()).toEqual([attemptOf("", "e4", id, 0)]);
@@ -3005,12 +3016,14 @@ describe("showing a line drill move's stored idea after the answer", () => {
     expect(drillOf(state).answered).toEqual({
       san: "e4",
       idea: "Take the centre and free the bishop.",
+      asked: false,
     });
     state = await play(service, state, "e4");
     expect(state.status).toBe("failed");
     expect(drillOf(state).answered).toEqual({
       san: "e4",
       idea: "Take the centre and free the bishop.",
+      asked: false,
     });
     expect(cardOf("", "e4")).toMatchObject({ fsrs_state: 3, lapses: 1, interval_hours: 10 / 60 });
   });
@@ -3024,18 +3037,18 @@ describe("showing a line drill move's stored idea after the answer", () => {
     let state = await start(service, id, "due");
     state = await play(service, state, "e4");
     expect(lineSan(state)).toEqual(["e4", "e5"]);
-    expect(drillOf(state).answered).toEqual({ san: "e4", idea: "Take the centre." });
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: "Take the centre.", asked: false });
 
     state = await play(service, state, "h3");
-    expect(drillOf(state).answered).toEqual({ san: "e4", idea: "Take the centre." });
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: "Take the centre.", asked: false });
     state = await play(service, state, "Nf3");
-    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: "Develop." });
+    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: "Develop.", asked: false });
     expect(state.status).toBe("failed");
 
     state = await next(service, state);
     expect(drillOf(state).answered).toBeNull();
     state = await play(service, state, "Nf3");
-    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: "Develop." });
+    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: "Develop.", asked: false });
   });
 
   it("gives answered.idea null when none is stored, never the placeholder", async () => {
@@ -3044,7 +3057,7 @@ describe("showing a line drill move's stored idea after the answer", () => {
     const service = boot();
     let state = await start(service, id, "due");
     state = await play(service, state, "e4");
-    expect(drillOf(state).answered).toEqual({ san: "e4", idea: null });
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: null, asked: false });
     expect(drillOf(state).hint).toEqual({ kind: "none" });
   });
 
@@ -3056,11 +3069,179 @@ describe("showing a line drill move's stored idea after the answer", () => {
     const service = boot();
     let state = await start(service, id, "recommended");
     expect(drillOf(state)).toMatchObject({ first_pass: true, answer: { san: "c3" } });
-    expect(drillOf(state).answered).toEqual({ san: "c3", idea: "Prepare d4." });
+    expect(drillOf(state).answered).toEqual({ san: "c3", idea: "Prepare d4.", asked: false });
 
     state = await play(service, state, "c3");
-    expect(drillOf(state).answered).toEqual({ san: "c3", idea: "Prepare d4." });
+    expect(drillOf(state).answered).toEqual({ san: "c3", idea: "Prepare d4.", asked: false });
     expect(firstAttempts()).toEqual([]);
+  });
+});
+
+describe("asking the coach for the idea of an answered line drill move", () => {
+  const LONDON_ROWS: FixtureRow[] = [
+    ["", "d4", 1],
+    ["d4", "d5", 1],
+    ["d4 d5", "Bf4", 1],
+    ["d4 d5 Bf4", "Nf6", 1],
+    ["d4 d5 Bf4 Nf6", "e3", 1],
+  ];
+
+  const notifications = (): CoachNotification[] =>
+    (
+      db
+        .prepare("SELECT content_json FROM chat_messages WHERE kind = 'notification' ORDER BY id")
+        .all() as { content_json: string }[]
+    ).map((row) => JSON.parse(row.content_json) as CoachNotification);
+
+  it("writes a repertoire_idea_request with both names, numbered line and FEN before the move, wakes the coach and leaves cards alone", async () => {
+    const id = addVariation("Main lines", LONDON_ROWS, "London System");
+    addCards(LONDON_ROWS);
+    setIdea("d4 d5", "Bf4", "Develop outside the pawn chain.");
+    const service = boot();
+    let state = await start(service, id, "all");
+    state = await play(service, state, "d4");
+    state = await play(service, state, "Bf4");
+    expect(drillOf(state).answered).toEqual({
+      san: "Bf4",
+      idea: "Develop outside the pawn chain.",
+      asked: false,
+    });
+
+    const reviewsBefore = drillReviewCount();
+    const cardBefore = cardOf("d4 d5", "Bf4");
+    const attemptsBefore = firstAttempts();
+
+    state = training(await service.trainingAskCoach(state.activity_id));
+    expect(drillOf(state).answered).toEqual({
+      san: "Bf4",
+      idea: "Develop outside the pawn chain.",
+      asked: true,
+    });
+    expect(wakes).toEqual([1]);
+    expect(drillReviewCount()).toBe(reviewsBefore);
+    expect(cardOf("d4 d5", "Bf4")).toEqual(cardBefore);
+    expect(firstAttempts()).toEqual(attemptsBefore);
+
+    const beforeBf4 = new Chess();
+    beforeBf4.move("d4");
+    beforeBf4.move("d5");
+    const expectedFenBefore = beforeBf4.fen();
+
+    const notes = notifications();
+    expect(notes).toEqual([
+      {
+        type: "repertoire_idea_request",
+        group: "London System",
+        variation: "Main lines",
+        side: "white",
+        line: ["d4", "d5", "Bf4"],
+        fen_before: expectedFenBefore,
+        san: "Bf4",
+        idea: "Develop outside the pawn chain.",
+        first_try_right: true,
+      },
+    ]);
+    const rendered = renderNotifications(notes);
+    expect(rendered).toContain("London System");
+    expect(rendered).toContain("Main lines");
+    expect(rendered).toContain("1.d4 d5 2.Bf4");
+    expect(rendered).toContain(expectedFenBefore);
+  });
+
+  it("works after the move is shown by the second hint and keeps asked when the move is then played", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4");
+    const service = boot();
+    let state = await start(service, id, "due");
+    state = training(await service.trainingHint(state.activity_id));
+    expect(await code(service.trainingAskCoach(state.activity_id))).toBe("not_in_training");
+
+    state = training(await service.trainingHint(state.activity_id));
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: null, asked: false });
+
+    const reviewsBefore = drillReviewCount();
+    const cardBefore = cardOf("", "e4");
+    state = training(await service.trainingAskCoach(state.activity_id));
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: null, asked: true });
+    expect(wakes).toEqual([1]);
+    expect(drillReviewCount()).toBe(reviewsBefore);
+    expect(cardOf("", "e4")).toEqual(cardBefore);
+    expect(notifications()).toEqual([
+      expect.objectContaining({
+        type: "repertoire_idea_request",
+        san: "e4",
+        idea: null,
+        first_try_right: false,
+      }),
+    ]);
+
+    state = await play(service, state, "e4");
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: null, asked: true });
+    expect(await code(service.trainingAskCoach(state.activity_id))).toBe("already_requested");
+  });
+
+  it("works on a first showing before or after playing the move, and never changes cards", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCardsAllButC3();
+    const service = boot();
+    let state = await start(service, id, "recommended");
+    expect(drillOf(state)).toMatchObject({
+      first_pass: true,
+      answer: { san: "c3" },
+      answered: { san: "c3", idea: null, asked: false },
+    });
+
+    const reviewsBefore = drillReviewCount();
+    const cardBefore = cardOf("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3");
+    state = training(await service.trainingAskCoach(state.activity_id));
+    expect(drillOf(state).answered).toEqual({ san: "c3", idea: null, asked: true });
+    expect(wakes).toEqual([1]);
+    expect(drillReviewCount()).toBe(reviewsBefore);
+    expect(cardOf("e4 e5 Nf3 Nc6 Bc4 Bc5", "c3")).toEqual(cardBefore);
+    expect(notifications()).toEqual([
+      expect.objectContaining({
+        type: "repertoire_idea_request",
+        group: "Italian Game",
+        variation: "Classical",
+        san: "c3",
+        idea: null,
+        first_try_right: false,
+      }),
+    ]);
+
+    state = await play(service, state, "c3");
+    expect(drillOf(state).answered).toEqual({ san: "c3", idea: null, asked: true });
+    expect(await code(service.trainingAskCoach(state.activity_id))).toBe("already_requested");
+  });
+
+  it("refuses with not_in_training while answered is null, already_requested on repeat, and stale_activity on a stale id, and resets asked on the next answered move", async () => {
+    const id = addVariation("Classical", ITALIAN_ROWS);
+    addCards(ITALIAN_ROWS, (_lineText, san) => san === "e4" || san === "Nf3");
+    const service = boot();
+    let state = await start(service, id, "due");
+    expect(drillOf(state).answered).toBeNull();
+    expect(await code(service.trainingAskCoach(state.activity_id))).toBe("not_in_training");
+    expect(wakes).toEqual([]);
+
+    state = await play(service, state, "e4");
+    expect(await code(service.trainingAskCoach(state.activity_id + 1))).toBe("stale_activity");
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: null, asked: false });
+
+    state = training(await service.trainingAskCoach(state.activity_id));
+    expect(drillOf(state).answered).toEqual({ san: "e4", idea: null, asked: true });
+    expect(await code(service.trainingAskCoach(state.activity_id))).toBe("already_requested");
+    expect(wakes).toEqual([1]);
+
+    // Answering the next move replaces `answered` with `asked: false`, allowing a request for it.
+    state = await play(service, state, "Nf3");
+    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: null, asked: false });
+    state = training(await service.trainingAskCoach(state.activity_id));
+    expect(drillOf(state).answered).toEqual({ san: "Nf3", idea: null, asked: true });
+    expect(wakes).toEqual([1, 2]);
+    expect(notifications().map((note) => note.type)).toEqual([
+      "repertoire_idea_request",
+      "repertoire_idea_request",
+    ]);
   });
 });
 

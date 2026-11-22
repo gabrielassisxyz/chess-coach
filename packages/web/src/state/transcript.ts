@@ -9,6 +9,7 @@ import {
   type ServerEvent,
   type TranscriptEntry,
 } from "@chess-coach/shared";
+import { answeredPlyOf } from "./repertoire-drill.js";
 
 export type ChatItem =
   | { type: "text"; key: string; role: "user" | "assistant"; text: string; liveId?: number }
@@ -242,11 +243,17 @@ export type ChatAction =
   | { type: "dismiss_error" };
 
 // A practice item whose notification the coach has not answered yet: solved or failed with
-// the queue still open. A rated card or a finished queue owes no reply, nor does a first-try
-// solve until the student asks for the coach's comment, nor a retry, which the coach is never
-// told of.
+// the queue still open, or a line drill move the student asked the coach to explain. A rated card
+// or a finished queue owes no reply, nor does a first-try solve until the student asks for the
+// coach's comment, nor a retry, which the coach is never told of.
 function endedItemKey(activity: ActivityState | null): string | null {
   if (activity?.kind !== "training" || activity.summary !== null) return null;
+  if (activity.repertoire) {
+    const answered = activity.repertoire.answered;
+    if (!answered?.asked) return null;
+    const ply = answeredPlyOf(activity, activity.repertoire);
+    return `${activity.served_at}#${activity.item.position_in_queue}#idea#${ply}#${answered.san}`;
+  }
   if (activity.status !== "solved" && activity.status !== "failed") return null;
   if (activity.coach_comment === "offered" || activity.retry) return null;
   return `${activity.served_at}#${activity.item.position_in_queue}`;

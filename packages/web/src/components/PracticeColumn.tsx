@@ -40,6 +40,7 @@ export interface PracticeColumnActions {
   retry(): void;
   end(): void;
   hint(): void;
+  askCoach?: (() => void) | undefined;
   skipFirstShowings?: (() => void) | undefined;
   toggleScratch(): void;
   takeBack(): void;
@@ -507,6 +508,16 @@ export function PracticeColumn(props: PracticeColumnProps) {
               <p className="state-card__title">{why.title}</p>
               <p className="state-card__body">{why.body}</p>
             </div>
+          </div>
+          <div className="state-card__actions">
+            <button
+              type="button"
+              className="button"
+              disabled={why.asked}
+              onClick={actions.askCoach}
+            >
+              {why.asked ? "Asked" : "Ask for the idea"}
+            </button>
           </div>
         </div>
       ) : null}
